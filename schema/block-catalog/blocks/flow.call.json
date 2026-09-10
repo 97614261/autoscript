@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "flow.call",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/flow.call/1/flow.call.schema.json",
+  "title": "调用 Flow",
+  "category": "flow",
+  "summary": "调用项目中的另一个 Flow，并传入类型化参数。",
+  "searchTerms": ["flow", "调用", "子流程", "函数"],
+  "requiredCapabilities": [],
+  "childBlocks": [],
+  "properties": [
+    { "path": "targetFlowId", "label": "目标 Flow", "editor": "flow_reference", "required": true },
+    { "path": "arguments", "label": "调用参数", "editor": "flow_arguments", "required": true, "dependsOn": "targetFlowId" }
+  ],
+  "migrations": []
+}

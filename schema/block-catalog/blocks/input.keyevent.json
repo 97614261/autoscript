@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.keyevent",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.keyevent/1/input.keyevent.schema.json",
+  "title": "按键",
+  "category": "task",
+  "summary": "发送一个经过白名单校验的 Android KeyEvent 键码。",
+  "searchTerms": ["key", "keyevent", "按键", "返回键", "home"],
+  "requiredCapabilities": ["input.basic"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "keyCode", "label": "键码", "editor": "integer", "required": true, "defaultValue": "4" }
+  ],
+  "migrations": []
+}

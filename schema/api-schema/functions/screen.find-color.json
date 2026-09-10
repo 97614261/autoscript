@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5100,
+  "name": "Screen.findColor",
+  "since": "1.1",
+  "capability": "vision.pixel",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "在租用帧的半开ROI内按行优先查找颜色。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的帧句柄。" },
+    { "name": "rgb", "type": "integer", "required": true, "summary": "0xRRGGBB颜色。" },
+    { "name": "tolerance", "type": "integer", "required": true, "summary": "0至255的逐通道容差。" },
+    { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
+    { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
+    { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
+    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" }
+  ],
+  "returns": { "type": "Point", "nullable": true, "summary": "首个匹配点；未找到时为nil。" },
+  "legacyAliases": ["FindColor"]
+}

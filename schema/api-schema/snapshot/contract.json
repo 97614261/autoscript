@@ -1,0 +1,1163 @@
+{
+  "schemaVersion": 1,
+  "generatorVersion": "0.1.0",
+  "functions": [
+    {
+      "schemaVersion": 1,
+      "opcode": 1000,
+      "name": "Math.distance",
+      "since": "1.0",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "计算两个设计坐标点之间的欧氏距离。",
+      "params": [
+        {
+          "name": "x1",
+          "type": "number",
+          "required": true,
+          "summary": "起点X坐标。"
+        },
+        {
+          "name": "y1",
+          "type": "number",
+          "required": true,
+          "summary": "起点Y坐标。"
+        },
+        {
+          "name": "x2",
+          "type": "number",
+          "required": true,
+          "summary": "终点X坐标。"
+        },
+        {
+          "name": "y2",
+          "type": "number",
+          "required": true,
+          "summary": "终点Y坐标。"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "非负距离。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 2000,
+      "name": "System.getScreenSize",
+      "since": "1.0",
+      "capability": "device.display",
+      "execution": "host_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": 1000,
+      "resourceOwnership": "none",
+      "summary": "读取当前Android显示区域的物理像素尺寸。",
+      "params": [],
+      "returns": {
+        "type": "Size",
+        "nullable": false,
+        "summary": "包含width和height的尺寸值。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3000,
+      "name": "Task.sleep",
+      "since": "1.0",
+      "capability": "core.task",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "task",
+      "summary": "挂起当前Lua协程，期间不阻塞调度线程，并响应任务取消。",
+      "params": [
+        {
+          "name": "milliseconds",
+          "type": "integer",
+          "required": true,
+          "summary": "非负等待毫秒数。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "正常到期时无返回值。"
+      },
+      "legacyAliases": [
+        "Sleep"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4000,
+      "name": "Input.tap",
+      "since": "1.1",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "在设计坐标中执行一次点击，并等待Root输入后端确认。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "设计坐标X。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "设计坐标Y。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "输入后端确认完成时返回。"
+      },
+      "legacyAliases": [
+        "Tap"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4001,
+      "name": "Input.swipe",
+      "since": "1.1",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 7000,
+      "resourceOwnership": "input_transaction",
+      "summary": "在两个设计坐标之间执行有限时长滑动。",
+      "params": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "required": true,
+          "summary": "起点X。"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "required": true,
+          "summary": "起点Y。"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "required": true,
+          "summary": "终点X。"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "required": true,
+          "summary": "终点Y。"
+        },
+        {
+          "name": "durationMs",
+          "type": "integer",
+          "required": true,
+          "summary": "1至5000毫秒。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "输入后端确认完成时返回。"
+      },
+      "legacyAliases": [
+        "Swipe"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4002,
+      "name": "Input.keyEvent",
+      "since": "1.1",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "发送一个白名单校验后的Android键码。",
+      "params": [
+        {
+          "name": "keyCode",
+          "type": "integer",
+          "required": true,
+          "summary": "非负Android KeyEvent键码。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "输入后端确认完成时返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5000,
+      "name": "Screen.capture",
+      "since": "1.1",
+      "capability": "screen.capture",
+      "execution": "async_task",
+      "cancelMode": "discard_result",
+      "sideEffect": "screen_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "capture_slot",
+      "summary": "请求一帧屏幕图像，返回短生命周期采集编号。",
+      "params": [],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "可传给Screen.cache的采集编号。"
+      },
+      "legacyAliases": [
+        "CaptureScreen"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5001,
+      "name": "Screen.cache",
+      "since": "1.1",
+      "capability": "screen.capture",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "memory_reserve",
+      "timeoutMs": 1000,
+      "resourceOwnership": "task_frame_lease",
+      "summary": "把当前采集帧固定为任务拥有的不可变识图帧。",
+      "params": [
+        {
+          "name": "captureId",
+          "type": "integer",
+          "required": true,
+          "summary": "Screen.capture返回的采集编号。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "任务范围内有效的帧句柄。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5002,
+      "name": "Screen.release",
+      "since": "1.1",
+      "capability": "screen.capture",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "memory_release",
+      "timeoutMs": 1000,
+      "resourceOwnership": "task_frame_lease",
+      "summary": "显式释放当前任务持有的一份帧租约。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "Screen.cache返回的帧句柄。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "租约释放后返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5003,
+      "name": "Screen.loadImage",
+      "since": "1.2",
+      "capability": "vision.template",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "memory_reserve",
+      "timeoutMs": 1000,
+      "resourceOwnership": "task_frame_lease",
+      "summary": "加载已冻结到项目中的图片资源，并取得任务范围内有效的不可变模板帧。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "以assets/images/开头的规范项目资源路径。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "可传给Screen.findImage并用Screen.release释放的模板帧句柄。"
+      },
+      "legacyAliases": [
+        "LoadImage"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5100,
+      "name": "Screen.findColor",
+      "since": "1.1",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "在租用帧的半开ROI内按行优先查找颜色。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的帧句柄。"
+        },
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "0xRRGGBB颜色。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的逐通道容差。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI左边界，包含。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI上边界，包含。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI下边界，不包含。"
+        }
+      ],
+      "returns": {
+        "type": "Point",
+        "nullable": true,
+        "summary": "首个匹配点；未找到时为nil。"
+      },
+      "legacyAliases": [
+        "FindColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5101,
+      "name": "Screen.findImage",
+      "since": "1.1",
+      "capability": "vision.template",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "使用不可变模板帧执行有界透明像素模板匹配。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "待搜索帧句柄。"
+        },
+        {
+          "name": "template",
+          "type": "integer",
+          "required": true,
+          "summary": "模板帧句柄。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的逐通道容差。"
+        },
+        {
+          "name": "similarityPermille",
+          "type": "integer",
+          "required": true,
+          "summary": "0至1000的最低相似度。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI左边界，包含。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI上边界，包含。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI下边界，不包含。"
+        }
+      ],
+      "returns": {
+        "type": "Point",
+        "nullable": true,
+        "summary": "首个匹配模板的左上角；未找到时为nil。"
+      },
+      "legacyAliases": [
+        "FindImage"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5102,
+      "name": "Screen.getColor",
+      "since": "1.4",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "读取任务所持不可变帧中的一个像素，返回0xRRGGBB。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的帧句柄。"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "帧内横坐标。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "帧内纵坐标。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "0xRRGGBB颜色值。"
+      },
+      "legacyAliases": [
+        "GetColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5103,
+      "name": "Screen.compareColor",
+      "since": "1.4",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "比较帧内一个像素与目标颜色是否落在逐通道容差内。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的帧句柄。"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "帧内横坐标。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "帧内纵坐标。"
+        },
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "0xRRGGBB目标颜色。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的逐通道容差。"
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "nullable": false,
+        "summary": "是否匹配。"
+      },
+      "legacyAliases": [
+        "CompareColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5104,
+      "name": "Screen.findMultiColor",
+      "since": "1.4",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "在半开ROI内按行优先查找锚点色和最多64个有符号偏移采样点。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的帧句柄。"
+        },
+        {
+          "name": "anchorRgb",
+          "type": "integer",
+          "required": true,
+          "summary": "0xRRGGBB锚点颜色。"
+        },
+        {
+          "name": "anchorTolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "锚点逐通道容差。"
+        },
+        {
+          "name": "samples",
+          "type": "MultiColorSample[]",
+          "required": true,
+          "summary": "附加采样点表；每项包含x、y、rgb、tolerance。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI左边界，包含。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI上边界，包含。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI下边界，不包含。"
+        }
+      ],
+      "returns": {
+        "type": "Point",
+        "nullable": true,
+        "summary": "首个匹配锚点；未找到时为nil。"
+      },
+      "legacyAliases": [
+        "FindMultiColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5105,
+      "name": "Screen.countColor",
+      "since": "1.4",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "统计半开ROI内的匹配颜色，达到limit后立即返回。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的帧句柄。"
+        },
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "0xRRGGBB目标颜色。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的逐通道容差。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI左边界，包含。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI上边界，包含。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI下边界，不包含。"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": true,
+          "summary": "1至256的提前停止上限。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "匹配数量，最大为limit。"
+      },
+      "legacyAliases": [
+        "CountColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5106,
+      "name": "Screen.findAllColor",
+      "since": "1.4",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "按行优先返回半开ROI内最多limit个匹配颜色坐标。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的帧句柄。"
+        },
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "0xRRGGBB目标颜色。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的逐通道容差。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI左边界，包含。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI上边界，包含。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI下边界，不包含。"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": true,
+          "summary": "1至256的返回数量上限。"
+        }
+      ],
+      "returns": {
+        "type": "Point[]",
+        "nullable": false,
+        "summary": "按行优先排序的坐标数组。"
+      },
+      "legacyAliases": [
+        "FindAllColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5110,
+      "name": "Legacy.duoDianZhaoSe",
+      "since": "1.5",
+      "capability": "vision.pixel.legacy",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "按旧版严格字符串语法、宽高ROI、百分比阈值和指定方向执行多点找色。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的显式不可变帧句柄，替代旧版隐式全局屏幕。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI起点X。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI起点Y。"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI宽度，大于0。"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI高度，大于0。"
+        },
+        {
+          "name": "parameters",
+          "type": "string",
+          "required": true,
+          "summary": "锚点色与有符号相对点组成的严格旧版参数串。"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "required": true,
+          "summary": "搜索方向0至4，映射与旧版一致。"
+        },
+        {
+          "name": "minimumMatchPercent",
+          "type": "integer",
+          "required": true,
+          "summary": "0至100的最低匹配点百分比，使用向上取整。"
+        }
+      ],
+      "returns": {
+        "type": "XunTuResult",
+        "nullable": false,
+        "summary": "包含count、first和有序points的兼容寻图结果。"
+      },
+      "legacyAliases": [
+        "DuoDianZhaoSe"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5111,
+      "name": "Legacy.duoDianBiSe",
+      "since": "1.5",
+      "capability": "vision.pixel.legacy",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "按旧版绝对坐标参数串和百分比向上取整规则执行多点比色。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的显式不可变帧句柄。"
+        },
+        {
+          "name": "parameters",
+          "type": "string",
+          "required": true,
+          "summary": "绝对坐标、颜色和逐通道容差组成的严格旧版参数串。"
+        },
+        {
+          "name": "minimumMatchPercent",
+          "type": "integer",
+          "required": true,
+          "summary": "0至100的最低匹配点百分比，使用向上取整。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "匹配返回1，不匹配返回0，保留旧版整数语义。"
+      },
+      "legacyAliases": [
+        "DuoDianBiSe"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5112,
+      "name": "Legacy.getRectColorNum",
+      "since": "1.5",
+      "capability": "vision.pixel.legacy",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "统计旧版宽高ROI内命中任一严格颜色参数的像素总数。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "任务持有的显式不可变帧句柄。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI起点X。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI起点Y。"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI宽度，大于0。"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "required": true,
+          "summary": "旧版ROI高度，大于0。"
+        },
+        {
+          "name": "parameters",
+          "type": "string",
+          "required": true,
+          "summary": "一个或多个颜色及逐通道容差组成的严格旧版参数串。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "ROI内命中像素总数。"
+      },
+      "legacyAliases": [
+        "GetRectColorNum"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5113,
+      "name": "Legacy.getRgbColor",
+      "since": "1.5",
+      "capability": "vision.pixel.legacy",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "按旧版GetRGBColor语义将三个颜色通道组合成0xRRGGBB整数。",
+      "params": [
+        {
+          "name": "red",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的红色通道。"
+        },
+        {
+          "name": "green",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的绿色通道。"
+        },
+        {
+          "name": "blue",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的蓝色通道。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "0xRRGGBB整数颜色。"
+      },
+      "legacyAliases": [
+        "GetRGBColor"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5200,
+      "name": "Screen.captureSeries",
+      "since": "1.5",
+      "capability": "screen.capture.series",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "screen_read",
+      "timeoutMs": 65000,
+      "resourceOwnership": "task_frame_leases",
+      "summary": "按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。",
+      "params": [
+        {
+          "name": "maxFrames",
+          "type": "integer",
+          "required": true,
+          "summary": "1至120的最大帧数，仍受会话字节预算限制。"
+        },
+        {
+          "name": "durationMs",
+          "type": "integer",
+          "required": true,
+          "summary": "1至60000毫秒的最长持续时间。"
+        },
+        {
+          "name": "targetFps",
+          "type": "integer",
+          "required": true,
+          "summary": "1至120的目标采样帧率。"
+        },
+        {
+          "name": "allowPartial",
+          "type": "boolean",
+          "required": true,
+          "summary": "几何变化时是否允许返回已完成部分。"
+        }
+      ],
+      "returns": {
+        "type": "CaptureSeriesResult",
+        "nullable": false,
+        "summary": "包含帧句柄与实际时间戳、丢帧数和partial标记。"
+      },
+      "legacyAliases": [
+        "CaptureSeries"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 6000,
+      "name": "Ocr.loadDictionary",
+      "since": "1.3",
+      "capability": "ocr.glyph",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "memory_reserve",
+      "timeoutMs": 1000,
+      "resourceOwnership": "task_dictionary_lease",
+      "summary": "加载已冻结到项目中的基础字库，并取得任务范围内有效的字库句柄。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "以dictionaries/开头的规范项目资源路径。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "可传给Ocr.glyph并用Ocr.releaseDictionary释放的字库句柄。"
+      },
+      "legacyAliases": [
+        "LoadDictionary"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 6001,
+      "name": "Ocr.releaseDictionary",
+      "since": "1.3",
+      "capability": "ocr.glyph",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "memory_release",
+      "timeoutMs": 1000,
+      "resourceOwnership": "owned_dictionary",
+      "summary": "释放当前任务持有的基础字库句柄。",
+      "params": [
+        {
+          "name": "dictionary",
+          "type": "integer",
+          "required": true,
+          "summary": "Ocr.loadDictionary返回的字库句柄。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "无返回值。"
+      },
+      "legacyAliases": [
+        "ReleaseDictionary"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 6100,
+      "name": "Ocr.glyph",
+      "since": "1.3",
+      "capability": "ocr.glyph",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame_and_dictionary",
+      "summary": "在不可变帧的指定区域中二值化、分行分字，并使用基础字库逐字匹配。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "待识别的缓存帧句柄。"
+        },
+        {
+          "name": "dictionary",
+          "type": "integer",
+          "required": true,
+          "summary": "基础字库句柄。"
+        },
+        {
+          "name": "foregroundRgb",
+          "type": "integer",
+          "required": true,
+          "summary": "0xRRGGBB格式的前景色。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255的逐通道颜色容差。"
+        },
+        {
+          "name": "similarityPermille",
+          "type": "integer",
+          "required": true,
+          "summary": "0至1000的最低字形相似度。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI左边界，包含。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI上边界，包含。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "ROI下边界，不包含。"
+        },
+        {
+          "name": "spaceGapColumns",
+          "type": "integer",
+          "required": true,
+          "summary": "插入空格所需的最小连续空列数，0表示不插入。"
+        }
+      ],
+      "returns": {
+        "type": "GlyphOcrResult",
+        "nullable": false,
+        "summary": "包含text、coveragePermille和averageScorePermille的识别结果。"
+      },
+      "legacyAliases": [
+        "GlyphOcr"
+      ]
+    }
+  ]
+}

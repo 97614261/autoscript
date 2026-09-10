@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  "comparison": "unsigned_ascii_byte_lexicographic",
+  "maxLength": 64,
+  "generation": "deterministic_midpoint_with_prefix_rebalance",
+  "rebalance": {
+    "scope": "single_block_atomic",
+    "minimumWidth": 4,
+    "minimumGap": 16
+  },
+  "vectors": [
+    { "previous": null, "next": null, "result": "U" },
+    { "previous": "a0", "next": null, "result": "n" },
+    { "previous": null, "next": "a0", "result": "H" },
+    { "previous": "a0", "next": "a2", "result": "a1" },
+    { "previous": "a", "next": "a1", "result": "a0V" },
+    { "previous": "aZz", "next": "aa", "result": "aZzU" }
+  ],
+  "noSpaceVectors": [
+    { "previous": "a", "next": "a0" }
+  ]
+}

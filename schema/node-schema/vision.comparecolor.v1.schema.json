@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.comparecolor/1/vision.comparecolor.schema.json",
+  "title": "vision.comparecolor node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "vision.comparecolor" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frameVariable", "point", "rgb", "tolerance", "resultVariable"],
+      "properties": {
+        "frameVariable": { "$ref": "#/$defs/variable" },
+        "point": { "$ref": "#/$defs/point" },
+        "rgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "resultVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "point": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y"],
+      "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } }
+    }
+  }
+}

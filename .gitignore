@@ -1,0 +1,29 @@
+# Android / Gradle
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.iml
+.idea/
+
+# Rust
+/target/
+
+# Native generated artifacts
+**/.cxx/
+**/.externalNativeBuild/
+
+# Local signing and secrets
+*.jks
+*.keystore
+*.p12
+secrets.properties
+
+# Local device output
+/tools/bench/results/
+/artifacts/local/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

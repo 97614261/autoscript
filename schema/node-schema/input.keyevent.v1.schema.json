@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/input.keyevent/1/input.keyevent.schema.json",
+  "title": "input.keyevent node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "input.keyevent" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyCode"],
+      "properties": {
+        "keyCode": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      }
+    }
+  }
+}

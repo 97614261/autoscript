@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "hash": "SHA-256",
+  "integerEncoding": "unsigned_u64_big_endian",
+  "byteStringEncoding": "u64_length_then_exact_bytes",
+  "flowDigest": {
+    "domainTagUtf8": "AutoScript.FlowDigest.v1",
+    "domainTagTerminatorByte": 0,
+    "order": "flowId_unsigned_utf8_byte_lexicographic",
+    "payload": ["flowCount", "flowId", "canonicalRelativePath", "exactSavedJsonlBytes"]
+  },
+  "generationId": {
+    "domainTagUtf8": "AutoScript.GenerationId.v1",
+    "domainTagTerminatorByte": 0,
+    "payload": ["flowDigestHex", "generatorVersionUtf8", "runtimeApiUtf8"],
+    "format": "gen- plus first 32 lowercase hex characters"
+  }
+}

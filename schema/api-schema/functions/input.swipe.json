@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4001,
+  "name": "Input.swipe",
+  "since": "1.1",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 7000,
+  "resourceOwnership": "input_transaction",
+  "summary": "在两个设计坐标之间执行有限时长滑动。",
+  "params": [
+    { "name": "x1", "type": "integer", "required": true, "summary": "起点X。" },
+    { "name": "y1", "type": "integer", "required": true, "summary": "起点Y。" },
+    { "name": "x2", "type": "integer", "required": true, "summary": "终点X。" },
+    { "name": "y2", "type": "integer", "required": true, "summary": "终点Y。" },
+    { "name": "durationMs", "type": "integer", "required": true, "summary": "1至5000毫秒。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "输入后端确认完成时返回。" },
+  "legacyAliases": ["Swipe"]
+}

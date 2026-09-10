@@ -1,0 +1,17 @@
+[package]
+name = "engine-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+automation-core = { path = "../automation-core" }
+coordinate = { path = "../coordinate" }
+lua-runtime = { path = "../lua-runtime" }
+runtime-executor = { path = "../runtime-executor" }
+runtime-scheduler = { path = "../runtime-scheduler" }
+script-api = { path = "../script-api" }
+
+[lints]
+workspace = true

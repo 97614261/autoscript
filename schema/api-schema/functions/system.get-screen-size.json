@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "opcode": 2000,
+  "name": "System.getScreenSize",
+  "since": "1.0",
+  "capability": "device.display",
+  "execution": "host_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": 1000,
+  "resourceOwnership": "none",
+  "summary": "读取当前Android显示区域的物理像素尺寸。",
+  "params": [],
+  "returns": { "type": "Size", "nullable": false, "summary": "包含width和height的尺寸值。" },
+  "legacyAliases": []
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/flow-envelope/1/flow-envelope.schema.json",
+  "$comment": "orderKey generation, byte comparison, rebalance constants and cross-language vectors are frozen in order-key-v1.json",
+  "title": "AutoScript Flow JSONL envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["nodeId", "blockId", "parentId", "orderKey", "kind", "nodeVersion", "args"],
+  "properties": {
+    "flowSchemaVersion": { "const": 1 },
+    "nodeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "blockId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "parentId": { "type": ["string", "null"], "maxLength": 128 },
+    "orderKey": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9A-Za-z]+$" },
+    "kind": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
+    "nodeVersion": { "type": "integer", "minimum": 1 },
+    "childBlocks": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-zA-Z0-9]*$" },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "depth": { "type": "integer", "minimum": 0 },
+    "args": { "type": "object" }
+  }
+}

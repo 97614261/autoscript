@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5111,
+  "name": "Legacy.duoDianBiSe",
+  "since": "1.5",
+  "capability": "vision.pixel.legacy",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "按旧版绝对坐标参数串和百分比向上取整规则执行多点比色。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的显式不可变帧句柄。" },
+    { "name": "parameters", "type": "string", "required": true, "summary": "绝对坐标、颜色和逐通道容差组成的严格旧版参数串。" },
+    { "name": "minimumMatchPercent", "type": "integer", "required": true, "summary": "0至100的最低匹配点百分比，使用向上取整。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "匹配返回1，不匹配返回0，保留旧版整数语义。" },
+  "legacyAliases": ["DuoDianBiSe"]
+}

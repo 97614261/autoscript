@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.tap",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.tap/1/input.tap.schema.json",
+  "title": "点击",
+  "category": "task",
+  "summary": "在设计坐标中执行一次 Root 点击。",
+  "searchTerms": ["tap", "click", "单击", "坐标"],
+  "requiredCapabilities": ["input.basic"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "x", "label": "X 坐标", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "y", "label": "Y 坐标", "editor": "integer", "required": true, "defaultValue": "0" }
+  ],
+  "migrations": []
+}

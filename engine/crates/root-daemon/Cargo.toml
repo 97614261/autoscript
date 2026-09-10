@@ -1,0 +1,20 @@
+[package]
+name = "root-daemon"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+root-daemon-core = { path = "../root-daemon-core" }
+root-protocol = { path = "../root-protocol" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2.189"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

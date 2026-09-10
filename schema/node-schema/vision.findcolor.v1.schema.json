@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.findcolor/1/vision.findcolor.schema.json",
+  "title": "vision.findcolor node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "vision.findcolor" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frameVariable", "rgb", "tolerance", "region", "foundVariable", "xVariable", "yVariable"],
+      "properties": {
+        "frameVariable": { "$ref": "#/$defs/variable" },
+        "rgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "region": { "$ref": "#/$defs/rect" },
+        "foundVariable": { "$ref": "#/$defs/variable" },
+        "xVariable": { "$ref": "#/$defs/variable" },
+        "yVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "top": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "right": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "bottom": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 3000,
+  "name": "Task.sleep",
+  "since": "1.0",
+  "capability": "core.task",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "task",
+  "summary": "挂起当前Lua协程，期间不阻塞调度线程，并响应任务取消。",
+  "params": [
+    { "name": "milliseconds", "type": "integer", "required": true, "summary": "非负等待毫秒数。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "正常到期时无返回值。" },
+  "legacyAliases": ["Sleep"]
+}

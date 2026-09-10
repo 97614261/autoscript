@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/control.repeat/1/control.repeat.schema.json",
+  "title": "control.repeat node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "childBlocks", "args"],
+  "properties": {
+    "kind": { "const": "control.repeat" },
+    "nodeVersion": { "const": 1 },
+    "childBlocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body"],
+      "properties": {
+        "body": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["times"],
+      "properties": {
+        "times": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "indexVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+      }
+    }
+  }
+}

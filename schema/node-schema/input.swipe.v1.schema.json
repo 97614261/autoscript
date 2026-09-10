@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/input.swipe/1/input.swipe.schema.json",
+  "title": "input.swipe node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "input.swipe" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x1", "y1", "x2", "y2", "durationMs"],
+      "properties": {
+        "x1": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "y1": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "x2": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "y2": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "durationMs": { "type": "integer", "minimum": 1, "maximum": 5000 }
+      }
+    }
+  }
+}

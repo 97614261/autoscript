@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6100,
+  "name": "Ocr.glyph",
+  "since": "1.3",
+  "capability": "ocr.glyph",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame_and_dictionary",
+  "summary": "在不可变帧的指定区域中二值化、分行分字，并使用基础字库逐字匹配。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "待识别的缓存帧句柄。" },
+    { "name": "dictionary", "type": "integer", "required": true, "summary": "基础字库句柄。" },
+    { "name": "foregroundRgb", "type": "integer", "required": true, "summary": "0xRRGGBB格式的前景色。" },
+    { "name": "tolerance", "type": "integer", "required": true, "summary": "0至255的逐通道颜色容差。" },
+    { "name": "similarityPermille", "type": "integer", "required": true, "summary": "0至1000的最低字形相似度。" },
+    { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
+    { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
+    { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
+    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" },
+    { "name": "spaceGapColumns", "type": "integer", "required": true, "summary": "插入空格所需的最小连续空列数，0表示不插入。" }
+  ],
+  "returns": { "type": "GlyphOcrResult", "nullable": false, "summary": "包含text、coveragePermille和averageScorePermille的识别结果。" },
+  "legacyAliases": ["GlyphOcr"]
+}

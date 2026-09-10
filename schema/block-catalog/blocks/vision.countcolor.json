@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1, "kind": "vision.countcolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.countcolor/1/vision.countcolor.schema.json",
+  "title": "颜色计数", "category": "vision", "summary": "统计半开矩形内匹配颜色数量，达到上限立即停止。",
+  "searchTerms": ["countcolor", "颜色计数", "数量", "区域"],
+  "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "rgb", "label": "目标颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
+    { "path": "tolerance", "label": "颜色容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "limit", "label": "计数上限(1-256)", "editor": "integer", "required": true, "defaultValue": "256" },
+    { "path": "resultVariable", "label": "数量变量", "editor": "string", "required": true, "defaultValue": "colorCount" }
+  ], "migrations": []
+}

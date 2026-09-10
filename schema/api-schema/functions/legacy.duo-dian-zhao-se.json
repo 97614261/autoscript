@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5110,
+  "name": "Legacy.duoDianZhaoSe",
+  "since": "1.5",
+  "capability": "vision.pixel.legacy",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "按旧版严格字符串语法、宽高ROI、百分比阈值和指定方向执行多点找色。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的显式不可变帧句柄，替代旧版隐式全局屏幕。" },
+    { "name": "left", "type": "integer", "required": true, "summary": "旧版ROI起点X。" },
+    { "name": "top", "type": "integer", "required": true, "summary": "旧版ROI起点Y。" },
+    { "name": "width", "type": "integer", "required": true, "summary": "旧版ROI宽度，大于0。" },
+    { "name": "height", "type": "integer", "required": true, "summary": "旧版ROI高度，大于0。" },
+    { "name": "parameters", "type": "string", "required": true, "summary": "锚点色与有符号相对点组成的严格旧版参数串。" },
+    { "name": "direction", "type": "integer", "required": true, "summary": "搜索方向0至4，映射与旧版一致。" },
+    { "name": "minimumMatchPercent", "type": "integer", "required": true, "summary": "0至100的最低匹配点百分比，使用向上取整。" }
+  ],
+  "returns": { "type": "XunTuResult", "nullable": false, "summary": "包含count、first和有序points的兼容寻图结果。" },
+  "legacyAliases": ["DuoDianZhaoSe"]
+}

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1, "kind": "screen.capture", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.capture/1/screen.capture.schema.json",
+  "title": "截图并缓存", "category": "screen", "summary": "截取当前屏幕并保存为任务级帧变量。",
+  "searchTerms": ["capture", "screenshot", "截图", "缓存"],
+  "requiredCapabilities": ["screen.capture"], "childBlocks": [],
+  "properties": [
+    { "path": "resultVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" }
+  ], "migrations": []
+}

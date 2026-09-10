@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AutoScript 基础字库</title>
+  <style>
+    body{font:14px/1.6 system-ui;margin:0;background:#f4f6f8;color:#1f2933}header{padding:14px 18px;background:#1976d2;color:#fff}main{max-width:920px;margin:auto;padding:14px}section{background:#fff;border:1px solid #d6dbe1;border-radius:6px;margin:10px 0;padding:12px 14px}code,pre{font-family:ui-monospace,monospace}pre{overflow:auto;background:#f6f8fa;padding:10px;border-radius:4px}table{border-collapse:collapse;width:100%}td,th{border-top:1px solid #e6e9ed;padding:6px;text-align:left}
+  </style>
+</head>
+<body>
+<header><strong>AutoScript 基础字库与制作工具</strong></header>
+<main>
+  <section>
+    <h2>用途</h2>
+    <p><code>ASGLYPH v1</code>用于固定游戏字体和数字等小型离线OCR。制作源用<code>#</code>表示前景、<code>.</code>表示背景；工具会自动裁掉四周空白，再生成运行时字库和独立HTML预览。</p>
+  </section>
+  <section>
+    <h2>制作命令</h2>
+    <pre>cargo run --offline -p glyph-maker -- tools/glyph-maker/examples/basic.json dictionaries/main.asglyph glyph-preview.html</pre>
+    <p>为防止误覆盖，输出文件已存在时命令会拒绝写入。</p>
+  </section>
+  <section>
+    <h2>项目声明</h2>
+    <pre>"resources": [
+  { "kind": "glyphDictionary", "path": "dictionaries/main.asglyph" }
+]</pre>
+    <p>Runner启动项目时先按路径稳定排序并注册全部资源，任一资源失败就停止当前会话，不运行部分装载的项目。</p>
+  </section>
+  <section>
+    <h2>运行接口</h2>
+    <pre>local frame = Screen.cache(Screen.capture())
+local dict = Ocr.loadDictionary("dictionaries/main.asglyph")
+local result = Ocr.glyph(frame, dict, 0xffffff, 20, 850, 0, 0, 720, 1280, 3)
+Ocr.releaseDictionary(dict)
+Screen.release(frame)</pre>
+    <p>结果包含<code>text</code>、<code>coveragePermille</code>和<code>averageScorePermille</code>。</p>
+  </section>
+  <section>
+    <h2>格式边界</h2>
+    <table>
+      <tr><th>项目</th><th>上限</th></tr>
+      <tr><td>单字库文件</td><td>8 MiB</td></tr>
+      <tr><td>字形数量</td><td>65535</td></tr>
+      <tr><td>单字形尺寸</td><td>256×256</td></tr>
+      <tr><td>标签UTF-8长度</td><td>32字节</td></tr>
+      <tr><td>项目资源数量</td><td>256</td></tr>
+    </table>
+  </section>
+</main>
+</body>
+</html>

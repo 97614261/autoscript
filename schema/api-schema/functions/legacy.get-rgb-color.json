@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5113,
+  "name": "Legacy.getRgbColor",
+  "since": "1.5",
+  "capability": "vision.pixel.legacy",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按旧版GetRGBColor语义将三个颜色通道组合成0xRRGGBB整数。",
+  "params": [
+    { "name": "red", "type": "integer", "required": true, "summary": "0至255的红色通道。" },
+    { "name": "green", "type": "integer", "required": true, "summary": "0至255的绿色通道。" },
+    { "name": "blue", "type": "integer", "required": true, "summary": "0至255的蓝色通道。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "0xRRGGBB整数颜色。" },
+  "legacyAliases": ["GetRGBColor"]
+}

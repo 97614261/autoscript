@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5101,
+  "name": "Screen.findImage",
+  "since": "1.1",
+  "capability": "vision.template",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "使用不可变模板帧执行有界透明像素模板匹配。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "待搜索帧句柄。" },
+    { "name": "template", "type": "integer", "required": true, "summary": "模板帧句柄。" },
+    { "name": "tolerance", "type": "integer", "required": true, "summary": "0至255的逐通道容差。" },
+    { "name": "similarityPermille", "type": "integer", "required": true, "summary": "0至1000的最低相似度。" },
+    { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
+    { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
+    { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
+    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" }
+  ],
+  "returns": { "type": "Point", "nullable": true, "summary": "首个匹配模板的左上角；未找到时为nil。" },
+  "legacyAliases": ["FindImage"]
+}

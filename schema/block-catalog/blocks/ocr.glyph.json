@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1, "kind": "ocr.glyph", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ocr.glyph/1/ocr.glyph.schema.json",
+  "title": "字库识字", "category": "ocr", "summary": "使用项目ASGLYPH字库识别缓存帧指定区域。",
+  "searchTerms": ["ocr", "glyph", "字库", "识字", "文字"],
+  "requiredCapabilities": ["ocr.glyph"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "dictionaryPath", "label": "字库", "editor": "resource", "resourceKind": "glyph_dictionary", "required": true },
+    { "path": "foregroundRgb", "label": "文字颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
+    { "path": "tolerance", "label": "颜色容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "similarityPermille", "label": "最低相似度(‰)", "editor": "integer", "required": true, "defaultValue": "900" },
+    { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "spaceGapColumns", "label": "空格列数", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "textVariable", "label": "文本变量", "editor": "string", "required": true, "defaultValue": "ocrText" },
+    { "path": "coverageVariable", "label": "覆盖率变量", "editor": "string", "required": true, "defaultValue": "ocrCoverage" },
+    { "path": "scoreVariable", "label": "得分变量", "editor": "string", "required": true, "defaultValue": "ocrScore" }
+  ], "migrations": []
+}

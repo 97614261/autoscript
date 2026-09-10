@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/task.sleep/1/task.sleep.schema.json",
+  "title": "task.sleep node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "task.sleep" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["milliseconds"],
+      "properties": {
+        "milliseconds": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
+      }
+    }
+  }
+}

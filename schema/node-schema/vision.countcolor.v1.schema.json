@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.countcolor/1/vision.countcolor.schema.json",
+  "title": "vision.countcolor node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "vision.countcolor" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object", "additionalProperties": false,
+      "required": ["frameVariable", "rgb", "tolerance", "region", "limit", "resultVariable"],
+      "properties": {
+        "frameVariable": { "$ref": "#/$defs/variable" },
+        "rgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "region": { "$ref": "#/$defs/rect" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "resultVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "rect": {
+      "type": "object", "additionalProperties": false,
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": { "type": "integer" }, "top": { "type": "integer" },
+        "right": { "type": "integer" }, "bottom": { "type": "integer" }
+      }
+    }
+  }
+}

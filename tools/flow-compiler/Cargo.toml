@@ -1,0 +1,20 @@
+[package]
+name = "flow-compiler"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+flow-ir = { path = "../../engine/crates/flow-ir" }
+lua-runtime = { path = "../../engine/crates/lua-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+fs4 = { workspace = true }
+
+[dev-dependencies]
+api-codegen = { path = "../api-codegen" }
+
+[lints]
+workspace = true

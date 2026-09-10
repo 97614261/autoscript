@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5105,
+  "name": "Screen.countColor",
+  "since": "1.4",
+  "capability": "vision.pixel",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "统计半开ROI内的匹配颜色，达到limit后立即返回。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的帧句柄。" },
+    { "name": "rgb", "type": "integer", "required": true, "summary": "0xRRGGBB目标颜色。" },
+    { "name": "tolerance", "type": "integer", "required": true, "summary": "0至255的逐通道容差。" },
+    { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
+    { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
+    { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
+    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" },
+    { "name": "limit", "type": "integer", "required": true, "summary": "1至256的提前停止上限。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "匹配数量，最大为limit。" },
+  "legacyAliases": ["CountColor"]
+}

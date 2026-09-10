@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1, "kind": "vision.findmulticolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findmulticolor/1/vision.findmulticolor.schema.json",
+  "title": "多点找色", "category": "vision", "summary": "在半开矩形内查找锚点色及最多64个相对偏移色。",
+  "searchTerms": ["findmulticolor", "多点找色", "偏移色", "组合色"],
+  "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "anchorRgb", "label": "锚点颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
+    { "path": "anchorTolerance", "label": "锚点容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "samples", "label": "偏移点(x,y,颜色,容差;…)", "editor": "multi_color_samples", "required": true, "defaultValue": "1,0,#FFFFFF,0" },
+    { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "multiFound" },
+    { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "multiX" },
+    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "multiY" }
+  ], "migrations": []
+}

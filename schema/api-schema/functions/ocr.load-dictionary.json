@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6000,
+  "name": "Ocr.loadDictionary",
+  "since": "1.3",
+  "capability": "ocr.glyph",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "memory_reserve",
+  "timeoutMs": 1000,
+  "resourceOwnership": "task_dictionary_lease",
+  "summary": "加载已冻结到项目中的基础字库，并取得任务范围内有效的字库句柄。",
+  "params": [
+    { "name": "path", "type": "string", "required": true, "summary": "以dictionaries/开头的规范项目资源路径。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "可传给Ocr.glyph并用Ocr.releaseDictionary释放的字库句柄。" },
+  "legacyAliases": ["LoadDictionary"]
+}

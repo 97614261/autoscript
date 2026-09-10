@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ocr.glyph/1/ocr.glyph.schema.json",
+  "title": "ocr.glyph node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "ocr.glyph" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frameVariable", "dictionaryPath", "foregroundRgb", "tolerance", "similarityPermille", "region", "spaceGapColumns", "textVariable", "coverageVariable", "scoreVariable"],
+      "properties": {
+        "frameVariable": { "$ref": "#/$defs/variable" },
+        "dictionaryPath": { "type": "string", "pattern": "^dictionaries/[^\\\\]+\\.asglyph$", "maxLength": 256 },
+        "foregroundRgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "similarityPermille": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "region": { "$ref": "#/$defs/rect" },
+        "spaceGapColumns": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "textVariable": { "$ref": "#/$defs/variable" },
+        "coverageVariable": { "$ref": "#/$defs/variable" },
+        "scoreVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": { "type": "integer" }, "top": { "type": "integer" },
+        "right": { "type": "integer" }, "bottom": { "type": "integer" }
+      }
+    }
+  }
+}

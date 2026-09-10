@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/control.while/1/control.while.schema.json",
+  "title": "control.while node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "childBlocks", "args"],
+  "properties": {
+    "kind": { "const": "control.while" },
+    "nodeVersion": { "const": 1 },
+    "childBlocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body"],
+      "properties": {
+        "body": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variable", "operator", "value", "maxIterations"],
+      "properties": {
+        "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "operator": { "enum": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
+        "value": { "type": ["boolean", "number", "string", "null"] },
+        "maxIterations": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+      }
+    }
+  }
+}

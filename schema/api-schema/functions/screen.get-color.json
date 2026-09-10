@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5102,
+  "name": "Screen.getColor",
+  "since": "1.4",
+  "capability": "vision.pixel",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "读取任务所持不可变帧中的一个像素，返回0xRRGGBB。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的帧句柄。" },
+    { "name": "x", "type": "integer", "required": true, "summary": "帧内横坐标。" },
+    { "name": "y", "type": "integer", "required": true, "summary": "帧内纵坐标。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "0xRRGGBB颜色值。" },
+  "legacyAliases": ["GetColor"]
+}

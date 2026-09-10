@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "variable.set",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/variable.set/1/variable.set.schema.json",
+  "title": "设置变量",
+  "category": "variable",
+  "summary": "把一个JSON标量写入当前 Flow 的变量表。",
+  "searchTerms": ["set", "赋值", "变量", "写入"],
+  "requiredCapabilities": [],
+  "childBlocks": [],
+  "properties": [
+    { "path": "name", "label": "变量名", "editor": "string", "required": true, "defaultValue": "value" },
+    { "path": "value", "label": "值(JSON)", "editor": "scalar", "required": true, "defaultValue": "0" }
+  ],
+  "migrations": []
+}

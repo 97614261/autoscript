@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/flow.call/1/flow.call.schema.json",
+  "title": "flow.call node semantics",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "flow.call" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetFlowId", "arguments"],
+      "properties": {
+        "targetFlowId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["boolean", "integer", "number", "string", "null"]
+          }
+        }
+      }
+    }
+  }
+}

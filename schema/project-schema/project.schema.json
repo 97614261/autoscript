@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/project/2/project.schema.json",
+  "title": "AutoScript project manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "flowSchemaVersion", "runtimeApi", "projectId", "name", "sourceMode", "flows", "capabilities", "design"],
+  "properties": {
+    "formatVersion": { "const": 2 },
+    "flowSchemaVersion": { "const": 1 },
+    "runtimeApi": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sourceMode": { "enum": ["lua", "visual"] },
+    "entryPoint": { "type": "string", "const": "main.lua" },
+    "entryFlowId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "flows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["flowId", "path", "rootBlockId", "params", "returns"],
+        "properties": {
+          "flowId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "path": { "type": "string", "pattern": "^visual/flows/[0-9A-Za-z._-]+\\.jsonl$" },
+          "rootBlockId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "type", "required"],
+              "properties": {
+                "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+                "type": { "enum": ["boolean", "integer", "number", "string"] },
+                "required": { "type": "boolean" }
+              }
+            }
+          },
+          "returns": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "nullable"],
+                "properties": {
+                  "type": { "enum": ["boolean", "integer", "number", "string"] },
+                  "nullable": { "type": "boolean" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path"],
+        "properties": {
+          "kind": { "enum": ["image", "glyphDictionary"] },
+          "path": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" }
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "scaleMode", "orientationPolicy"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 32768 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 32768 },
+        "scaleMode": { "enum": ["letterbox", "crop", "stretch"] },
+        "orientationPolicy": { "enum": ["follow", "portrait", "landscape"] }
+      }
+    },
+    "ownerId": { "type": ["string", "null"] },
+    "cloudId": { "type": ["string", "null"] },
+    "syncState": { "type": ["string", "null"] },
+    "signature": { "type": ["object", "null"] },
+    "licensePolicy": { "type": ["object", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "sourceMode": { "const": "lua" } }, "required": ["sourceMode"] },
+      "then": {
+        "required": ["entryPoint"],
+        "properties": { "flows": { "maxItems": 0 } },
+        "not": { "required": ["entryFlowId"] }
+      }
+    },
+    {
+      "if": { "properties": { "sourceMode": { "const": "visual" } }, "required": ["sourceMode"] },
+      "then": {
+        "required": ["entryFlowId"],
+        "properties": { "flows": { "minItems": 1 } },
+        "not": { "required": ["entryPoint"] }
+      }
+    }
+  ]
+}

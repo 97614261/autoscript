@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5002,
+  "name": "Screen.release",
+  "since": "1.1",
+  "capability": "screen.capture",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "memory_release",
+  "timeoutMs": 1000,
+  "resourceOwnership": "task_frame_lease",
+  "summary": "显式释放当前任务持有的一份帧租约。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "Screen.cache返回的帧句柄。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "租约释放后返回。" },
+  "legacyAliases": []
+}

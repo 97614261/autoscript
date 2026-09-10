@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "control.if",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.if/1/control.if.schema.json",
+  "title": "如果 / 否则",
+  "category": "control",
+  "summary": "比较一个流程变量，并执行满足或不满足分支。",
+  "searchTerms": ["if", "else", "条件", "判断", "比较"],
+  "requiredCapabilities": [],
+  "childBlocks": ["then", "else"],
+  "properties": [
+    { "path": "variable", "label": "变量名", "editor": "string", "required": true, "defaultValue": "value" },
+    { "path": "operator", "label": "比较方式", "editor": "enum", "required": true, "defaultValue": "equals", "choices": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
+    { "path": "value", "label": "比较值(JSON)", "editor": "scalar", "required": true, "defaultValue": "true" }
+  ],
+  "migrations": []
+}

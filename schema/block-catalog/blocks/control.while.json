@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "kind": "control.while",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.while/1/control.while.schema.json",
+  "title": "条件循环",
+  "category": "control",
+  "summary": "条件满足时执行子积木，并由最大次数强制限制。",
+  "searchTerms": ["while", "条件循环", "比较", "上限"],
+  "requiredCapabilities": [],
+  "childBlocks": ["body"],
+  "properties": [
+    { "path": "variable", "label": "变量名", "editor": "string", "required": true, "defaultValue": "value" },
+    { "path": "operator", "label": "比较方式", "editor": "enum", "required": true, "defaultValue": "equals", "choices": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
+    { "path": "value", "label": "比较值(JSON)", "editor": "scalar", "required": true, "defaultValue": "true" },
+    { "path": "maxIterations", "label": "最大次数", "editor": "integer", "required": true, "defaultValue": "10000" }
+  ],
+  "migrations": []
+}

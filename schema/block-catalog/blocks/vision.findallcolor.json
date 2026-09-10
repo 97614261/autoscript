@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1, "kind": "vision.findallcolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findallcolor/1/vision.findallcolor.schema.json",
+  "title": "查找全部颜色", "category": "vision", "summary": "按行优先返回半开矩形内最多256个匹配坐标。",
+  "searchTerms": ["findallcolor", "全部找色", "坐标列表", "区域"],
+  "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "rgb", "label": "目标颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
+    { "path": "tolerance", "label": "颜色容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "limit", "label": "结果上限(1-256)", "editor": "integer", "required": true, "defaultValue": "256" },
+    { "path": "resultVariable", "label": "坐标列表变量", "editor": "string", "required": true, "defaultValue": "colorPoints" }
+  ], "migrations": []
+}

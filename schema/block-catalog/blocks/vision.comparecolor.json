@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1, "kind": "vision.comparecolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.comparecolor/1/vision.comparecolor.schema.json",
+  "title": "单点比色", "category": "vision", "summary": "比较缓存帧指定坐标与目标颜色是否匹配。",
+  "searchTerms": ["comparecolor", "比色", "颜色", "坐标"],
+  "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "point", "label": "坐标(x,y)", "editor": "point", "required": true, "defaultValue": "0,0" },
+    { "path": "rgb", "label": "目标颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
+    { "path": "tolerance", "label": "颜色容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "resultVariable", "label": "匹配变量", "editor": "string", "required": true, "defaultValue": "matched" }
+  ], "migrations": []
+}

@@ -1,0 +1,13 @@
+[package]
+name = "lua-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+mlua = { workspace = true }
+runtime-scheduler = { path = "../runtime-scheduler" }
+
+[lints]
+workspace = true

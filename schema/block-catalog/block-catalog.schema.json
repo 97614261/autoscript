@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/block-catalog/1/block-catalog.schema.json",
+  "title": "AutoScript Studio block catalog declaration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "nodeVersion", "nodeSchemaId", "title", "category", "summary", "searchTerms", "requiredCapabilities", "childBlocks", "properties", "migrations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
+    "nodeVersion": { "type": "integer", "minimum": 1 },
+    "nodeSchemaId": { "type": "string", "pattern": "^https://autoscript\\.local/schema/node/" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "category": { "enum": ["flow", "task", "control", "variable", "screen", "vision", "ocr"] },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "searchTerms": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+    "requiredCapabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" } },
+    "childBlocks": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9]*$" } },
+    "properties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "label", "editor", "required"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "editor": { "enum": ["boolean", "integer", "number", "string", "scalar", "point", "rect", "color", "multi_color_samples", "flow_reference", "flow_arguments", "enum", "resource"] },
+          "required": { "type": "boolean" },
+          "defaultValue": { "type": "string" },
+          "resourceKind": { "enum": ["image", "glyph_dictionary"] },
+          "dependsOn": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "choices": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+        }
+      }
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fromVersion", "toVersion", "renameArguments"],
+        "properties": {
+          "fromVersion": { "type": "integer", "minimum": 1 },
+          "toVersion": { "type": "integer", "minimum": 2 },
+          "renameArguments": {
+            "type": "object",
+            "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "additionalProperties": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5003,
+  "name": "Screen.loadImage",
+  "since": "1.2",
+  "capability": "vision.template",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "memory_reserve",
+  "timeoutMs": 1000,
+  "resourceOwnership": "task_frame_lease",
+  "summary": "加载已冻结到项目中的图片资源，并取得任务范围内有效的不可变模板帧。",
+  "params": [
+    { "name": "path", "type": "string", "required": true, "summary": "以assets/images/开头的规范项目资源路径。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "可传给Screen.findImage并用Screen.release释放的模板帧句柄。" },
+  "legacyAliases": ["LoadImage"]
+}

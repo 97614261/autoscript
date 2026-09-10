@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4000,
+  "name": "Input.tap",
+  "since": "1.1",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "在设计坐标中执行一次点击，并等待Root输入后端确认。",
+  "params": [
+    { "name": "x", "type": "integer", "required": true, "summary": "设计坐标X。" },
+    { "name": "y", "type": "integer", "required": true, "summary": "设计坐标Y。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "输入后端确认完成时返回。" },
+  "legacyAliases": ["Tap"]
+}

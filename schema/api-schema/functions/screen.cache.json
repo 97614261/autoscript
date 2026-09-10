@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5001,
+  "name": "Screen.cache",
+  "since": "1.1",
+  "capability": "screen.capture",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "memory_reserve",
+  "timeoutMs": 1000,
+  "resourceOwnership": "task_frame_lease",
+  "summary": "把当前采集帧固定为任务拥有的不可变识图帧。",
+  "params": [
+    { "name": "captureId", "type": "integer", "required": true, "summary": "Screen.capture返回的采集编号。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "任务范围内有效的帧句柄。" },
+  "legacyAliases": []
+}

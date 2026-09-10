@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/project/1/source-map.schema.json",
+  "title": "AutoScript runtime-stripped source map",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generationId", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generationId": { "type": "string", "pattern": "^gen-[0-9a-f]{32}$" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["flowId", "nodeId", "luaStartLine", "luaEndLine"],
+        "properties": {
+          "flowId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "nodeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "luaStartLine": { "type": "integer", "minimum": 1 },
+          "luaEndLine": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

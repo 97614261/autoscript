@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5200,
+  "name": "Screen.captureSeries",
+  "since": "1.5",
+  "capability": "screen.capture.series",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "screen_read",
+  "timeoutMs": 65000,
+  "resourceOwnership": "task_frame_leases",
+  "summary": "按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。",
+  "params": [
+    { "name": "maxFrames", "type": "integer", "required": true, "summary": "1至120的最大帧数，仍受会话字节预算限制。" },
+    { "name": "durationMs", "type": "integer", "required": true, "summary": "1至60000毫秒的最长持续时间。" },
+    { "name": "targetFps", "type": "integer", "required": true, "summary": "1至120的目标采样帧率。" },
+    { "name": "allowPartial", "type": "boolean", "required": true, "summary": "几何变化时是否允许返回已完成部分。" }
+  ],
+  "returns": { "type": "CaptureSeriesResult", "nullable": false, "summary": "包含帧句柄与实际时间戳、丢帧数和partial标记。" },
+  "legacyAliases": ["CaptureSeries"]
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "control.repeat",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.repeat/1/control.repeat.schema.json",
+  "title": "重复次数",
+  "category": "control",
+  "summary": "按固定次数执行子积木，可选写入当前序号变量。",
+  "searchTerms": ["repeat", "for", "循环", "次数"],
+  "requiredCapabilities": [],
+  "childBlocks": ["body"],
+  "properties": [
+    { "path": "times", "label": "次数", "editor": "integer", "required": true, "defaultValue": "1" },
+    { "path": "indexVariable", "label": "序号变量(可选)", "editor": "string", "required": false }
+  ],
+  "migrations": []
+}

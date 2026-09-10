@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1000,
+  "name": "Math.distance",
+  "since": "1.0",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "计算两个设计坐标点之间的欧氏距离。",
+  "params": [
+    { "name": "x1", "type": "number", "required": true, "summary": "起点X坐标。" },
+    { "name": "y1", "type": "number", "required": true, "summary": "起点Y坐标。" },
+    { "name": "x2", "type": "number", "required": true, "summary": "终点X坐标。" },
+    { "name": "y2", "type": "number", "required": true, "summary": "终点Y坐标。" }
+  ],
+  "returns": { "type": "number", "nullable": false, "summary": "非负距离。" },
+  "legacyAliases": []
+}

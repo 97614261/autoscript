@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoScript API</title><style>body{font:14px system-ui;margin:0;background:#f4f6f8;color:#1f2933}header{padding:14px 18px;background:#1976d2;color:#fff}main{max-width:980px;margin:auto;padding:12px}.api{background:#fff;border:1px solid #d6dbe1;border-radius:6px;margin:8px 0;padding:10px 12px}code{color:#0d47a1}table{border-collapse:collapse;width:100%}td,th{border-top:1px solid #e6e9ed;padding:5px;text-align:left}.meta{color:#52606d;font-size:12px}</style></head><body><header><strong>AutoScript 脚本能力目录</strong></header><main>
+<section class="api"><h3><code>Math.distance</code></h3><p>计算两个设计坐标点之间的欧氏距离。</p><p class="meta">opcode 1000 · since 1.0 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x1</code></td><td>number</td><td>起点X坐标。</td></tr>
+<tr><td><code>y1</code></td><td>number</td><td>起点Y坐标。</td></tr>
+<tr><td><code>x2</code></td><td>number</td><td>终点X坐标。</td></tr>
+<tr><td><code>y2</code></td><td>number</td><td>终点Y坐标。</td></tr>
+</table><p><b>返回：</b>number — 非负距离。</p></section>
+<section class="api"><h3><code>System.getScreenSize</code></h3><p>读取当前Android显示区域的物理像素尺寸。</p><p class="meta">opcode 2000 · since 1.0 · device.display · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>Size — 包含width和height的尺寸值。</p></section>
+<section class="api"><h3><code>Task.sleep</code></h3><p>挂起当前Lua协程，期间不阻塞调度线程，并响应任务取消。</p><p class="meta">opcode 3000 · since 1.0 · core.task · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>milliseconds</code></td><td>integer</td><td>非负等待毫秒数。</td></tr>
+</table><p><b>返回：</b>void — 正常到期时无返回值。</p></section>
+<section class="api"><h3><code>Input.tap</code></h3><p>在设计坐标中执行一次点击，并等待Root输入后端确认。</p><p class="meta">opcode 4000 · since 1.1 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x</code></td><td>integer</td><td>设计坐标X。</td></tr>
+<tr><td><code>y</code></td><td>integer</td><td>设计坐标Y。</td></tr>
+</table><p><b>返回：</b>void — 输入后端确认完成时返回。</p></section>
+<section class="api"><h3><code>Input.swipe</code></h3><p>在两个设计坐标之间执行有限时长滑动。</p><p class="meta">opcode 4001 · since 1.1 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x1</code></td><td>integer</td><td>起点X。</td></tr>
+<tr><td><code>y1</code></td><td>integer</td><td>起点Y。</td></tr>
+<tr><td><code>x2</code></td><td>integer</td><td>终点X。</td></tr>
+<tr><td><code>y2</code></td><td>integer</td><td>终点Y。</td></tr>
+<tr><td><code>durationMs</code></td><td>integer</td><td>1至5000毫秒。</td></tr>
+</table><p><b>返回：</b>void — 输入后端确认完成时返回。</p></section>
+<section class="api"><h3><code>Input.keyEvent</code></h3><p>发送一个白名单校验后的Android键码。</p><p class="meta">opcode 4002 · since 1.1 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>keyCode</code></td><td>integer</td><td>非负Android KeyEvent键码。</td></tr>
+</table><p><b>返回：</b>void — 输入后端确认完成时返回。</p></section>
+<section class="api"><h3><code>Screen.capture</code></h3><p>请求一帧屏幕图像，返回短生命周期采集编号。</p><p class="meta">opcode 5000 · since 1.1 · screen.capture · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>integer — 可传给Screen.cache的采集编号。</p></section>
+<section class="api"><h3><code>Screen.cache</code></h3><p>把当前采集帧固定为任务拥有的不可变识图帧。</p><p class="meta">opcode 5001 · since 1.1 · screen.capture · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>captureId</code></td><td>integer</td><td>Screen.capture返回的采集编号。</td></tr>
+</table><p><b>返回：</b>integer — 任务范围内有效的帧句柄。</p></section>
+<section class="api"><h3><code>Screen.release</code></h3><p>显式释放当前任务持有的一份帧租约。</p><p class="meta">opcode 5002 · since 1.1 · screen.capture · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>Screen.cache返回的帧句柄。</td></tr>
+</table><p><b>返回：</b>void — 租约释放后返回。</p></section>
+<section class="api"><h3><code>Screen.loadImage</code></h3><p>加载已冻结到项目中的图片资源，并取得任务范围内有效的不可变模板帧。</p><p class="meta">opcode 5003 · since 1.2 · vision.template · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>以assets/images/开头的规范项目资源路径。</td></tr>
+</table><p><b>返回：</b>integer — 可传给Screen.findImage并用Screen.release释放的模板帧句柄。</p></section>
+<section class="api"><h3><code>Screen.findColor</code></h3><p>在租用帧的半开ROI内按行优先查找颜色。</p><p class="meta">opcode 5100 · since 1.1 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>0xRRGGBB颜色。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255的逐通道容差。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>ROI左边界，包含。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>ROI上边界，包含。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>ROI右边界，不包含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>ROI下边界，不包含。</td></tr>
+</table><p><b>返回：</b>Point — 首个匹配点；未找到时为nil。</p></section>
+<section class="api"><h3><code>Screen.findImage</code></h3><p>使用不可变模板帧执行有界透明像素模板匹配。</p><p class="meta">opcode 5101 · since 1.1 · vision.template · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>待搜索帧句柄。</td></tr>
+<tr><td><code>template</code></td><td>integer</td><td>模板帧句柄。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255的逐通道容差。</td></tr>
+<tr><td><code>similarityPermille</code></td><td>integer</td><td>0至1000的最低相似度。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>ROI左边界，包含。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>ROI上边界，包含。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>ROI右边界，不包含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>ROI下边界，不包含。</td></tr>
+</table><p><b>返回：</b>Point — 首个匹配模板的左上角；未找到时为nil。</p></section>
+<section class="api"><h3><code>Screen.getColor</code></h3><p>读取任务所持不可变帧中的一个像素，返回0xRRGGBB。</p><p class="meta">opcode 5102 · since 1.4 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
+<tr><td><code>x</code></td><td>integer</td><td>帧内横坐标。</td></tr>
+<tr><td><code>y</code></td><td>integer</td><td>帧内纵坐标。</td></tr>
+</table><p><b>返回：</b>integer — 0xRRGGBB颜色值。</p></section>
+<section class="api"><h3><code>Screen.compareColor</code></h3><p>比较帧内一个像素与目标颜色是否落在逐通道容差内。</p><p class="meta">opcode 5103 · since 1.4 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
+<tr><td><code>x</code></td><td>integer</td><td>帧内横坐标。</td></tr>
+<tr><td><code>y</code></td><td>integer</td><td>帧内纵坐标。</td></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>0xRRGGBB目标颜色。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255的逐通道容差。</td></tr>
+</table><p><b>返回：</b>boolean — 是否匹配。</p></section>
+<section class="api"><h3><code>Screen.findMultiColor</code></h3><p>在半开ROI内按行优先查找锚点色和最多64个有符号偏移采样点。</p><p class="meta">opcode 5104 · since 1.4 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
+<tr><td><code>anchorRgb</code></td><td>integer</td><td>0xRRGGBB锚点颜色。</td></tr>
+<tr><td><code>anchorTolerance</code></td><td>integer</td><td>锚点逐通道容差。</td></tr>
+<tr><td><code>samples</code></td><td>MultiColorSample[]</td><td>附加采样点表；每项包含x、y、rgb、tolerance。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>ROI左边界，包含。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>ROI上边界，包含。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>ROI右边界，不包含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>ROI下边界，不包含。</td></tr>
+</table><p><b>返回：</b>Point — 首个匹配锚点；未找到时为nil。</p></section>
+<section class="api"><h3><code>Screen.countColor</code></h3><p>统计半开ROI内的匹配颜色，达到limit后立即返回。</p><p class="meta">opcode 5105 · since 1.4 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>0xRRGGBB目标颜色。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255的逐通道容差。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>ROI左边界，包含。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>ROI上边界，包含。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>ROI右边界，不包含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>ROI下边界，不包含。</td></tr>
+<tr><td><code>limit</code></td><td>integer</td><td>1至256的提前停止上限。</td></tr>
+</table><p><b>返回：</b>integer — 匹配数量，最大为limit。</p></section>
+<section class="api"><h3><code>Screen.findAllColor</code></h3><p>按行优先返回半开ROI内最多limit个匹配颜色坐标。</p><p class="meta">opcode 5106 · since 1.4 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>0xRRGGBB目标颜色。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255的逐通道容差。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>ROI左边界，包含。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>ROI上边界，包含。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>ROI右边界，不包含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>ROI下边界，不包含。</td></tr>
+<tr><td><code>limit</code></td><td>integer</td><td>1至256的返回数量上限。</td></tr>
+</table><p><b>返回：</b>Point[] — 按行优先排序的坐标数组。</p></section>
+<section class="api"><h3><code>Legacy.duoDianZhaoSe</code></h3><p>按旧版严格字符串语法、宽高ROI、百分比阈值和指定方向执行多点找色。</p><p class="meta">opcode 5110 · since 1.5 · vision.pixel.legacy · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的显式不可变帧句柄，替代旧版隐式全局屏幕。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>旧版ROI起点X。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>旧版ROI起点Y。</td></tr>
+<tr><td><code>width</code></td><td>integer</td><td>旧版ROI宽度，大于0。</td></tr>
+<tr><td><code>height</code></td><td>integer</td><td>旧版ROI高度，大于0。</td></tr>
+<tr><td><code>parameters</code></td><td>string</td><td>锚点色与有符号相对点组成的严格旧版参数串。</td></tr>
+<tr><td><code>direction</code></td><td>integer</td><td>搜索方向0至4，映射与旧版一致。</td></tr>
+<tr><td><code>minimumMatchPercent</code></td><td>integer</td><td>0至100的最低匹配点百分比，使用向上取整。</td></tr>
+</table><p><b>返回：</b>XunTuResult — 包含count、first和有序points的兼容寻图结果。</p></section>
+<section class="api"><h3><code>Legacy.duoDianBiSe</code></h3><p>按旧版绝对坐标参数串和百分比向上取整规则执行多点比色。</p><p class="meta">opcode 5111 · since 1.5 · vision.pixel.legacy · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的显式不可变帧句柄。</td></tr>
+<tr><td><code>parameters</code></td><td>string</td><td>绝对坐标、颜色和逐通道容差组成的严格旧版参数串。</td></tr>
+<tr><td><code>minimumMatchPercent</code></td><td>integer</td><td>0至100的最低匹配点百分比，使用向上取整。</td></tr>
+</table><p><b>返回：</b>integer — 匹配返回1，不匹配返回0，保留旧版整数语义。</p></section>
+<section class="api"><h3><code>Legacy.getRectColorNum</code></h3><p>统计旧版宽高ROI内命中任一严格颜色参数的像素总数。</p><p class="meta">opcode 5112 · since 1.5 · vision.pixel.legacy · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>任务持有的显式不可变帧句柄。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>旧版ROI起点X。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>旧版ROI起点Y。</td></tr>
+<tr><td><code>width</code></td><td>integer</td><td>旧版ROI宽度，大于0。</td></tr>
+<tr><td><code>height</code></td><td>integer</td><td>旧版ROI高度，大于0。</td></tr>
+<tr><td><code>parameters</code></td><td>string</td><td>一个或多个颜色及逐通道容差组成的严格旧版参数串。</td></tr>
+</table><p><b>返回：</b>integer — ROI内命中像素总数。</p></section>
+<section class="api"><h3><code>Legacy.getRgbColor</code></h3><p>按旧版GetRGBColor语义将三个颜色通道组合成0xRRGGBB整数。</p><p class="meta">opcode 5113 · since 1.5 · vision.pixel.legacy · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>red</code></td><td>integer</td><td>0至255的红色通道。</td></tr>
+<tr><td><code>green</code></td><td>integer</td><td>0至255的绿色通道。</td></tr>
+<tr><td><code>blue</code></td><td>integer</td><td>0至255的蓝色通道。</td></tr>
+</table><p><b>返回：</b>integer — 0xRRGGBB整数颜色。</p></section>
+<section class="api"><h3><code>Screen.captureSeries</code></h3><p>按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。</p><p class="meta">opcode 5200 · since 1.5 · screen.capture.series · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>maxFrames</code></td><td>integer</td><td>1至120的最大帧数，仍受会话字节预算限制。</td></tr>
+<tr><td><code>durationMs</code></td><td>integer</td><td>1至60000毫秒的最长持续时间。</td></tr>
+<tr><td><code>targetFps</code></td><td>integer</td><td>1至120的目标采样帧率。</td></tr>
+<tr><td><code>allowPartial</code></td><td>boolean</td><td>几何变化时是否允许返回已完成部分。</td></tr>
+</table><p><b>返回：</b>CaptureSeriesResult — 包含帧句柄与实际时间戳、丢帧数和partial标记。</p></section>
+<section class="api"><h3><code>Ocr.loadDictionary</code></h3><p>加载已冻结到项目中的基础字库，并取得任务范围内有效的字库句柄。</p><p class="meta">opcode 6000 · since 1.3 · ocr.glyph · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>以dictionaries/开头的规范项目资源路径。</td></tr>
+</table><p><b>返回：</b>integer — 可传给Ocr.glyph并用Ocr.releaseDictionary释放的字库句柄。</p></section>
+<section class="api"><h3><code>Ocr.releaseDictionary</code></h3><p>释放当前任务持有的基础字库句柄。</p><p class="meta">opcode 6001 · since 1.3 · ocr.glyph · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>dictionary</code></td><td>integer</td><td>Ocr.loadDictionary返回的字库句柄。</td></tr>
+</table><p><b>返回：</b>void — 无返回值。</p></section>
+<section class="api"><h3><code>Ocr.glyph</code></h3><p>在不可变帧的指定区域中二值化、分行分字，并使用基础字库逐字匹配。</p><p class="meta">opcode 6100 · since 1.3 · ocr.glyph · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>待识别的缓存帧句柄。</td></tr>
+<tr><td><code>dictionary</code></td><td>integer</td><td>基础字库句柄。</td></tr>
+<tr><td><code>foregroundRgb</code></td><td>integer</td><td>0xRRGGBB格式的前景色。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255的逐通道颜色容差。</td></tr>
+<tr><td><code>similarityPermille</code></td><td>integer</td><td>0至1000的最低字形相似度。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>ROI左边界，包含。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>ROI上边界，包含。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>ROI右边界，不包含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>ROI下边界，不包含。</td></tr>
+<tr><td><code>spaceGapColumns</code></td><td>integer</td><td>插入空格所需的最小连续空列数，0表示不插入。</td></tr>
+</table><p><b>返回：</b>GlyphOcrResult — 包含text、coveragePermille和averageScorePermille的识别结果。</p></section>
+</main></body></html>

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5000,
+  "name": "Screen.capture",
+  "since": "1.1",
+  "capability": "screen.capture",
+  "execution": "async_task",
+  "cancelMode": "discard_result",
+  "sideEffect": "screen_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "capture_slot",
+  "summary": "请求一帧屏幕图像，返回短生命周期采集编号。",
+  "params": [],
+  "returns": { "type": "integer", "nullable": false, "summary": "可传给Screen.cache的采集编号。" },
+  "legacyAliases": ["CaptureScreen"]
+}

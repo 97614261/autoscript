@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6001,
+  "name": "Ocr.releaseDictionary",
+  "since": "1.3",
+  "capability": "ocr.glyph",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "memory_release",
+  "timeoutMs": 1000,
+  "resourceOwnership": "owned_dictionary",
+  "summary": "释放当前任务持有的基础字库句柄。",
+  "params": [
+    { "name": "dictionary", "type": "integer", "required": true, "summary": "Ocr.loadDictionary返回的字库句柄。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "无返回值。" },
+  "legacyAliases": ["ReleaseDictionary"]
+}

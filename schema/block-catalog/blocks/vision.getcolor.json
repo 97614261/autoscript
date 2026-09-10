@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1, "kind": "vision.getcolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.getcolor/1/vision.getcolor.schema.json",
+  "title": "取点颜色", "category": "vision", "summary": "读取缓存帧中指定设计坐标的0xRRGGBB颜色。",
+  "searchTerms": ["getcolor", "像素", "颜色", "坐标"],
+  "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "point", "label": "坐标(x,y)", "editor": "point", "required": true, "defaultValue": "0,0" },
+    { "path": "resultVariable", "label": "颜色变量", "editor": "string", "required": true, "defaultValue": "color" }
+  ], "migrations": []
+}

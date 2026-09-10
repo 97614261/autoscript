@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/project/1/generation.schema.json",
+  "title": "AutoScript generated artifact generation record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["generationId", "flowDigest", "luaDigest", "sourceMapDigest", "generatorVersion", "runtimeApi"],
+  "properties": {
+    "generationId": { "type": "string", "pattern": "^gen-[0-9a-f]{32}$" },
+    "flowDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "luaDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sourceMapDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "generatorVersion": { "type": "string", "pattern": "^[0-9]+[.][0-9]+[.][0-9]+$" },
+    "runtimeApi": { "type": "string", "pattern": "^[0-9]+[.][0-9]+$" }
+  }
+}

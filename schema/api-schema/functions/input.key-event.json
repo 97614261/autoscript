@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4002,
+  "name": "Input.keyEvent",
+  "since": "1.1",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "发送一个白名单校验后的Android键码。",
+  "params": [
+    { "name": "keyCode", "type": "integer", "required": true, "summary": "非负Android KeyEvent键码。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "输入后端确认完成时返回。" },
+  "legacyAliases": []
+}

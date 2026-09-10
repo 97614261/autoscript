@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/control.if/1/control.if.schema.json",
+  "title": "control.if node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "childBlocks", "args"],
+  "properties": {
+    "kind": { "const": "control.if" },
+    "nodeVersion": { "const": 1 },
+    "childBlocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["then", "else"],
+      "properties": {
+        "then": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "else": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "args": { "$ref": "#/$defs/comparison" }
+  },
+  "$defs": {
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variable", "operator", "value"],
+      "properties": {
+        "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "operator": { "enum": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
+        "value": { "type": ["boolean", "number", "string", "null"] }
+      }
+    }
+  }
+}

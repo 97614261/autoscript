@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.noop",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.noop/1/task.noop.schema.json",
+  "title": "空任务",
+  "category": "task",
+  "summary": "不执行操作，用于占位或验证流程。",
+  "searchTerms": ["noop", "空操作", "占位"],
+  "requiredCapabilities": [],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

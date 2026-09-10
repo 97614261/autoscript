@@ -1,0 +1,13 @@
+[package]
+name = "automation-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+pixel-vision = { path = "../pixel-vision" }
+runtime-scheduler = { path = "../runtime-scheduler" }
+
+[lints]
+workspace = true

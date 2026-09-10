@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.swipe",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.swipe/1/input.swipe.schema.json",
+  "title": "滑动",
+  "category": "task",
+  "summary": "从起点向终点执行一次有限时长的 Root 滑动。",
+  "searchTerms": ["swipe", "drag", "滑屏", "拖动"],
+  "requiredCapabilities": ["input.basic"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "x1", "label": "起点 X", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "y1", "label": "起点 Y", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "x2", "label": "终点 X", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "y2", "label": "终点 Y", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "durationMs", "label": "时长(毫秒)", "editor": "integer", "required": true, "defaultValue": "300" }
+  ],
+  "migrations": []
+}

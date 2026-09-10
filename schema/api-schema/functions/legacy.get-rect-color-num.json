@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5112,
+  "name": "Legacy.getRectColorNum",
+  "since": "1.5",
+  "capability": "vision.pixel.legacy",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "统计旧版宽高ROI内命中任一严格颜色参数的像素总数。",
+  "params": [
+    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的显式不可变帧句柄。" },
+    { "name": "left", "type": "integer", "required": true, "summary": "旧版ROI起点X。" },
+    { "name": "top", "type": "integer", "required": true, "summary": "旧版ROI起点Y。" },
+    { "name": "width", "type": "integer", "required": true, "summary": "旧版ROI宽度，大于0。" },
+    { "name": "height", "type": "integer", "required": true, "summary": "旧版ROI高度，大于0。" },
+    { "name": "parameters", "type": "string", "required": true, "summary": "一个或多个颜色及逐通道容差组成的严格旧版参数串。" }
+  ],
+  "returns": { "type": "integer", "nullable": false, "summary": "ROI内命中像素总数。" },
+  "legacyAliases": ["GetRectColorNum"]
+}

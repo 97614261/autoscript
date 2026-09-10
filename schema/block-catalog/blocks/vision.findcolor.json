@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1, "kind": "vision.findcolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findcolor/1/vision.findcolor.schema.json",
+  "title": "区域找色", "category": "vision", "summary": "在缓存帧的半开矩形中查找目标颜色。",
+  "searchTerms": ["findcolor", "找色", "颜色", "区域"],
+  "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "rgb", "label": "目标颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
+    { "path": "tolerance", "label": "颜色容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "found" },
+    { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "foundX" },
+    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "foundY" }
+  ], "migrations": []
+}

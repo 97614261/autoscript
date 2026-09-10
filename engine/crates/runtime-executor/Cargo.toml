@@ -1,0 +1,16 @@
+[package]
+name = "runtime-executor"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+automation-core = { path = "../automation-core" }
+glyph-ocr = { path = "../glyph-ocr" }
+lua-runtime = { path = "../lua-runtime" }
+runtime-scheduler = { path = "../runtime-scheduler" }
+script-api = { path = "../script-api" }
+
+[lints]
+workspace = true

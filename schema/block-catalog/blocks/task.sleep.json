@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.sleep",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.sleep/1/task.sleep.schema.json",
+  "title": "等待",
+  "category": "task",
+  "summary": "挂起当前任务指定毫秒，不阻塞其他脚本任务。",
+  "searchTerms": ["sleep", "delay", "延时", "暂停"],
+  "requiredCapabilities": ["core.task"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "milliseconds", "label": "毫秒", "editor": "integer", "required": true, "defaultValue": "1000" }
+  ],
+  "migrations": []
+}
