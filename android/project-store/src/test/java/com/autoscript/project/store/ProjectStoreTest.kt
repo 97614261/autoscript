@@ -2,8 +2,12 @@ package com.autoscript.project.store
 
 import java.io.File
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.util.Base64
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,7 +40,11 @@ class ProjectStoreTest {
 
         assertEquals("main.lua", created.manifest.entryPoint)
         assertTrue(File(created.directory, "main.lua").readText().contains("Task.sleep(1)"))
-        assertEquals(ProjectSourceMode.LUA, newStore().listProjects().single().sourceMode)
+        val summary = newStore().listProjects().single()
+        assertEquals(ProjectSourceMode.LUA, summary.sourceMode)
+        assertEquals(720, summary.designWidth)
+        assertEquals(1280, summary.designHeight)
+        assertEquals(1_001L, summary.createdAt)
     }
 
     @Test
@@ -50,6 +58,17 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun createsProjectWithSelectedBaselineResolution() {
+        val created = store.createProject("1080 项目", ProjectSourceMode.VISUAL, 1080, 1920)
+
+        assertEquals(1080, created.manifest.design.width)
+        assertEquals(1920, created.manifest.design.height)
+        val summary = newStore().listProjects().single()
+        assertEquals(1080, summary.designWidth)
+        assertEquals(1920, summary.designHeight)
+    }
+
+    @Test
     fun renamesAndDeletesOnlyTheSelectedProject() {
         val first = store.createProject("第一个", ProjectSourceMode.LUA)
         val second = store.createProject("第二个", ProjectSourceMode.VISUAL)
@@ -60,6 +79,74 @@ class ProjectStoreTest {
         assertFalse(first.directory.exists())
         assertTrue(second.directory.exists())
         assertEquals(second.manifest.projectId, store.listProjects().single().projectId)
+    }
+
+    @Test
+    fun exportsAuthoritativeFilesAndImportsAnIndependentProjectCopy() {
+        val created = store.createProject("备份示例", ProjectSourceMode.LUA)
+        val saved = store.saveLua(
+            created.manifest.projectId,
+            "return function()\n  Task.sleep(7)\nend\n",
+            created.luaSource,
+        )
+        val withImage = store.importResource(
+            saved.manifest.projectId,
+            ProjectResourceKind.IMAGE,
+            "target.png",
+            ByteArrayInputStream(PNG_1X1),
+            emptySet(),
+        )
+        File(withImage.directory, "generated").mkdirs()
+        File(withImage.directory, "generated/main.lua").writeText("stale")
+
+        val output = ByteArrayOutputStream()
+        store.exportProjectBackup(withImage.manifest.projectId, output)
+        val archiveEntries = mutableSetOf<String>()
+        ZipInputStream(ByteArrayInputStream(output.toByteArray())).use { archive ->
+            while (true) {
+                val entry = archive.nextEntry ?: break
+                archiveEntries += entry.name
+            }
+        }
+        assertEquals(setOf("project.json", "main.lua", "assets/images/target.png"), archiveEntries)
+
+        val imported = store.importProjectBackup(ByteArrayInputStream(output.toByteArray()))
+
+        assertTrue(imported.manifest.projectId != withImage.manifest.projectId)
+        assertEquals("备份示例", imported.manifest.name)
+        assertEquals(withImage.luaSource, imported.luaSource)
+        assertTrue(File(imported.directory, "assets/images/target.png").readBytes().contentEquals(PNG_1X1))
+        assertFalse(File(imported.directory, "generated").exists())
+        assertEquals(2, store.listProjects().size)
+    }
+
+    @Test
+    fun backupImportRejectsTraversalAndRemovesItsStagingDirectory() {
+        val archive = zipOf("../escape" to "bad".toByteArray())
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.importProjectBackup(ByteArrayInputStream(archive))
+        }
+
+        assertFalse(File(root.parentFile, "escape").exists())
+        assertTrue(root.listFiles().orEmpty().none { it.name.startsWith(".project-import-") })
+    }
+
+    @Test
+    fun backupImportRejectsFilesNotDeclaredByTheManifest() {
+        val created = store.createProject("严格清单", ProjectSourceMode.LUA)
+        val archive = zipOf(
+            "project.json" to File(created.directory, "project.json").readBytes(),
+            "main.lua" to File(created.directory, "main.lua").readBytes(),
+            "assets/images/hidden.png" to PNG_1X1,
+        )
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            store.importProjectBackup(ByteArrayInputStream(archive))
+        }
+
+        assertTrue(error.message!!.contains("未声明文件"))
+        assertEquals(1, store.listProjects().size)
     }
 
     @Test
@@ -378,6 +465,17 @@ class ProjectStoreTest {
         clock = { ++now },
         idFactory = { "project-${++idCounter}" },
     )
+
+    private fun zipOf(vararg entries: Pair<String, ByteArray>): ByteArray =
+        ByteArrayOutputStream().also { output ->
+            ZipOutputStream(output).use { archive ->
+                entries.forEach { (path, bytes) ->
+                    archive.putNextEntry(ZipEntry(path))
+                    archive.write(bytes)
+                    archive.closeEntry()
+                }
+            }
+        }.toByteArray()
 
     private companion object {
         val PNG_1X1: ByteArray = Base64.getDecoder().decode(

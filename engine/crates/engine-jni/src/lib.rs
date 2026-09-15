@@ -14,7 +14,7 @@ use automation_core::{CaptureSeriesHandle, SeriesPublish};
 use automation_core::{FrameFormat, FrameMetadata, FramePool, Rotation};
 use coordinate::{CoordinateSnapshot, ScaleMode, Size};
 use engine_core::{EngineSession, EngineSessionConfig, EngineState};
-use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString};
+use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JObjectArray, JString};
 use jni::sys::{jint, jlong, jstring};
 use jni::{JNIEnv, JavaVM};
 #[cfg(target_os = "android")]
@@ -29,6 +29,7 @@ const STATE_RUNNING: i32 = 2;
 const STATE_STOPPED: i32 = 3;
 const STATE_FAILED: i32 = 4;
 const STATE_STOPPING: i32 = 5;
+const STATE_PAUSED: i32 = 6;
 const NEXT_IDLE: i64 = -1;
 const NEXT_STOPPED: i64 = -2;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -37,6 +38,8 @@ const HOST_QUEUE_CAPACITY: usize = 32;
 const HOST_CANCELLATION_CAPACITY: usize = 64;
 const MAX_DICTIONARY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RUNTIME_DIAGNOSTIC_CHARS: usize = 4_096;
+const MAX_PROJECT_CAPABILITIES: usize = 64;
+const MAX_CAPABILITY_BYTES: usize = 128;
 
 struct RootDispatch {
     result: HostResult,
@@ -64,6 +67,7 @@ enum SessionCommand {
     },
     Start {
         source: Vec<u8>,
+        capabilities: Vec<String>,
         response: SyncSender<Result<(), String>>,
     },
     Pump {
@@ -485,6 +489,7 @@ struct NativeSession {
     stop_handle: Mutex<SchedulerHandle>,
     stop_requested: Arc<AtomicBool>,
     stop_boot_nanos: Arc<AtomicU64>,
+    pause_request: Arc<Mutex<Option<PauseControl>>>,
     shutdown_requested: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     root_control: SyncSender<RootControl>,
@@ -492,6 +497,12 @@ struct NativeSession {
     root_worker: Mutex<Option<JoinHandle<()>>>,
     root_attached: Arc<AtomicBool>,
     wake_callback: Arc<Mutex<Option<WakeCallback>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PauseControl {
+    Pause(u64),
+    Resume(u64),
 }
 
 struct WakeCallback {
@@ -594,9 +605,11 @@ impl NativeSession {
         let worker_diagnostic = Arc::clone(&last_diagnostic);
         let stop_requested = Arc::new(AtomicBool::new(false));
         let stop_boot_nanos = Arc::new(AtomicU64::new(0));
+        let pause_request = Arc::new(Mutex::new(None));
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let worker_stop_requested = Arc::clone(&stop_requested);
         let worker_stop_boot_nanos = Arc::clone(&stop_boot_nanos);
+        let worker_pause_request = Arc::clone(&pause_request);
         let worker_shutdown_requested = Arc::clone(&shutdown_requested);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
@@ -626,6 +639,7 @@ impl NativeSession {
                         last_diagnostic: &worker_diagnostic,
                         stop_requested: &worker_stop_requested,
                         stop_boot_nanos: &worker_stop_boot_nanos,
+                        pause_request: &worker_pause_request,
                         shutdown_requested: &worker_shutdown_requested,
                         display_width: &engine_display_width,
                         display_height: &engine_display_height,
@@ -659,6 +673,7 @@ impl NativeSession {
             stop_handle: Mutex::new(stop_handle),
             stop_requested,
             stop_boot_nanos,
+            pause_request,
             shutdown_requested,
             worker: Mutex::new(Some(worker)),
             root_control,
@@ -696,6 +711,40 @@ impl NativeSession {
         self.next_wake.store(0, Ordering::Release);
         // A full business queue is not an error: the worker checks this atomic flag before
         // taking every subsequent business command.
+        let _ = self.commands.try_send(SessionCommand::ControlWake);
+        Ok(())
+    }
+
+    fn request_pause(&self, boot_nanos: u64) -> Result<(), String> {
+        if self.state.load(Ordering::Acquire) != STATE_RUNNING {
+            return Err("SESSION_NOT_RUNNING".to_owned());
+        }
+        let mut request = self
+            .pause_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if request.is_some() {
+            return Err("SESSION_CONTROL_PENDING".to_owned());
+        }
+        *request = Some(PauseControl::Pause(boot_nanos));
+        drop(request);
+        let _ = self.commands.try_send(SessionCommand::ControlWake);
+        Ok(())
+    }
+
+    fn request_resume(&self, boot_nanos: u64) -> Result<(), String> {
+        if self.state.load(Ordering::Acquire) != STATE_PAUSED {
+            return Err("SESSION_NOT_PAUSED".to_owned());
+        }
+        let mut request = self
+            .pause_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if request.is_some() {
+            return Err("SESSION_CONTROL_PENDING".to_owned());
+        }
+        *request = Some(PauseControl::Resume(boot_nanos));
+        drop(request);
         let _ = self.commands.try_send(SessionCommand::ControlWake);
         Ok(())
     }
@@ -834,6 +883,10 @@ impl NativeSession {
     fn shutdown(&self) {
         self.stop_boot_nanos.store(0, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
+        *self
+            .pause_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.shutdown_requested.store(true, Ordering::Release);
         self.stop_handle
             .lock()
@@ -878,6 +931,7 @@ struct WorkerSignals<'a> {
     last_diagnostic: &'a Mutex<Option<String>>,
     stop_requested: &'a AtomicBool,
     stop_boot_nanos: &'a AtomicU64,
+    pause_request: &'a Mutex<Option<PauseControl>>,
     shutdown_requested: &'a AtomicBool,
     display_width: &'a AtomicU32,
     display_height: &'a AtomicU32,
@@ -899,11 +953,15 @@ fn worker_loop(
         next_wake,
         stop_requested,
         stop_boot_nanos,
+        pause_request,
         shutdown_requested,
         ..
     } = signals;
     loop {
         if stop_requested.swap(false, Ordering::AcqRel) {
+            *pause_request
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             let boot_nanos = stop_boot_nanos.load(Ordering::Acquire);
             match engine.stop(boot_nanos) {
                 Err(error) if engine.state() != EngineState::Stopped => {
@@ -919,6 +977,21 @@ fn worker_loop(
                 Err(_) | Ok(_) => publish_engine_state(engine, signals),
             }
         }
+        let control = pause_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match control {
+            Some(PauseControl::Pause(boot_nanos)) => {
+                let result = engine.pause(boot_nanos);
+                publish_control_result(engine, result, "ENGINE_PAUSE_FAILED", signals);
+            }
+            Some(PauseControl::Resume(boot_nanos)) => {
+                let result = engine.resume(boot_nanos);
+                publish_control_result(engine, result, "ENGINE_RESUME_FAILED", signals);
+            }
+            None => {}
+        }
         if shutdown_requested.load(Ordering::Acquire) {
             return;
         }
@@ -927,6 +1000,22 @@ fn worker_loop(
         };
         handle_session_command(engine, command, signals);
     }
+}
+
+fn publish_control_result(
+    engine: &EngineSession,
+    result: Result<(), engine_core::EngineSessionError>,
+    code: &str,
+    signals: WorkerSignals<'_>,
+) {
+    if let Err(error) = result {
+        *signals
+            .last_diagnostic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(runtime_diagnostic(&format!("{code}: {error:?}")));
+    }
+    publish_engine_state(engine, signals);
 }
 
 fn handle_session_command(
@@ -947,9 +1036,13 @@ fn handle_session_command(
             height,
             response,
         } => handle_reset_command(engine, width, height, &response, signals),
-        SessionCommand::Start { source, response } => {
+        SessionCommand::Start {
+            source,
+            capabilities,
+            response,
+        } => {
             let result = engine
-                .start(&source, "android-runner")
+                .start(&source, "android-runner", &capabilities)
                 .map(|_| ())
                 .map_err(|error| format!("{error:?}"));
             publish_engine_state(engine, signals);
@@ -1320,7 +1413,8 @@ fn publish_engine_state(engine: &EngineSession, signals: WorkerSignals<'_>) {
     } else {
         match engine.state() {
             EngineState::Created | EngineState::Starting => STATE_IDLE,
-            EngineState::Running | EngineState::Paused => STATE_RUNNING,
+            EngineState::Running => STATE_RUNNING,
+            EngineState::Paused => STATE_PAUSED,
             EngineState::Stopping => STATE_STOPPING,
             EngineState::Stopped => STATE_STOPPED,
             EngineState::Failed => STATE_FAILED,
@@ -1665,19 +1759,56 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeR
     finish_jni(&result)
 }
 
+fn read_string_array(
+    env: &mut JNIEnv<'_>,
+    array: &JObjectArray<'_>,
+) -> Result<Vec<String>, String> {
+    let length = env
+        .get_array_length(array)
+        .map_err(|error| error.to_string())?;
+    let capacity = usize::try_from(length).map_err(|_| "invalid capability count".to_owned())?;
+    if capacity > MAX_PROJECT_CAPABILITIES {
+        return Err("more than 64 project capabilities".to_owned());
+    }
+    let mut result = Vec::with_capacity(capacity);
+    for index in 0..length {
+        let object = env
+            .get_object_array_element(array, index)
+            .map_err(|error| error.to_string())?;
+        if object.is_null() {
+            return Err("project capability must not be null".to_owned());
+        }
+        let value: String = env
+            .get_string(&JString::from(object))
+            .map_err(|error| error.to_string())?
+            .into();
+        if value.len() > MAX_CAPABILITY_BYTES {
+            return Err("project capability exceeds 128 bytes".to_owned());
+        }
+        result.push(value);
+    }
+    Ok(result)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeStart(
-    env: JNIEnv<'_>,
+    mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
     source: JByteArray<'_>,
+    capabilities: JObjectArray<'_>,
 ) -> jint {
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
         let source = env
             .convert_byte_array(source)
             .map_err(|error| error.to_string())?;
-        get_session(handle)?.request(|response| SessionCommand::Start { source, response })
+        let capabilities = read_string_array(&mut env, &capabilities)?;
+        get_session(handle)?.request(|response| SessionCommand::Start {
+            source,
+            capabilities,
+            response,
+        })
     }));
     finish_jni(&result)
 }
@@ -1765,6 +1896,36 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeS
         let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
         let boot_nanos = u64::try_from(boot_nanos).map_err(|_| "invalid boot clock".to_owned())?;
         get_session(handle)?.request_stop(boot_nanos)
+    }));
+    finish_jni(&result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativePause(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    boot_nanos: jlong,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        let boot_nanos = u64::try_from(boot_nanos).map_err(|_| "invalid boot clock".to_owned())?;
+        get_session(handle)?.request_pause(boot_nanos)
+    }));
+    finish_jni(&result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeResume(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    boot_nanos: jlong,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        let boot_nanos = u64::try_from(boot_nanos).map_err(|_| "invalid boot clock".to_owned())?;
+        get_session(handle)?.request_resume(boot_nanos)
     }));
     finish_jni(&result)
 }
@@ -1901,6 +2062,7 @@ mod tests {
         session
             .request(|response| SessionCommand::Start {
                 source: b"return function() Task.sleep(1) end".to_vec(),
+                capabilities: vec!["core.task".to_owned()],
                 response,
             })
             .expect("start");
@@ -1932,6 +2094,7 @@ mod tests {
             session
                 .request(|response| SessionCommand::Start {
                     source: b"return function() end".to_vec(),
+                    capabilities: Vec::new(),
                     response,
                 })
                 .expect("start");
@@ -1965,6 +2128,7 @@ mod tests {
         session
             .request(|response| SessionCommand::Start {
                 source: b"return function() error('expected runtime failure', 0) end".to_vec(),
+                capabilities: Vec::new(),
                 response,
             })
             .expect("start");
@@ -1993,6 +2157,7 @@ mod tests {
         session
             .request(|response| SessionCommand::Start {
                 source: b"return function() Task.sleep(60000) end".to_vec(),
+                capabilities: vec!["core.task".to_owned()],
                 response,
             })
             .expect("start");

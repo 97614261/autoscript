@@ -1,7 +1,7 @@
 package com.autoscript.runtime.api
 
 object RuntimeProtocol {
-    const val VERSION: Int = 10
+    const val VERSION: Int = 14
     const val SERVICE_CLASS: String = "com.autoscript.runtime.service.AutomationRuntimeService"
 
     const val STATE_IDLE: Int = 1
@@ -9,16 +9,32 @@ object RuntimeProtocol {
     const val STATE_STOPPED: Int = 3
     const val STATE_FAILED: Int = 4
     const val STATE_STOPPING: Int = 5
+    const val STATE_PAUSED: Int = 6
+
+    const val ROOT_STOPPED: Int = 1
+    const val ROOT_STARTING: Int = 2
+    const val ROOT_READY: Int = 3
+    const val ROOT_FAILED: Int = 4
 
     const val STOP_ACCEPTED: Int = 0
     const val STOP_SESSION_MISMATCH: Int = 1
     const val STOP_ENGINE_ERROR: Int = 2
+
+    const val CONTROL_ACCEPTED: Int = 0
+    const val CONTROL_SESSION_MISMATCH: Int = 1
+    const val CONTROL_INVALID_STATE: Int = 2
+    const val CONTROL_ENGINE_ERROR: Int = 3
+
+    const val SURFACE_ACCEPTED: Int = 0
+    const val SURFACE_SESSION_MISMATCH: Int = 1
+    const val SURFACE_PERMISSION_DENIED: Int = 2
 
     const val START_ACCEPTED: Int = 0
     const val START_SESSION_MISMATCH: Int = 1
     const val START_INVALID_SCRIPT: Int = 2
     const val START_BACKEND_NOT_READY: Int = 3
     const val START_INVALID_PROJECT: Int = 4
+    const val START_FOREGROUND_UNAVAILABLE: Int = 5
 
     const val PREPARE_ACCEPTED: Int = 0
     const val PREPARE_SESSION_MISMATCH: Int = 1

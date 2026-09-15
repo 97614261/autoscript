@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1, "kind": "legacy.getrgbcolor", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/legacy.getrgbcolor/1/legacy.getrgbcolor.schema.json",
+  "title": "旧版RGB颜色合成", "category": "vision", "summary": "按旧版GetRGBColor语义把三个通道合成0xRRGGBB整数。",
+  "searchTerms": ["getrgbcolor", "rgb", "颜色合成", "旧版", "legacy"],
+  "requiredCapabilities": ["vision.pixel.legacy"], "childBlocks": [],
+  "properties": [
+    { "path": "red", "label": "红(0-255)", "editor": "integer", "required": true, "defaultValue": "255" },
+    { "path": "green", "label": "绿(0-255)", "editor": "integer", "required": true, "defaultValue": "255" },
+    { "path": "blue", "label": "蓝(0-255)", "editor": "integer", "required": true, "defaultValue": "255" },
+    { "path": "resultVariable", "label": "结果颜色变量", "editor": "string", "required": true, "defaultValue": "legacyRgb" }
+  ], "migrations": []
+}

@@ -12,6 +12,7 @@ import android.os.RemoteException
 import com.autoscript.core.model.RuntimeConnectionPhase
 import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.core.model.RuntimeEngineState
+import com.autoscript.core.model.RuntimeRootState
 import com.autoscript.runtime.api.IRuntimeService
 import com.autoscript.runtime.api.IRuntimeStateListener
 import com.autoscript.runtime.api.RuntimeProtocol
@@ -57,6 +58,7 @@ class RuntimeClient(context: Context) {
     private var bound = false
     @Volatile private var lastSessionGeneration: Long? = null
     @Volatile private var lastEngineState: RuntimeEngineState = RuntimeEngineState.UNKNOWN
+    @Volatile private var lastRootState: RuntimeRootState = RuntimeRootState.UNKNOWN
 
     var onStateChanged: ((RuntimeConnectionState) -> Unit)? = null
 
@@ -64,17 +66,20 @@ class RuntimeClient(context: Context) {
         override fun onRuntimeStateChanged(
             sessionGeneration: Long,
             stateCode: Int,
+            rootStateCode: Int,
             diagnostic: String?,
         ) {
             mainHandler.post {
                 if (remote == null) return@post
                 lastSessionGeneration = sessionGeneration
                 lastEngineState = mapEngineState(stateCode)
+                lastRootState = mapRootState(rootStateCode)
                 publish(
                     phase = RuntimeConnectionPhase.CONNECTED,
                     protocolVersion = RuntimeProtocol.VERSION,
                     sessionGeneration = sessionGeneration,
                     engineState = lastEngineState,
+                    rootState = lastRootState,
                     message = diagnostic,
                 )
             }
@@ -99,11 +104,13 @@ class RuntimeClient(context: Context) {
                 val generation = service.sessionGeneration
                 lastSessionGeneration = generation
                 lastEngineState = mapEngineState(service.runtimeStateCode)
+                lastRootState = mapRootState(service.rootStateCode)
                 publish(
                     phase = RuntimeConnectionPhase.CONNECTED,
                     protocolVersion = version,
                     sessionGeneration = generation,
                     engineState = lastEngineState,
+                    rootState = lastRootState,
                 )
                 service.registerStateListener(stateListener)
             } catch (error: RemoteException) {
@@ -116,6 +123,7 @@ class RuntimeClient(context: Context) {
             remote = null
             lastSessionGeneration = null
             lastEngineState = RuntimeEngineState.UNKNOWN
+            lastRootState = RuntimeRootState.UNKNOWN
             publish(RuntimeConnectionPhase.DISCONNECTED, message = "Runner连接已断开")
         }
 
@@ -124,6 +132,7 @@ class RuntimeClient(context: Context) {
             bound = false
             lastSessionGeneration = null
             lastEngineState = RuntimeEngineState.UNKNOWN
+            lastRootState = RuntimeRootState.UNKNOWN
             publish(RuntimeConnectionPhase.ERROR, message = "Runner进程已退出")
         }
 
@@ -131,6 +140,7 @@ class RuntimeClient(context: Context) {
             remote = null
             lastSessionGeneration = null
             lastEngineState = RuntimeEngineState.UNKNOWN
+            lastRootState = RuntimeRootState.UNKNOWN
             publish(RuntimeConnectionPhase.ERROR, message = "Runner未提供控制接口")
         }
     }
@@ -152,6 +162,7 @@ class RuntimeClient(context: Context) {
         remote = null
         lastSessionGeneration = null
         lastEngineState = RuntimeEngineState.UNKNOWN
+        lastRootState = RuntimeRootState.UNKNOWN
         publish(RuntimeConnectionPhase.DISCONNECTED)
     }
 
@@ -159,7 +170,7 @@ class RuntimeClient(context: Context) {
 
     fun validateScript(
         source: ByteArray,
-        chunkName: String = "@main.lua",
+        chunkName: String = "main.lua",
         requestId: Long = System.nanoTime(),
     ): ScriptValidationResult {
         val service = remote
@@ -385,6 +396,7 @@ class RuntimeClient(context: Context) {
     fun startProject(
         generatedLuaModule: ByteArray,
         resources: List<RuntimeProjectResource>,
+        capabilities: List<String>,
         designWidth: Int = 720,
         designHeight: Int = 1280,
         scaleMode: Int = RuntimeProtocol.SCALE_LETTERBOX,
@@ -393,6 +405,11 @@ class RuntimeClient(context: Context) {
         val invalid = validateProjectResources(resources)
         if (invalid != null) {
             publishOperationError(invalid)
+            return false
+        }
+        val invalidCapabilities = validateProjectCapabilities(capabilities)
+        if (invalidCapabilities != null) {
+            publishOperationError(invalidCapabilities)
             return false
         }
         val requestIds = runCatching {
@@ -423,6 +440,7 @@ class RuntimeClient(context: Context) {
         }
         val started = startScript(
             generatedLuaModule = generatedLuaModule,
+            capabilities = capabilities,
             designWidth = designWidth,
             designHeight = designHeight,
             scaleMode = scaleMode,
@@ -432,30 +450,116 @@ class RuntimeClient(context: Context) {
         return started
     }
 
-    fun requestStop(requestId: Long = System.nanoTime()) {
+    fun requestStop(requestId: Long = System.nanoTime()): Boolean {
         val expectedGeneration = lastSessionGeneration
         if (expectedGeneration == null) {
             publishOperationError("Runner会话尚未建立")
-            return
+            return false
         }
-        try {
+        return try {
             when (remote?.requestStop(requestId, expectedGeneration)) {
-                RuntimeProtocol.STOP_ACCEPTED -> Unit
+                RuntimeProtocol.STOP_ACCEPTED -> true
                 RuntimeProtocol.STOP_SESSION_MISMATCH -> {
                     publishOperationError("Runner会话已重建，请刷新后重试")
+                    false
                 }
                 RuntimeProtocol.STOP_ENGINE_ERROR -> {
                     publishOperationError("Runner未能接受停止请求")
+                    false
                 }
-                else -> publishOperationError("Runner返回未知停止结果")
+                else -> {
+                    publishOperationError("Runner返回未知停止结果")
+                    false
+                }
             }
         } catch (error: RemoteException) {
             publishOperationError(error.message ?: "停止请求失败")
+            false
         }
+    }
+
+    fun requestPause(requestId: Long = System.nanoTime()): Boolean =
+        requestRuntimeControl(requestId, pause = true)
+
+    fun requestResume(requestId: Long = System.nanoTime()): Boolean =
+        requestRuntimeControl(requestId, pause = false)
+
+    private fun requestRuntimeControl(requestId: Long, pause: Boolean): Boolean {
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null) {
+            publishOperationError("Runner会话尚未建立")
+            return false
+        }
+        return try {
+            val result = if (pause) {
+                service.requestPause(requestId, generation)
+            } else {
+                service.requestResume(requestId, generation)
+            }
+            when (result) {
+                RuntimeProtocol.CONTROL_ACCEPTED -> true
+                RuntimeProtocol.CONTROL_SESSION_MISMATCH -> {
+                    publishOperationError("Runner会话已重建，请刷新后重试")
+                    false
+                }
+                RuntimeProtocol.CONTROL_INVALID_STATE -> {
+                    publishOperationError(if (pause) "当前状态不能暂停" else "当前状态不能继续")
+                    false
+                }
+                RuntimeProtocol.CONTROL_ENGINE_ERROR -> {
+                    publishOperationError(if (pause) "引擎未能接受暂停请求" else "引擎未能接受继续请求")
+                    false
+                }
+                else -> {
+                    publishOperationError("Runner返回未知控制结果")
+                    false
+                }
+            }
+        } catch (error: Exception) {
+            publishOperationError(error.message ?: "Runner控制请求失败")
+            false
+        }
+    }
+
+    fun setFloatingControlEnabled(
+        enabled: Boolean,
+        requestId: Long = System.nanoTime(),
+    ): Boolean {
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null) return false
+        return try {
+            when (service.setFloatingControlEnabled(requestId, generation, enabled)) {
+                RuntimeProtocol.SURFACE_ACCEPTED -> true
+                RuntimeProtocol.SURFACE_SESSION_MISMATCH -> {
+                    publishOperationError("Runner会话已重建，请刷新后重试")
+                    false
+                }
+                RuntimeProtocol.SURFACE_PERMISSION_DENIED -> {
+                    publishOperationError("尚未授予悬浮窗权限")
+                    false
+                }
+                else -> false
+            }
+        } catch (error: Exception) {
+            publishOperationError(error.message ?: "悬浮控制设置失败")
+            false
+        }
+    }
+
+    fun recentRuntimeLogs(maximumEntries: Int = 50): List<String> {
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null || maximumEntries !in 1..100) return emptyList()
+        return runCatching {
+            service.getRecentRuntimeLogs(generation, maximumEntries).toList()
+        }.getOrDefault(emptyList())
     }
 
     fun startScript(
         generatedLuaModule: ByteArray,
+        capabilities: List<String>,
         designWidth: Int = 720,
         designHeight: Int = 1280,
         scaleMode: Int = RuntimeProtocol.SCALE_LETTERBOX,
@@ -466,6 +570,11 @@ class RuntimeClient(context: Context) {
             publishOperationError("Runner会话尚未建立")
             return false
         }
+        val invalidCapabilities = validateProjectCapabilities(capabilities)
+        if (invalidCapabilities != null) {
+            publishOperationError(invalidCapabilities)
+            return false
+        }
         return try {
             when (remote?.startScript(
                 requestId,
@@ -474,6 +583,7 @@ class RuntimeClient(context: Context) {
                 designWidth,
                 designHeight,
                 scaleMode,
+                capabilities.sorted().toTypedArray(),
             )) {
                 RuntimeProtocol.START_ACCEPTED -> {
                     true
@@ -491,7 +601,11 @@ class RuntimeClient(context: Context) {
                     false
                 }
                 RuntimeProtocol.START_INVALID_PROJECT -> {
-                    publishOperationError("项目设计尺寸或缩放模式无效")
+                    publishOperationError("项目设计参数或能力清单无效")
+                    false
+                }
+                RuntimeProtocol.START_FOREGROUND_UNAVAILABLE -> {
+                    publishOperationError("系统不允许启动前台运行服务，请保持应用在前台后重试")
                     false
                 }
                 else -> {
@@ -523,6 +637,15 @@ class RuntimeClient(context: Context) {
                     resource.file.length() in 1..MAX_DICTIONARY_BYTES
             }
             if (!validPath) return "项目资源路径或文件无效：${resource.path}"
+        }
+        return null
+    }
+
+    private fun validateProjectCapabilities(capabilities: List<String>): String? {
+        if (capabilities.size > MAX_PROJECT_CAPABILITIES) return "项目能力数量超过64"
+        if (capabilities.toSet().size != capabilities.size) return "项目能力声明重复"
+        if (capabilities.any { it.length > MAX_CAPABILITY_LENGTH || !CAPABILITY.matches(it) }) {
+            return "项目能力声明格式无效"
         }
         return null
     }
@@ -588,11 +711,13 @@ class RuntimeClient(context: Context) {
             val generation = service.sessionGeneration
             lastSessionGeneration = generation
             lastEngineState = mapEngineState(service.runtimeStateCode)
+            lastRootState = mapRootState(service.rootStateCode)
             publish(
                 phase = RuntimeConnectionPhase.CONNECTED,
                 protocolVersion = version,
                 sessionGeneration = generation,
                 engineState = lastEngineState,
+                rootState = lastRootState,
             )
         } catch (error: RemoteException) {
             publish(RuntimeConnectionPhase.ERROR, message = error.message ?: "读取Runner状态失败")
@@ -607,6 +732,7 @@ class RuntimeClient(context: Context) {
                 protocolVersion = RuntimeProtocol.VERSION,
                 sessionGeneration = generation,
                 engineState = lastEngineState,
+                rootState = lastRootState,
                 message = message,
             )
         } else {
@@ -619,14 +745,16 @@ class RuntimeClient(context: Context) {
         protocolVersion: Int? = null,
         sessionGeneration: Long? = null,
         engineState: RuntimeEngineState = RuntimeEngineState.UNKNOWN,
+        rootState: RuntimeRootState = RuntimeRootState.UNKNOWN,
         message: String? = null,
     ) {
         val state = RuntimeConnectionState(
-            phase,
-            protocolVersion,
-            sessionGeneration,
-            engineState,
-            message,
+            phase = phase,
+            protocolVersion = protocolVersion,
+            sessionGeneration = sessionGeneration,
+            engineState = engineState,
+            rootState = rootState,
+            message = message,
         )
         if (Looper.myLooper() == Looper.getMainLooper()) {
             onStateChanged?.invoke(state)
@@ -638,10 +766,19 @@ class RuntimeClient(context: Context) {
     private fun mapEngineState(code: Int): RuntimeEngineState = when (code) {
         RuntimeProtocol.STATE_IDLE -> RuntimeEngineState.IDLE
         RuntimeProtocol.STATE_RUNNING -> RuntimeEngineState.RUNNING
+        RuntimeProtocol.STATE_PAUSED -> RuntimeEngineState.PAUSED
         RuntimeProtocol.STATE_STOPPING -> RuntimeEngineState.STOPPING
         RuntimeProtocol.STATE_STOPPED -> RuntimeEngineState.STOPPED
         RuntimeProtocol.STATE_FAILED -> RuntimeEngineState.FAILED
         else -> RuntimeEngineState.UNKNOWN
+    }
+
+    private fun mapRootState(code: Int): RuntimeRootState = when (code) {
+        RuntimeProtocol.ROOT_STOPPED -> RuntimeRootState.STOPPED
+        RuntimeProtocol.ROOT_STARTING -> RuntimeRootState.STARTING
+        RuntimeProtocol.ROOT_READY -> RuntimeRootState.READY
+        RuntimeProtocol.ROOT_FAILED -> RuntimeRootState.FAILED
+        else -> RuntimeRootState.UNKNOWN
     }
 
     private companion object {
@@ -650,5 +787,8 @@ class RuntimeClient(context: Context) {
         const val MAX_DICTIONARY_BYTES = 8L * 1024 * 1024
         const val MAX_IMAGE_SOURCE_BYTES = 32L * 1024 * 1024
         const val MAX_FLOW_BYTES = 64 * 1024 * 1024
+        const val MAX_PROJECT_CAPABILITIES = 64
+        const val MAX_CAPABILITY_LENGTH = 128
+        val CAPABILITY = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+")
     }
 }

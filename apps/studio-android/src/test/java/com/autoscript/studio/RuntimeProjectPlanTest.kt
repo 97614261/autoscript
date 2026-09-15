@@ -42,6 +42,7 @@ class RuntimeProjectPlanTest {
         assertEquals(1080, plan.designWidth)
         assertEquals(1920, plan.designHeight)
         assertEquals(RuntimeProtocol.SCALE_CROP, plan.scaleMode)
+        assertEquals(listOf("core.task"), plan.capabilities)
         assertEquals(
             listOf("assets/images/button.png", "dictionaries/chinese.asglyph"),
             plan.resources.map { it.path },

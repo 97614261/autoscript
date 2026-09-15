@@ -1,8 +1,8 @@
 //! Event-driven bridge between generated Lua, the scheduler and typed host requests.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use automation_core::{
     duo_dian_bi_se, duo_dian_zhao_se, get_rect_color_num, get_rgb_color, CaptureSeriesConfig,
@@ -54,6 +54,7 @@ const MAX_LUA_COLOR_RESULTS: usize = 256;
 const OP_OCR_LOAD_DICTIONARY: u32 = 6_000;
 const OP_OCR_RELEASE_DICTIONARY: u32 = 6_001;
 const OP_OCR_GLYPH: u32 = 6_100;
+const MAX_PROJECT_CAPABILITIES: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostRequest {
@@ -174,6 +175,52 @@ impl ExternalHostQueue {
                 .changed
                 .wait(state)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// Waits for the next host event until `timeout` expires.
+    ///
+    /// This keeps the same lifecycle priority as [`Self::wait_next`] and is intended for
+    /// bounded callers such as integration tests and watchdog-controlled workers.
+    #[must_use]
+    pub fn wait_next_timeout(&self, timeout: Duration) -> Option<ExternalHostEvent> {
+        let deadline = Instant::now().checked_add(timeout)?;
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if state.stopped {
+                return Some(ExternalHostEvent::Stop);
+            }
+            if state.interrupted {
+                state.interrupted = false;
+                return Some(ExternalHostEvent::Interrupted);
+            }
+            if let Some((request_id, (task, cancel_mode))) = state.cancellations.pop_first() {
+                return Some(ExternalHostEvent::Cancel {
+                    request_id,
+                    task,
+                    cancel_mode,
+                });
+            }
+            if let Some((request, completion)) = state.requests.pop_front() {
+                return Some(ExternalHostEvent::Dispatch {
+                    request,
+                    completion,
+                });
+            }
+            let remaining = deadline.checked_duration_since(Instant::now())?;
+            let (next_state, timeout_result) = self
+                .0
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next_state;
+            if timeout_result.timed_out() {
+                return None;
+            }
         }
     }
 
@@ -331,6 +378,7 @@ pub enum ExecutorError {
     InvalidYield(String),
     UnknownOpcode(u32),
     MissingContract(u32),
+    InvalidCapabilities(String),
     RequestIdExhausted,
 }
 
@@ -370,6 +418,8 @@ pub struct RuntimeExecutor<C, H> {
     resume_inputs: BTreeMap<TaskToken, LuaInput>,
     frames: Arc<Mutex<FramePool>>,
     dictionaries: Arc<Mutex<DictionaryStore>>,
+    allowed_capabilities: Option<BTreeSet<String>>,
+    capabilities_locked: bool,
 }
 
 impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
@@ -446,7 +496,40 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             resume_inputs: BTreeMap::new(),
             frames,
             dictionaries,
+            allowed_capabilities: None,
+            capabilities_locked: false,
         })
+    }
+
+    /// Installs the immutable project capability set before the first Lua task is registered.
+    ///
+    /// # Errors
+    ///
+    /// Rejects late mutation, duplicate/invalid names, or more than 64 declarations.
+    pub fn set_allowed_capabilities(
+        &mut self,
+        capabilities: &[String],
+    ) -> Result<(), ExecutorError> {
+        if self.capabilities_locked {
+            return Err(ExecutorError::InvalidCapabilities(
+                "capabilities are immutable after script registration".to_owned(),
+            ));
+        }
+        if capabilities.len() > MAX_PROJECT_CAPABILITIES {
+            return Err(ExecutorError::InvalidCapabilities(
+                "more than 64 project capabilities".to_owned(),
+            ));
+        }
+        let mut allowed = BTreeSet::new();
+        for capability in capabilities {
+            if !valid_capability(capability) || !allowed.insert(capability.clone()) {
+                return Err(ExecutorError::InvalidCapabilities(format!(
+                    "invalid or duplicate capability: {capability}"
+                )));
+            }
+        }
+        self.allowed_capabilities = Some(allowed);
+        Ok(())
     }
 
     #[must_use]
@@ -510,6 +593,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         source: &[u8],
         chunk_name: &str,
     ) -> Result<TaskToken, ExecutorError> {
+        self.capabilities_locked = true;
         let task = self.scheduler.spawn(None, false)?;
         if let Err(error) = self
             .scheduler
@@ -526,6 +610,26 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             return Err(error.into());
         }
         Ok(task)
+    }
+
+    /// Pauses business tasks and timers while leaving priority control and host timeouts active.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the scheduler rejects the lifecycle transition.
+    pub fn pause(&mut self) -> Result<SchedulerPoll, ExecutorError> {
+        self.scheduler.pause()?;
+        Ok(self.scheduler.poll_state())
+    }
+
+    /// Resumes business work and shifts paused timer deadlines by the exact pause duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the scheduler rejects the lifecycle transition.
+    pub fn resume(&mut self) -> Result<SchedulerPoll, ExecutorError> {
+        self.scheduler.resume()?;
+        Ok(self.scheduler.poll_state())
     }
 
     /// Drives all immediately available work up to the configured fairness boundary.
@@ -599,6 +703,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         };
         let opcode = u32::try_from(*opcode)
             .map_err(|_| ExecutorError::InvalidYield("opcode out of range".to_owned()))?;
+        if !self.authorize_opcode(task, opcode)? {
+            return Ok(());
+        }
         match opcode {
             OP_TASK_SLEEP => self.apply_sleep(task, &values[2..]),
             OP_SYSTEM_GET_SCREEN_SIZE
@@ -631,6 +738,32 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             }
             other => Err(ExecutorError::UnknownOpcode(other)),
         }
+    }
+
+    fn authorize_opcode(&mut self, task: TaskToken, opcode: u32) -> Result<bool, ExecutorError> {
+        let Some(required) = required_capability(opcode) else {
+            return Ok(true);
+        };
+        if self
+            .allowed_capabilities
+            .as_ref()
+            .is_none_or(|allowed| allowed.contains(required))
+        {
+            return Ok(true);
+        }
+        let message = format!("project does not declare capability {required}");
+        let input = if opcode == OP_TASK_SLEEP {
+            LuaInput::Values(vec![
+                LuaScalar::Boolean(false),
+                LuaScalar::Bytes(b"CAPABILITY_DENIED".to_vec()),
+                LuaScalar::Bytes(message.into_bytes()),
+            ])
+        } else {
+            host_failure_input("CAPABILITY_DENIED", &message)
+        };
+        self.resume_inputs.insert(task, input);
+        self.scheduler.yield_budget(task)?;
+        Ok(false)
     }
 
     fn apply_ocr_operation(
@@ -1421,6 +1554,34 @@ fn contract(opcode: u32) -> Option<&'static ApiContract> {
         .binary_search_by_key(&opcode, |contract| contract.opcode)
         .ok()
         .map(|index| &API_CONTRACTS[index])
+}
+
+fn required_capability(opcode: u32) -> Option<&'static str> {
+    match opcode {
+        OP_SCREEN_CAPTURE_SERIES_FRAME
+        | OP_SCREEN_CACHE_SERIES_FRAME
+        | OP_SCREEN_RELEASE_SERIES => {
+            contract(OP_SCREEN_BEGIN_SERIES).map(|contract| contract.capability)
+        }
+        _ => contract(opcode).map(|contract| contract.capability),
+    }
+}
+
+fn valid_capability(value: &str) -> bool {
+    if value.len() > 128 {
+        return false;
+    }
+    let mut parts = value.split('.');
+    let valid_part = |part: &str| {
+        part.bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    };
+    matches!((parts.next(), parts.next()), (Some(first), Some(second)) if
+        valid_part(first) && valid_part(second) && parts.all(valid_part))
 }
 
 fn integer_args<const N: usize>(args: &[LuaScalar]) -> Result<[i64; N], String> {

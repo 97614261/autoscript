@@ -4,7 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -61,13 +63,18 @@ internal fun VisualProjectScreen(
     runtimeClient: RuntimeClient,
     runtimeState: RuntimeConnectionState,
     active: Boolean,
+    initialFlowId: String? = null,
     modifier: Modifier = Modifier,
     onSnapshotChanged: (ProjectSnapshot) -> Unit,
     onExit: () -> Unit,
 ) {
     val projectId = snapshot.manifest.projectId
     var selectedFlowId by remember(projectId) {
-        mutableStateOf(snapshot.manifest.entryFlowId ?: snapshot.manifest.flows.first().flowId)
+        mutableStateOf(
+            initialFlowId?.takeIf { requested -> snapshot.manifest.flows.any { it.flowId == requested } }
+                ?: snapshot.manifest.entryFlowId
+                ?: snapshot.manifest.flows.first().flowId,
+        )
     }
     var action by remember(projectId) { mutableStateOf<VisualAction?>(null) }
     var error by remember(projectId) { mutableStateOf<String?>(null) }
@@ -85,9 +92,14 @@ internal fun VisualProjectScreen(
     var showNewFlowDialog by remember(projectId) { mutableStateOf(false) }
     var newFlowId by remember(projectId) { mutableStateOf("") }
     var showBlockPicker by remember(projectId) { mutableStateOf(false) }
+    var blockPickerAutoSave by remember(projectId) { mutableStateOf(false) }
     var blockQuery by remember(projectId) { mutableStateOf("") }
     var blockCategory by remember(projectId) { mutableStateOf<BlockCategory?>(null) }
     var insertionChildBlockName by remember(projectId) { mutableStateOf<String?>(null) }
+    var pendingDockInsertHint by remember(projectId) { mutableStateOf<String?>(null) }
+    var dockClipboard by remember(projectId) { mutableStateOf<VisualSubtreeClipboard?>(null) }
+    var pendingDockPaste by remember(projectId) { mutableStateOf(false) }
+    var pendingDockIndentSlots by remember(projectId) { mutableStateOf<List<String>?>(null) }
     var editingCallNodeId by remember(projectId) { mutableStateOf<String?>(null) }
     var editingCallTargetId by remember(projectId) { mutableStateOf<String?>(null) }
     var propertyInputs by remember(projectId) { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -97,10 +109,14 @@ internal fun VisualProjectScreen(
     val editor = requireNotNull(editors[selectedFlowId])
     val nodes = remember(editor, editorRevision) { editor.rows }
     val runtimeBusy = action != null
-    val running = runtimeState.engineState == RuntimeEngineState.RUNNING
+    val running = runtimeState.engineState in setOf(
+        RuntimeEngineState.RUNNING,
+        RuntimeEngineState.PAUSED,
+    )
     val stopping = runtimeState.engineState == RuntimeEngineState.STOPPING
     val canStartAction = !runtimeBusy && !running && !stopping
     val canStop = runtimeState.phase == RuntimeConnectionPhase.CONNECTED && running && !runtimeBusy
+    val canPauseResume = canStop
     val canEditProjectSettings = !runtimeBusy && !running && !stopping &&
         editors.values.none { it.isDirty }
 
@@ -240,6 +256,7 @@ internal fun VisualProjectScreen(
                 runtimeClient.startProject(
                     generatedLuaModule = plan.luaSource,
                     resources = plan.resources,
+                    capabilities = plan.capabilities,
                     designWidth = plan.designWidth,
                     designHeight = plan.designHeight,
                     scaleMode = plan.scaleMode,
@@ -257,6 +274,21 @@ internal fun VisualProjectScreen(
         notice = null
         scope.launch {
             withContext(Dispatchers.IO) { runtimeClient.requestStop() }
+            action = null
+        }
+    }
+
+    fun pauseOrResumeProject() {
+        if (!canPauseResume) return
+        val resume = runtimeState.engineState == RuntimeEngineState.PAUSED
+        action = VisualAction.CONTROLLING
+        error = null
+        notice = null
+        scope.launch {
+            val accepted = withContext(Dispatchers.IO) {
+                if (resume) runtimeClient.requestResume() else runtimeClient.requestPause()
+            }
+            if (!accepted) error = if (resume) "继续请求被拒绝" else "暂停请求被拒绝"
             action = null
         }
     }
@@ -345,6 +377,209 @@ internal fun VisualProjectScreen(
         )
     }
 
+    fun insertDockBlock(
+        hint: String,
+        childSlot: String?,
+        position: LegacyInsertPosition = LegacyInsertPosition.BELOW,
+    ) {
+        val query = legacyDockBlockQuery(hint)
+        val matching = BlockCatalog.search(
+            query,
+            snapshot.manifest.capabilities.toSet(),
+        ).filter(BlockSearchResult::isAvailable)
+        if (matching.size == 1) {
+            val contract = matching.single().contract
+            val args = initialBlockArguments(
+                contract,
+                snapshot.manifest.flows,
+                snapshot.manifest.resources,
+                selectedFlowId,
+            )
+            if (args == null) {
+                error = "缺少${contract.title}所需的目标 Flow 或项目资源"
+                return
+            }
+            val migratedArgs = legacyDockBlockArguments(contract, hint, args)
+            if (position == LegacyInsertPosition.REPLACE) {
+                if (!editor.replaceSelectedBlock(contract, migratedArgs)) {
+                    error = "无法修改当前选择行"
+                } else {
+                    editorRevision++
+                    error = null
+                    notice = "已修改：${contract.title}"
+                    saveCurrent()
+                }
+                return
+            }
+            val originalSelection = editor.selectedNodeId
+            if (position == LegacyInsertPosition.LIST_BOTTOM) {
+                editor.selectedNodeId = editor.rows.lastOrNull { it.depth == 0 }?.nodeId
+            }
+            val inserted = editor.insertBlock(contract, migratedArgs, intoChildBlockName = childSlot)
+            if (inserted != null && position == LegacyInsertPosition.ABOVE && originalSelection != null) {
+                editor.moveSelected(-1)
+            }
+            if (inserted == null) {
+                error = "无法把${contract.title}加入当前位置"
+            } else {
+                editorRevision++
+                error = null
+                notice = "已加入：${contract.title}"
+                saveCurrent()
+            }
+            return
+        }
+        blockQuery = query.takeIf { matching.isNotEmpty() }.orEmpty()
+        insertionChildBlockName = childSlot
+        blockPickerAutoSave = true
+        showBlockPicker = true
+    }
+
+    fun finishDockMutation(changed: Boolean, message: String) {
+        if (!changed) {
+            error = "当前节点不能执行此操作"
+            return
+        }
+        editorRevision++
+        error = null
+        notice = message
+        saveCurrent()
+    }
+
+    fun pasteDockClipboard(childSlot: String?) {
+        val clipboard = dockClipboard ?: run {
+            error = "剪贴板为空"
+            return
+        }
+        finishDockMutation(
+            editor.pasteSubtree(clipboard, intoChildBlockName = childSlot) != null,
+            "已粘贴节点副本",
+        )
+    }
+
+    fun runDockCommand(command: LegacyDockProgramCommand) {
+        if (runtimeBusy || editor.isReadOnly) return
+        when (command) {
+            LegacyDockProgramCommand.MOVE_UP -> finishDockMutation(editor.moveSelected(-1), "节点已上移")
+            LegacyDockProgramCommand.MOVE_DOWN -> finishDockMutation(editor.moveSelected(1), "节点已下移")
+            LegacyDockProgramCommand.OUTDENT -> finishDockMutation(editor.outdentSelected(), "节点已减少一级缩进")
+            LegacyDockProgramCommand.INDENT -> {
+                val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+                val siblings = nodes.filter { it.blockId == selected?.blockId }.sortedBy { it.orderKey }
+                val previous = siblings.getOrNull(siblings.indexOfFirst { it.nodeId == selected?.nodeId } - 1)
+                val slots = previous?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
+                when (slots.size) {
+                    0 -> error = "上一节点不是容器"
+                    1 -> finishDockMutation(editor.indentSelected(slots.single()), "节点已缩进")
+                    else -> pendingDockIndentSlots = slots
+                }
+            }
+            LegacyDockProgramCommand.COPY -> {
+                dockClipboard = editor.copySelectedSubtree()
+                if (dockClipboard == null) error = "请先选择节点" else {
+                    error = null
+                    notice = "已复制整棵子树"
+                }
+            }
+            LegacyDockProgramCommand.CUT -> {
+                val copied = editor.copySelectedSubtree()
+                if (copied == null) error = "请先选择节点" else {
+                    dockClipboard = copied
+                    finishDockMutation(editor.deleteSelected(), "已剪切整棵子树")
+                }
+            }
+            LegacyDockProgramCommand.PASTE -> {
+                if (dockClipboard == null) error = "剪贴板为空" else {
+                    val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+                    val slots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
+                    if (selected != null && slots.isNotEmpty()) pendingDockPaste = true else pasteDockClipboard(null)
+                }
+            }
+            LegacyDockProgramCommand.UNDO -> finishDockMutation(editor.undo(), "已撤销")
+            LegacyDockProgramCommand.REDO -> finishDockMutation(editor.redo(), "已重做")
+            LegacyDockProgramCommand.DATA_BACKFILL -> {
+                error = null
+                notice = "当前没有可回填的调试结果，未修改节点参数"
+            }
+            LegacyDockProgramCommand.SEARCH,
+            LegacyDockProgramCommand.EXPAND_ALL,
+            LegacyDockProgramCommand.COLLAPSE_ALL
+            -> Unit // handled as view-only state by LegacyScriptDock
+        }
+    }
+
+    pendingDockInsertHint?.let { hint ->
+        val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+        val childSlots = selectedRow?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingDockInsertHint = null },
+            title = { Text("选择插入位置") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            pendingDockInsertHint = null
+                            insertDockBlock(hint, null)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("当前节点之后") }
+                    childSlots.forEach { childSlot ->
+                        TextButton(
+                            onClick = {
+                                pendingDockInsertHint = null
+                                insertDockBlock(hint, childSlot)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("${childBlockLabel(childSlot)}内新增") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { pendingDockInsertHint = null }) { Text("取消") }
+            },
+        )
+    }
+
+    pendingDockIndentSlots?.let { slots ->
+        AlertDialog(
+            onDismissRequest = { pendingDockIndentSlots = null },
+            title = { Text("选择缩进分支") },
+            text = { Column { slots.forEach { slot ->
+                TextButton(
+                    onClick = {
+                        pendingDockIndentSlots = null
+                        finishDockMutation(editor.indentSelected(slot), "节点已缩进到${childBlockLabel(slot)}")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(childBlockLabel(slot)) }
+            } } },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { pendingDockIndentSlots = null }) { Text("取消") } },
+        )
+    }
+
+    if (pendingDockPaste) {
+        val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+        val slots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingDockPaste = false },
+            title = { Text("选择粘贴位置") },
+            text = { Column {
+                TextButton(onClick = { pendingDockPaste = false; pasteDockClipboard(null) }, Modifier.fillMaxWidth()) {
+                    Text("当前节点之后")
+                }
+                slots.forEach { slot ->
+                    TextButton(onClick = { pendingDockPaste = false; pasteDockClipboard(slot) }, Modifier.fillMaxWidth()) {
+                        Text("${childBlockLabel(slot)}内")
+                    }
+                }
+            } },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { pendingDockPaste = false }) { Text("取消") } },
+        )
+    }
+
     if (showBlockPicker) {
         val results = BlockCatalog.search(
             blockQuery,
@@ -352,7 +587,7 @@ internal fun VisualProjectScreen(
             blockCategory,
         )
         AlertDialog(
-            onDismissRequest = { showBlockPicker = false },
+            onDismissRequest = { showBlockPicker = false; blockPickerAutoSave = false },
             title = {
                 Text(insertionChildBlockName?.let { "添加积木到 $it" } ?: "添加积木")
             },
@@ -396,13 +631,17 @@ internal fun VisualProjectScreen(
                                         if (args == null) {
                                             error = "缺少积木所需的目标 Flow 或项目资源"
                                         } else {
-                                            editor.insertBlock(
+                                            val inserted = editor.insertBlock(
                                                 contract,
                                                 args,
                                                 intoChildBlockName = insertionChildBlockName,
                                             )
-                                            editorRevision++
+                                            if (inserted != null) {
+                                                editorRevision++
+                                                if (blockPickerAutoSave) saveCurrent()
+                                            }
                                             showBlockPicker = false
+                                            blockPickerAutoSave = false
                                             insertionChildBlockName = null
                                         }
                                     }
@@ -429,7 +668,7 @@ internal fun VisualProjectScreen(
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showBlockPicker = false }) { Text("关闭") }
+                TextButton(onClick = { showBlockPicker = false; blockPickerAutoSave = false }) { Text("关闭") }
             },
         )
     }
@@ -492,7 +731,8 @@ internal fun VisualProjectScreen(
                                     }
                                 }
                             }
-                            BlockPropertyEditor.ENUM -> {
+                            BlockPropertyEditor.ENUM,
+                            BlockPropertyEditor.INTEGER_ENUM -> {
                                 Text(property.label, style = MaterialTheme.typography.labelMedium)
                                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                                     property.choices.forEach { choice ->
@@ -565,9 +805,11 @@ internal fun VisualProjectScreen(
                         if (parsed.second != null) {
                             callArgumentError = parsed.second
                         } else {
-                            editor.updateArguments(nodeId, requireNotNull(parsed.first))
-                            editorRevision++
-                            editingCallNodeId = null
+                            if (editor.updateArguments(nodeId, requireNotNull(parsed.first))) {
+                                editorRevision++
+                                editingCallNodeId = null
+                                saveCurrent()
+                            }
                         }
                     },
                 ) { Text("确定") }
@@ -580,7 +822,8 @@ internal fun VisualProjectScreen(
 
     BackHandler(enabled = active, onBack = onExit)
 
-    Column(modifier.fillMaxSize().padding(8.dp)) {
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().padding(8.dp)) {
         Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 1.dp) {
             Column {
                 Row(
@@ -614,16 +857,6 @@ internal fun VisualProjectScreen(
                             enabled = canStartAction,
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
                         ) { Text(if (action == VisualAction.COMPILING) "编译中…" else "编译") }
-                        TextButton(
-                            onClick = ::runProject,
-                            enabled = canStartAction,
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                        ) { Text(if (action == VisualAction.STARTING) "启动中…" else "运行") }
-                        TextButton(
-                            onClick = ::stopProject,
-                            enabled = canStop,
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                        ) { Text("停止") }
                     }
                 }
                 HorizontalDivider()
@@ -631,6 +864,23 @@ internal fun VisualProjectScreen(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    TextButton(
+                        onClick = ::runProject,
+                        enabled = canStartAction,
+                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                    ) { Text(if (action == VisualAction.STARTING) "启动中…" else "运行") }
+                    TextButton(
+                        onClick = ::pauseOrResumeProject,
+                        enabled = canPauseResume,
+                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                    ) {
+                        Text(if (runtimeState.engineState == RuntimeEngineState.PAUSED) "继续" else "暂停")
+                    }
+                    TextButton(
+                        onClick = ::stopProject,
+                        enabled = canStop,
+                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                    ) { Text("停止") }
                     TextButton(
                         onClick = {
                             insertionChildBlockName = null
@@ -837,6 +1087,77 @@ internal fun VisualProjectScreen(
             }
         }
     }
+        LegacyScriptDock(
+            projectName = snapshot.manifest.name,
+            onRun = ::runProject,
+            sourceName = "$selectedFlowId.jsonl",
+            programNodes = nodes.map { node ->
+                val contract = BlockCatalog.find(node.kind)
+                LegacyDockProgramNode(
+                    nodeId = node.nodeId,
+                    label = buildString {
+                        node.childSlot?.let { append('[').append(childBlockLabel(it)).append("] ") }
+                        append(legacyDockProgramLabel(contract, editor.nodeArguments(node.nodeId), node.kind))
+                    },
+                    kind = node.kind,
+                    depth = node.depth,
+                    childSlots = contract?.childBlocks.orEmpty(),
+                )
+            },
+            programSelectedNodeId = editor.selectedNodeId,
+            editingEnabled = !runtimeBusy && !editor.isReadOnly,
+            onProgramNodeSelected = { nodeId ->
+                editor.selectedNodeId = nodeId
+                editorRevision++
+            },
+            onProgramNodeDeleted = {
+                if (!runtimeBusy && !editor.isReadOnly && editor.deleteSelected()) {
+                    editorRevision++
+                    saveCurrent()
+                }
+            },
+            onProgramNodeEdited = {
+                val selectedId = editor.selectedNodeId
+                val selectedRow = nodes.firstOrNull { it.nodeId == selectedId }
+                val contract = selectedRow?.kind?.let(BlockCatalog::find)
+                if (selectedId != null && contract != null && contract.properties.isNotEmpty()) {
+                    val args = editor.nodeArguments(selectedId) ?: JsonObject()
+                    val targets = snapshot.manifest.flows.filter { it.flowId != selectedFlowId }
+                    val currentTarget = args.get("targetFlowId")?.takeIf { it.isJsonPrimitive }?.asString
+                    val target = targets.firstOrNull { it.flowId == currentTarget } ?: targets.firstOrNull()
+                    editingCallNodeId = selectedId
+                    editingCallTargetId = target?.flowId
+                    propertyInputs = blockPropertyTexts(contract, args)
+                    callArgumentInputs = target?.let {
+                        flowCallArgumentTexts(it, args.getAsJsonObject("arguments"))
+                    }.orEmpty()
+                    callArgumentError = null
+                }
+            },
+            onProgramCommand = ::runDockCommand,
+            onStep = { notice = "单步运行需要 Runtime 调试协议，当前版本未开放，未执行脚本" },
+            onInsertPositioned = { legacyHint, position ->
+                val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+                val childSlots = selectedRow?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
+                when {
+                    position == LegacyInsertPosition.INSIDE && childSlots.isEmpty() -> error = "当前选择行不能加入内部"
+                    position == LegacyInsertPosition.INSIDE -> insertDockBlock(legacyHint, childSlots.first(), position)
+                    else -> insertDockBlock(legacyHint, null, position)
+                }
+            },
+            onInsert = { legacyHint ->
+                val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+                val childSlots = selectedRow?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
+                when {
+                    selectedRow == null || childSlots.isEmpty() -> {
+                        insertDockBlock(legacyHint, null)
+                    }
+                    else -> pendingDockInsertHint = legacyHint
+                }
+                notice = "请选择要加入的积木和插入位置"
+            },
+        )
+    }
 }
 
 internal data class VisualNodeRow(
@@ -919,11 +1240,150 @@ private fun VisualNodeDraft.toRow(depth: Int, childSlot: String?) = VisualNodeRo
     sourceLine = sourceLine,
 )
 
-private fun childBlockLabel(name: String): String = when (name) {
+internal fun childBlockLabel(name: String): String = when (name) {
     "then" -> "满足"
     "else" -> "否则"
     "body" -> "循环体"
     else -> name
+}
+
+internal fun legacyDockBlockQuery(snippet: String): String {
+    val line = snippet.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    return when {
+        line.contains("Onnx", ignoreCase = true) -> "ONNX OCR"
+        line.contains("findImage", ignoreCase = true) -> "区域找图"
+        line.contains("findColor", ignoreCase = true) -> "区域找色"
+        line.contains("findText", ignoreCase = true) -> "字库识字"
+        line.startsWith("if ") -> "如果"
+        line.startsWith("while ") || line.startsWith("repeat") -> "条件循环"
+        line.startsWith("for ") -> "重复次数"
+        line.contains("Input.tap", ignoreCase = true) -> "点击"
+        line.contains("Input.swipe", ignoreCase = true) -> "滑动"
+        line.contains("sleep", ignoreCase = true) -> "等待"
+        line.contains("Capture.", ignoreCase = true) -> "截图"
+        line.contains("Runtime.setParameter", ignoreCase = true) -> "设置变量"
+        line.contains("Runtime.getParameter", ignoreCase = true) -> "读取变量"
+        else -> line.substringBefore('(').substringBefore('\n').trim()
+    }
+}
+
+internal fun legacyDockProgramLabel(
+    contract: BlockContract?,
+    arguments: JsonObject?,
+    fallbackKind: String,
+): String {
+    if (contract == null) return fallbackKind
+    val details = contract.properties.asSequence().mapNotNull { property ->
+        val value = arguments?.get(property.path)?.takeIf { it.isJsonPrimitive } ?: return@mapNotNull null
+        val text = runCatching { value.asString }.getOrNull()?.take(24) ?: return@mapNotNull null
+        "${property.label}=$text"
+    }.take(3).toList()
+    return if (details.isEmpty()) contract.title else "${contract.title} · ${details.joinToString(" · ")}"
+}
+
+/**
+ * Migrates the compact legacy editor's Lua-shaped command into the typed
+ * arguments owned by the Flow node. Unknown or symbolic values deliberately
+ * keep the catalog defaults so a dock action can never create an invalid node.
+ */
+internal fun legacyDockBlockArguments(
+    contract: BlockContract,
+    snippet: String,
+    defaults: JsonObject,
+): JsonObject = defaults.deepCopy().apply {
+    val callArguments = legacyLuaCallArguments(snippet)
+    fun integer(index: Int): Long? = callArguments.getOrNull(index)?.trim()?.toLongOrNull()
+    fun decimal(index: Int): Double? = callArguments.getOrNull(index)?.trim()?.toDoubleOrNull()
+        ?.takeIf(Double::isFinite)
+    fun quoted(index: Int): String? = callArguments.getOrNull(index)?.trim()?.let(::legacyLuaString)
+
+    when (contract.kind) {
+        "input.tap" -> {
+            integer(0)?.let { addProperty("x", it) }
+            integer(1)?.let { addProperty("y", it) }
+        }
+        "input.swipe" -> {
+            integer(0)?.let { addProperty("x1", it) }
+            integer(1)?.let { addProperty("y1", it) }
+            integer(2)?.let { addProperty("x2", it) }
+            integer(3)?.let { addProperty("y2", it) }
+            integer(4)?.takeIf { it in 1..5_000 }?.let { addProperty("durationMs", it) }
+        }
+        "task.sleep" -> integer(0)?.takeIf { it >= 0 }?.let { addProperty("milliseconds", it) }
+        "control.repeat" -> {
+            Regex("for\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*1\\s*,\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                .find(snippet)?.let { match ->
+                    match.groupValues[2].toLongOrNull()?.takeIf { it > 0 }?.let { addProperty("times", it) }
+                    addProperty("indexVariable", match.groupValues[1])
+                }
+        }
+        "control.if", "control.while" -> {
+            Regex("(?:if|while)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(==|~=|!=|<=|>=|<|>)\\s*(.+?)\\s+(?:then|do)", RegexOption.IGNORE_CASE)
+                .find(snippet)?.let { match ->
+                    addProperty("variable", match.groupValues[1])
+                    addProperty("operator", legacyComparisonOperator(match.groupValues[2]))
+                    add("value", parseScalar(match.groupValues[3].trim())
+                        ?: com.google.gson.JsonPrimitive(match.groupValues[3].trim()))
+                }
+            Regex("--\\s*maxIterations=(\\d+)").find(snippet)?.groupValues?.get(1)
+                ?.toLongOrNull()?.takeIf { it > 0 }?.let { addProperty("maxIterations", it) }
+        }
+        "vision.findimage" -> {
+            decimal(1)?.takeIf { it in 0.0..1.0 }
+                ?.let { addProperty("similarityPermille", (it * 1_000).toInt()) }
+            // Only replace a catalog-selected resource when the command names
+            // that same project asset. Arbitrary picker examples must not leak
+            // invalid paths into the persisted Flow.
+            quoted(0)?.substringAfterLast('/')?.let { requestedName ->
+                get("imagePath")?.asString?.takeIf { it.substringAfterLast('/') == requestedName }
+                    ?.let { addProperty("imagePath", it) }
+            }
+        }
+        "vision.findcolor" -> quoted(0)?.let(::parseColor)?.let { addProperty("rgb", it) }
+        "ocr.glyph" -> {
+            decimal(1)?.takeIf { it in 0.0..1.0 }
+                ?.let { addProperty("similarityPermille", (it * 1_000).toInt()) }
+        }
+    }
+}
+
+private fun legacyLuaCallArguments(snippet: String): List<String> {
+    val body = snippet.substringAfter('(', "").substringBeforeLast(')', "")
+    if (body.isBlank()) return emptyList()
+    val result = mutableListOf<String>()
+    val current = StringBuilder()
+    var quote: Char? = null
+    var escaped = false
+    body.forEach { character ->
+        when {
+            escaped -> { current.append(character); escaped = false }
+            character == '\\' && quote != null -> { current.append(character); escaped = true }
+            quote != null && character == quote -> { current.append(character); quote = null }
+            quote != null -> current.append(character)
+            character == '\'' || character == '"' -> { current.append(character); quote = character }
+            character == ',' -> { result += current.toString().trim(); current.clear() }
+            else -> current.append(character)
+        }
+    }
+    result += current.toString().trim()
+    return result
+}
+
+private fun legacyLuaString(value: String): String? {
+    if (value.length < 2 || value.first() !in charArrayOf('\'', '"') || value.last() != value.first()) return null
+    return value.substring(1, value.lastIndex)
+        .replace("\\${value.first()}", value.first().toString())
+        .replace("\\\\", "\\")
+}
+
+private fun legacyComparisonOperator(value: String): String = when (value) {
+    "==" -> "equals"
+    "!=", "~=" -> "notEquals"
+    "<" -> "lessThan"
+    "<=" -> "lessOrEqual"
+    ">" -> "greaterThan"
+    ">=" -> "greaterOrEqual"
+    else -> "equals"
 }
 
 private fun com.google.gson.JsonObject.stringOr(name: String, fallback: String): String =
@@ -945,6 +1405,7 @@ private enum class VisualAction {
     DELETING_FLOW,
     COMPILING,
     STARTING,
+    CONTROLLING,
     STOPPING,
 }
 
@@ -961,7 +1422,7 @@ private fun defaultFlowCallArguments(flow: ProjectFlow): JsonObject = JsonObject
     }
 }
 
-private fun initialBlockArguments(
+internal fun initialBlockArguments(
     contract: BlockContract,
     flows: List<ProjectFlow>,
     resources: List<JsonObject>,
@@ -979,6 +1440,12 @@ private fun initialBlockArguments(
             BlockPropertyEditor.INTEGER -> arguments.addProperty(
                 property.path,
                 property.defaultValue?.toLongOrNull() ?: 0,
+            )
+            BlockPropertyEditor.INTEGER_ENUM -> arguments.addProperty(
+                property.path,
+                property.defaultValue
+                    ?.takeIf { it in property.choices }
+                    ?.toLongOrNull() ?: property.choices.firstOrNull()?.toLongOrNull() ?: return null,
             )
             BlockPropertyEditor.NUMBER -> arguments.addProperty(
                 property.path,
@@ -1011,6 +1478,22 @@ private fun initialBlockArguments(
                 property.path,
                 parseMultiColorSamples(property.defaultValue ?: "1,0,#FFFFFF,0") ?: return null,
             )
+            BlockPropertyEditor.LEGACY_PATTERN -> arguments.add(
+                property.path,
+                parseLegacyPattern(property.defaultValue ?: "0,0,#FFFFFF,0,0,0") ?: return null,
+            )
+            BlockPropertyEditor.LEGACY_FIXED_PATTERN -> arguments.add(
+                property.path,
+                parseLegacyFixedPattern(property.defaultValue ?: "0,0,#FFFFFF,0,0,0") ?: return null,
+            )
+            BlockPropertyEditor.LEGACY_COLOR_GROUP -> arguments.add(
+                property.path,
+                parseLegacyColorGroup(property.defaultValue ?: "#FFFFFF,0,0,0") ?: return null,
+            )
+            BlockPropertyEditor.LEGACY_REGION -> arguments.add(
+                property.path,
+                parseLegacyRegion(property.defaultValue ?: "0,0,1,1") ?: return null,
+            )
             BlockPropertyEditor.ENUM -> arguments.addProperty(
                 property.path,
                 property.defaultValue?.takeIf { it in property.choices }
@@ -1025,6 +1508,81 @@ private fun initialBlockArguments(
         }
     }
     return arguments
+}
+
+@Composable
+internal fun VisualNodeArgumentsDialog(
+    contract: BlockContract,
+    arguments: JsonObject,
+    flows: List<ProjectFlow>,
+    currentFlowId: String,
+    resources: List<JsonObject>,
+    onDismiss: () -> Unit,
+    onConfirm: (JsonObject) -> Unit,
+) {
+    val targets = flows.filter { it.flowId != currentFlowId }
+    var targetFlowId by remember(contract.kind, arguments) {
+        mutableStateOf(arguments.get("targetFlowId")?.takeIf { it.isJsonPrimitive }?.asString ?: targets.firstOrNull()?.flowId)
+    }
+    var inputs by remember(contract.kind, arguments) { mutableStateOf(blockPropertyTexts(contract, arguments)) }
+    var flowInputs by remember(contract.kind, arguments, targetFlowId) {
+        val target = targets.firstOrNull { it.flowId == targetFlowId }
+        mutableStateOf(target?.let { flowCallArgumentTexts(it, arguments.getAsJsonObject("arguments")) }.orEmpty())
+    }
+    var validationError by remember(contract.kind, arguments) { mutableStateOf<String?>(null) }
+    val target = targets.firstOrNull { it.flowId == targetFlowId }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${contract.title}参数") },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState())) {
+                contract.properties.forEach { property ->
+                    when (property.editor) {
+                        BlockPropertyEditor.FLOW_REFERENCE -> {
+                            Text(property.label, style = MaterialTheme.typography.labelMedium)
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                                targets.forEach { candidate ->
+                                    TextButton(onClick = {
+                                        targetFlowId = candidate.flowId
+                                        inputs = inputs + (property.path to candidate.flowId)
+                                        flowInputs = defaultFlowCallArgumentTexts(candidate)
+                                    }) { Text(if (candidate.flowId == targetFlowId) "● ${candidate.flowId}" else candidate.flowId) }
+                                }
+                            }
+                        }
+                        BlockPropertyEditor.FLOW_ARGUMENTS -> {
+                            target?.params.orEmpty().forEach { parameter ->
+                                val name = parameter.get("name")?.asString.orEmpty()
+                                OutlinedTextField(
+                                    value = flowInputs[name].orEmpty(),
+                                    onValueChange = { flowInputs = flowInputs + (name to it) },
+                                    label = { Text("调用参数 $name") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                        else -> OutlinedTextField(
+                            value = inputs[property.path].orEmpty(),
+                            onValueChange = { inputs = inputs + (property.path to it) },
+                            label = { Text(property.label) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                validationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val parsed = parseBlockArguments(contract, inputs, target, flowInputs, resources)
+                if (parsed.first == null) validationError = parsed.second ?: "参数无效"
+                else onConfirm(requireNotNull(parsed.first))
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 private fun defaultFlowCallArgumentTexts(flow: ProjectFlow): Map<String, String> =
@@ -1053,13 +1611,25 @@ private fun blockPropertyTexts(
             property.editor == BlockPropertyEditor.MULTI_COLOR_SAMPLES -> {
                 formatMultiColorSamples(value.asJsonArray)
             }
+            property.editor == BlockPropertyEditor.LEGACY_PATTERN -> {
+                formatLegacyPattern(value.asJsonArray)
+            }
+            property.editor == BlockPropertyEditor.LEGACY_FIXED_PATTERN -> {
+                formatLegacyFixedPattern(value.asJsonArray)
+            }
+            property.editor == BlockPropertyEditor.LEGACY_COLOR_GROUP -> {
+                formatLegacyColorGroup(value.asJsonArray)
+            }
+            property.editor == BlockPropertyEditor.LEGACY_REGION -> {
+                formatLegacyRegion(value.asJsonObject)
+            }
             property.editor != BlockPropertyEditor.SCALAR &&
                 value.isJsonPrimitive && value.asJsonPrimitive.isString -> value.asString
             else -> value.toString()
         }
     }
 
-private fun parseBlockArguments(
+internal fun parseBlockArguments(
     contract: BlockContract,
     inputs: Map<String, String>,
     targetFlow: ProjectFlow?,
@@ -1082,6 +1652,11 @@ private fun parseBlockArguments(
                 property.path,
                 text.toLongOrNull() ?: return null to "${property.label}必须是整数",
             )
+            BlockPropertyEditor.INTEGER_ENUM -> {
+                if (text !in property.choices) return null to "${property.label}不在允许值中"
+                val value = text.toLongOrNull() ?: return null to "${property.label}必须是整数"
+                arguments.addProperty(property.path, value)
+            }
             BlockPropertyEditor.NUMBER -> arguments.addProperty(
                 property.path,
                 text.toDoubleOrNull()?.takeIf { it.isFinite() }
@@ -1116,6 +1691,29 @@ private fun parseBlockArguments(
                 property.path,
                 parseMultiColorSamples(text)
                     ?: return null to "${property.label}格式必须是 x,y,#RRGGBB,容差；最多64组并用分号分隔",
+            )
+            BlockPropertyEditor.LEGACY_PATTERN -> arguments.add(
+                property.path,
+                parseLegacyPattern(text)
+                    ?: return null to
+                        "${property.label}格式必须是 dx,dy,#RRGGBB,红容差,绿容差,蓝容差；首项偏移必须为 0,0，最多65组并用分号分隔",
+            )
+            BlockPropertyEditor.LEGACY_FIXED_PATTERN -> arguments.add(
+                property.path,
+                parseLegacyFixedPattern(text)
+                    ?: return null to
+                        "${property.label}格式必须是 x,y,#RRGGBB,红容差,绿容差,蓝容差；坐标非负，最多256组并用分号分隔",
+            )
+            BlockPropertyEditor.LEGACY_COLOR_GROUP -> arguments.add(
+                property.path,
+                parseLegacyColorGroup(text)
+                    ?: return null to
+                        "${property.label}格式必须是 #RRGGBB,红容差,绿容差,蓝容差；最多64组并用分号分隔",
+            )
+            BlockPropertyEditor.LEGACY_REGION -> arguments.add(
+                property.path,
+                parseLegacyRegion(text)
+                    ?: return null to "${property.label}必须是 左,上,宽,高，且宽高大于0",
             )
             BlockPropertyEditor.ENUM -> {
                 if (text !in property.choices) return null to "${property.label}不在允许值中"
@@ -1199,6 +1797,121 @@ private fun formatMultiColorSamples(samples: JsonArray): String = samples.joinTo
     val sample = value.asJsonObject
     "${sample.get("x").asInt},${sample.get("y").asInt},${formatColor(sample.get("rgb").asInt)},${sample.get("tolerance").asInt}"
 }
+
+private fun JsonObject.channelTolerances(): String =
+    "${get("toleranceRed").asInt},${get("toleranceGreen").asInt},${get("toleranceBlue").asInt}"
+
+private fun JsonObject.addChannelTolerances(red: Int, green: Int, blue: Int) {
+    addProperty("toleranceRed", red)
+    addProperty("toleranceGreen", green)
+    addProperty("toleranceBlue", blue)
+}
+
+/**
+ * Parses per-channel legacy tolerances. The legacy grammar keeps red, green and blue independent,
+ * so a single collapsed tolerance would silently change matching behaviour.
+ */
+private fun parseChannelTolerances(values: List<String>): Triple<Int, Int, Int>? {
+    val channels = values.map { it.toIntOrNull()?.takeIf { channel -> channel in 0..255 } ?: return null }
+    return Triple(channels[0], channels[1], channels[2])
+}
+
+internal fun parseLegacyPattern(text: String): JsonArray? {
+    val entries = text.split(';').map(String::trim)
+    if (entries.isEmpty() || entries.size > 65 || entries.any(String::isEmpty)) return null
+    val samples = JsonArray()
+    entries.forEachIndexed { index, entry ->
+        val values = entry.split(',').map(String::trim)
+        if (values.size != 6) return null
+        val dx = values[0].toIntOrNull() ?: return null
+        val dy = values[1].toIntOrNull() ?: return null
+        if (index == 0 && (dx != 0 || dy != 0)) return null
+        val rgb = parseColor(values[2]) ?: return null
+        val (red, green, blue) = parseChannelTolerances(values.subList(3, 6)) ?: return null
+        samples.add(JsonObject().apply {
+            addProperty("dx", dx)
+            addProperty("dy", dy)
+            addProperty("rgb", rgb)
+            addChannelTolerances(red, green, blue)
+        })
+    }
+    return samples
+}
+
+private fun formatLegacyPattern(samples: JsonArray): String = samples.joinToString(";") { value ->
+    val sample = value.asJsonObject
+    "${sample.get("dx").asInt},${sample.get("dy").asInt}," +
+        "${formatColor(sample.get("rgb").asInt)},${sample.channelTolerances()}"
+}
+
+internal fun parseLegacyFixedPattern(text: String): JsonArray? {
+    val entries = text.split(';').map(String::trim)
+    if (entries.isEmpty() || entries.size > 256 || entries.any(String::isEmpty)) return null
+    val samples = JsonArray()
+    entries.forEach { entry ->
+        val values = entry.split(',').map(String::trim)
+        if (values.size != 6) return null
+        val x = values[0].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        val y = values[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        val rgb = parseColor(values[2]) ?: return null
+        val (red, green, blue) = parseChannelTolerances(values.subList(3, 6)) ?: return null
+        samples.add(JsonObject().apply {
+            addProperty("x", x)
+            addProperty("y", y)
+            addProperty("rgb", rgb)
+            addChannelTolerances(red, green, blue)
+        })
+    }
+    return samples
+}
+
+private fun formatLegacyFixedPattern(samples: JsonArray): String = samples.joinToString(";") { value ->
+    val sample = value.asJsonObject
+    "${sample.get("x").asInt},${sample.get("y").asInt}," +
+        "${formatColor(sample.get("rgb").asInt)},${sample.channelTolerances()}"
+}
+
+internal fun parseLegacyColorGroup(text: String): JsonArray? {
+    val entries = text.split(';').map(String::trim)
+    if (entries.isEmpty() || entries.size > 64 || entries.any(String::isEmpty)) return null
+    val colors = JsonArray()
+    entries.forEach { entry ->
+        val values = entry.split(',').map(String::trim)
+        if (values.size != 4) return null
+        val rgb = parseColor(values[0]) ?: return null
+        val (red, green, blue) = parseChannelTolerances(values.subList(1, 4)) ?: return null
+        colors.add(JsonObject().apply {
+            addProperty("rgb", rgb)
+            addChannelTolerances(red, green, blue)
+        })
+    }
+    return colors
+}
+
+private fun formatLegacyColorGroup(colors: JsonArray): String = colors.joinToString(";") { value ->
+    val color = value.asJsonObject
+    "${formatColor(color.get("rgb").asInt)},${color.channelTolerances()}"
+}
+
+/** Legacy regions are origin plus extent, not a half-open rectangle. */
+internal fun parseLegacyRegion(text: String): JsonObject? {
+    val values = text.split(',').map(String::trim)
+    if (values.size != 4) return null
+    val left = values[0].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+    val top = values[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+    val width = values[2].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    val height = values[3].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    return JsonObject().apply {
+        addProperty("left", left)
+        addProperty("top", top)
+        addProperty("width", width)
+        addProperty("height", height)
+    }
+}
+
+private fun formatLegacyRegion(value: JsonObject): String =
+    "${value.get("left").asInt},${value.get("top").asInt}," +
+        "${value.get("width").asInt},${value.get("height").asInt}"
 
 private fun formatPoint(value: JsonObject): String =
     "${value.get("x").asInt},${value.get("y").asInt}"

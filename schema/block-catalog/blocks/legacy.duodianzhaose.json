@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1, "kind": "legacy.duodianzhaose", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/legacy.duodianzhaose/1/legacy.duodianzhaose.schema.json",
+  "title": "旧版多点找色", "category": "vision", "summary": "按旧版起点宽高ROI、方向和百分比阈值查找锚点色与相对偏移色。",
+  "searchTerms": ["duodianzhaose", "多点找色", "旧版", "legacy", "方向", "百分比"],
+  "requiredCapabilities": ["vision.pixel.legacy"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "region", "label": "区域(左,上,宽,高)", "editor": "legacy_region", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "pattern", "label": "锚点与偏移色(dx,dy,#RRGGBB,dr,dg,db;…)", "editor": "legacy_pattern", "required": true, "defaultValue": "0,0,#FFFFFF,0,0,0" },
+    { "path": "direction", "label": "查找方向", "editor": "integer_enum", "required": true, "defaultValue": "1",
+      "choices": ["0", "1", "2", "3", "4"] },
+    { "path": "minimumMatchPercent", "label": "最低匹配百分比", "editor": "integer", "required": true, "defaultValue": "100" },
+    { "path": "resultVariable", "label": "完整结果变量", "editor": "string", "required": true, "defaultValue": "legacyResult" },
+    { "path": "countVariable", "label": "结果数量变量", "editor": "string", "required": true, "defaultValue": "legacyCount" },
+    { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "legacyFound" },
+    { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "legacyX" },
+    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "legacyY" }
+  ], "migrations": []
+}

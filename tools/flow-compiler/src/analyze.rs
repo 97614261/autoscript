@@ -244,6 +244,93 @@ pub(crate) enum BuiltinNodeArgs {
     FindAllColor(FindAllColorArgs),
     FindImage(FindImageArgs),
     GlyphOcr(GlyphOcrArgs),
+    LegacyDuoDianZhaoSe(LegacyDuoDianZhaoSeArgs),
+    LegacyDuoDianBiSe(LegacyDuoDianBiSeArgs),
+    LegacyGetRectColorNum(LegacyGetRectColorNumArgs),
+    LegacyGetRgbColor(LegacyGetRgbColorArgs),
+}
+
+/// Legacy region keeps the original origin-plus-extent form instead of a half-open rectangle.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyRegionArgs {
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyRelativeSampleArgs {
+    pub dx: i32,
+    pub dy: i32,
+    pub rgb: u32,
+    pub tolerance_red: u8,
+    pub tolerance_green: u8,
+    pub tolerance_blue: u8,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyFixedSampleArgs {
+    pub x: u32,
+    pub y: u32,
+    pub rgb: u32,
+    pub tolerance_red: u8,
+    pub tolerance_green: u8,
+    pub tolerance_blue: u8,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyColorSpecArgs {
+    pub rgb: u32,
+    pub tolerance_red: u8,
+    pub tolerance_green: u8,
+    pub tolerance_blue: u8,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyDuoDianZhaoSeArgs {
+    pub frame_variable: String,
+    pub region: LegacyRegionArgs,
+    pub pattern: Vec<LegacyRelativeSampleArgs>,
+    pub direction: u8,
+    pub minimum_match_percent: u8,
+    pub result_variable: String,
+    pub count_variable: String,
+    pub found_variable: String,
+    pub x_variable: String,
+    pub y_variable: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyDuoDianBiSeArgs {
+    pub frame_variable: String,
+    pub pattern: Vec<LegacyFixedSampleArgs>,
+    pub minimum_match_percent: u8,
+    pub result_variable: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyGetRectColorNumArgs {
+    pub frame_variable: String,
+    pub region: LegacyRegionArgs,
+    pub colors: Vec<LegacyColorSpecArgs>,
+    pub result_variable: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyGetRgbColorArgs {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub result_variable: String,
 }
 
 pub(crate) struct PreparedFlow<'a> {
@@ -463,6 +550,10 @@ fn is_builtin_kind(kind: &str) -> bool {
             | "vision.findallcolor"
             | "vision.findimage"
             | "ocr.glyph"
+            | "legacy.duodianzhaose"
+            | "legacy.duodianbise"
+            | "legacy.getrectcolornum"
+            | "legacy.getrgbcolor"
     )
 }
 
@@ -548,6 +639,10 @@ fn validate_builtin_node(
         | "vision.findallcolor"
         | "vision.findimage"
         | "ocr.glyph" => parse_visual_node(kind, node, manifest),
+        "legacy.duodianzhaose"
+        | "legacy.duodianbise"
+        | "legacy.getrectcolornum"
+        | "legacy.getrgbcolor" => parse_legacy_node(kind, node),
         _ => unreachable!("caller filters builtin kinds"),
     };
     match parsed {
@@ -585,6 +680,12 @@ fn validate_builtin_requirements(
             require_capability(node, "screen.capture", capabilities, errors);
         }
         "ocr.glyph" => require_capability(node, "ocr.glyph", capabilities, errors),
+        "legacy.duodianzhaose"
+        | "legacy.duodianbise"
+        | "legacy.getrectcolornum"
+        | "legacy.getrgbcolor" => {
+            require_capability(node, "vision.pixel.legacy", capabilities, errors);
+        }
         _ => {}
     }
     if matches!(
@@ -605,9 +706,91 @@ fn validate_builtin_requirements(
             | "vision.findallcolor"
             | "vision.findimage"
             | "ocr.glyph"
+            | "legacy.duodianzhaose"
+            | "legacy.duodianbise"
+            | "legacy.getrectcolornum"
+            | "legacy.getrgbcolor"
     ) {
         validate_leaf(node, errors);
     }
+}
+
+fn parse_legacy_node(
+    kind: &str,
+    node: &flow_ir::FlowNode,
+) -> Result<BuiltinNodeArgs, &'static str> {
+    match kind {
+        "legacy.duodianzhaose" => {
+            serde_json::from_value::<LegacyDuoDianZhaoSeArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|value| {
+                    value.direction <= 4
+                        && value.minimum_match_percent <= 100
+                        && valid_legacy_region(&value.region)
+                        && (1..=pixel_vision::MAX_LEGACY_PATTERN_SAMPLES)
+                            .contains(&value.pattern.len())
+                        && value.pattern[0].dx == 0
+                        && value.pattern[0].dy == 0
+                        && value.pattern.iter().all(|sample| sample.rgb <= 0xFF_FFFF)
+                        && valid_variable_names([
+                            &value.frame_variable,
+                            &value.result_variable,
+                            &value.count_variable,
+                            &value.found_variable,
+                            &value.x_variable,
+                            &value.y_variable,
+                        ])
+                })
+                .map(BuiltinNodeArgs::LegacyDuoDianZhaoSe)
+                .ok_or(
+                    "legacy.duodianzhaose requires a zero-offset anchor, 1..=65 samples, direction 0..=4, percent 0..=100, a positive region, and valid variable names",
+                )
+        }
+        "legacy.duodianbise" => {
+            serde_json::from_value::<LegacyDuoDianBiSeArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|value| {
+                    value.minimum_match_percent <= 100
+                        && (1..=pixel_vision::MAX_LEGACY_FIXED_SAMPLES)
+                            .contains(&value.pattern.len())
+                        && value.pattern.iter().all(|sample| sample.rgb <= 0xFF_FFFF)
+                        && valid_variable_names([&value.frame_variable, &value.result_variable])
+                })
+                .map(BuiltinNodeArgs::LegacyDuoDianBiSe)
+                .ok_or(
+                    "legacy.duodianbise requires 1..=256 fixed samples, percent 0..=100, and valid variable names",
+                )
+        }
+        "legacy.getrectcolornum" => {
+            serde_json::from_value::<LegacyGetRectColorNumArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|value| {
+                    valid_legacy_region(&value.region)
+                        && (1..=pixel_vision::MAX_LEGACY_COLOR_SPECS).contains(&value.colors.len())
+                        && value.colors.iter().all(|color| color.rgb <= 0xFF_FFFF)
+                        && valid_variable_names([&value.frame_variable, &value.result_variable])
+                })
+                .map(BuiltinNodeArgs::LegacyGetRectColorNum)
+                .ok_or(
+                    "legacy.getrectcolornum requires 1..=64 colors, a positive region, and valid variable names",
+                )
+        }
+        "legacy.getrgbcolor" => {
+            serde_json::from_value::<LegacyGetRgbColorArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|value| valid_variable_name(&value.result_variable))
+                .map(BuiltinNodeArgs::LegacyGetRgbColor)
+                .ok_or("legacy.getrgbcolor requires 0..=255 channels and a valid resultVariable")
+        }
+        _ => unreachable!("caller filters legacy node kinds"),
+    }
+}
+
+fn valid_legacy_region(value: &LegacyRegionArgs) -> bool {
+    value.width > 0
+        && value.height > 0
+        && value.left.checked_add(value.width).is_some()
+        && value.top.checked_add(value.height).is_some()
 }
 
 fn parse_visual_node(

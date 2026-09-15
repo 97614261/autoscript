@@ -151,7 +151,11 @@ fn render_node<'a>(
         | "vision.countcolor"
         | "vision.findallcolor"
         | "vision.findimage"
-        | "ocr.glyph" => {
+        | "ocr.glyph"
+        | "legacy.duodianzhaose"
+        | "legacy.duodianbise"
+        | "legacy.getrectcolornum"
+        | "legacy.getrgbcolor" => {
             let arguments = builtin_arguments(project, node)?;
             writer.indented(indent, &render_builtin(arguments)?);
             push_source_entry(
@@ -385,10 +389,144 @@ fn render_builtin(arguments: &BuiltinNodeArgs) -> Result<String, CompileError> {
         }
         BuiltinNodeArgs::FindImage(value) => render_find_image(value),
         BuiltinNodeArgs::GlyphOcr(value) => render_glyph_ocr(value),
+        BuiltinNodeArgs::LegacyDuoDianZhaoSe(value) => render_legacy_duo_dian_zhao_se(value),
+        BuiltinNodeArgs::LegacyDuoDianBiSe(value) => render_legacy_duo_dian_bi_se(value),
+        BuiltinNodeArgs::LegacyGetRectColorNum(value) => render_legacy_get_rect_color_num(value),
+        BuiltinNodeArgs::LegacyGetRgbColor(value) => Ok(format!(
+            "__vars[{}] = Legacy.getRgbColor({},{},{})",
+            lua_string(&value.result_variable)?,
+            value.red,
+            value.green,
+            value.blue,
+        )),
         BuiltinNodeArgs::If(_) | BuiltinNodeArgs::Repeat(_) | BuiltinNodeArgs::While(_) => {
             Err(invalid_builtin_variant())
         }
     }
+}
+
+fn legacy_color(rgb: u32) -> pixel_vision::Color {
+    pixel_vision::Color {
+        red: u8::try_from((rgb >> 16) & 0xFF).unwrap_or_default(),
+        green: u8::try_from((rgb >> 8) & 0xFF).unwrap_or_default(),
+        blue: u8::try_from(rgb & 0xFF).unwrap_or_default(),
+        alpha: 255,
+    }
+}
+
+const fn legacy_tolerance(red: u8, green: u8, blue: u8) -> pixel_vision::ColorTolerance {
+    pixel_vision::ColorTolerance {
+        red,
+        green,
+        blue,
+        alpha: 0,
+    }
+}
+
+fn legacy_format_error(kind: &str, error: &pixel_vision::LegacyFormatError) -> CompileError {
+    CompileError::Serialization(format!(
+        "{kind} cannot be encoded as legacy text: {error:?}"
+    ))
+}
+
+/// Renders structured Flow data as the strict legacy parameter string at generation time, so the
+/// author never edits the fragile old grammar by hand.
+fn render_legacy_duo_dian_zhao_se(
+    value: &crate::analyze::LegacyDuoDianZhaoSeArgs,
+) -> Result<String, CompileError> {
+    let samples = value
+        .pattern
+        .iter()
+        .map(|sample| pixel_vision::PatternSample {
+            offset_x: sample.dx,
+            offset_y: sample.dy,
+            color: legacy_color(sample.rgb),
+            tolerance: legacy_tolerance(
+                sample.tolerance_red,
+                sample.tolerance_green,
+                sample.tolerance_blue,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let parameters = pixel_vision::format_relative_pattern(&samples)
+        .map_err(|error| legacy_format_error("legacy.duodianzhaose", &error))?;
+    let region = &value.region;
+    Ok(format!(
+        "do local __result = Legacy.duoDianZhaoSe(__vars[{}],{},{},{},{},{},{},{}); __vars[{}] = __result; __vars[{}] = __result.count; __vars[{}] = __result.count > 0; __vars[{}] = __result.first and __result.first.x or nil; __vars[{}] = __result.first and __result.first.y or nil end",
+        lua_string(&value.frame_variable)?,
+        region.left,
+        region.top,
+        region.width,
+        region.height,
+        lua_string(&parameters)?,
+        value.direction,
+        value.minimum_match_percent,
+        lua_string(&value.result_variable)?,
+        lua_string(&value.count_variable)?,
+        lua_string(&value.found_variable)?,
+        lua_string(&value.x_variable)?,
+        lua_string(&value.y_variable)?,
+    ))
+}
+
+fn render_legacy_duo_dian_bi_se(
+    value: &crate::analyze::LegacyDuoDianBiSeArgs,
+) -> Result<String, CompileError> {
+    let samples = value
+        .pattern
+        .iter()
+        .map(|sample| pixel_vision::FixedPatternSample {
+            point: pixel_vision::PixelPoint {
+                x: sample.x,
+                y: sample.y,
+            },
+            color: legacy_color(sample.rgb),
+            tolerance: legacy_tolerance(
+                sample.tolerance_red,
+                sample.tolerance_green,
+                sample.tolerance_blue,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let parameters = pixel_vision::format_fixed_pattern(&samples)
+        .map_err(|error| legacy_format_error("legacy.duodianbise", &error))?;
+    Ok(format!(
+        "__vars[{}] = Legacy.duoDianBiSe(__vars[{}],{},{})",
+        lua_string(&value.result_variable)?,
+        lua_string(&value.frame_variable)?,
+        lua_string(&parameters)?,
+        value.minimum_match_percent,
+    ))
+}
+
+fn render_legacy_get_rect_color_num(
+    value: &crate::analyze::LegacyGetRectColorNumArgs,
+) -> Result<String, CompileError> {
+    let colors = value
+        .colors
+        .iter()
+        .map(|color| pixel_vision::ColorSpec {
+            color: legacy_color(color.rgb),
+            tolerance: legacy_tolerance(
+                color.tolerance_red,
+                color.tolerance_green,
+                color.tolerance_blue,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let parameters = pixel_vision::format_color_list(&colors)
+        .map_err(|error| legacy_format_error("legacy.getrectcolornum", &error))?;
+    let region = &value.region;
+    Ok(format!(
+        "__vars[{}] = Legacy.getRectColorNum(__vars[{}],{},{},{},{},{})",
+        lua_string(&value.result_variable)?,
+        lua_string(&value.frame_variable)?,
+        region.left,
+        region.top,
+        region.width,
+        region.height,
+        lua_string(&parameters)?,
+    ))
 }
 
 fn render_find_multi_color(

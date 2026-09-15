@@ -21,6 +21,7 @@ members = [
     "tools/glyph-maker",
     "tools/schema-check",
     "tools/package-probe",
+    "tools/release-packager",
 ]
 
 [workspace.package]

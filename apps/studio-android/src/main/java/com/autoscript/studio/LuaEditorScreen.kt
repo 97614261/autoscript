@@ -78,15 +78,25 @@ internal fun LuaEditorScreen(
     val lineCount = remember(buffer.text) { buffer.text.count { it == '\n' } + 1 }
     val runtimeBusy = runtimeAction != null
     val canRun = runtimeState.phase == RuntimeConnectionPhase.CONNECTED &&
-        runtimeState.engineState !in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.STOPPING) &&
+        runtimeState.engineState !in setOf(
+            RuntimeEngineState.RUNNING,
+            RuntimeEngineState.PAUSED,
+            RuntimeEngineState.STOPPING,
+        ) &&
         !runtimeBusy && !saving && sourceBytes <= MAX_LUA_SOURCE_BYTES
     val runButtonEnabled = runtimeState.engineState !in
-        setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.STOPPING) &&
+        setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING) &&
         !runtimeBusy && !saving && sourceBytes <= MAX_LUA_SOURCE_BYTES
     val canStop = runtimeState.phase == RuntimeConnectionPhase.CONNECTED &&
-        runtimeState.engineState == RuntimeEngineState.RUNNING && !runtimeBusy
+        runtimeState.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED) &&
+        !runtimeBusy
+    val canPauseResume = canStop
     val canEditProjectSettings = !buffer.isDirty && !saving && !runtimeBusy &&
-        runtimeState.engineState !in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.STOPPING)
+        runtimeState.engineState !in setOf(
+            RuntimeEngineState.RUNNING,
+            RuntimeEngineState.PAUSED,
+            RuntimeEngineState.STOPPING,
+        )
 
     LaunchedEffect(active) {
         if (!active) {
@@ -193,6 +203,7 @@ internal fun LuaEditorScreen(
                 runtimeClient.startProject(
                     generatedLuaModule = plan.luaSource,
                     resources = plan.resources,
+                    capabilities = plan.capabilities,
                     designWidth = plan.designWidth,
                     designHeight = plan.designHeight,
                     scaleMode = plan.scaleMode,
@@ -214,9 +225,25 @@ internal fun LuaEditorScreen(
         }
     }
 
+    fun pauseOrResumeProject() {
+        if (!canPauseResume) return
+        val resume = runtimeState.engineState == RuntimeEngineState.PAUSED
+        runtimeAction = RuntimeAction.CONTROLLING
+        error = null
+        notice = null
+        scope.launch {
+            val accepted = withContext(Dispatchers.IO) {
+                if (resume) runtimeClient.requestResume() else runtimeClient.requestPause()
+            }
+            if (!accepted) error = if (resume) "继续请求被拒绝" else "暂停请求被拒绝"
+            runtimeAction = null
+        }
+    }
+
     BackHandler(enabled = active, onBack = ::requestExit)
 
-    Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
+    Box(modifier = modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surface,
@@ -263,6 +290,13 @@ internal fun LuaEditorScreen(
                             enabled = runButtonEnabled,
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
                         ) { Text(if (runtimeAction == RuntimeAction.RUNNING) "启动中…" else "运行") }
+                        TextButton(
+                            onClick = ::pauseOrResumeProject,
+                            enabled = canPauseResume,
+                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                        ) {
+                            Text(if (runtimeState.engineState == RuntimeEngineState.PAUSED) "继续" else "暂停")
+                        }
                         TextButton(
                             onClick = ::stopProject,
                             enabled = canStop,
@@ -345,6 +379,25 @@ internal fun LuaEditorScreen(
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
     }
+        LegacyScriptDock(
+            projectName = snapshot.manifest.name,
+            onRun = ::runProject,
+            sourceName = snapshot.manifest.entryPoint ?: "main.lua",
+            onStep = { notice = "单步运行需要 Runtime 调试协议，当前版本未开放，未执行脚本" },
+            onProgramCommand = { notice = "结构化节点操作仅适用于可视化项目，Lua 请直接编辑源码" },
+            onInsert = { snippet ->
+                val selection = fieldValue.selection
+                val updated = fieldValue.copy(
+                    text = fieldValue.text.replaceRange(selection.start, selection.end, snippet),
+                    selection = androidx.compose.ui.text.TextRange(selection.start + snippet.length),
+                )
+                fieldValue = updated
+                buffer = buffer.edit(updated.text)
+                error = null
+                notice = "已插入脚本片段"
+            },
+        )
+    }
 
     if (confirmExit) {
         AlertDialog(
@@ -425,5 +478,6 @@ private const val MAX_RENDERED_LINE_NUMBERS = 20_000
 private enum class RuntimeAction {
     VALIDATING,
     RUNNING,
+    CONTROLLING,
     STOPPING,
 }

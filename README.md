@@ -1,13 +1,23 @@
 # AutoScript
 
+> 开发接手前请先阅读 [`项目交接与后续计划.md`](项目交接与后续计划.md)，其中记录了未提交工作树、最新 UI 状态、已知缺口、测试边界和后续顺序。
+
 新一代 Android 自动化脚本平台。Studio 使用 Kotlin/Jetpack Compose，运行引擎使用 Rust 与 PUC Lua 5.4；首个交付阶段仅支持用户明确授权设备上的 Root 自动化。
 
 ## 当前阶段
 
-R0 十二批基础能力已落地并接入统一门禁：
+R0 二十三批基础能力已落地并接入统一门禁：
 
 - Studio 与 Runner 是两个独立 Android 应用。
-- Studio 已建立紧凑的“开发者 / 我的”基础页面。
+- Studio 已建立参考易编精灵紧凑风格的工作台与底部“开发者 / 我的”导航；项目卡片可展开并提供真实的编辑、运行、资源设置、备份导出、改名和删除操作，学习项目和开发者后台仅明确显示为预留入口。
+- 本地 `.asproject` 备份仅包含权威清单、源码和已登记资源，不携带生成物与编辑器状态；导入执行条目数、单文件、总解压量、规范路径、重复项、声明闭包和资源格式校验，始终分配新项目 ID，并清除云端身份、签名和授权字段，绝不覆盖已有项目。
+- `release-packager`已建立“项目源码→不可变发布目录”边界：手写Lua执行PUC Lua 5.4语法校验，可视化项目从权威Flow重新编译；发布元数据、设计分辨率、Lua和按路径排序的资源由SHA-256发布ID统一绑定，输出目录拒绝覆盖并可独立复验。
+- Runner模板可通过`autoscript.releaseDir`注入已复验发布目录，自动采用发布包的applicationId、名称与版本；启动时再次严格解析清单、核对APK身份/版本及所有载荷摘要，将资源安全物化后自动提交同一Runtime运行链。普通构建仍保持无项目的模板模式。
+- `project.json.capabilities`已贯穿Studio运行计划、发布格式v3、AIDL、JNI与Rust执行器：发布ID绑定规范排序后的能力集合；数量、名称、重复项和篡改均失败关闭；Lua发起宿主调用前按API契约校验，未声明能力以`CAPABILITY_DENIED`终止当前任务，不能到达Root、截图或资源后端。
+- 独立Runner已改为显式启动，不再因服务连接自动执行脚本；RootDaemon的`停止/启动中/已认证/失败`真实状态通过AIDL状态快照与回调送达Runner和Studio，Root未就绪时运行按钮失败关闭。Runner紧凑展示发布身份、服务/Root运行条件、引擎状态与有界错误诊断，并提供运行、停止和刷新控制。
+- 用户显式运行脚本后，独立Runner会把运行服务提升为低打扰前台Service；通知展示运行/停止状态，点击可返回Runner，并提供直接停止脚本的可见入口。Android 13以上会在界面提示通知权限，但拒绝通知不作为脚本启动硬门禁；脚本停止或失败后立即撤下前台状态，Service采用`START_NOT_STICKY`且进程被杀后绝不自动恢复用户脚本。
+- Runner运行条件页逐项展示Root、通知和悬浮窗权限；可拖动悬浮控件支持紧凑/展开、暂停、继续和停止。暂停通过独立优先控制路径贯穿AIDL、JNI和Rust，业务任务及计时器被冻结，停止控制和Host超时仍保持活动。
+- 冻结发布格式v3可携带摘要绑定的`runnerUi`和可视化source map：Studio项目设置提供严格JSON作者入口，传统Android View配置宿主支持文本、整数、布尔和单选字段，本地值按releaseId隔离并作为单行`RunnerConfig`注入；发布与Runner双重核对source map生成代次，运行错误可从Lua行号映射到`flowId/nodeId`，Runner同时展示有界生命周期日志。
 - 两个应用通过版本化 AIDL 绑定到独立 `:runner` 进程。
 - Rust workspace 已建立状态机、坐标、Root 协议及严格 Flow JSONL codec。
 - Flow 加载器按显式 block 所有权与 `orderKey` 建图，保留原始字节，并区分结构错误、`depth` 冲突和非规范物理行序。
@@ -16,9 +26,9 @@ R0 十二批基础能力已落地并接入统一门禁：
 - 可视化Flow已支持`control.if`、`control.repeat`、有硬上限的`control.while`、`variable.set`和`variable.copy`；编译器以显式`childBlocks`迭代生成嵌套Lua，不依赖`depth`且不使用受用户深度控制的Rust递归。Studio可向空的满足/否则/循环体子block直接插入积木。
 - 真实视觉积木链已覆盖截图缓存/释放、取点颜色、区域找色、区域找图和基础字库OCR；Rust编译器生成唯一Lua执行语义并把命中状态、坐标、颜色及OCR结果写回Flow变量。图片和字库只能选择`project.json.resources`中类型匹配的登记资源，矩形、颜色、相似度和能力声明均在生成前失败关闭。
 - 扩展像素积木已公开单点比色、多点找色、颜色计数与全部找色；多点参数以结构化数组保存，Studio提供严格的`x,y,颜色,容差;…`紧凑编辑格式，编译器硬限制1至64个偏移点、1至256个结果，并继续复用同一套Rust像素核。
-- 旧版像素能力已通过独立`Legacy`命名空间公开：`duoDianZhaoSe`、`duoDianBiSe`、`getRectColorNum`和`getRgbColor`保留严格旧字符串、宽高ROI、5种方向、百分比向上取整及整数返回语义，同时强制显式帧句柄；不会把语义不同的现代`Screen.*`接口伪装成旧版实现。
+- 旧版像素能力已通过独立`Legacy`命名空间和四个可视化积木公开：`duoDianZhaoSe`、`duoDianBiSe`、`getRectColorNum`和`getRgbColor`在Flow中保存结构化参数，编译时才生成严格旧字符串；保留宽高ROI、完整32位偏移、5种方向、逐通道容差、百分比向上取整及整数返回语义，并保存多点找色的完整`count/first/points`结果和便捷派生变量。
 - 同一份正式视觉项目已建立可重复端到端验收：项目清单和Flow JSONL经Rust编译、生成Lua、注入确定性截图/模板/ASGLYPH字库并由真实Runtime Executor执行；Flow内部逐项核对取色、找色、找图和OCR结果后才发出成功标记，终态同时断言全部任务资源租约释放。
-- Studio项目设置已形成资源与能力闭环：可通过系统文件选择器流式导入图片和`ASGLYPH v1`字库、查看有界缩略图/尺寸/字形数、保存积木能力声明，并按清单并发代次安全删除未引用资源。导入自动规范化扩展名和重名路径，限制图片为32 MiB、4096边长和4194304像素，字库为8 MiB；资源或能力变化会立即使旧生成物失效。
+- Studio项目设置已形成资源、Runner动态配置与能力闭环：可通过系统文件选择器流式导入图片和`ASGLYPH v1`字库、查看有界缩略图/尺寸/字形数、编辑启动表单、保存积木能力声明，并按清单并发代次安全删除未引用资源。导入自动规范化扩展名和重名路径，限制图片为32 MiB、4096边长和4194304像素，字库为8 MiB；资源、动态配置或能力变化会立即使旧生成物失效。
 - Android可视化项目已通过AIDL调用同一个Rust Flow编译器，按显式结构投影紧凑节点树，编译诊断可定位`flowId/nodeId/line`，成功生成后校验代次和摘要再进入统一Runner运行链。
 - 积木编辑器已支持稳定ID新增、子树删除、同block移动、类型化`flow.call`参数、撤销/重做及多Flow创建与引用安全删除；保存严格执行“PFD草稿→Rust全项目校验→精确旧源码冲突检测→generation stale→原子写入”，编译与运行会先提交全部脏Flow。
 - Studio积木目录由`schema/block-catalog/blocks`单一声明生成：包含分类、搜索词、属性编辑器、可用默认值、能力要求、子block和逐版本迁移；紧凑选择器支持分类/关键词搜索和缺失能力禁用，通用属性面板按目录渲染，并提供点、矩形、颜色、项目图片及字库专用编辑器。目录节点集合与Rust编译器支持集合由测试强制完全一致，未知或更高版本节点失败关闭，迁移后的Flow保持未保存状态并仍须经过Rust草稿校验。
@@ -33,7 +43,7 @@ R0 十二批基础能力已落地并接入统一门禁：
 - `runtime-executor`已把生成Lua、同步Math、异步Host请求、无轮询Timer、超时、取消和终态串成执行闭环，并有确定性虚拟Host端到端测试。
 - `automation-core`已提供`AutomationBackend`、`CaptureBackend`、`OcrEngine`窄接口，以及有界不可变FramePool、Task资源租约与公平原子InputArbiter。
 - `engine-core`以一个会话一个Lua VM组合执行器、输入仲裁和帧池；`engine-jni`使用generation句柄、有界命令通道和独立Lua线程隔离JNI边界。
-- AIDL协议为v10，Runner `:runner` Service已真实调用Rust会话，并按Rust返回的单调时钟deadline及AIDL状态回调工作，不做固定周期轮询；失败终态会把有界Lua/引擎诊断经JNI与AIDL推送给Studio，重置会话会清除旧诊断。项目图片、字库和可视化Flow草稿均通过PFD导入，不走大ByteArray Binder传输。
+- AIDL协议为v14，Runner `:runner` Service已真实调用Rust会话，并按Rust返回的单调时钟deadline及包含Root后端状态的AIDL回调工作，不做固定周期轮询；失败终态会把有界Lua/引擎诊断经JNI与AIDL推送给Studio，重置会话会清除旧诊断。项目图片、字库和可视化Flow草稿均通过PFD导入，不走大ByteArray Binder传输。
 - `root-protocol`提供HMAC-SHA256认证、单调序列、重放拒绝、payload上限和结构化命令白名单；`root-daemon-core`落实首包Hello、`SO_PEERCRED` UID契约、能力协商、空闲退出和只派发合法命令的状态机。
 - Android构建自动交叉编译并打包arm64-v8a与x86_64 JNI库；`package-probe`检查双ABI、stored、16KiB ZIP对齐、ELF机器类型和APK Signing Block。
 - Lua与调度模块已通过Android API 24的arm64与x86_64交叉检查。
@@ -51,6 +61,17 @@ R0 十二批基础能力已落地并接入统一门禁：
 
 ## 构建
 
+M26完整主机门禁与MuMu回归已脚本化；主机脚本会生成带SHA-256和逐步结果的独立产物目录，设备脚本默认只操作指定的`127.0.0.1:16384`：
+
+```powershell
+.\scripts\m26-gate.ps1
+.\scripts\m26-device-smoke.ps1 -ArtifactRoot .\build\m26-YYYYMMDD-HHMMSS
+```
+
+设备已安装同一批产物、仅需重跑回归时可增加`-SkipInstall`。设备脚本硬校验MuMu的API 32、x86_64与720×1280，避免误操作同时连接的真机。
+
+M27调整为完整UI对齐批：覆盖工作台、项目文件工作台、Lua/积木编辑、脚本界面设计、资源工具、运行环境、备份、打包、Runner、悬浮控制、错误页和本地“我的”；登录、学习项目和开发者后台只做明确的预留页面。详细范围、顺序与验收见[`docs/m27-ui-plan.md`](docs/m27-ui-plan.md)。
+
 ```powershell
 .\gradlew.bat :apps:studio-android:assembleDebug :apps:runner-template-android:assembleDebug
 cargo test --workspace
@@ -60,6 +81,9 @@ cargo run -p schema-check -- .
 cargo run -p glyph-maker -- tools/glyph-maker/examples/basic.json dictionaries/main.asglyph glyph-preview.html
 cargo test -p flow-compiler
 cargo run -p package-probe -- apps/runner-template-android/build/outputs/apk/debug/runner-template-android-debug.apk
+cargo run -p release-packager -- prepare examples/hello-project build/releases/hello-runner com.autoscript.hello 1 1.0.0
+.\gradlew.bat :apps:runner-template-android:assembleDebug -Pautoscript.releaseDir=build/releases/hello-runner
+cargo run -p package-probe -- --require-embedded-release apps/runner-template-android/build/outputs/apk/debug/runner-template-android-debug.apk
 ```
 
 要求：JDK 17、Android SDK 36、minSdk 24、Rust 1.96.0。Android 首发 ABI 为 `arm64-v8a`，`x86_64`仅用于模拟器开发。
@@ -71,7 +95,7 @@ apps/       Studio 与独立 Runner 应用
 android/    可复用 Android 模块
 engine/     Rust 引擎与协议 crate
 schema/     项目、Flow信封、节点语义与脚本API独立契约
-tools/      API代码生成器、Flow编译器、Schema门禁与APK/ELF打包风险探针
+tools/      API代码生成器、Flow编译器、发布准备器、Schema门禁与APK/ELF打包风险探针
 docs-site/  不打包进Android App的离线HTML能力文档
 ```
 

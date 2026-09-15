@@ -17,8 +17,17 @@ enum class RuntimeEngineState {
     UNKNOWN,
     IDLE,
     RUNNING,
+    PAUSED,
     STOPPING,
     STOPPED,
+    FAILED,
+}
+
+enum class RuntimeRootState {
+    UNKNOWN,
+    STOPPED,
+    STARTING,
+    READY,
     FAILED,
 }
 
@@ -27,5 +36,6 @@ data class RuntimeConnectionState(
     val protocolVersion: Int? = null,
     val sessionGeneration: Long? = null,
     val engineState: RuntimeEngineState = RuntimeEngineState.UNKNOWN,
+    val rootState: RuntimeRootState = RuntimeRootState.UNKNOWN,
     val message: String? = null,
 )

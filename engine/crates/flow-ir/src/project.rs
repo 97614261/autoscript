@@ -1,11 +1,12 @@
 use crate::LoadReport;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub const SUPPORTED_PROJECT_FORMAT_VERSION: u32 = 2;
 pub const LEGACY_PROJECT_FORMAT_VERSION: u32 = 1;
+const MAX_PROJECT_CAPABILITIES: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -26,6 +27,8 @@ pub struct ProjectManifest {
     pub resources: Vec<ProjectResource>,
     pub capabilities: Vec<String>,
     pub design: DesignSpec,
+    #[serde(default)]
+    pub runner_ui: Option<RunnerUi>,
     #[serde(default)]
     pub owner_id: Option<String>,
     #[serde(default)]
@@ -120,6 +123,39 @@ pub enum OrientationPolicy {
     Landscape,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunnerUi {
+    #[serde(default)]
+    pub description: Option<String>,
+    pub fields: Vec<RunnerUiField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunnerUiField {
+    pub id: String,
+    pub label: String,
+    pub kind: RunnerUiFieldKind,
+    pub required: bool,
+    pub initial_value: Value,
+    #[serde(default)]
+    pub minimum: Option<i64>,
+    #[serde(default)]
+    pub maximum: Option<i64>,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunnerUiFieldKind {
+    Text,
+    Integer,
+    Boolean,
+    Choice,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectManifestError {
     InvalidJson(String),
@@ -140,6 +176,7 @@ pub enum ProjectManifestError {
     DuplicateRootBlockId(String),
     InvalidFlowPath(String),
     MissingEntryFlow(String),
+    TooManyCapabilities,
     InvalidCapability(String),
     DuplicateCapability(String),
     InvalidParameter(String),
@@ -147,6 +184,7 @@ pub enum ProjectManifestError {
     TooManyResources,
     InvalidResourcePath(String),
     DuplicateResourcePath(String),
+    InvalidRunnerUi(String),
 }
 
 impl fmt::Display for ProjectManifestError {
@@ -181,10 +219,56 @@ pub fn parse_project_manifest(source: &[u8]) -> Result<ProjectManifest, ProjectM
     } else if version != SUPPORTED_PROJECT_FORMAT_VERSION {
         return Err(ProjectManifestError::UnsupportedFormatVersion(version));
     }
+    validate_runner_ui_json_shape(&value)?;
     let manifest: ProjectManifest = serde_json::from_value(value)
         .map_err(|error| ProjectManifestError::InvalidJson(error.to_string()))?;
     validate_manifest(&manifest)?;
     Ok(manifest)
+}
+
+fn validate_runner_ui_json_shape(value: &Value) -> Result<(), ProjectManifestError> {
+    const FIELD_KEYS: [&str; 8] = [
+        "id",
+        "label",
+        "kind",
+        "required",
+        "initialValue",
+        "minimum",
+        "maximum",
+        "options",
+    ];
+
+    let Some(runner_ui) = value.get("runnerUi") else {
+        return Ok(());
+    };
+    if runner_ui.is_null() {
+        return Ok(());
+    }
+    let object = runner_ui.as_object().ok_or_else(|| {
+        ProjectManifestError::InvalidRunnerUi("runnerUi must be an object or null".to_owned())
+    })?;
+    if object.len() != 2 || !object.contains_key("description") || !object.contains_key("fields") {
+        return Err(ProjectManifestError::InvalidRunnerUi(
+            "runnerUi fields are incomplete or unknown".to_owned(),
+        ));
+    }
+    let fields = object
+        .get("fields")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ProjectManifestError::InvalidRunnerUi("runnerUi fields must be an array".to_owned())
+        })?;
+    if fields.iter().any(|field| {
+        field.as_object().is_none_or(|field| {
+            field.len() != FIELD_KEYS.len()
+                || FIELD_KEYS.iter().any(|key| !field.contains_key(*key))
+        })
+    }) {
+        return Err(ProjectManifestError::InvalidRunnerUi(
+            "runnerUi field is incomplete or contains unknown keys".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_manifest(manifest: &ProjectManifest) -> Result<(), ProjectManifestError> {
@@ -210,7 +294,98 @@ fn validate_manifest(manifest: &ProjectManifest) -> Result<(), ProjectManifestEr
     }
     validate_source_mode(manifest)?;
     validate_resources(&manifest.resources)?;
-    validate_capabilities(&manifest.capabilities)
+    validate_capabilities(&manifest.capabilities)?;
+    validate_runner_ui(manifest.runner_ui.as_ref())
+}
+
+/// Validates the optional dynamic form exposed by a packaged runner.
+///
+/// # Errors
+///
+/// Returns [`ProjectManifestError::InvalidRunnerUi`] when the field count, identifiers, labels,
+/// value constraints, or initial values are invalid.
+pub fn validate_runner_ui(runner_ui: Option<&RunnerUi>) -> Result<(), ProjectManifestError> {
+    let Some(runner_ui) = runner_ui else {
+        return Ok(());
+    };
+    if runner_ui.fields.is_empty() || runner_ui.fields.len() > 32 {
+        return Err(ProjectManifestError::InvalidRunnerUi(
+            "runnerUi must contain 1..32 fields".to_owned(),
+        ));
+    }
+    if runner_ui
+        .description
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 512 || value.chars().any(char::is_control))
+    {
+        return Err(ProjectManifestError::InvalidRunnerUi(
+            "runnerUi description is invalid".to_owned(),
+        ));
+    }
+    let mut ids = HashSet::with_capacity(runner_ui.fields.len());
+    for field in &runner_ui.fields {
+        if !valid_identifier(&field.id) || field.id.len() > 64 || !ids.insert(field.id.as_str()) {
+            return Err(ProjectManifestError::InvalidRunnerUi(
+                "runnerUi field id is invalid or duplicated".to_owned(),
+            ));
+        }
+        if field.label.is_empty()
+            || field.label.chars().count() > 64
+            || field.label.chars().any(char::is_control)
+        {
+            return Err(ProjectManifestError::InvalidRunnerUi(
+                "runnerUi field label is invalid".to_owned(),
+            ));
+        }
+        let valid = match field.kind {
+            RunnerUiFieldKind::Text => {
+                field
+                    .initial_value
+                    .as_str()
+                    .is_some_and(|value| value.chars().count() <= 256 && !value.contains('\0'))
+                    && field.minimum.is_none()
+                    && field.maximum.is_none()
+                    && field.options.is_empty()
+            }
+            RunnerUiFieldKind::Integer => {
+                let value = field.initial_value.as_i64();
+                let minimum = field.minimum.unwrap_or(-1_000_000_000);
+                let maximum = field.maximum.unwrap_or(1_000_000_000);
+                value.is_some_and(|value| minimum <= value && value <= maximum)
+                    && minimum <= maximum
+                    && field.options.is_empty()
+            }
+            RunnerUiFieldKind::Boolean => {
+                field.initial_value.is_boolean()
+                    && field.minimum.is_none()
+                    && field.maximum.is_none()
+                    && field.options.is_empty()
+            }
+            RunnerUiFieldKind::Choice => {
+                let unique = field.options.iter().collect::<HashSet<_>>();
+                (1..=32).contains(&field.options.len())
+                    && unique.len() == field.options.len()
+                    && field.options.iter().all(|value| {
+                        !value.is_empty()
+                            && value.chars().count() <= 64
+                            && !value.chars().any(char::is_control)
+                    })
+                    && field
+                        .initial_value
+                        .as_str()
+                        .is_some_and(|value| field.options.iter().any(|option| option == value))
+                    && field.minimum.is_none()
+                    && field.maximum.is_none()
+            }
+        };
+        if !valid {
+            return Err(ProjectManifestError::InvalidRunnerUi(format!(
+                "runnerUi field {} is invalid",
+                field.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_source_mode(manifest: &ProjectManifest) -> Result<(), ProjectManifestError> {
@@ -329,6 +504,9 @@ fn valid_identifier(value: &str) -> bool {
 }
 
 fn validate_capabilities(capabilities: &[String]) -> Result<(), ProjectManifestError> {
+    if capabilities.len() > MAX_PROJECT_CAPABILITIES {
+        return Err(ProjectManifestError::TooManyCapabilities);
+    }
     let mut unique = HashSet::with_capacity(capabilities.len());
     for capability in capabilities {
         if !valid_capability(capability) {
@@ -395,6 +573,9 @@ fn valid_resource_path(kind: ProjectResourceKind, value: &str) -> bool {
 }
 
 fn valid_capability(value: &str) -> bool {
+    if value.len() > 128 {
+        return false;
+    }
     let mut parts = value.split('.');
     let valid_part = |part: &str| {
         part.bytes()
@@ -581,6 +762,21 @@ mod tests {
         assert_eq!(
             parse_project_manifest(mixed.as_bytes()),
             Err(ProjectManifestError::UnexpectedEntryFlow)
+        );
+    }
+
+    #[test]
+    fn capability_count_is_bounded() {
+        let capabilities = (0..65)
+            .map(|index| format!(r#""test.c{index}""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let source = manifest("visual/flows/main.jsonl", "main")
+            .replace(r#"["core.task"]"#, &format!("[{capabilities}]"));
+
+        assert_eq!(
+            parse_project_manifest(source.as_bytes()),
+            Err(ProjectManifestError::TooManyCapabilities)
         );
     }
 

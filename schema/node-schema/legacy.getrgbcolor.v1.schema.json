@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/legacy.getrgbcolor/1/legacy.getrgbcolor.schema.json",
+  "title": "legacy.getrgbcolor node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "legacy.getrgbcolor" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["red", "green", "blue", "resultVariable"],
+      "properties": {
+        "red": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "green": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "blue": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "resultVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+  }
+}

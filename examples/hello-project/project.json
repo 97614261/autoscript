@@ -1,0 +1,43 @@
+{
+  "formatVersion": 2,
+  "flowSchemaVersion": 1,
+  "runtimeApi": "1.5",
+  "projectId": "hello-runner",
+  "name": "Hello Runner",
+  "sourceMode": "lua",
+  "entryPoint": "main.lua",
+  "flows": [],
+  "resources": [],
+  "capabilities": ["core.task"],
+  "design": {
+    "width": 720,
+    "height": 1280,
+    "scaleMode": "letterbox",
+    "orientationPolicy": "follow"
+  },
+  "runnerUi": {
+    "description": "运行前可调整示例脚本参数。",
+    "fields": [
+      {
+        "id": "delayMs",
+        "label": "等待毫秒",
+        "kind": "integer",
+        "required": true,
+        "initialValue": 1000,
+        "minimum": 0,
+        "maximum": 60000,
+        "options": []
+      },
+      {
+        "id": "mode",
+        "label": "运行模式",
+        "kind": "choice",
+        "required": true,
+        "initialValue": "普通",
+        "minimum": null,
+        "maximum": null,
+        "options": ["普通", "快速"]
+      }
+    ]
+  }
+}

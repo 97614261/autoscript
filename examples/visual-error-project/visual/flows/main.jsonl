@@ -1,0 +1,3 @@
+{"flowSchemaVersion":1,"nodeId":"node-set-running","blockId":"block-main","parentId":null,"orderKey":"a0","kind":"variable.set","nodeVersion":1,"depth":0,"args":{"name":"running","value":true}}
+{"flowSchemaVersion":1,"nodeId":"node-while","blockId":"block-main","parentId":null,"orderKey":"a1","kind":"control.while","nodeVersion":1,"childBlocks":{"body":"block-while-body"},"depth":0,"args":{"variable":"running","operator":"equals","value":true,"maxIterations":1}}
+{"flowSchemaVersion":1,"nodeId":"node-noop","blockId":"block-while-body","parentId":"node-while","orderKey":"a0","kind":"task.noop","nodeVersion":1,"depth":1,"args":{}}

@@ -4,9 +4,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.util.Locale
 import java.util.Properties
 import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonNull
@@ -37,11 +41,15 @@ class ProjectStore(
                     require(decoded.projectId == directory.name) { "项目目录与 projectId 不一致" }
                     validateManifest(decoded)
                     val state = readState(directory)
+                    val updatedAt = state.updatedAt ?: directory.lastModified()
                     ProjectSummary(
                         projectId = decoded.projectId,
                         name = decoded.name,
                         sourceMode = decoded.sourceMode,
-                        updatedAt = state.updatedAt ?: directory.lastModified(),
+                        designWidth = decoded.design.width,
+                        designHeight = decoded.design.height,
+                        createdAt = state.createdAt ?: updatedAt,
+                        updatedAt = updatedAt,
                         lastOpenedAt = state.lastOpenedAt,
                     )
                 }.getOrNull()
@@ -54,9 +62,16 @@ class ProjectStore(
     }
 
     @Synchronized
-    fun createProject(name: String, mode: ProjectSourceMode): ProjectSnapshot {
+    fun createProject(
+        name: String,
+        mode: ProjectSourceMode,
+        designWidth: Int = 720,
+        designHeight: Int = 1280,
+    ): ProjectSnapshot {
         ensureRoot()
         val cleanName = validateName(name)
+        require(designWidth in 1..8192 && designHeight in 1..8192) { "基准分辨率无效" }
+        val design = ProjectDesign(width = designWidth, height = designHeight)
         val projectId = validateProjectId(idFactory())
         val destination = projectDirectory(projectId)
         check(!destination.exists()) { "项目 ID 已存在：$projectId" }
@@ -70,8 +85,8 @@ class ProjectStore(
 
         try {
             val manifest = when (mode) {
-                ProjectSourceMode.LUA -> luaManifest(projectId, cleanName)
-                ProjectSourceMode.VISUAL -> visualManifest(projectId, cleanName)
+                ProjectSourceMode.LUA -> luaManifest(projectId, cleanName, design)
+                ProjectSourceMode.VISUAL -> visualManifest(projectId, cleanName, design)
             }
             writeManifest(staging, manifest, keepBackup = false)
             when (mode) {
@@ -90,7 +105,8 @@ class ProjectStore(
                     )
                 }
             }
-            writeState(staging, ProjectState(updatedAt = clock()))
+            val createdAt = clock()
+            writeState(staging, ProjectState(createdAt = createdAt, updatedAt = createdAt))
             if (!staging.renameTo(destination)) throw ProjectStoreException("无法提交新项目目录")
             return openProject(projectId)
         } catch (error: Throwable) {
@@ -117,9 +133,14 @@ class ProjectStore(
         ensureDeclaredFiles(directory, manifest)
 
         val state = readState(directory)
+        val updatedAt = state.updatedAt ?: clock()
         writeState(
             directory,
-            state.copy(updatedAt = state.updatedAt ?: clock(), lastOpenedAt = clock()),
+            state.copy(
+                createdAt = state.createdAt ?: updatedAt,
+                updatedAt = updatedAt,
+                lastOpenedAt = clock(),
+            ),
         )
         return ProjectSnapshot(
             directory = directory,
@@ -255,11 +276,35 @@ class ProjectStore(
         if (current.manifest.capabilities.toSet() != expectedCapabilities) {
             throw ProjectManifestConflictException()
         }
-        require(capabilities.all(CAPABILITY::matches)) { "非法能力声明" }
+        require(capabilities.size <= MAX_PROJECT_CAPABILITIES) { "项目能力数量超过64" }
+        require(capabilities.all { it.length <= MAX_CAPABILITY_LENGTH && CAPABILITY.matches(it) }) {
+            "非法能力声明"
+        }
         invalidateGeneration(current.directory)
         writeManifest(
             current.directory,
             current.manifest.copy(capabilities = capabilities.sorted()),
+            keepBackup = true,
+        )
+        touchProject(current.directory)
+        return openProject(projectId)
+    }
+
+    @Synchronized
+    fun updateRunnerUi(
+        projectId: String,
+        runnerUi: JsonObject?,
+        expectedRunnerUi: JsonObject?,
+    ): ProjectSnapshot {
+        val current = openProject(projectId)
+        if (current.manifest.runnerUi != expectedRunnerUi) {
+            throw ProjectManifestConflictException()
+        }
+        validateRunnerUi(runnerUi)
+        invalidateGeneration(current.directory)
+        writeManifest(
+            current.directory,
+            current.manifest.copy(runnerUi = runnerUi?.deepCopy()),
             keepBackup = true,
         )
         touchProject(current.directory)
@@ -407,6 +452,195 @@ class ProjectStore(
         if (!directory.deleteRecursively() && directory.exists()) {
             throw ProjectStoreException("删除项目失败：$projectId")
         }
+    }
+
+    /** Exports only authoritative project files. Generated output and local editor state are omitted. */
+    @Synchronized
+    fun exportProjectBackup(projectId: String, destination: OutputStream) {
+        val current = openProject(projectId)
+        val paths = backupPaths(current.manifest)
+        var totalBytes = 0L
+        try {
+            ZipOutputStream(destination).use { archive ->
+                archive.setLevel(BACKUP_COMPRESSION_LEVEL)
+                paths.forEach { path ->
+                    val file = File(current.directory, path)
+                    checkContained(file)
+                    require(file.isFile && file.canRead()) { "备份文件不存在：$path" }
+                    val maximum = backupEntryLimit(path)
+                    require(file.length() in 1..maximum) { "备份文件大小无效：$path" }
+                    archive.putNextEntry(ZipEntry(path).apply { time = ZIP_EPOCH_MILLIS })
+                    file.inputStream().use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var entryBytes = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            if (count == 0) continue
+                            entryBytes += count
+                            totalBytes += count
+                            require(entryBytes <= maximum) { "备份文件超过大小上限：$path" }
+                            require(totalBytes <= MAX_PROJECT_BACKUP_BYTES) { "项目备份超过 512 MiB" }
+                            archive.write(buffer, 0, count)
+                        }
+                        require(entryBytes > 0) { "备份文件为空：$path" }
+                    }
+                    archive.closeEntry()
+                }
+            }
+        } catch (error: Throwable) {
+            throw if (error is ProjectStoreException || error is IllegalArgumentException) error
+            else ProjectStoreException("导出项目备份失败", error)
+        }
+    }
+
+    /** Imports a backup as a new local project and never overwrites the source project ID. */
+    @Synchronized
+    fun importProjectBackup(source: InputStream): ProjectSnapshot {
+        ensureRoot()
+        val staging = File(rootDirectory, ".project-import-${UUID.randomUUID()}")
+        checkContained(staging)
+        if (!staging.mkdirs()) throw ProjectStoreException("无法创建项目导入目录")
+        var committed: File? = null
+        try {
+            val extracted = extractProjectBackup(source, staging)
+            require(MANIFEST in extracted) { "备份缺少 project.json" }
+            val loaded = readManifest(staging, recover = false)
+            val expected = backupPaths(loaded.manifest).toSet()
+            require(extracted == expected) {
+                val unexpected = (extracted - expected).sorted().firstOrNull()
+                val missing = (expected - extracted).sorted().firstOrNull()
+                when {
+                    unexpected != null -> "备份包含未声明文件：$unexpected"
+                    missing != null -> "备份缺少声明文件：$missing"
+                    else -> "备份文件清单不一致"
+                }
+            }
+            validateImportedBackupFiles(staging, loaded.manifest)
+
+            val projectId = allocateImportedProjectId()
+            val destination = projectDirectory(projectId)
+            val importedManifest = loaded.manifest.copy(
+                projectId = projectId,
+                ownerId = null,
+                cloudId = null,
+                syncState = null,
+                signature = null,
+                licensePolicy = null,
+            )
+            writeManifest(staging, importedManifest, keepBackup = false)
+            val createdAt = clock()
+            writeState(staging, ProjectState(createdAt = createdAt, updatedAt = createdAt))
+            if (!staging.renameTo(destination)) throw ProjectStoreException("无法提交导入项目")
+            committed = destination
+            return openProject(projectId)
+        } catch (error: Throwable) {
+            (committed ?: staging).deleteRecursively()
+            throw if (error is ProjectStoreException || error is IllegalArgumentException) error
+            else ProjectStoreException("导入项目备份失败", error)
+        }
+    }
+
+    private fun extractProjectBackup(source: InputStream, staging: File): Set<String> {
+        val extracted = linkedSetOf<String>()
+        var totalBytes = 0L
+        ZipInputStream(source).use { archive ->
+            while (true) {
+                val entry = archive.nextEntry ?: break
+                require(!entry.isDirectory) { "备份不能包含目录条目" }
+                val path = validateBackupEntryPath(entry.name)
+                require(extracted.add(path)) { "备份文件重复：$path" }
+                require(extracted.size <= MAX_PROJECT_BACKUP_ENTRIES) { "备份文件数量超过上限" }
+                val maximum = backupEntryLimit(path)
+                if (entry.size >= 0) require(entry.size in 1..maximum) { "备份文件大小无效：$path" }
+                val target = File(staging, path)
+                require(target.canonicalFile.toPath().startsWith(staging.canonicalFile.toPath())) {
+                    "备份路径越界：$path"
+                }
+                target.parentFile?.let { parent ->
+                    if (!parent.exists() && !parent.mkdirs()) throw ProjectStoreException("无法创建备份目录")
+                }
+                FileOutputStream(target).use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var entryBytes = 0L
+                    while (true) {
+                        val count = archive.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        entryBytes += count
+                        totalBytes += count
+                        require(entryBytes <= maximum) { "备份文件超过大小上限：$path" }
+                        require(totalBytes <= MAX_PROJECT_BACKUP_BYTES) { "项目备份超过 512 MiB" }
+                        output.write(buffer, 0, count)
+                    }
+                    require(entryBytes > 0) { "备份文件为空：$path" }
+                    output.flush()
+                    output.fd.sync()
+                }
+                archive.closeEntry()
+            }
+        }
+        return extracted
+    }
+
+    private fun validateImportedBackupFiles(directory: File, manifest: ProjectManifestDocument) {
+        ensureDeclaredFiles(directory, manifest)
+        when (manifest.sourceMode) {
+            ProjectSourceMode.LUA -> decodeLuaSource(File(directory, LUA_ENTRY).readBytes())
+            ProjectSourceMode.VISUAL -> manifest.flows.forEach { flow ->
+                val file = File(directory, flow.path)
+                require(file.length() in 1..MAX_FLOW_SOURCE_BYTES.toLong()) {
+                    "Flow 文件大小无效：${flow.path}"
+                }
+                file.readText(Charsets.UTF_8)
+            }
+        }
+        manifest.resources.forEach { resource ->
+            val path = resource.get("path").asString
+            val kind = when (resource.get("kind").asString) {
+                "image" -> ProjectResourceKind.IMAGE
+                "glyphDictionary" -> ProjectResourceKind.GLYPH_DICTIONARY
+                else -> error("不支持的资源类型")
+            }
+            validateImportedResource(kind, File(directory, path))
+        }
+    }
+
+    private fun backupPaths(manifest: ProjectManifestDocument): List<String> = buildList {
+        add(MANIFEST)
+        when (manifest.sourceMode) {
+            ProjectSourceMode.LUA -> add(requireNotNull(manifest.entryPoint))
+            ProjectSourceMode.VISUAL -> addAll(manifest.flows.map(ProjectFlow::path).sorted())
+        }
+        addAll(manifest.resources.map { it.get("path").asString }.sorted())
+    }
+
+    private fun validateBackupEntryPath(path: String): String {
+        require(path.length in 1..256 && '\\' !in path && '\u0000' !in path) { "非法备份路径" }
+        require(path.split('/').none { it.isEmpty() || it == "." || it == ".." }) { "备份路径越界" }
+        require(
+            path == MANIFEST || path == LUA_ENTRY ||
+                (path.startsWith("visual/flows/") && path.endsWith(".jsonl")) ||
+                path.startsWith("assets/images/") || path.startsWith("dictionaries/"),
+        ) { "备份包含非法文件：$path" }
+        return path
+    }
+
+    private fun backupEntryLimit(path: String): Long = when {
+        path == MANIFEST -> MAX_PROJECT_MANIFEST_BYTES
+        path == LUA_ENTRY -> MAX_LUA_SOURCE_BYTES.toLong()
+        path.startsWith("visual/flows/") -> MAX_FLOW_SOURCE_BYTES.toLong()
+        path.startsWith("assets/images/") -> MAX_IMAGE_RESOURCE_BYTES
+        path.startsWith("dictionaries/") -> MAX_GLYPH_DICTIONARY_BYTES
+        else -> throw IllegalArgumentException("备份包含非法文件：$path")
+    }
+
+    private fun allocateImportedProjectId(): String {
+        repeat(MAX_IMPORT_ID_ATTEMPTS) {
+            val candidate = validateProjectId(idFactory())
+            if (!projectDirectory(candidate).exists()) return candidate
+        }
+        throw ProjectStoreException("无法为导入项目分配唯一 ID")
     }
 
     private fun readManifest(directory: File, recover: Boolean): LoadedManifest {
@@ -725,8 +959,12 @@ class ProjectStore(
             "非法方向策略"
         }
         require(manifest.capabilities.distinct().size == manifest.capabilities.size) { "能力声明重复" }
-        require(manifest.capabilities.all(CAPABILITY::matches)) { "非法能力声明" }
+        require(manifest.capabilities.size <= MAX_PROJECT_CAPABILITIES) { "项目能力数量超过64" }
+        require(manifest.capabilities.all { it.length <= MAX_CAPABILITY_LENGTH && CAPABILITY.matches(it) }) {
+            "非法能力声明"
+        }
         validateResources(manifest.resources)
+        validateRunnerUi(manifest.runnerUi)
         when (manifest.sourceMode) {
             ProjectSourceMode.LUA -> {
                 require(manifest.entryPoint == LUA_ENTRY) { "Lua 项目入口必须是 main.lua" }
@@ -781,6 +1019,100 @@ class ProjectStore(
         }
     }
 
+    private fun validateRunnerUi(runnerUi: JsonObject?) {
+        if (runnerUi == null) return
+        require(runnerUi.keySet() == setOf("description", "fields")) { "runnerUi 含未知字段" }
+        val description = runnerUi.get("description")
+        require(description != null) { "runnerUi 缺少description" }
+        if (!description.isJsonNull) {
+            require(description.isJsonPrimitive && description.asJsonPrimitive.isString) {
+                "runnerUi.description 必须是字符串或null"
+            }
+            require(description.asString.codePointLength() <= 512 && description.asString.none(Char::isISOControl)) {
+                "runnerUi.description 无效"
+            }
+        }
+        val fieldsElement = runnerUi.get("fields")
+        require(fieldsElement != null && fieldsElement.isJsonArray) { "runnerUi.fields必须是数组" }
+        val fields = fieldsElement.asJsonArray
+        require(fields.size() in 1..32) { "runnerUi字段数量必须为1至32" }
+        val ids = mutableSetOf<String>()
+        fields.forEach { element ->
+            require(element.isJsonObject) { "runnerUi字段必须是对象" }
+            val field = element.asJsonObject
+            require(
+                field.keySet() == setOf(
+                    "id", "label", "kind", "required", "initialValue", "minimum", "maximum", "options",
+                ),
+            ) { "runnerUi字段不完整或含未知字段" }
+            fun requiredString(name: String): String {
+                val value = field.get(name)
+                require(value != null && value.isJsonPrimitive && value.asJsonPrimitive.isString) {
+                    "runnerUi.$name 必须是字符串"
+                }
+                return value.asString
+            }
+            fun nullableInteger(name: String): Long? {
+                val value = field.get(name)
+                require(value != null) { "runnerUi 缺少$name" }
+                if (value.isJsonNull) return null
+                require(value.isJsonPrimitive && value.asJsonPrimitive.isNumber) {
+                    "runnerUi.$name 必须是整数或null"
+                }
+                return value.asString.toLongOrNull() ?: error("runnerUi.$name 必须是整数")
+            }
+            val id = requiredString("id")
+            val label = requiredString("label")
+            val kind = requiredString("kind")
+            require(PARAMETER_NAME.matches(id) && id.length <= 64 && ids.add(id)) { "runnerUi字段ID无效或重复" }
+            require(label.codePointLength() in 1..64 && label.none(Char::isISOControl)) { "runnerUi字段标题无效" }
+            require(kind in RUNNER_UI_KINDS) { "runnerUi字段类型无效" }
+            val required = field.get("required")
+            require(required != null && required.isJsonPrimitive && required.asJsonPrimitive.isBoolean) {
+                "runnerUi.required必须是布尔值"
+            }
+            val initial = field.get("initialValue")
+            require(initial != null) { "runnerUi 缺少initialValue" }
+            val minimum = nullableInteger("minimum")
+            val maximum = nullableInteger("maximum")
+            val optionsElement = field.get("options")
+            require(optionsElement != null && optionsElement.isJsonArray) { "runnerUi.options必须是数组" }
+            val options = optionsElement.asJsonArray
+            when (kind) {
+                "text" -> require(initial.isJsonPrimitive && initial.asJsonPrimitive.isString &&
+                    initial.asString.codePointLength() <= 256 && '\u0000' !in initial.asString &&
+                    minimum == null && maximum == null &&
+                    options.size() == 0) { "runnerUi文本字段无效" }
+                "integer" -> {
+                    require(initial.isJsonPrimitive && initial.asJsonPrimitive.isNumber && options.size() == 0) {
+                        "runnerUi整数字段无效"
+                    }
+                    val value = initial.asString.toLongOrNull() ?: error("runnerUi整数默认值无效")
+                    val low = minimum ?: -1_000_000_000L
+                    val high = maximum ?: 1_000_000_000L
+                    require(low <= high && low <= value && value <= high) { "runnerUi整数默认值越界" }
+                }
+                "boolean" -> require(initial.isJsonPrimitive && initial.asJsonPrimitive.isBoolean &&
+                    minimum == null && maximum == null && options.size() == 0) {
+                    "runnerUi布尔字段无效"
+                }
+                "choice" -> {
+                    require(options.all {
+                        it.isJsonPrimitive && it.asJsonPrimitive.isString
+                    }) { "runnerUi选项必须是字符串" }
+                    val values = options.map { it.asString }
+                    require(initial.isJsonPrimitive && initial.asJsonPrimitive.isString &&
+                        values.size in 1..32 &&
+                        values.distinct().size == values.size &&
+                        values.all { it.codePointLength() in 1..64 && it.none(Char::isISOControl) } &&
+                        initial.asString in values && minimum == null && maximum == null) {
+                        "runnerUi选项字段无效"
+                    }
+                }
+            }
+        }
+    }
+
     private fun validateJsonShape(manifest: JsonObject) {
         require(manifest.keySet().all(MANIFEST_KEYS::contains)) { "project.json 含未知字段" }
         manifest.getAsJsonObject("design")?.let { design ->
@@ -818,19 +1150,21 @@ class ProjectStore(
         }
     }
 
-    private fun luaManifest(projectId: String, name: String) = ProjectManifestDocument(
+    private fun luaManifest(projectId: String, name: String, design: ProjectDesign) = ProjectManifestDocument(
         projectId = projectId,
         name = name,
         sourceMode = ProjectSourceMode.LUA,
         entryPoint = LUA_ENTRY,
+        design = design,
     )
 
-    private fun visualManifest(projectId: String, name: String): ProjectManifestDocument {
+    private fun visualManifest(projectId: String, name: String, design: ProjectDesign): ProjectManifestDocument {
         val rootBlockId = "block-${UUID.randomUUID()}"
         return ProjectManifestDocument(
             projectId = projectId,
             name = name,
             sourceMode = ProjectSourceMode.VISUAL,
+            design = design,
             entryFlowId = MAIN_FLOW,
             flows = listOf(
                 ProjectFlow(
@@ -888,6 +1222,7 @@ class ProjectStore(
         return runCatching {
             val properties = Properties().apply { file.inputStream().use(::load) }
             ProjectState(
+                createdAt = properties.getProperty("createdAt")?.toLongOrNull(),
                 updatedAt = properties.getProperty("updatedAt")?.toLongOrNull(),
                 lastOpenedAt = properties.getProperty("lastOpenedAt")?.toLongOrNull(),
             )
@@ -896,6 +1231,7 @@ class ProjectStore(
 
     private fun writeState(directory: File, state: ProjectState) {
         val text = buildString {
+            state.createdAt?.let { append("createdAt=$it\n") }
             state.updatedAt?.let { append("updatedAt=$it\n") }
             state.lastOpenedAt?.let { append("lastOpenedAt=$it\n") }
         }
@@ -909,6 +1245,7 @@ class ProjectStore(
     )
 
     private data class ProjectState(
+        val createdAt: Long? = null,
         val updatedAt: Long? = null,
         val lastOpenedAt: Long? = null,
     )
@@ -924,10 +1261,11 @@ class ProjectStore(
         val MANIFEST_KEYS = setOf(
             "formatVersion", "flowSchemaVersion", "runtimeApi", "projectId", "name", "sourceMode",
             "entryPoint", "entryFlowId", "flows", "resources", "capabilities", "design", "ownerId",
-            "cloudId", "syncState", "signature", "licensePolicy",
+            "cloudId", "syncState", "signature", "licensePolicy", "runnerUi",
         )
         val OPTIONAL_MANIFEST_KEYS = setOf(
             "entryPoint", "entryFlowId", "ownerId", "cloudId", "syncState", "signature", "licensePolicy",
+            "runnerUi",
         )
         const val MANIFEST = "project.json"
         const val MANIFEST_BACKUP = ".studio/project.json.bak"
@@ -942,9 +1280,20 @@ class ProjectStore(
         const val MAIN_FLOW_PATH = "visual/flows/main.jsonl"
         const val MAX_PROJECT_FLOWS = 256
         const val MAX_PROJECT_RESOURCES = 256
+        const val MAX_PROJECT_CAPABILITIES = 64
+        const val MAX_CAPABILITY_LENGTH = 128
+        val RUNNER_UI_KINDS = setOf("text", "integer", "boolean", "choice")
+        const val MAX_PROJECT_BACKUP_ENTRIES = 514
+        const val MAX_IMPORT_ID_ATTEMPTS = 32
+        const val BACKUP_COMPRESSION_LEVEL = 6
+        const val ZIP_EPOCH_MILLIS = 315_532_800_000L
+        const val MAX_PROJECT_MANIFEST_BYTES = 1024L * 1024
+        const val MAX_PROJECT_BACKUP_BYTES = 512L * 1024 * 1024
         const val DEFAULT_LUA = """return function()
     Task.sleep(1)
 end
 """
     }
 }
+
+private fun String.codePointLength(): Int = codePointCount(0, length)

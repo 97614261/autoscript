@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1, "kind": "legacy.getrectcolornum", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/legacy.getrectcolornum/1/legacy.getrectcolornum.schema.json",
+  "title": "旧版区域颜色计数", "category": "vision", "summary": "统计旧版起点宽高ROI内命中任一颜色组的像素总数。",
+  "searchTerms": ["getrectcolornum", "区域颜色计数", "颜色个数", "旧版", "legacy", "颜色组"],
+  "requiredCapabilities": ["vision.pixel.legacy"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "region", "label": "区域(左,上,宽,高)", "editor": "legacy_region", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "colors", "label": "颜色组(#RRGGBB,dr,dg,db;…)", "editor": "legacy_color_group", "required": true, "defaultValue": "#FFFFFF,0,0,0" },
+    { "path": "resultVariable", "label": "计数结果变量", "editor": "string", "required": true, "defaultValue": "legacyColorNum" }
+  ], "migrations": []
+}

@@ -250,6 +250,7 @@ mod tests {
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     };
+    use std::time::Duration;
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
     const TEST_OP_INPUT_TAP: u32 = 4_000;
@@ -286,7 +287,7 @@ mod tests {
         fs::create_dir_all(root.join("visual/flows")).expect("project directories");
         fs::write(
             root.join("project.json"),
-            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.5","projectId":"project-vision-e2e","name":"Vision E2E","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root","params":[],"returns":null}],"resources":[{"kind":"image","path":"assets/images/target.png"},{"kind":"glyphDictionary","path":"dictionaries/main.asglyph"}],"capabilities":["screen.capture","vision.pixel","vision.template","ocr.glyph","input.basic"],"design":{"width":8,"height":3,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
+            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.5","projectId":"project-vision-e2e","name":"Vision E2E","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root","params":[],"returns":null}],"resources":[{"kind":"image","path":"assets/images/target.png"},{"kind":"glyphDictionary","path":"dictionaries/main.asglyph"}],"capabilities":["screen.capture","vision.pixel","vision.pixel.legacy","vision.template","ocr.glyph","input.basic"],"design":{"width":8,"height":3,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
         )
         .expect("manifest");
         fs::write(
@@ -300,6 +301,14 @@ mod tests {
     fn visual_pipeline_e2e_source() -> String {
         concat!(
             r#"{"flowSchemaVersion":1,"nodeId":"capture","blockId":"root","parentId":null,"orderKey":"a0","kind":"screen.capture","nodeVersion":1,"depth":0,"args":{"resultVariable":"frame"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"legacy-search","blockId":"root","parentId":null,"orderKey":"aa0","kind":"legacy.duodianzhaose","nodeVersion":1,"depth":0,"args":{"frameVariable":"frame","region":{"left":0,"top":0,"width":8,"height":3},"pattern":[{"dx":0,"dy":0,"rgb":660510,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0},{"dx":-1,"dy":0,"rgb":16777215,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0}],"direction":1,"minimumMatchPercent":100,"resultVariable":"legacyResult","countVariable":"legacyCount","foundVariable":"legacyFound","xVariable":"legacyX","yVariable":"legacyY"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"legacy-compare","blockId":"root","parentId":null,"orderKey":"ab0","kind":"legacy.duodianbise","nodeVersion":1,"depth":0,"args":{"frameVariable":"frame","pattern":[{"x":7,"y":1,"rgb":660510,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0},{"x":6,"y":1,"rgb":16777215,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0}],"minimumMatchPercent":100,"resultVariable":"legacyMatch"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"legacy-count-colors","blockId":"root","parentId":null,"orderKey":"ac0","kind":"legacy.getrectcolornum","nodeVersion":1,"depth":0,"args":{"frameVariable":"frame","region":{"left":0,"top":0,"width":8,"height":3},"colors":[{"rgb":660510,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0},{"rgb":16777215,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0}],"resultVariable":"legacyColorNum"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"legacy-rgb","blockId":"root","parentId":null,"orderKey":"ad0","kind":"legacy.getrgbcolor","nodeVersion":1,"depth":0,"args":{"red":10,"green":20,"blue":30,"resultVariable":"legacyRgb"}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"get-color","blockId":"root","parentId":null,"orderKey":"b0","kind":"vision.getcolor","nodeVersion":1,"depth":0,"args":{"frameVariable":"frame","point":{"x":7,"y":1},"resultVariable":"pixel"}}"#,
             "\n",
@@ -349,7 +358,21 @@ mod tests {
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"if-ocr-score","blockId":"ocr-coverage-then","parentId":"if-ocr-coverage","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"ocr-score-then","else":"ocr-score-else"},"depth":14,"args":{"variable":"ocrScore","operator":"equals","value":1000}}"#,
             "\n",
-            r#"{"flowSchemaVersion":1,"nodeId":"success-marker","blockId":"ocr-score-then","parentId":"if-ocr-score","orderKey":"a0","kind":"input.tap","nodeVersion":1,"depth":15,"args":{"x":1,"y":2}}"#,
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-count","blockId":"ocr-score-then","parentId":"if-ocr-score","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-count-then","else":"legacy-count-else"},"depth":15,"args":{"variable":"legacyCount","operator":"equals","value":1}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-found","blockId":"legacy-count-then","parentId":"if-legacy-count","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-found-then","else":"legacy-found-else"},"depth":16,"args":{"variable":"legacyFound","operator":"equals","value":true}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-x","blockId":"legacy-found-then","parentId":"if-legacy-found","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-x-then","else":"legacy-x-else"},"depth":17,"args":{"variable":"legacyX","operator":"equals","value":7}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-y","blockId":"legacy-x-then","parentId":"if-legacy-x","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-y-then","else":"legacy-y-else"},"depth":18,"args":{"variable":"legacyY","operator":"equals","value":1}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-match","blockId":"legacy-y-then","parentId":"if-legacy-y","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-match-then","else":"legacy-match-else"},"depth":19,"args":{"variable":"legacyMatch","operator":"equals","value":1}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-color-count","blockId":"legacy-match-then","parentId":"if-legacy-match","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-color-count-then","else":"legacy-color-count-else"},"depth":20,"args":{"variable":"legacyColorNum","operator":"equals","value":10}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"if-legacy-rgb","blockId":"legacy-color-count-then","parentId":"if-legacy-color-count","orderKey":"a0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"legacy-rgb-then","else":"legacy-rgb-else"},"depth":21,"args":{"variable":"legacyRgb","operator":"equals","value":660510}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"success-marker","blockId":"legacy-rgb-then","parentId":"if-legacy-rgb","orderKey":"a0","kind":"input.tap","nodeVersion":1,"depth":22,"args":{"x":1,"y":2}}"#,
             "\n",
         )
         .to_owned()
@@ -456,12 +479,24 @@ mod tests {
             )
             .expect("capture");
 
-        let task = engine.start(&generated, "visual-e2e").expect("start");
+        let capabilities = [
+            "input.basic".to_owned(),
+            "ocr.glyph".to_owned(),
+            "screen.capture".to_owned(),
+            "vision.pixel".to_owned(),
+            "vision.pixel.legacy".to_owned(),
+            "vision.template".to_owned(),
+        ];
+        let task = engine
+            .start(&generated, "visual-e2e", &capabilities)
+            .expect("start");
         engine.pump(0).expect("dispatch capture");
         let ExternalHostEvent::Dispatch {
             request,
             completion,
-        } = host_queue.wait_next()
+        } = host_queue
+            .wait_next_timeout(Duration::from_secs(1))
+            .expect("capture request timeout")
         else {
             panic!("expected capture request")
         };
@@ -479,7 +514,9 @@ mod tests {
         let ExternalHostEvent::Dispatch {
             request,
             completion,
-        } = host_queue.wait_next()
+        } = host_queue
+            .wait_next_timeout(Duration::from_secs(1))
+            .expect("success marker timeout")
         else {
             panic!("expected success marker")
         };

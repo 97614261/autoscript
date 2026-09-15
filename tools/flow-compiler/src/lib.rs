@@ -101,6 +101,22 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         kind: "ocr.glyph",
         version: 1,
     },
+    SupportedNodeVersion {
+        kind: "legacy.duodianzhaose",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "legacy.duodianbise",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "legacy.getrectcolornum",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "legacy.getrgbcolor",
+        version: 1,
+    },
 ];
 
 /// Compiles validated project Flow sources to one deterministic Lua program and bound metadata.
@@ -714,6 +730,164 @@ mod tests {
             error,
             CompileError::InvalidNodeArguments { node_id, .. } if node_id == "zero-limit"
         )));
+    }
+
+    #[test]
+    fn legacy_nodes_render_structured_arguments_as_strict_legacy_text() {
+        let manifest = parse_project_manifest(
+            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.5","projectId":"project-legacy-blocks","name":"Legacy blocks","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root","params":[],"returns":null}],"resources":[],"capabilities":["screen.capture","vision.pixel.legacy"],"design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
+        )
+        .expect("valid manifest");
+        let source = legacy_pipeline_source();
+        let report = load_jsonl(
+            source.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "root",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let bundle = compile_project(
+            &manifest,
+            &[FlowSource {
+                flow_id: "main",
+                exact_bytes: source.as_bytes(),
+                report: &report,
+            }],
+        )
+        .expect("legacy pipeline compiles");
+        let lua = std::str::from_utf8(&bundle.main_lua).expect("generated Lua UTF-8");
+
+        // The author edits structured JSON; the strict legacy grammar only appears here.
+        assert!(lua.contains(
+            r#"Legacy.duoDianZhaoSe(__vars["frame"],5,6,300,400,"(255,0,0)-(5,6,7)#(3,-2)|(0,255,0)-(1,2,3)",2,80)"#
+        ));
+        assert!(lua.contains(r#"__vars["legacyResult"] = __result"#));
+        assert!(lua.contains(r#"__vars["legacyCount"] = __result.count"#));
+        assert!(lua.contains(r#"__vars["legacyFound"] = __result.count > 0"#));
+        assert!(lua.contains(
+            r#"__vars["legacyMatch"] = Legacy.duoDianBiSe(__vars["frame"],"(10,20)|(0,0,255)-(4,5,6)#(30,40)|(255,255,255)-(0,0,0)",70)"#
+        ));
+        assert!(lua.contains(
+            r#"__vars["legacyColorNum"] = Legacy.getRectColorNum(__vars["frame"],1,2,100,200,"(17,34,51)-(1,2,3)#(68,85,102)-(4,5,6)")"#
+        ));
+        assert!(lua.contains(r#"__vars["legacyRgb"] = Legacy.getRgbColor(17,34,51)"#));
+    }
+
+    #[test]
+    fn legacy_multi_color_anchor_must_have_zero_offset() {
+        let manifest = parse_project_manifest(
+            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.5","projectId":"project-legacy-anchor","name":"Legacy anchor","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root","params":[],"returns":null}],"resources":[],"capabilities":["vision.pixel.legacy"],"design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
+        )
+        .expect("valid manifest");
+        let source = json!({
+            "flowSchemaVersion": 1, "nodeId": "moved-anchor", "blockId": "root",
+            "parentId": null, "orderKey": "a0", "kind": "legacy.duodianzhaose",
+            "nodeVersion": 1, "depth": 0,
+            "args": {
+                "frameVariable": "frame",
+                "region": {"left": 0, "top": 0, "width": 10, "height": 10},
+                "pattern": [{"dx": 1, "dy": 0, "rgb": 0, "toleranceRed": 0, "toleranceGreen": 0, "toleranceBlue": 0}],
+                "direction": 1, "minimumMatchPercent": 100,
+                "resultVariable": "result",
+                "countVariable": "c", "foundVariable": "f", "xVariable": "x", "yVariable": "y"
+            }
+        })
+        .to_string()
+            + "\n";
+        let report = load_jsonl(
+            source.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "root",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let errors = compile_project(
+            &manifest,
+            &[FlowSource {
+                flow_id: "main",
+                exact_bytes: source.as_bytes(),
+                report: &report,
+            }],
+        )
+        .expect_err("a non-zero anchor offset cannot be expressed in legacy text");
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            CompileError::InvalidNodeArguments { node_id, .. } if node_id == "moved-anchor"
+        )));
+    }
+
+    fn legacy_pipeline_source() -> String {
+        [
+            json!({
+                "flowSchemaVersion": 1, "nodeId": "capture", "blockId": "root",
+                "parentId": null, "orderKey": "a0", "kind": "screen.capture",
+                "nodeVersion": 1, "depth": 0, "args": {"resultVariable": "frame"}
+            }),
+            json!({
+                "flowSchemaVersion": 1, "nodeId": "legacy-multi", "blockId": "root",
+                "parentId": null, "orderKey": "b0", "kind": "legacy.duodianzhaose",
+                "nodeVersion": 1, "depth": 0,
+                "args": {
+                    "frameVariable": "frame",
+                    "region": {"left": 5, "top": 6, "width": 300, "height": 400},
+                    "pattern": [
+                        {"dx": 0, "dy": 0, "rgb": 16_711_680, "toleranceRed": 5, "toleranceGreen": 6, "toleranceBlue": 7},
+                        {"dx": 3, "dy": -2, "rgb": 65_280, "toleranceRed": 1, "toleranceGreen": 2, "toleranceBlue": 3}
+                    ],
+                    "direction": 2, "minimumMatchPercent": 80,
+                    "resultVariable": "legacyResult",
+                    "countVariable": "legacyCount", "foundVariable": "legacyFound",
+                    "xVariable": "legacyX", "yVariable": "legacyY"
+                }
+            }),
+            json!({
+                "flowSchemaVersion": 1, "nodeId": "legacy-compare", "blockId": "root",
+                "parentId": null, "orderKey": "c0", "kind": "legacy.duodianbise",
+                "nodeVersion": 1, "depth": 0,
+                "args": {
+                    "frameVariable": "frame",
+                    "pattern": [
+                        {"x": 10, "y": 20, "rgb": 255, "toleranceRed": 4, "toleranceGreen": 5, "toleranceBlue": 6},
+                        {"x": 30, "y": 40, "rgb": 16_777_215, "toleranceRed": 0, "toleranceGreen": 0, "toleranceBlue": 0}
+                    ],
+                    "minimumMatchPercent": 70, "resultVariable": "legacyMatch"
+                }
+            }),
+            json!({
+                "flowSchemaVersion": 1, "nodeId": "legacy-count", "blockId": "root",
+                "parentId": null, "orderKey": "d0", "kind": "legacy.getrectcolornum",
+                "nodeVersion": 1, "depth": 0,
+                "args": {
+                    "frameVariable": "frame",
+                    "region": {"left": 1, "top": 2, "width": 100, "height": 200},
+                    "colors": [
+                        {"rgb": 1_122_867, "toleranceRed": 1, "toleranceGreen": 2, "toleranceBlue": 3},
+                        {"rgb": 4_478_310, "toleranceRed": 4, "toleranceGreen": 5, "toleranceBlue": 6}
+                    ],
+                    "resultVariable": "legacyColorNum"
+                }
+            }),
+            json!({
+                "flowSchemaVersion": 1, "nodeId": "legacy-rgb", "blockId": "root",
+                "parentId": null, "orderKey": "e0", "kind": "legacy.getrgbcolor",
+                "nodeVersion": 1, "depth": 0,
+                "args": {"red": 17, "green": 34, "blue": 51, "resultVariable": "legacyRgb"}
+            }),
+            json!({
+                "flowSchemaVersion": 1, "nodeId": "release", "blockId": "root",
+                "parentId": null, "orderKey": "f0", "kind": "screen.release",
+                "nodeVersion": 1, "depth": 0, "args": {"frameVariable": "frame"}
+            }),
+        ]
+        .into_iter()
+        .map(|node| node.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n"
     }
 
     fn visual_pipeline_source() -> String {

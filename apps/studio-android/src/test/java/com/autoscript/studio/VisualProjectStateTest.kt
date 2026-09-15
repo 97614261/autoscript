@@ -9,6 +9,58 @@ import org.junit.Test
 
 class VisualProjectStateTest {
     @Test
+    fun legacyDockMigratesTypedCommandArgumentsWithoutDiscardingDefaults() {
+        val tapDefaults = JsonObject().apply { addProperty("x", 0); addProperty("y", 0) }
+        val tap = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("input.tap")),
+            "Input.tap(120, 345)\n",
+            tapDefaults,
+        )
+        assertEquals(120, tap.get("x").asInt)
+        assertEquals(345, tap.get("y").asInt)
+
+        val imageDefaults = JsonObject().apply {
+            addProperty("imagePath", "assets/images/start.png")
+            addProperty("similarityPermille", 900)
+            addProperty("tolerance", 0)
+        }
+        val image = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("vision.findimage")),
+            "Vision.findImage(\"start.png\", 0.95)\n",
+            imageDefaults,
+        )
+        assertEquals("assets/images/start.png", image.get("imagePath").asString)
+        assertEquals(950, image.get("similarityPermille").asInt)
+        assertEquals(0, image.get("tolerance").asInt)
+    }
+
+    @Test
+    fun legacyDockMigratesControlStructureAndKeepsExplicitBranching() {
+        val conditionDefaults = JsonObject().apply {
+            addProperty("variable", "value")
+            addProperty("operator", "equals")
+            addProperty("value", true)
+        }
+        val condition = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("control.if")),
+            "if score >= 10 then\nend\n",
+            conditionDefaults,
+        )
+        assertEquals("score", condition.get("variable").asString)
+        assertEquals("greaterOrEqual", condition.get("operator").asString)
+        assertEquals(10, condition.get("value").asInt)
+
+        val repeatDefaults = JsonObject().apply { addProperty("times", 1) }
+        val repeat = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("control.repeat")),
+            "for index = 1, 7 do\nend\n",
+            repeatDefaults,
+        )
+        assertEquals(7, repeat.get("times").asInt)
+        assertEquals("index", repeat.get("indexVariable").asString)
+    }
+
+    @Test
     fun projectionUsesExplicitBlocksAndOrderKeysInsteadOfPhysicalLinesOrDepth() {
         val source = listOf(
             node("child-b", "block-body", "b0", "task.noop", parent = "loop", depth = 99),
@@ -53,6 +105,7 @@ class VisualProjectStateTest {
         assertEquals(listOf("first", third, second), editor.rows.map { it.nodeId })
         assertTrue(editor.deleteSelected())
         assertEquals(listOf("first", second), editor.rows.map { it.nodeId })
+        assertEquals("first", editor.selectedNodeId)
         assertTrue(editor.undo())
         assertEquals(listOf("first", third, second), editor.rows.map { it.nodeId })
         assertTrue(editor.redo())
@@ -77,6 +130,7 @@ class VisualProjectStateTest {
 
         assertTrue(editor.deleteSelected())
         assertTrue(editor.rows.isEmpty())
+        assertEquals(null, editor.selectedNodeId)
         assertTrue(editor.undo())
         assertEquals(listOf("owner", "child"), editor.rows.map { it.nodeId })
         val inserted = editor.insertNoop("child")
@@ -153,10 +207,67 @@ class VisualProjectStateTest {
         assertEquals(listOf(owner, elseNode, thenNode), editor.rows.map { it.nodeId })
         assertEquals(listOf(0, 1, 1), editor.rows.map { it.depth })
         assertEquals(listOf(null, "else", "then"), editor.rows.map { it.childSlot })
+        val sibling = requireNotNull(editor.insertBlock(noop, JsonObject(), owner))
+        assertEquals(listOf(owner, elseNode, thenNode, sibling), editor.rows.map { it.nodeId })
+        assertEquals(listOf(0, 1, 1, 0), editor.rows.map { it.depth })
+        assertEquals(listOf(null, "else", "then", null), editor.rows.map { it.childSlot })
         val before = editor.currentSource
         editor.selectedNodeId = owner
         assertEquals(null, editor.insertBlock(noop, JsonObject(), owner, "missing"))
         assertEquals(before, editor.currentSource)
+    }
+
+    @Test
+    fun indentAndOutdentMoveWholeSubtreeWithoutChangingIdentity() {
+        val source = listOf(
+            node(
+                "owner", "block-root", "a0", "control.if", depth = 0,
+                childBlocks = "\"childBlocks\":{\"then\":\"block-then\",\"else\":\"block-else\"},",
+            ),
+            node("moving", "block-root", "b0", "task.noop", depth = 0),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.selectedNodeId = "moving"
+
+        assertTrue(editor.indentSelected("then"))
+        assertEquals(listOf("owner", "moving"), editor.rows.map { it.nodeId })
+        assertEquals(listOf(0, 1), editor.rows.map { it.depth })
+        assertEquals("then", editor.rows.last().childSlot)
+        assertTrue(editor.outdentSelected())
+        assertEquals(listOf(0, 0), editor.rows.map { it.depth })
+        assertEquals(listOf("owner", "moving"), editor.rows.map { it.nodeId })
+    }
+
+    @Test
+    fun subtreePasteAlwaysRegeneratesNodeAndBlockIdsAndRewritesInternalReferences() {
+        val source = listOf(
+            node(
+                "owner", "block-root", "a0", "control.if", depth = 0,
+                childBlocks = "\"childBlocks\":{\"then\":\"owned-then\",\"else\":\"owned-else\"},",
+            ).replace("\"args\":{}", "\"args\":{\"targetNodeId\":\"child\",\"label\":\"child\"}"),
+            node("child", "owned-then", "a0", "task.noop", parent = "owner", depth = 1),
+        ).joinToString("\n", postfix = "\n")
+        var id = 0
+        val editor = VisualEditorState.create(source, "block-root") { "copy-${++id}" }
+        editor.selectedNodeId = "owner"
+        val clipboard = requireNotNull(editor.copySelectedSubtree())
+
+        val copiedRoot = requireNotNull(editor.pasteSubtree(clipboard, afterNodeId = "owner"))
+        val copiedRows = editor.rows.filter { it.nodeId !in setOf("owner", "child") }
+        assertEquals(2, copiedRows.size)
+        assertNotEquals("owner", copiedRoot)
+        assertEquals(4, editor.rows.map { it.nodeId }.distinct().size)
+        assertNotEquals(
+            editor.rows.first { it.nodeId == "child" }.blockId,
+            copiedRows.first { it.depth == 1 }.blockId,
+        )
+        assertEquals(
+            copiedRows.first { it.depth == 1 }.nodeId,
+            editor.nodeArguments(copiedRoot)?.get("targetNodeId")?.asString,
+        )
+        assertEquals("child", editor.nodeArguments(copiedRoot)?.get("label")?.asString)
+        assertTrue(editor.undo())
+        assertEquals(listOf("owner", "child"), editor.rows.map { it.nodeId })
     }
 
     private fun node(

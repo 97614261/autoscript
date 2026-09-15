@@ -69,8 +69,13 @@
     },
     "capabilities": {
       "type": "array",
+      "maxItems": 64,
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" }
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
+      }
     },
     "design": {
       "type": "object",
@@ -83,11 +88,96 @@
         "orientationPolicy": { "enum": ["follow", "portrait", "landscape"] }
       }
     },
+    "runnerUi": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["description", "fields"],
+          "properties": {
+            "description": { "type": ["string", "null"], "maxLength": 512 },
+            "fields": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/runnerUiField" }
+            }
+          }
+        }
+      ]
+    },
     "ownerId": { "type": ["string", "null"] },
     "cloudId": { "type": ["string", "null"] },
     "syncState": { "type": ["string", "null"] },
     "signature": { "type": ["object", "null"] },
     "licensePolicy": { "type": ["object", "null"] }
+  },
+  "$defs": {
+    "runnerUiField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "kind", "required", "initialValue", "minimum", "maximum", "options"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "kind": { "enum": ["text", "integer", "boolean", "choice"] },
+        "required": { "type": "boolean" },
+        "initialValue": { "type": ["string", "integer", "boolean"] },
+        "minimum": { "type": ["integer", "null"] },
+        "maximum": { "type": ["integer", "null"] },
+        "options": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "text" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "initialValue": { "type": "string", "maxLength": 256 },
+              "minimum": { "type": "null" },
+              "maximum": { "type": "null" },
+              "options": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "integer" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "initialValue": { "type": "integer" },
+              "options": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "boolean" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "initialValue": { "type": "boolean" },
+              "minimum": { "type": "null" },
+              "maximum": { "type": "null" },
+              "options": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "choice" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "initialValue": { "type": "string" },
+              "minimum": { "type": "null" },
+              "maximum": { "type": "null" },
+              "options": { "minItems": 1 }
+            }
+          }
+        }
+      ]
+    }
   },
   "allOf": [
     {

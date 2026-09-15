@@ -53,6 +53,7 @@ data class ProjectManifestDocument(
     val resources: List<JsonObject> = emptyList(),
     val capabilities: List<String> = listOf("core.task"),
     val design: ProjectDesign = ProjectDesign(),
+    val runnerUi: JsonObject? = null,
     val ownerId: String? = null,
     val cloudId: String? = null,
     val syncState: String? = null,
@@ -64,6 +65,9 @@ data class ProjectSummary(
     val projectId: String,
     val name: String,
     val sourceMode: ProjectSourceMode,
+    val designWidth: Int,
+    val designHeight: Int,
+    val createdAt: Long,
     val updatedAt: Long,
     val lastOpenedAt: Long?,
 )

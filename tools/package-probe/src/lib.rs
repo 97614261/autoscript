@@ -8,6 +8,8 @@ const CENTRAL_SIGNATURE: u32 = 0x0201_4b50;
 const LOCAL_SIGNATURE: u32 = 0x0403_4b50;
 const APK_SIGNING_MAGIC: &[u8; 16] = b"APK Sig Block 42";
 const PAGE_ALIGNMENT: usize = 16 * 1024;
+const RELEASE_MANIFEST: &str = "assets/autoscript-release/release.json";
+const RELEASE_LUA: &str = "assets/autoscript-release/payload/main.lua";
 
 const REQUIRED_LIBRARIES: [(&str, u16); 2] = [
     ("lib/arm64-v8a/libengine_jni.so", 183),
@@ -36,6 +38,10 @@ pub enum ProbeError {
         actual: u16,
     },
     ApkSigningBlockMissing,
+    MissingEmbeddedReleaseManifest,
+    DuplicateEmbeddedReleaseManifest,
+    MissingEmbeddedReleaseLua,
+    DuplicateEmbeddedReleaseLua,
 }
 
 impl fmt::Display for ProbeError {
@@ -58,6 +64,7 @@ pub struct LibraryReport {
 pub struct PackageReport {
     pub libraries: Vec<LibraryReport>,
     pub has_apk_signing_block: bool,
+    pub has_embedded_release: bool,
 }
 
 #[derive(Debug)]
@@ -78,6 +85,16 @@ pub fn probe_path(path: &Path) -> Result<PackageReport, ProbeError> {
     probe_bytes(&bytes)
 }
 
+/// Reads an APK and additionally requires the immutable release manifest and Lua payload.
+///
+/// # Errors
+///
+/// Returns the normal package errors or a missing/duplicate embedded release error.
+pub fn probe_path_requiring_embedded_release(path: &Path) -> Result<PackageReport, ProbeError> {
+    let bytes = std::fs::read(path).map_err(|error| ProbeError::Io(error.to_string()))?;
+    probe_bytes_with_policy(&bytes, true)
+}
+
 /// Validates the ZIP and native-library properties needed by the Runner.
 ///
 /// # Errors
@@ -85,6 +102,13 @@ pub fn probe_path(path: &Path) -> Result<PackageReport, ProbeError> {
 /// Returns an error for missing ABIs, compressed or misaligned libraries, bad ELF metadata,
 /// unsupported ZIP layouts, or a missing APK v2+ signing block.
 pub fn probe_bytes(bytes: &[u8]) -> Result<PackageReport, ProbeError> {
+    probe_bytes_with_policy(bytes, false)
+}
+
+fn probe_bytes_with_policy(
+    bytes: &[u8],
+    require_embedded_release: bool,
+) -> Result<PackageReport, ProbeError> {
     let eocd = find_eocd(bytes).ok_or(ProbeError::EndOfCentralDirectoryMissing)?;
     if read_u16(bytes, eocd + 4)? != 0
         || read_u16(bytes, eocd + 6)? != 0
@@ -110,6 +134,28 @@ pub fn probe_bytes(bytes: &[u8]) -> Result<PackageReport, ProbeError> {
     }
 
     let central_entries = parse_central_entries(bytes, central_offset, entries, central_end)?;
+    let release_manifests = central_entries
+        .iter()
+        .filter(|entry| entry.name == RELEASE_MANIFEST)
+        .count();
+    let release_lua = central_entries
+        .iter()
+        .filter(|entry| entry.name == RELEASE_LUA)
+        .count();
+    if release_manifests > 1 {
+        return Err(ProbeError::DuplicateEmbeddedReleaseManifest);
+    }
+    if release_lua > 1 {
+        return Err(ProbeError::DuplicateEmbeddedReleaseLua);
+    }
+    if require_embedded_release || release_manifests == 1 || release_lua == 1 {
+        if release_manifests == 0 {
+            return Err(ProbeError::MissingEmbeddedReleaseManifest);
+        }
+        if release_lua == 0 {
+            return Err(ProbeError::MissingEmbeddedReleaseLua);
+        }
+    }
     let mut reports = Vec::with_capacity(REQUIRED_LIBRARIES.len());
     for (required_name, expected_machine) in REQUIRED_LIBRARIES {
         let matching: Vec<_> = central_entries
@@ -150,6 +196,7 @@ pub fn probe_bytes(bytes: &[u8]) -> Result<PackageReport, ProbeError> {
     Ok(PackageReport {
         libraries: reports,
         has_apk_signing_block: has_signing_block,
+        has_embedded_release: release_manifests == 1 && release_lua == 1,
     })
 }
 
@@ -264,7 +311,9 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, ProbeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{probe_bytes, ProbeError, APK_SIGNING_MAGIC, PAGE_ALIGNMENT};
+    use super::{
+        probe_bytes, probe_bytes_with_policy, ProbeError, APK_SIGNING_MAGIC, PAGE_ALIGNMENT,
+    };
 
     fn append_u16(bytes: &mut Vec<u8>, value: u16) {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -350,6 +399,7 @@ mod tests {
         let report = probe_bytes(&fixture()).expect("valid fixture");
         assert_eq!(report.libraries.len(), 2);
         assert!(report.has_apk_signing_block);
+        assert!(!report.has_embedded_release);
         assert!(report
             .libraries
             .iter()
@@ -376,5 +426,13 @@ mod tests {
             probe_bytes(&wrong_machine),
             Err(ProbeError::WrongElfMachine { .. })
         ));
+    }
+
+    #[test]
+    fn strict_release_policy_rejects_the_plain_runner_template() {
+        assert_eq!(
+            probe_bytes_with_policy(&fixture(), true),
+            Err(ProbeError::MissingEmbeddedReleaseManifest),
+        );
     }
 }

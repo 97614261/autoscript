@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -23,6 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,7 +46,9 @@ import androidx.compose.ui.unit.dp
 import com.autoscript.project.store.ProjectResourceKind
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectStore
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -63,7 +68,7 @@ internal fun ProjectSettingsButton(
         enabled = enabled,
         contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
     ) {
-        Text("资源 ${snapshot.manifest.resources.size}")
+        Text("项目设置")
     }
     if (visible) {
         ProjectSettingsDialog(
@@ -76,7 +81,7 @@ internal fun ProjectSettingsButton(
 }
 
 @Composable
-private fun ProjectSettingsDialog(
+internal fun ProjectSettingsDialog(
     snapshot: ProjectSnapshot,
     store: ProjectStore,
     onSnapshotChanged: (ProjectSnapshot) -> Unit,
@@ -90,6 +95,8 @@ private fun ProjectSettingsDialog(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var runnerUiEditorVisible by remember { mutableStateOf(false) }
+    var runnerUiDraft by remember { mutableStateOf("") }
     var selectedCapabilities by remember(snapshot.manifest.capabilities) {
         mutableStateOf(snapshot.manifest.capabilities.toSet())
     }
@@ -136,9 +143,14 @@ private fun ProjectSettingsDialog(
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("项目资源与能力") },
+        title = { Text("项目设置") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     TextButton(
                         enabled = !busy,
@@ -177,6 +189,33 @@ private fun ProjectSettingsDialog(
                             onDelete = { deletePath = resource.get("path").asString },
                         )
                     }
+                }
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Runner 动态配置", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            snapshot.manifest.runnerUi?.getAsJsonArray("fields")?.let {
+                                "已定义 ${it.size()} 个字段"
+                            } ?: "未启用",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(
+                        enabled = !busy,
+                        onClick = {
+                            error = null
+                            notice = null
+                            runnerUiDraft = snapshot.manifest.runnerUi?.let { PRETTY_JSON.toJson(it) }
+                                ?: RUNNER_UI_TEMPLATE
+                            runnerUiEditorVisible = true
+                        },
+                    ) { Text("编辑") }
                 }
                 HorizontalDivider()
                 Text("脚本能力", style = MaterialTheme.typography.titleSmall)
@@ -270,6 +309,76 @@ private fun ProjectSettingsDialog(
             },
             dismissButton = {
                 TextButton(onClick = { deletePath = null }) { Text("取消") }
+            },
+        )
+    }
+
+    if (runnerUiEditorVisible) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) runnerUiEditorVisible = false },
+            title = { Text("Runner 动态配置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "定义最终用户启动脚本前填写的表单。留空保存会删除表单；字段 ID 将作为 RunnerConfig 的键。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = runnerUiDraft,
+                        onValueChange = { runnerUiDraft = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp),
+                        enabled = !busy,
+                        label = { Text("runnerUi JSON") },
+                        textStyle = MaterialTheme.typography.bodySmall,
+                    )
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        val candidate = runCatching {
+                            runnerUiDraft.trim().takeIf(String::isNotEmpty)?.let { source ->
+                                JsonParser.parseString(source).also {
+                                    require(it.isJsonObject) { "runnerUi 必须是 JSON 对象" }
+                                }.asJsonObject
+                            }
+                        }.getOrElse { failure ->
+                            error = failure.message ?: "runnerUi JSON 无效"
+                            return@TextButton
+                        }
+                        busy = true
+                        error = null
+                        notice = null
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    val current = latestSnapshot
+                                    store.updateRunnerUi(
+                                        current.manifest.projectId,
+                                        candidate,
+                                        current.manifest.runnerUi,
+                                    )
+                                }
+                            }.onSuccess { updated ->
+                                onSnapshotChanged(updated)
+                                runnerUiEditorVisible = false
+                                notice = if (candidate == null) "动态配置已删除" else "动态配置已保存"
+                            }.onFailure { failure ->
+                                error = failure.message ?: "动态配置保存失败"
+                            }
+                            busy = false
+                        }
+                    },
+                ) { Text(if (busy) "保存中…" else "保存") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { runnerUiEditorVisible = false },
+                    enabled = !busy,
+                ) { Text("取消") }
             },
         )
     }
@@ -417,3 +526,27 @@ private fun formatBytes(bytes: Long): String = when {
     bytes >= 1024 -> String.format(Locale.ROOT, "%.1f KiB", bytes / 1024.0)
     else -> "$bytes B"
 }
+
+private val PRETTY_JSON = GsonBuilder()
+    .setPrettyPrinting()
+    .disableHtmlEscaping()
+    .serializeNulls()
+    .create()
+
+private val RUNNER_UI_TEMPLATE = """
+{
+  "description": "运行前配置",
+  "fields": [
+    {
+      "id": "delayMs",
+      "label": "等待毫秒",
+      "kind": "integer",
+      "required": true,
+      "initialValue": 1000,
+      "minimum": 0,
+      "maximum": 60000,
+      "options": []
+    }
+  ]
+}
+""".trimIndent()

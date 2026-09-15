@@ -530,6 +530,7 @@ impl EngineSession {
         &mut self,
         source: &[u8],
         chunk_name: &str,
+        capabilities: &[String],
     ) -> Result<TaskToken, EngineSessionError> {
         if self.root_task.is_some() {
             return Err(EngineSessionError::AlreadyStarted);
@@ -537,6 +538,9 @@ impl EngineSession {
         if self.control.state() != EngineState::Running {
             return Err(EngineSessionError::NotRunning);
         }
+        self.executor
+            .set_allowed_capabilities(capabilities)
+            .map_err(|error| EngineSessionError::Executor(format!("{error:?}")))?;
         let task = self
             .executor
             .start_entry_chunk(source, chunk_name)
@@ -566,6 +570,42 @@ impl EngineSession {
         self.next = report.next;
         self.update_terminal_state()?;
         Ok(report)
+    }
+
+    /// Pauses business execution without blocking stop control or host request timeouts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is not running or the scheduler cannot pause safely.
+    pub fn pause(&mut self, boot_time_nanos: u64) -> Result<(), EngineSessionError> {
+        if self.control.state() != EngineState::Running || self.root_task.is_none() {
+            return Err(EngineSessionError::NotRunning);
+        }
+        self.clock.set(MonoTime::from_nanos(boot_time_nanos));
+        self.next = self
+            .executor
+            .pause()
+            .map_err(|error| EngineSessionError::Executor(format!("{error:?}")))?;
+        self.control.transition(EngineState::Paused)?;
+        Ok(())
+    }
+
+    /// Resumes a paused session and makes newly runnable work visible to the Android pump.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is not paused or the scheduler cannot resume safely.
+    pub fn resume(&mut self, boot_time_nanos: u64) -> Result<(), EngineSessionError> {
+        if self.control.state() != EngineState::Paused {
+            return Err(EngineSessionError::NotRunning);
+        }
+        self.clock.set(MonoTime::from_nanos(boot_time_nanos));
+        self.next = self
+            .executor
+            .resume()
+            .map_err(|error| EngineSessionError::Executor(format!("{error:?}")))?;
+        self.control.transition(EngineState::Running)?;
+        Ok(())
     }
 
     /// Stops input first, then atomically cancels and closes all Lua tasks.
@@ -663,6 +703,7 @@ mod tests {
             .start(
                 b"return function() local s=System.getScreenSize(); session_result=s.width+s.height end",
                 "session",
+                &["device.display".to_owned()],
             )
             .expect("start");
         session.pump(1).expect("pump");
@@ -681,6 +722,7 @@ mod tests {
             .start(
                 b"return function() error('vision assertion failed', 0) end",
                 "failure",
+                &[],
             )
             .expect("start");
 
@@ -739,10 +781,56 @@ mod tests {
         let mut session =
             EngineSession::new(720, 1280, EngineSessionConfig::default()).expect("session");
         session
-            .start(b"return function() Task.sleep(60000) end", "sleep")
+            .start(
+                b"return function() Task.sleep(60000) end",
+                "sleep",
+                &["core.task".to_owned()],
+            )
             .expect("start");
         session.pump(10).expect("reach sleep");
         session.stop(11).expect("stop");
         assert_eq!(session.state(), EngineState::Stopped);
+    }
+
+    #[test]
+    fn pause_and_resume_preserve_the_session_and_allow_priority_stop() {
+        let mut session =
+            EngineSession::new(720, 1280, EngineSessionConfig::default()).expect("session");
+        session
+            .start(
+                b"return function() Task.sleep(60000) end",
+                "pause",
+                &["core.task".to_owned()],
+            )
+            .expect("start");
+        session.pump(10).expect("reach sleep");
+        session.pause(20).expect("pause");
+        assert_eq!(session.state(), EngineState::Paused);
+        session
+            .pump(1_000_000)
+            .expect("pump host timeouts while paused");
+        assert_eq!(session.state(), EngineState::Paused);
+        session.resume(1_000_010).expect("resume");
+        assert_eq!(session.state(), EngineState::Running);
+        session.stop(1_000_020).expect("priority stop");
+        assert_eq!(session.state(), EngineState::Stopped);
+    }
+
+    #[test]
+    fn undeclared_host_capability_fails_the_lua_task() {
+        let mut session =
+            EngineSession::new(720, 1280, EngineSessionConfig::default()).expect("session");
+        session
+            .start(b"return function() Task.sleep(1) end", "denied", &[])
+            .expect("start");
+
+        session.pump(1).expect("pump");
+
+        assert_eq!(session.state(), EngineState::Failed);
+        assert!(session
+            .root_failure()
+            .expect("capability failure")
+            .message
+            .contains("CAPABILITY_DENIED"));
     }
 }

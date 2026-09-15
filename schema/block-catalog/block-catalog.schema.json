@@ -25,7 +25,7 @@
         "properties": {
           "path": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
           "label": { "type": "string", "minLength": 1, "maxLength": 64 },
-          "editor": { "enum": ["boolean", "integer", "number", "string", "scalar", "point", "rect", "color", "multi_color_samples", "flow_reference", "flow_arguments", "enum", "resource"] },
+          "editor": { "enum": ["boolean", "integer", "integer_enum", "number", "string", "scalar", "point", "rect", "color", "multi_color_samples", "legacy_pattern", "legacy_fixed_pattern", "legacy_color_group", "legacy_region", "flow_reference", "flow_arguments", "enum", "resource"] },
           "required": { "type": "boolean" },
           "defaultValue": { "type": "string" },
           "resourceKind": { "enum": ["image", "glyph_dictionary"] },

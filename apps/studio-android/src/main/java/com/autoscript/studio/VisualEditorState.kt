@@ -2,6 +2,8 @@ package com.autoscript.studio
 
 import com.autoscript.studio.generated.BlockContract
 import com.google.gson.JsonNull
+import com.google.gson.JsonElement
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.util.UUID
@@ -51,6 +53,33 @@ internal class VisualEditorState private constructor(
         intoChildBlockName = intoChildBlockName,
     )
 
+    fun replaceSelectedBlock(contract: BlockContract, args: JsonObject): Boolean {
+        val selected = selectedNodeId ?: return false
+        val document = editableDocument() ?: return false
+        val node = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
+        val removedNodeIds = mutableSetOf<String>()
+        fun collectBlock(blockId: String) {
+            document.nodes.filter { it.blockId == blockId }.forEach { child ->
+                if (removedNodeIds.add(child.nodeId)) child.childBlocks.values.forEach(::collectBlock)
+            }
+        }
+        node.childBlocks.values.forEach(::collectBlock)
+        document.nodes.removeAll { it.nodeId in removedNodeIds }
+        val usedBlockIds = document.nodes.flatMapTo(mutableSetOf()) { candidate ->
+            listOf(candidate.blockId) + candidate.childBlocks.values
+        }.apply { add(rootBlockId) }
+        val childBlocks = contract.childBlocks.associateWith {
+            uniqueId("block", usedBlockIds).also(usedBlockIds::add)
+        }
+        node.json.addProperty("kind", contract.kind)
+        node.json.addProperty("nodeVersion", contract.nodeVersion)
+        node.json.add("args", args.deepCopy())
+        if (childBlocks.isEmpty()) node.json.remove("childBlocks") else {
+            node.json.add("childBlocks", JsonObject().apply { childBlocks.forEach(::addProperty) })
+        }
+        return commit(document)
+    }
+
     fun insertFlowCall(
         targetFlowId: String,
         arguments: JsonObject = JsonObject(),
@@ -65,6 +94,8 @@ internal class VisualEditorState private constructor(
 
     fun deleteSelected(): Boolean {
         val selected = selectedNodeId ?: return false
+        val previousRows = rows
+        val previousIndex = previousRows.indexOfFirst { it.nodeId == selected }
         val document = editableDocument() ?: return false
         val root = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
         val ownedBlocks = mutableSetOf<String>()
@@ -79,8 +110,14 @@ internal class VisualEditorState private constructor(
         }
         collect(root)
         document.nodes.removeAll { it.nodeId in removedNodes }
-        selectedNodeId = null
-        return commit(document)
+        if (!commit(document)) return false
+        val remainingRows = rows
+        selectedNodeId = when {
+            remainingRows.isEmpty() -> null
+            previousIndex > 0 -> remainingRows[(previousIndex - 1).coerceAtMost(remainingRows.lastIndex)].nodeId
+            else -> remainingRows.first().nodeId
+        }
+        return true
     }
 
     fun moveSelected(offset: Int): Boolean {
@@ -98,6 +135,123 @@ internal class VisualEditorState private constructor(
         }
         rebalance(reordered)
         return commit(document)
+    }
+
+    fun indentSelected(childBlockName: String? = null): Boolean {
+        val selected = selectedNodeId ?: return false
+        val document = editableDocument() ?: return false
+        val node = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
+        val siblings = document.nodes.filter { it.blockId == node.blockId }.sortedBy { it.orderKey }
+        val index = siblings.indexOfFirst { it.nodeId == selected }
+        val owner = siblings.getOrNull(index - 1) ?: return false
+        val targetBlock = childBlockName?.let(owner.childBlocks::get)
+            ?: owner.childBlocks.entries.sortedBy { it.key }.firstOrNull()?.value
+            ?: return false
+        val targetSiblings = document.nodes.filter { it.blockId == targetBlock }.sortedBy { it.orderKey }
+        val key = appendOrderKey(targetSiblings) ?: return false
+        node.json.addProperty("blockId", targetBlock)
+        node.json.addProperty("parentId", owner.nodeId)
+        node.orderKey = key
+        return commit(document)
+    }
+
+    fun outdentSelected(): Boolean {
+        val selected = selectedNodeId ?: return false
+        val document = editableDocument() ?: return false
+        val node = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
+        val owner = node.parentId?.let { parent -> document.nodes.firstOrNull { it.nodeId == parent } }
+            ?: return false
+        val destination = document.nodes.filter { it.blockId == owner.blockId }.sortedBy { it.orderKey }
+        val ownerIndex = destination.indexOfFirst { it.nodeId == owner.nodeId }
+        if (ownerIndex < 0) return false
+        var key = between(owner.orderKey, destination.getOrNull(ownerIndex + 1)?.orderKey)
+        if (key == null) {
+            rebalance(destination)
+            key = between(owner.orderKey, destination.getOrNull(ownerIndex + 1)?.orderKey) ?: return false
+        }
+        node.json.addProperty("blockId", owner.blockId)
+        node.json.add("parentId", owner.parentId?.let { com.google.gson.JsonPrimitive(it) } ?: JsonNull.INSTANCE)
+        node.orderKey = key
+        return commit(document)
+    }
+
+    fun copySelectedSubtree(): VisualSubtreeClipboard? {
+        val selected = selectedNodeId ?: return null
+        val document = editableDocument() ?: return null
+        val root = document.nodes.firstOrNull { it.nodeId == selected } ?: return null
+        val included = linkedSetOf(root.nodeId)
+        fun collect(owner: EditableNode) {
+            owner.childBlocks.values.forEach { blockId ->
+                document.nodes.filter { it.blockId == blockId }.sortedBy { it.orderKey }.forEach { child ->
+                    if (included.add(child.nodeId)) collect(child)
+                }
+            }
+        }
+        collect(root)
+        return VisualSubtreeClipboard(
+            rootNodeId = root.nodeId,
+            nodes = document.nodes.filter { it.nodeId in included }.map { it.json.deepCopy() },
+        )
+    }
+
+    fun pasteSubtree(
+        clipboard: VisualSubtreeClipboard,
+        afterNodeId: String? = selectedNodeId,
+        intoChildBlockName: String? = null,
+    ): String? {
+        val document = editableDocument() ?: return null
+        val sourceNodes = clipboard.nodes.map(::EditableNode)
+        val sourceRoot = sourceNodes.singleOrNull { it.nodeId == clipboard.rootNodeId } ?: return null
+        val selected = afterNodeId?.let { id -> document.nodes.firstOrNull { it.nodeId == id } }
+        val targetChildBlock = intoChildBlockName?.let { selected?.childBlocks?.get(it) }
+            ?: if (intoChildBlockName == null) null else return null
+        val after = if (targetChildBlock == null) selected else null
+        val targetBlock = targetChildBlock ?: after?.blockId ?: rootBlockId
+        val targetParent = if (targetChildBlock != null) selected?.nodeId else after?.parentId
+        val siblings = document.nodes.filter { it.blockId == targetBlock }.sortedBy { it.orderKey }
+        val insertionIndex = after?.let { sibling ->
+            siblings.indexOfFirst { it.nodeId == sibling.nodeId }.takeIf { it >= 0 }?.plus(1)
+        } ?: siblings.size
+        var rootOrder = between(
+            siblings.getOrNull(insertionIndex - 1)?.orderKey,
+            siblings.getOrNull(insertionIndex)?.orderKey,
+        )
+        if (rootOrder == null) {
+            rebalance(siblings)
+            rootOrder = between(
+                siblings.getOrNull(insertionIndex - 1)?.orderKey,
+                siblings.getOrNull(insertionIndex)?.orderKey,
+            ) ?: return null
+        }
+
+        val existingNodeIds = document.nodes.mapTo(mutableSetOf(), EditableNode::nodeId)
+        val existingBlockIds = document.nodes.flatMapTo(mutableSetOf()) { node ->
+            listOf(node.blockId) + node.childBlocks.values
+        }.apply { add(rootBlockId) }
+        val nodeIds = sourceNodes.associate { source ->
+            source.nodeId to uniqueId("node", existingNodeIds).also(existingNodeIds::add)
+        }
+        val ownedBlocks = sourceNodes.flatMap { it.childBlocks.values }.distinct()
+        val blockIds = ownedBlocks.associateWith {
+            uniqueId("block", existingBlockIds).also(existingBlockIds::add)
+        }
+        val references = nodeIds + blockIds
+        val copies = sourceNodes.map { source ->
+            val json = rewriteDeclaredJsonReferences(source.json, references).asJsonObject
+            json.addProperty("nodeId", nodeIds.getValue(source.nodeId))
+            if (source.nodeId == sourceRoot.nodeId) {
+                json.addProperty("blockId", targetBlock)
+                json.add("parentId", targetParent?.let { com.google.gson.JsonPrimitive(it) } ?: JsonNull.INSTANCE)
+                json.addProperty("orderKey", rootOrder)
+            } else {
+                json.addProperty("blockId", blockIds[source.blockId] ?: return null)
+                json.addProperty("parentId", nodeIds[source.parentId] ?: return null)
+            }
+            EditableNode(json)
+        }
+        document.nodes += copies
+        if (!commit(document)) return null
+        return nodeIds.getValue(sourceRoot.nodeId).also { selectedNodeId = it }
     }
 
     fun updateArguments(nodeId: String, arguments: JsonObject): Boolean {
@@ -215,6 +369,15 @@ internal class VisualEditorState private constructor(
         error("无法生成唯一节点 ID")
     }
 
+    private fun appendOrderKey(siblings: List<EditableNode>): String? {
+        var key = between(siblings.lastOrNull()?.orderKey, null)
+        if (key == null) {
+            rebalance(siblings)
+            key = between(siblings.lastOrNull()?.orderKey, null)
+        }
+        return key
+    }
+
     private fun editableDocument(): EditableDocument? =
         if (isReadOnly) null else parseDocument(currentSource, rootBlockId)?.editable
 
@@ -252,6 +415,41 @@ internal class VisualEditorState private constructor(
 
         private const val MAX_HISTORY = 100
     }
+}
+
+internal data class VisualSubtreeClipboard(
+    val rootNodeId: String,
+    val nodes: List<JsonObject>,
+)
+
+private fun rewriteDeclaredJsonReferences(
+    element: JsonElement,
+    replacements: Map<String, String>,
+    fieldName: String? = null,
+): JsonElement = when {
+    element.isJsonObject -> JsonObject().apply {
+        element.asJsonObject.entrySet().forEach { (name, value) ->
+            if (name == "childBlocks" && value.isJsonObject) {
+                add(name, JsonObject().apply {
+                    value.asJsonObject.entrySet().forEach { (slot, block) ->
+                        val original = block.asString
+                        addProperty(slot, replacements[original] ?: original)
+                    }
+                })
+            } else {
+                add(name, rewriteDeclaredJsonReferences(value, replacements, name))
+            }
+        }
+    }
+    element.isJsonArray -> JsonArray().apply {
+        element.asJsonArray.forEach { add(rewriteDeclaredJsonReferences(it, replacements, fieldName)) }
+    }
+    element.isJsonPrimitive && element.asJsonPrimitive.isString &&
+        fieldName?.let { it == "nodeId" || it == "parentId" || it == "blockId" || it.endsWith("NodeId") || it.endsWith("BlockId") } == true -> {
+        val value = element.asString
+        replacements[value]?.let { com.google.gson.JsonPrimitive(it) } ?: element.deepCopy()
+    }
+    else -> element.deepCopy()
 }
 
 private class EditableNode(val json: JsonObject) {

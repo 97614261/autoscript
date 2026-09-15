@@ -13,6 +13,7 @@ import com.google.gson.JsonParser
 internal data class RuntimeProjectPlan(
     val luaSource: ByteArray,
     val resources: List<RuntimeProjectResource>,
+    val capabilities: List<String>,
     val designWidth: Int,
     val designHeight: Int,
     val scaleMode: Int,
@@ -78,9 +79,16 @@ internal data class RuntimeProjectPlan(
                 )
             }.sortedBy(RuntimeProjectResource::path)
             val design = snapshot.manifest.design
+            val capabilities = snapshot.manifest.capabilities.sorted()
+            require(capabilities.size <= MAX_PROJECT_CAPABILITIES) { "项目能力数量超过64" }
+            require(capabilities.distinct().size == capabilities.size) { "项目能力声明重复" }
+            require(capabilities.all { it.length <= 128 && CAPABILITY.matches(it) }) {
+                "项目能力声明格式无效"
+            }
             return RuntimeProjectPlan(
                 luaSource = luaSource,
                 resources = resources,
+                capabilities = capabilities,
                 designWidth = design.width,
                 designHeight = design.height,
                 scaleMode = when (design.scaleMode) {
@@ -135,5 +143,7 @@ internal data class RuntimeProjectPlan(
 
         private const val MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024
         private const val MAX_RECORD_BYTES = 64 * 1024
+        private const val MAX_PROJECT_CAPABILITIES = 64
+        private val CAPABILITY = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+")
     }
 }

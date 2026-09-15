@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/legacy.duodianzhaose/1/legacy.duodianzhaose.schema.json",
+  "title": "legacy.duodianzhaose node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "legacy.duodianzhaose" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "region",
+        "pattern",
+        "direction",
+        "minimumMatchPercent",
+        "resultVariable",
+        "countVariable",
+        "foundVariable",
+        "xVariable",
+        "yVariable"
+      ],
+      "properties": {
+        "frameVariable": { "$ref": "#/$defs/variable" },
+        "region": { "$ref": "#/$defs/legacyRegion" },
+        "pattern": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 65,
+          "items": { "$ref": "#/$defs/relativeSample" },
+          "description": "第一项是锚点，其偏移必须为 0,0；其余为有符号相对偏移色。"
+        },
+        "direction": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "minimumMatchPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "resultVariable": { "$ref": "#/$defs/variable" },
+        "countVariable": { "$ref": "#/$defs/variable" },
+        "foundVariable": { "$ref": "#/$defs/variable" },
+        "xVariable": { "$ref": "#/$defs/variable" },
+        "yVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "channelTolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+    "relativeSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dx", "dy", "rgb", "toleranceRed", "toleranceGreen", "toleranceBlue"],
+      "properties": {
+        "dx": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "dy": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "rgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "toleranceRed": { "$ref": "#/$defs/channelTolerance" },
+        "toleranceGreen": { "$ref": "#/$defs/channelTolerance" },
+        "toleranceBlue": { "$ref": "#/$defs/channelTolerance" }
+      }
+    },
+    "legacyRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "width", "height"],
+      "properties": {
+        "left": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "top": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+      },
+      "description": "旧版 ROI 使用起点加宽高，不使用半开矩形。"
+    }
+  }
+}

@@ -28,7 +28,11 @@ class NativeEngineBridge private constructor() {
             draft: ByteArray,
         ): String?
         @JvmStatic external fun nativeReset(handle: Long, width: Int, height: Int): Int
-        @JvmStatic external fun nativeStart(handle: Long, source: ByteArray): Int
+        @JvmStatic external fun nativeStart(
+            handle: Long,
+            source: ByteArray,
+            capabilities: Array<String>,
+        ): Int
         @JvmStatic external fun nativePump(handle: Long, bootNanos: Long): Int
         @JvmStatic external fun nativeUpdateDisplay(
             handle: Long,
@@ -44,6 +48,8 @@ class NativeEngineBridge private constructor() {
             scaleMode: Int,
         ): Int
         @JvmStatic external fun nativeStop(handle: Long, bootNanos: Long): Int
+        @JvmStatic external fun nativePause(handle: Long, bootNanos: Long): Int
+        @JvmStatic external fun nativeResume(handle: Long, bootNanos: Long): Int
         @JvmStatic external fun nativeAttachRoot(
             handle: Long,
             socketPath: String,

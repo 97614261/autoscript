@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1, "kind": "legacy.duodianbise", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/legacy.duodianbise/1/legacy.duodianbise.schema.json",
+  "title": "旧版多点比色", "category": "vision", "summary": "按旧版绝对坐标点集和百分比向上取整规则比色，匹配返回1。",
+  "searchTerms": ["duodianbise", "多点比色", "旧版", "legacy", "固定坐标", "百分比"],
+  "requiredCapabilities": ["vision.pixel.legacy"], "childBlocks": [],
+  "properties": [
+    { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
+    { "path": "pattern", "label": "固定坐标色(x,y,#RRGGBB,dr,dg,db;…)", "editor": "legacy_fixed_pattern", "required": true, "defaultValue": "0,0,#FFFFFF,0,0,0" },
+    { "path": "minimumMatchPercent", "label": "最低匹配百分比", "editor": "integer", "required": true, "defaultValue": "100" },
+    { "path": "resultVariable", "label": "结果变量(1或0)", "editor": "string", "required": true, "defaultValue": "legacyMatch" }
+  ], "migrations": []
+}

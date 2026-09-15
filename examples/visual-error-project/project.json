@@ -1,0 +1,26 @@
+{
+  "formatVersion": 2,
+  "flowSchemaVersion": 1,
+  "runtimeApi": "1.5",
+  "projectId": "visual-error-smoke",
+  "name": "Visual Error Smoke",
+  "sourceMode": "visual",
+  "entryFlowId": "main",
+  "flows": [
+    {
+      "flowId": "main",
+      "path": "visual/flows/main.jsonl",
+      "rootBlockId": "block-main",
+      "params": [],
+      "returns": null
+    }
+  ],
+  "resources": [],
+  "capabilities": [],
+  "design": {
+    "width": 720,
+    "height": 1280,
+    "scaleMode": "letterbox",
+    "orientationPolicy": "follow"
+  }
+}

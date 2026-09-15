@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 flow-ir = { path = "../../engine/crates/flow-ir" }
 lua-runtime = { path = "../../engine/crates/lua-runtime" }
+pixel-vision = { path = "../../engine/crates/pixel-vision" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

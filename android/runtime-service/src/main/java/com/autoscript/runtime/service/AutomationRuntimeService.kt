@@ -1,5 +1,9 @@
 package com.autoscript.runtime.service
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.res.Configuration
@@ -26,6 +30,8 @@ import com.autoscript.runtime.api.VisualCompileReply
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.SecureRandom
+import java.util.ArrayDeque
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -38,11 +44,17 @@ class AutomationRuntimeService : Service() {
     private val rootStateRef = AtomicReference(RootDaemonController.State.STOPPED)
     private val stateListeners = RemoteCallbackList<IRuntimeStateListener>()
     private val lastNotifiedStateRef = AtomicInteger(UNPUBLISHED_STATE)
+    private val lastNotifiedRootStateRef = AtomicInteger(UNPUBLISHED_STATE)
+    private val foregroundActive = AtomicBoolean(false)
+    private val floatingControlEnabled = AtomicBoolean(true)
+    private val runtimeLogs = ArrayDeque<String>(MAX_RUNTIME_LOG_ENTRIES)
+    private val runtimeLogLock = Any()
     private val sessionRandom = SecureRandom()
     private lateinit var engineThread: HandlerThread
     private lateinit var engineHandler: Handler
     private lateinit var rootDaemonController: RootDaemonController
     private lateinit var nativeWakeListener: NativeWakeListener
+    private lateinit var overlayController: RuntimeOverlayController
 
     private val pump = object : Runnable {
         override fun run() {
@@ -52,6 +64,17 @@ class AutomationRuntimeService : Service() {
             NativeEngineBridge.nativePump(handle, now)
             notifyRuntimeStateIfChanged()
             scheduleFromNative(handle, now)
+        }
+    }
+
+    private val stopStateObserver = object : Runnable {
+        override fun run() {
+            val handle = nativeHandleRef.get()
+            if (handle == 0L) return
+            notifyRuntimeStateIfChanged()
+            if (NativeEngineBridge.nativeState(handle) == RuntimeProtocol.STATE_STOPPING) {
+                engineHandler.postDelayed(this, STOP_STATE_OBSERVER_DELAY_MILLIS)
+            }
         }
     }
 
@@ -66,12 +89,15 @@ class AutomationRuntimeService : Service() {
             else NativeEngineBridge.nativeState(handle)
         }
 
+        override fun getRootStateCode(): Int = currentRootStateCode()
+
         override fun registerStateListener(listener: IRuntimeStateListener) {
             stateListeners.register(listener)
             try {
                 listener.onRuntimeStateChanged(
                     sessionGenerationRef.get(),
                     currentRuntimeState(),
+                    currentRootStateCode(),
                     currentRuntimeDiagnostic(),
                 )
             } catch (_: RemoteException) {
@@ -182,7 +208,10 @@ class AutomationRuntimeService : Service() {
             val handle = nativeHandleRef.get()
             if (handle == 0L) return RuntimeProtocol.PREPARE_ENGINE_ERROR
             return when (currentRuntimeState()) {
-                RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_STOPPING -> {
+                RuntimeProtocol.STATE_RUNNING,
+                RuntimeProtocol.STATE_PAUSED,
+                RuntimeProtocol.STATE_STOPPING,
+                -> {
                     RuntimeProtocol.PREPARE_BUSY
                 }
                 RuntimeProtocol.STATE_IDLE,
@@ -269,6 +298,7 @@ class AutomationRuntimeService : Service() {
             designWidth: Int,
             designHeight: Int,
             scaleMode: Int,
+            capabilities: Array<out String>,
         ): Int {
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.START_SESSION_MISMATCH
@@ -282,6 +312,7 @@ class AutomationRuntimeService : Service() {
             ) {
                 return RuntimeProtocol.START_INVALID_PROJECT
             }
+            if (!validCapabilities(capabilities)) return RuntimeProtocol.START_INVALID_PROJECT
             if (rootStateRef.get() != RootDaemonController.State.READY) {
                 return RuntimeProtocol.START_BACKEND_NOT_READY
             }
@@ -298,9 +329,19 @@ class AutomationRuntimeService : Service() {
             ) {
                 return RuntimeProtocol.START_INVALID_PROJECT
             }
-            if (NativeEngineBridge.nativeStart(handle, generatedLuaModule) != 0) {
+            if (!ensureForegroundForRun()) {
+                return RuntimeProtocol.START_FOREGROUND_UNAVAILABLE
+            }
+            if (NativeEngineBridge.nativeStart(
+                    handle,
+                    generatedLuaModule,
+                    capabilities.toList().toTypedArray(),
+                ) != 0
+            ) {
+                finishForegroundRun()
                 return RuntimeProtocol.START_INVALID_SCRIPT
             }
+            synchronized(runtimeLogLock) { runtimeLogs.clear() }
             engineHandler.removeCallbacks(pump)
             engineHandler.post(pump)
             notifyRuntimeStateIfChanged()
@@ -314,30 +355,96 @@ class AutomationRuntimeService : Service() {
             engineHandler.removeCallbacks(pump)
             val handle = nativeHandleRef.get()
             if (handle != 0L) {
-                return if (NativeEngineBridge.nativeStop(
-                        handle,
-                        SystemClock.elapsedRealtimeNanos(),
-                    ) == 0
-                ) {
-                    notifyRuntimeStateIfChanged()
+                return if (stopNativeEngine()) {
                     RuntimeProtocol.STOP_ACCEPTED
                 } else {
                     RuntimeProtocol.STOP_ENGINE_ERROR
                 }
             }
+            finishForegroundRun()
             return RuntimeProtocol.STOP_ACCEPTED
+        }
+
+        override fun requestPause(requestId: Long, expectedGeneration: Long): Int {
+            if (expectedGeneration != sessionGenerationRef.get()) {
+                return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            }
+            if (currentRuntimeState() != RuntimeProtocol.STATE_RUNNING) {
+                return RuntimeProtocol.CONTROL_INVALID_STATE
+            }
+            return if (pauseNativeEngine()) {
+                RuntimeProtocol.CONTROL_ACCEPTED
+            } else {
+                RuntimeProtocol.CONTROL_ENGINE_ERROR
+            }
+        }
+
+        override fun requestResume(requestId: Long, expectedGeneration: Long): Int {
+            if (expectedGeneration != sessionGenerationRef.get()) {
+                return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            }
+            if (currentRuntimeState() != RuntimeProtocol.STATE_PAUSED) {
+                return RuntimeProtocol.CONTROL_INVALID_STATE
+            }
+            return if (resumeNativeEngine()) {
+                RuntimeProtocol.CONTROL_ACCEPTED
+            } else {
+                RuntimeProtocol.CONTROL_ENGINE_ERROR
+            }
+        }
+
+        override fun setFloatingControlEnabled(
+            requestId: Long,
+            expectedGeneration: Long,
+            enabled: Boolean,
+        ): Int {
+            if (expectedGeneration != sessionGenerationRef.get()) {
+                return RuntimeProtocol.SURFACE_SESSION_MISMATCH
+            }
+            if (enabled && !overlayController.canShow()) {
+                floatingControlEnabled.set(false)
+                overlayController.hide()
+                return RuntimeProtocol.SURFACE_PERMISSION_DENIED
+            }
+            floatingControlEnabled.set(enabled)
+            if (enabled && foregroundActive.get()) {
+                overlayController.show(currentRuntimeState())
+            } else if (!enabled) {
+                overlayController.hide()
+            }
+            return RuntimeProtocol.SURFACE_ACCEPTED
+        }
+
+        override fun getRecentRuntimeLogs(
+            expectedGeneration: Long,
+            maximumEntries: Int,
+        ): Array<String> {
+            if (expectedGeneration != sessionGenerationRef.get() || maximumEntries !in 1..100) {
+                return emptyArray()
+            }
+            return synchronized(runtimeLogLock) {
+                runtimeLogs.toList().takeLast(maximumEntries).toTypedArray()
+            }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        createNotificationChannel()
         engineThread = HandlerThread("autoscript-engine-control").apply { start() }
         engineHandler = Handler(engineThread.looper)
+        overlayController = RuntimeOverlayController(
+            this,
+            onPause = { engineHandler.post { pauseNativeEngine() } },
+            onResume = { engineHandler.post { resumeNativeEngine() } },
+            onStop = { engineHandler.post { stopNativeEngine() } },
+        )
         val displaySize = currentDisplaySize()
         nativeHandleRef.set(NativeEngineBridge.nativeCreate(displaySize.x, displaySize.y))
         sessionGenerationRef.set(newSessionGeneration())
         lastNotifiedStateRef.set(currentRuntimeState())
-        rootDaemonController = RootDaemonController(this, engineHandler, rootStateRef::set)
+        lastNotifiedRootStateRef.set(currentRootStateCode())
+        rootDaemonController = RootDaemonController(this, engineHandler, ::updateRootState)
         val handle = nativeHandleRef.get()
         if (handle != 0L) {
             nativeWakeListener = NativeWakeListener(
@@ -348,9 +455,23 @@ class AutomationRuntimeService : Service() {
             if (NativeEngineBridge.nativeSetWakeListener(handle, nativeWakeListener) == 0) {
                 engineHandler.post { rootDaemonController.start(handle) }
             } else {
-                rootStateRef.set(RootDaemonController.State.FAILED)
+                updateRootState(RootDaemonController.State.FAILED)
             }
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP_SCRIPT -> engineHandler.post {
+                if (!stopNativeEngine()) updateForegroundNotification()
+            }
+            ACTION_PAUSE_SCRIPT -> engineHandler.post { pauseNativeEngine() }
+            ACTION_RESUME_SCRIPT -> engineHandler.post { resumeNativeEngine() }
+            ACTION_KEEP_ALIVE, null -> {
+                if (foregroundActive.get()) updateForegroundNotification()
+            }
+        }
+        return START_NOT_STICKY
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -375,6 +496,8 @@ class AutomationRuntimeService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onDestroy() {
+        overlayController.hide()
+        removeForegroundNotification()
         engineHandler.removeCallbacksAndMessages(null)
         val handle = nativeHandleRef.getAndSet(0L)
         if (handle != 0L) {
@@ -393,23 +516,256 @@ class AutomationRuntimeService : Service() {
         else NativeEngineBridge.nativeState(handle)
     }
 
+    private fun currentRootStateCode(): Int = when (rootStateRef.get()) {
+        RootDaemonController.State.STOPPED -> RuntimeProtocol.ROOT_STOPPED
+        RootDaemonController.State.STARTING -> RuntimeProtocol.ROOT_STARTING
+        RootDaemonController.State.READY -> RuntimeProtocol.ROOT_READY
+        RootDaemonController.State.FAILED -> RuntimeProtocol.ROOT_FAILED
+    }
+
+    private fun updateRootState(state: RootDaemonController.State) {
+        rootStateRef.set(state)
+        notifyRuntimeStateIfChanged()
+    }
+
     @Synchronized
     private fun notifyRuntimeStateIfChanged() {
         val state = currentRuntimeState()
-        if (lastNotifiedStateRef.get() == state) return
+        val rootState = currentRootStateCode()
+        if (lastNotifiedStateRef.get() == state && lastNotifiedRootStateRef.get() == rootState) return
         lastNotifiedStateRef.set(state)
+        lastNotifiedRootStateRef.set(rootState)
+        appendRuntimeLog(state, rootState)
         val generation = sessionGenerationRef.get()
         val count = stateListeners.beginBroadcast()
         try {
             for (index in 0 until count) {
                 runCatching {
                     stateListeners.getBroadcastItem(index)
-                        .onRuntimeStateChanged(generation, state, currentRuntimeDiagnostic())
+                        .onRuntimeStateChanged(generation, state, rootState, currentRuntimeDiagnostic())
                 }
             }
         } finally {
             stateListeners.finishBroadcast()
         }
+        when (state) {
+            RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED -> {
+                overlayController.hide()
+                finishForegroundRun()
+            }
+            RuntimeProtocol.STATE_RUNNING,
+            RuntimeProtocol.STATE_PAUSED,
+            RuntimeProtocol.STATE_STOPPING,
+            -> {
+                updateForegroundNotification()
+                if (floatingControlEnabled.get()) overlayController.show(state)
+            }
+        }
+    }
+
+    private fun pauseNativeEngine(): Boolean {
+        val handle = nativeHandleRef.get()
+        if (handle == 0L || currentRuntimeState() != RuntimeProtocol.STATE_RUNNING) return false
+        val accepted = NativeEngineBridge.nativePause(
+            handle,
+            SystemClock.elapsedRealtimeNanos(),
+        ) == 0
+        if (accepted) {
+            engineHandler.removeCallbacks(pump)
+            engineHandler.post(pump)
+        }
+        return accepted
+    }
+
+    private fun resumeNativeEngine(): Boolean {
+        val handle = nativeHandleRef.get()
+        if (handle == 0L || currentRuntimeState() != RuntimeProtocol.STATE_PAUSED) return false
+        val accepted = NativeEngineBridge.nativeResume(
+            handle,
+            SystemClock.elapsedRealtimeNanos(),
+        ) == 0
+        if (accepted) {
+            engineHandler.removeCallbacks(pump)
+            engineHandler.post(pump)
+        }
+        return accepted
+    }
+
+    private fun stopNativeEngine(): Boolean {
+        engineHandler.removeCallbacks(pump)
+        engineHandler.removeCallbacks(stopStateObserver)
+        val handle = nativeHandleRef.get()
+        if (handle == 0L) {
+            finishForegroundRun()
+            return true
+        }
+        val stopped = NativeEngineBridge.nativeStop(
+            handle,
+            SystemClock.elapsedRealtimeNanos(),
+        ) == 0
+        if (stopped) {
+            notifyRuntimeStateIfChanged()
+            engineHandler.post(stopStateObserver)
+        }
+        return stopped
+    }
+
+    @Synchronized
+    private fun ensureForegroundForRun(): Boolean {
+        if (foregroundActive.get()) {
+            updateForegroundNotification()
+            return true
+        }
+        val keepAliveIntent = Intent(this, AutomationRuntimeService::class.java)
+            .setAction(ACTION_KEEP_ALIVE)
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(keepAliveIntent)
+            } else {
+                startService(keepAliveIntent)
+            }
+            startForeground(NOTIFICATION_ID, buildRuntimeNotification(RuntimeProtocol.STATE_IDLE))
+            foregroundActive.set(true)
+            if (floatingControlEnabled.get()) overlayController.show(RuntimeProtocol.STATE_IDLE)
+            true
+        }.getOrElse {
+            foregroundActive.set(false)
+            runCatching { stopService(keepAliveIntent) }
+            false
+        }
+    }
+
+    private fun updateForegroundNotification() {
+        if (!foregroundActive.get()) return
+        runCatching {
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                buildRuntimeNotification(currentRuntimeState()),
+            )
+        }
+    }
+
+    @Synchronized
+    private fun finishForegroundRun() {
+        if (!foregroundActive.getAndSet(false)) return
+        overlayController.hide()
+        removeForegroundNotification()
+        stopSelf()
+    }
+
+    private fun removeForegroundNotification() {
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        runCatching {
+            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            "脚本运行状态",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "显示本地自动化脚本的运行状态和停止入口"
+            setShowBadge(false)
+        }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun buildRuntimeNotification(state: Int): Notification {
+        val stopIntent = Intent(this, AutomationRuntimeService::class.java)
+            .setAction(ACTION_STOP_SCRIPT)
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            STOP_REQUEST_CODE,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val pauseAction = if (state == RuntimeProtocol.STATE_PAUSED) {
+            ACTION_RESUME_SCRIPT to "继续脚本"
+        } else {
+            ACTION_PAUSE_SCRIPT to "暂停脚本"
+        }
+        val pausePendingIntent = PendingIntent.getService(
+            this,
+            PAUSE_REQUEST_CODE,
+            Intent(this, AutomationRuntimeService::class.java).setAction(pauseAction.first),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.let {
+            PendingIntent.getActivity(
+                this,
+                CONTENT_REQUEST_CODE,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        val status = when (state) {
+            RuntimeProtocol.STATE_RUNNING -> "脚本运行中"
+            RuntimeProtocol.STATE_PAUSED -> "脚本已暂停"
+            RuntimeProtocol.STATE_STOPPING -> "脚本停止中"
+            else -> "正在启动脚本"
+        }
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        return builder
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(applicationInfo.loadLabel(packageManager))
+            .setContentText(status)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setContentIntent(contentIntent)
+            .apply {
+                if (state == RuntimeProtocol.STATE_RUNNING || state == RuntimeProtocol.STATE_PAUSED) {
+                    val icon = if (state == RuntimeProtocol.STATE_PAUSED) {
+                        android.R.drawable.ic_media_play
+                    } else {
+                        android.R.drawable.ic_media_pause
+                    }
+                    addAction(icon, pauseAction.second, pausePendingIntent)
+                }
+                addAction(android.R.drawable.ic_delete, "停止脚本", stopPendingIntent)
+            }
+            .build()
+    }
+
+    private fun appendRuntimeLog(state: Int, rootState: Int) {
+        val entry = "${SystemClock.elapsedRealtime()}ms · ${runtimeStateName(state)} · " +
+            "Root ${rootStateName(rootState)}"
+        synchronized(runtimeLogLock) {
+            while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
+            runtimeLogs.addLast(entry.take(MAX_RUNTIME_LOG_LENGTH))
+            if (state == RuntimeProtocol.STATE_FAILED) {
+                currentRuntimeDiagnostic()?.let { diagnostic ->
+                    while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
+                    runtimeLogs.addLast("错误 · ${diagnostic.take(MAX_RUNTIME_LOG_LENGTH - 5)}")
+                }
+            }
+        }
+    }
+
+    private fun runtimeStateName(state: Int): String = when (state) {
+        RuntimeProtocol.STATE_IDLE -> "空闲"
+        RuntimeProtocol.STATE_RUNNING -> "运行中"
+        RuntimeProtocol.STATE_PAUSED -> "已暂停"
+        RuntimeProtocol.STATE_STOPPING -> "停止中"
+        RuntimeProtocol.STATE_STOPPED -> "已停止"
+        RuntimeProtocol.STATE_FAILED -> "失败"
+        else -> "未知"
+    }
+
+    private fun rootStateName(state: Int): String = when (state) {
+        RuntimeProtocol.ROOT_STOPPED -> "未启动"
+        RuntimeProtocol.ROOT_STARTING -> "启动中"
+        RuntimeProtocol.ROOT_READY -> "已认证"
+        RuntimeProtocol.ROOT_FAILED -> "失败"
+        else -> "未知"
     }
 
     private fun scheduleFromNative(handle: Long, now: Long) {
@@ -576,6 +932,11 @@ class AutomationRuntimeService : Service() {
     private fun JSONObject.nullableString(name: String): String? =
         if (isNull(name)) null else optString(name).takeIf(String::isNotEmpty)
 
+    private fun validCapabilities(capabilities: Array<out String>): Boolean =
+        capabilities.size <= MAX_PROJECT_CAPABILITIES &&
+            capabilities.toSet().size == capabilities.size &&
+            capabilities.all { it.length <= MAX_CAPABILITY_LENGTH && CAPABILITY.matches(it) }
+
     private fun visualCompileReply(
         status: Int,
         generationId: String? = null,
@@ -610,16 +971,31 @@ class AutomationRuntimeService : Service() {
         const val MAX_DICTIONARY_BYTES = 8 * 1024 * 1024
         const val MAX_FLOW_BYTES = 64 * 1024 * 1024
         const val MAX_RUNTIME_DIAGNOSTIC_LENGTH = 4_096
+        const val MAX_PROJECT_CAPABILITIES = 64
+        const val MAX_CAPABILITY_LENGTH = 128
         const val MAX_DICTIONARY_PATH_LENGTH = 256
         const val DICTIONARY_READ_BUFFER_BYTES = 32 * 1024
         const val FLOW_READ_BUFFER_BYTES = 64 * 1024
         const val NANOS_PER_MILLISECOND = 1_000_000L
+        const val STOP_STATE_OBSERVER_DELAY_MILLIS = 16L
         const val NEXT_RUNNABLE = 0L
         const val NEXT_IDLE = -1L
         const val NEXT_STOPPED = -2L
         const val UNPUBLISHED_STATE = Int.MIN_VALUE
+        const val NOTIFICATION_CHANNEL_ID = "autoscript_runtime"
+        const val NOTIFICATION_ID = 0x4153
+        const val CONTENT_REQUEST_CODE = 0x4153
+        const val STOP_REQUEST_CODE = 0x4154
+        const val PAUSE_REQUEST_CODE = 0x4155
+        const val ACTION_KEEP_ALIVE = "com.autoscript.runtime.action.KEEP_ALIVE"
+        const val ACTION_STOP_SCRIPT = "com.autoscript.runtime.action.STOP_SCRIPT"
+        const val ACTION_PAUSE_SCRIPT = "com.autoscript.runtime.action.PAUSE_SCRIPT"
+        const val ACTION_RESUME_SCRIPT = "com.autoscript.runtime.action.RESUME_SCRIPT"
+        const val MAX_RUNTIME_LOG_ENTRIES = 200
+        const val MAX_RUNTIME_LOG_LENGTH = 512
         val PROJECT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         val FLOW_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+        val CAPABILITY = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+")
     }
 }
 

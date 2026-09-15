@@ -1,0 +1,28 @@
+{
+  "formatVersion": 2,
+  "flowSchemaVersion": 1,
+  "runtimeApi": "1.5",
+  "projectId": "visual-release-smoke",
+  "name": "Visual Release Smoke",
+  "sourceMode": "visual",
+  "entryFlowId": "main",
+  "flows": [
+    {
+      "flowId": "main",
+      "path": "visual/flows/main.jsonl",
+      "rootBlockId": "block-main",
+      "params": [],
+      "returns": null
+    }
+  ],
+  "resources": [],
+  "capabilities": [
+    "core.task"
+  ],
+  "design": {
+    "width": 720,
+    "height": 1280,
+    "scaleMode": "letterbox",
+    "orientationPolicy": "follow"
+  }
+}

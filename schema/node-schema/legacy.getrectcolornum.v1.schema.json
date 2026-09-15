@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/legacy.getrectcolornum/1/legacy.getrectcolornum.schema.json",
+  "title": "legacy.getrectcolornum node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "legacy.getrectcolornum" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frameVariable", "region", "colors", "resultVariable"],
+      "properties": {
+        "frameVariable": { "$ref": "#/$defs/variable" },
+        "region": { "$ref": "#/$defs/legacyRegion" },
+        "colors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/colorSpec" },
+          "description": "命中任一颜色即计数一次。"
+        },
+        "resultVariable": { "$ref": "#/$defs/variable" }
+      }
+    }
+  },
+  "$defs": {
+    "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "channelTolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+    "colorSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rgb", "toleranceRed", "toleranceGreen", "toleranceBlue"],
+      "properties": {
+        "rgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+        "toleranceRed": { "$ref": "#/$defs/channelTolerance" },
+        "toleranceGreen": { "$ref": "#/$defs/channelTolerance" },
+        "toleranceBlue": { "$ref": "#/$defs/channelTolerance" }
+      }
+    },
+    "legacyRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "width", "height"],
+      "properties": {
+        "left": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "top": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+      }
+    }
+  }
+}

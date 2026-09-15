@@ -9,6 +9,7 @@ interface IRuntimeService {
     int getProtocolVersion();
     long getSessionGeneration();
     int getRuntimeStateCode();
+    int getRootStateCode();
     void registerStateListener(IRuntimeStateListener listener);
     void unregisterStateListener(IRuntimeStateListener listener);
     ScriptValidationReply validateScript(long requestId, long expectedGeneration, String chunkName, in byte[] source);
@@ -17,6 +18,10 @@ interface IRuntimeService {
     int prepareProject(long requestId, long expectedGeneration);
     int registerTemplate(long requestId, long expectedGeneration, String assetPath, in ParcelFileDescriptor imageFile);
     int registerDictionary(long requestId, long expectedGeneration, String resourcePath, in ParcelFileDescriptor dictionaryFile);
-    int startScript(long requestId, long expectedGeneration, in byte[] generatedLuaModule, int designWidth, int designHeight, int scaleMode);
+    int startScript(long requestId, long expectedGeneration, in byte[] generatedLuaModule, int designWidth, int designHeight, int scaleMode, in String[] capabilities);
+    int requestPause(long requestId, long expectedGeneration);
+    int requestResume(long requestId, long expectedGeneration);
     int requestStop(long requestId, long expectedGeneration);
+    int setFloatingControlEnabled(long requestId, long expectedGeneration, boolean enabled);
+    String[] getRecentRuntimeLogs(long expectedGeneration, int maximumEntries);
 }
