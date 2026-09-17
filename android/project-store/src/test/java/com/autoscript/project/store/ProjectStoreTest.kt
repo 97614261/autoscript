@@ -11,6 +11,7 @@ import java.util.zip.ZipOutputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -458,6 +459,167 @@ class ProjectStoreTest {
             )
         }
         assertTrue(store.openProject(created.manifest.projectId).manifest.resources.isEmpty())
+    }
+
+    @Test
+    fun createsFlowWithChineseDisplayNameAndRenamesWithoutBreakingReferences() {
+        val created = store.createProject("源文件", ProjectSourceMode.VISUAL)
+        val projectId = created.manifest.projectId
+        val withChild = store.createFlow(projectId, "flow-a", setOf("main"), fileName = "默认名称1")
+        val child = withChild.manifest.flows.single { it.flowId == "flow-a" }
+        assertEquals("visual/flows/默认名称1.jsonl", child.path)
+        assertTrue(File(created.directory, child.path).isFile)
+
+        val main = withChild.flowSources.getValue("main").replace(
+            "\"kind\":\"task.noop\",\"nodeVersion\":1,\"depth\":0,\"args\":{}",
+            "\"kind\":\"flow.call\",\"nodeVersion\":1,\"depth\":0,\"args\":{\"targetFlowId\":\"flow-a\",\"arguments\":{}}",
+        )
+        store.saveFlow(projectId, "main", main, withChild.flowSources.getValue("main"))
+        File(created.directory, "generated").mkdirs()
+        File(created.directory, "generated/generation.json").writeText("old-generation")
+
+        val renamed = store.renameFlow(projectId, "flow-a", "主流程 v2.jsonl", setOf("main", "flow-a"))
+        assertEquals("visual/flows/主流程 v2.jsonl", renamed.manifest.flows.single { it.flowId == "flow-a" }.path)
+        assertFalse(File(created.directory, "visual/flows/默认名称1.jsonl").exists())
+        assertTrue(File(created.directory, "visual/flows/主流程 v2.jsonl").isFile)
+        assertEquals(withChild.flowSources.getValue("flow-a"), renamed.flowSources.getValue("flow-a"))
+        assertFalse(File(created.directory, "generated/generation.json").exists())
+        assertThrows(IllegalArgumentException::class.java) {
+            store.deleteFlow(projectId, "flow-a", setOf("main", "flow-a"))
+        }
+        assertEquals(setOf("main", "flow-a"), newStore().openProject(projectId).flowSources.keys)
+    }
+
+    @Test
+    fun rejectsIllegalFlowNamesAndConflicts() {
+        val created = store.createProject("非法名", ProjectSourceMode.VISUAL)
+        val projectId = created.manifest.projectId
+        // "名字 .jsonl" 去掉扩展名后名字真的以空格结尾，trim 拿不掉，必须拒绝；"   " 全空白等价于空名。
+        listOf("分组/文件", ".hidden", "尾点.", "名字 .jsonl", "a:b", "", "   ", "カタカナ", "长".repeat(65))
+            .forEach { name ->
+                assertThrows("name=$name", IllegalArgumentException::class.java) {
+                    store.createFlow(projectId, "flow-x", setOf("main"), fileName = name)
+                }
+            }
+        assertEquals(setOf("main"), store.openProject(projectId).flowSources.keys)
+        assertFalse(File(created.directory, "visual/flows").listFiles().orEmpty().any { it.name != "main.jsonl" })
+
+        // 首尾空白是输入规范化，不是非法名：UI 会 trim，Store 再 trim 一次，落盘的是规范名。
+        val trimmed = store.createFlow(projectId, "flow-trim", setOf("main"), fileName = "  带空格  ")
+        assertEquals("visual/flows/带空格.jsonl", trimmed.manifest.flows.single { it.flowId == "flow-trim" }.path)
+
+        store.createFlow(projectId, "flow-a", setOf("main", "flow-trim"), fileName = "同名")
+        assertThrows(IllegalArgumentException::class.java) {
+            store.createFlow(projectId, "flow-b", setOf("main", "flow-trim", "flow-a"), fileName = "同名.jsonl")
+        }
+        assertThrows(ProjectManifestConflictException::class.java) {
+            store.renameFlow(projectId, "flow-a", "改名", setOf("main"))
+        }
+        assertEquals(setOf("main", "flow-trim", "flow-a"), store.openProject(projectId).flowSources.keys)
+    }
+
+    @Test
+    fun copiesFlowWithFreshIdentitiesAndKeepsStructure() {
+        val created = store.createProject("另存为", ProjectSourceMode.VISUAL)
+        val projectId = created.manifest.projectId
+        File(created.directory, "generated").mkdirs()
+        File(created.directory, "generated/generation.json").writeText("old-generation")
+
+        val copied = store.copyFlow(projectId, "main", "flow-copy", "main_副本", setOf("main"))
+
+        val original = copied.manifest.flows.single { it.flowId == "main" }
+        val duplicate = copied.manifest.flows.single { it.flowId == "flow-copy" }
+        assertEquals("visual/flows/main_副本.jsonl", duplicate.path)
+        assertNotEquals(original.rootBlockId, duplicate.rootBlockId)
+        val originalSource = copied.flowSources.getValue("main")
+        val copySource = copied.flowSources.getValue("flow-copy")
+        assertNotEquals(originalSource, copySource)
+        assertEquals(originalSource.lines().size, copySource.lines().size)
+        assertTrue(copySource.contains("\"blockId\":\"${duplicate.rootBlockId}\""))
+        assertFalse(copySource.contains(original.rootBlockId))
+        assertTrue(copySource.contains("\"kind\":\"task.noop\""))
+        assertFalse(File(created.directory, "generated/generation.json").exists())
+        assertThrows(IllegalArgumentException::class.java) {
+            store.copyFlow(projectId, "main", "flow-copy", "另一个", setOf("main", "flow-copy"))
+        }
+    }
+
+    @Test
+    fun sourceGroupsAreVirtualValidatedAndPrunedWithFlows() {
+        val created = store.createProject("分组", ProjectSourceMode.VISUAL)
+        val projectId = created.manifest.projectId
+        store.createFlow(projectId, "flow-a", setOf("main"), fileName = "甲")
+        store.createFlow(projectId, "flow-b", setOf("main", "flow-a"), fileName = "乙")
+        assertTrue(store.readSourceGroups(projectId).isEmpty())
+
+        val written = store.writeSourceGroups(
+            projectId,
+            listOf(SourceGroup(" 新建分组1 ", listOf("flow-a", "flow-b")), SourceGroup("空分组")),
+        )
+        assertEquals(listOf("新建分组1", "空分组"), written.map(SourceGroup::name))
+        assertEquals(written, newStore().readSourceGroups(projectId))
+        assertFalse(File(created.directory, "project.json").readText().contains("新建分组1"))
+        val backup = ByteArrayOutputStream().also { store.exportProjectBackup(projectId, it) }.toByteArray()
+        val entries = ZipInputStream(ByteArrayInputStream(backup)).use { zip ->
+            generateSequence { zip.nextEntry }.map { it.name }.toList()
+        }
+        assertTrue(entries.none { it.contains("source-groups") })
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.writeSourceGroups(projectId, listOf(SourceGroup("a/b", listOf("flow-a"))))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.writeSourceGroups(
+                projectId,
+                listOf(SourceGroup("甲组", listOf("flow-a")), SourceGroup("乙组", listOf("flow-a"))),
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.writeSourceGroups(projectId, listOf(SourceGroup("甲组", listOf("missing"))))
+        }
+        assertEquals(written, store.readSourceGroups(projectId))
+
+        store.deleteFlow(projectId, "flow-b", setOf("main", "flow-a", "flow-b"))
+        assertEquals(
+            listOf(SourceGroup("新建分组1", listOf("flow-a")), SourceGroup("空分组")),
+            store.readSourceGroups(projectId),
+        )
+    }
+
+    @Test
+    fun backupSlotsPersistRestoreAsNewProjectAndNeverLeakIntoProjectList() {
+        val created = store.createProject("槽位", ProjectSourceMode.VISUAL)
+        val projectId = created.manifest.projectId
+        assertTrue(store.listBackupSlots(projectId).none(BackupSlot::occupied))
+        assertTrue(store.listBackedUpProjects().isEmpty())
+        assertThrows(IllegalArgumentException::class.java) { store.backupToSlot(projectId, 4) }
+
+        val first = store.backupToSlot(projectId, 1, " 第一次 ")
+        assertTrue(first.occupied)
+        assertEquals("第一次", first.remark)
+        assertEquals("槽位", first.projectName)
+        assertTrue(first.bytes!! > 0)
+        assertTrue(File(root, ".backups/$projectId/slot-1.asproject").isFile)
+        assertEquals(listOf(true, false, false), newStore().listBackupSlots(projectId).map(BackupSlot::occupied))
+        assertEquals(1, store.listProjects().size)
+
+        val summary = store.listBackedUpProjects().single()
+        assertEquals(projectId, summary.projectId)
+        assertEquals("槽位", summary.projectName)
+        assertTrue(summary.localProjectExists)
+        assertEquals(first.createdAt, summary.latestBackupAt)
+
+        val restored = store.restoreBackupSlot(projectId, 1)
+        assertNotEquals(projectId, restored.manifest.projectId)
+        assertEquals("槽位", restored.manifest.name)
+        assertEquals(2, store.listProjects().size)
+
+        store.deleteProject(projectId)
+        assertFalse(store.listBackedUpProjects().single().localProjectExists)
+        store.deleteBackupSlot(projectId, 1)
+        assertTrue(store.listBackedUpProjects().isEmpty())
+        assertFalse(File(root, ".backups/$projectId").exists())
+        assertThrows(IllegalArgumentException::class.java) { store.restoreBackupSlot(projectId, 1) }
     }
 
     private fun newStore(): ProjectStore = ProjectStore(

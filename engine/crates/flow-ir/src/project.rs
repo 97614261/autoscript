@@ -540,18 +540,40 @@ fn valid_runtime_api(value: &str) -> bool {
         && minor.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// Flow 文件名允许的最大字符数（按 Unicode 标量计）。
+const MAX_FLOW_NAME_CHARS: usize = 64;
+const FLOW_PATH_PREFIX: &str = "visual/flows/";
+const FLOW_PATH_SUFFIX: &str = ".jsonl";
+
+/// Flow 路径策略，必须与 `ProjectStore.isValidFlowPath` 和 `project.schema.json` 保持一致。
+///
+/// 参考新版易编精灵：源文件全部放在同一个固定目录里，分组只是编辑器的虚拟视图而不是子目录，
+/// 所以路径固定为单层 `visual/flows/<名称>.jsonl`。名称允许中文（参考产品的文件名本来就是中文），
+/// 字符集限定为字母、数字、`_`、`-`、CJK 统一表意文字，以及不在首尾的 `.` 和空格；
+/// 于是 `.`、`..`、隐藏名、路径分隔符和 Windows 保留字符都构造不出来。
 fn valid_flow_path(value: &str) -> bool {
-    let Some(filename) = value.strip_prefix("visual/flows/") else {
+    value
+        .strip_prefix(FLOW_PATH_PREFIX)
+        .and_then(|rest| rest.strip_suffix(FLOW_PATH_SUFFIX))
+        .is_some_and(valid_flow_name)
+}
+
+fn valid_flow_name(name: &str) -> bool {
+    let (Some(first), Some(last)) = (name.chars().next(), name.chars().next_back()) else {
         return false;
     };
-    let Some(stem) = filename.strip_suffix(".jsonl") else {
-        return false;
-    };
-    !stem.is_empty()
-        && !filename.contains(['/', '\\'])
-        && filename
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    name.chars().count() <= MAX_FLOW_NAME_CHARS
+        && flow_name_edge_char(first)
+        && flow_name_edge_char(last)
+        && name
+            .chars()
+            .all(|value| flow_name_edge_char(value) || matches!(value, '.' | ' '))
+}
+
+fn flow_name_edge_char(value: char) -> bool {
+    value.is_ascii_alphanumeric()
+        || matches!(value, '_' | '-')
+        || ('\u{4E00}'..='\u{9FFF}').contains(&value)
 }
 
 fn valid_resource_path(kind: ProjectResourceKind, value: &str) -> bool {
@@ -705,6 +727,42 @@ mod tests {
             parse_project_manifest(manifest("visual/flows/../outside.jsonl", "main").as_bytes())
                 .expect_err("nested traversal must fail");
         assert!(matches!(error, ProjectManifestError::InvalidFlowPath(_)));
+    }
+
+    #[test]
+    fn flow_path_allows_single_level_chinese_names() {
+        for path in [
+            "visual/flows/默认名称1.jsonl",
+            "visual/flows/主流程_副本 v2.jsonl",
+            "visual/flows/a.b.jsonl",
+        ] {
+            let parsed = parse_project_manifest(manifest(path, "main").as_bytes())
+                .unwrap_or_else(|error| panic!("{path} must parse: {error:?}"));
+            assert_eq!(parsed.flows[0].path, path);
+        }
+    }
+
+    #[test]
+    fn flow_path_rejects_nesting_edges_and_length() {
+        let too_long = format!("visual/flows/{}.jsonl", "长".repeat(65));
+        for path in [
+            "visual/flows/分组/文件.jsonl",
+            "visual/flows/.hidden.jsonl",
+            "visual/flows/name .jsonl",
+            "visual/flows/a:b.jsonl",
+            "visual/flows/a\\b.jsonl",
+            "visual/flows/.jsonl",
+            "visual/flows/カタカナ.jsonl",
+            too_long.as_str(),
+        ] {
+            assert!(
+                matches!(
+                    parse_project_manifest(manifest(path, "main").as_bytes()),
+                    Err(ProjectManifestError::InvalidFlowPath(_))
+                ),
+                "{path} must be rejected"
+            );
+        }
     }
 
     #[test]

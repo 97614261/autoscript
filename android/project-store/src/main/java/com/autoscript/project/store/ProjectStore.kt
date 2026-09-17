@@ -13,6 +13,8 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -367,11 +369,16 @@ class ProjectStore(
         return openProject(projectId)
     }
 
+    /**
+     * 新建 Flow。`flowId` 是引用身份（ASCII），`fileName` 是源文件管理里显示的名字（允许中文），
+     * 默认与 `flowId` 相同。
+     */
     @Synchronized
     fun createFlow(
         projectId: String,
         flowId: String,
         expectedFlowIds: Set<String>,
+        fileName: String = flowId,
     ): ProjectSnapshot {
         val current = openProject(projectId)
         require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
@@ -383,9 +390,11 @@ class ProjectStore(
         require(FLOW_ID.matches(flowId)) { "非法 Flow ID：$flowId" }
         require(current.manifest.flows.none { it.flowId == flowId }) { "Flow 已存在：$flowId" }
         require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "Flow 数量不能超过 256" }
+        val path = flowPathForName(fileName)
+        require(current.manifest.flows.none { it.path == path }) { "源文件名已存在：$fileName" }
         val declaration = ProjectFlow(
             flowId = flowId,
-            path = "visual/flows/$flowId.jsonl",
+            path = path,
             rootBlockId = "block-${UUID.randomUUID()}",
         )
         val flowFile = File(current.directory, declaration.path)
@@ -440,6 +449,178 @@ class ProjectStore(
         checkContained(flowFile)
         if (flowFile.exists() && !flowFile.delete()) {
             throw ProjectStoreException("Flow 已从清单移除，但旧文件清理失败：$flowId")
+        }
+        pruneSourceGroups(current.directory, current.manifest.flows.map(ProjectFlow::flowId).toSet() - flowId)
+        val state = readState(current.directory)
+        writeState(current.directory, state.copy(updatedAt = clock()))
+        return openProject(projectId)
+    }
+
+    /**
+     * 把 Flow 文件移动到 [VISUAL_FLOW_ROOT] 内的新相对路径（当前策略下只有单层，等价于改名）。
+     *
+     * `flowId` 是 Flow 的身份，路径只是位置：移动不改变 `flowId`，因此所有 `flow.call` 引用保持有效。
+     * 参考产品用路径当身份（新版易编精灵 `Host.deleteProjectFile {path}`），移动即改身份、引用会断；
+     * 这里刻意不沿用。
+     */
+    @Synchronized
+    fun moveFlow(
+        projectId: String,
+        flowId: String,
+        relativePath: String,
+        expectedFlowIds: Set<String>,
+    ): ProjectSnapshot {
+        val current = openProject(projectId)
+        require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
+            "只有可视化项目可以移动 Flow"
+        }
+        require(current.manifest.flows.map(ProjectFlow::flowId).toSet() == expectedFlowIds) {
+            throw ProjectManifestConflictException()
+        }
+        val declaration = current.manifest.flows.singleOrNull { it.flowId == flowId }
+            ?: throw IllegalArgumentException("Flow 不存在：$flowId")
+        val target = normalizeFlowPath(relativePath)
+        if (target == declaration.path) return current
+        require(current.manifest.flows.none { it.path == target }) { "目标路径已被占用：$target" }
+
+        val sourceFile = File(current.directory, declaration.path)
+        val targetFile = File(current.directory, target)
+        checkContained(sourceFile)
+        checkContained(targetFile)
+        require(!targetFile.exists()) { "目标文件已存在：$target" }
+        targetFile.parentFile?.mkdirs()
+        require(sourceFile.renameTo(targetFile)) { "移动 Flow 文件失败：$flowId" }
+        try {
+            invalidateGeneration(current.directory)
+            writeManifest(
+                current.directory,
+                current.manifest.copy(
+                    flows = current.manifest.flows.map {
+                        if (it.flowId == flowId) it.copy(path = target) else it
+                    },
+                ),
+                keepBackup = true,
+            )
+        } catch (failure: Throwable) {
+            targetFile.renameTo(sourceFile)
+            throw failure
+        }
+        val state = readState(current.directory)
+        writeState(current.directory, state.copy(updatedAt = clock()))
+        return openProject(projectId)
+    }
+
+    /**
+     * 重命名 Flow 的显示文件名，保留 `flowId`。
+     *
+     * 与 [moveFlow] 同理，这只改变显示名，不改变引用身份。
+     */
+    @Synchronized
+    fun renameFlow(
+        projectId: String,
+        flowId: String,
+        fileName: String,
+        expectedFlowIds: Set<String>,
+    ): ProjectSnapshot = moveFlow(projectId, flowId, flowPathForName(fileName), expectedFlowIds)
+
+    /**
+     * 读取源文件管理的虚拟分组（`.studio/source-groups.json`）。
+     *
+     * 已不存在的 Flow 会被静默剔除；文件损坏时按“没有分组”处理，不影响项目打开。
+     */
+    @Synchronized
+    fun readSourceGroups(projectId: String): List<SourceGroup> {
+        val directory = existingProjectDirectory(projectId)
+        val manifest = readManifest(directory, recover = false).manifest
+        return loadSourceGroups(directory, manifest.flows.map(ProjectFlow::flowId).toSet())
+    }
+
+    /**
+     * 覆盖写入虚拟分组。分组名与 Flow 文件名共用同一套字符规则；一个 Flow 最多属于一个分组；
+     * 引用了不存在 Flow 的分组会被拒绝，而不是静默修正，避免 UI 与磁盘状态不一致。
+     */
+    @Synchronized
+    fun writeSourceGroups(projectId: String, groups: List<SourceGroup>): List<SourceGroup> {
+        val directory = existingProjectDirectory(projectId)
+        val manifest = readManifest(directory, recover = false).manifest
+        require(manifest.sourceMode == ProjectSourceMode.VISUAL) { "只有可视化项目可以管理源文件分组" }
+        require(groups.size <= MAX_SOURCE_GROUPS) { "分组数量不能超过 $MAX_SOURCE_GROUPS" }
+        val flowIds = manifest.flows.map(ProjectFlow::flowId).toSet()
+        val seenNames = mutableSetOf<String>()
+        val seenFlows = mutableSetOf<String>()
+        val normalized = groups.map { group ->
+            val name = group.name.trim()
+            require(isValidFlowName(name)) { "非法分组名：${group.name}" }
+            require(seenNames.add(name)) { "分组名重复：$name" }
+            group.flowIds.forEach { flowId ->
+                require(flowId in flowIds) { "分组引用了不存在的 Flow：$flowId" }
+                require(seenFlows.add(flowId)) { "Flow 只能属于一个分组：$flowId" }
+            }
+            SourceGroup(name, group.flowIds.toList())
+        }
+        writeAtomic(File(directory, SOURCE_GROUPS), serializeSourceGroups(normalized), backup = null)
+        return normalized
+    }
+
+    /**
+     * 复制一个 Flow（源文件管理里的「另存为」）。
+     *
+     * 副本必须拿到**新的** `flowId` 和新的 `rootBlockId`：`flowId` 是引用身份，
+     * 复制出的两份若共用身份，`flow.call` 就会指向二义的目标。
+     * 节点内的 `nodeId`/`blockId` 逐一重写，保持父子关系和 `orderKey` 不变，
+     * 于是副本结构与原件一致，但两份的节点身份互不重叠。
+     *
+     * 副本里的 `flow.call` 参数保持原样：它引用的是**别的** Flow，
+     * 复制不应该改变被调用方，这一点与子树复制的语义一致。
+     */
+    @Synchronized
+    fun copyFlow(
+        projectId: String,
+        sourceFlowId: String,
+        targetFlowId: String,
+        fileName: String,
+        expectedFlowIds: Set<String>,
+    ): ProjectSnapshot {
+        val current = openProject(projectId)
+        require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
+            "只有可视化项目可以复制 Flow"
+        }
+        require(current.manifest.flows.map(ProjectFlow::flowId).toSet() == expectedFlowIds) {
+            throw ProjectManifestConflictException()
+        }
+        require(FLOW_ID.matches(targetFlowId)) { "非法 Flow ID：$targetFlowId" }
+        require(current.manifest.flows.none { it.flowId == targetFlowId }) { "Flow 已存在：$targetFlowId" }
+        require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "Flow 数量不能超过 256" }
+        val origin = current.manifest.flows.singleOrNull { it.flowId == sourceFlowId }
+            ?: throw IllegalArgumentException("Flow 不存在：$sourceFlowId")
+        val target = flowPathForName(fileName)
+        require(current.manifest.flows.none { it.path == target }) { "源文件名已存在：$fileName" }
+
+        val originSource = current.flowSources[sourceFlowId]
+            ?: throw ProjectStoreException("Flow 源码缺失：$sourceFlowId")
+        val rootBlockId = "block-${UUID.randomUUID()}"
+        val copied = reidentifyFlowSource(originSource, origin.rootBlockId, rootBlockId, sourceFlowId)
+        val declaration = ProjectFlow(
+            flowId = targetFlowId,
+            path = target,
+            rootBlockId = rootBlockId,
+            params = origin.params,
+            returns = origin.returns,
+        )
+        val flowFile = File(current.directory, target)
+        checkContained(flowFile)
+        require(!flowFile.exists()) { "Flow 文件已存在：$target" }
+        writeAtomic(flowFile, copied.toByteArray(Charsets.UTF_8), backup = null)
+        try {
+            invalidateGeneration(current.directory)
+            writeManifest(
+                current.directory,
+                current.manifest.copy(flows = current.manifest.flows + declaration),
+                keepBackup = true,
+            )
+        } catch (failure: Throwable) {
+            flowFile.delete()
+            throw failure
         }
         val state = readState(current.directory)
         writeState(current.directory, state.copy(updatedAt = clock()))
@@ -540,6 +721,127 @@ class ProjectStore(
             else ProjectStoreException("导入项目备份失败", error)
         }
     }
+
+    /** 本地备份槽位：`<root>/.backups/<projectId>/slot-N.asproject` + `slot-N.json`，每个项目固定 3 个。 */
+    @Synchronized
+    fun listBackupSlots(projectId: String): List<BackupSlot> {
+        validateProjectId(projectId)
+        return (1..BACKUP_SLOTS).map { readBackupSlot(projectId, it) }
+    }
+
+    /** 把当前权威项目导出到槽位；覆盖已有槽位，写入先落临时文件再原子替换。 */
+    @Synchronized
+    fun backupToSlot(projectId: String, slot: Int, remark: String? = null): BackupSlot {
+        require(slot in 1..BACKUP_SLOTS) { "备份槽位无效：$slot" }
+        val snapshot = openProject(projectId)
+        val directory = backupDirectory(projectId)
+        if (!directory.exists() && !directory.mkdirs()) throw ProjectStoreException("无法创建备份目录")
+        val target = backupSlotFile(projectId, slot)
+        val temp = File(directory, "${target.name}.tmp")
+        try {
+            FileOutputStream(temp).use { output -> exportProjectBackup(projectId, output) }
+            if (target.exists() && !target.delete()) throw ProjectStoreException("无法覆盖备份槽位 $slot")
+            if (!temp.renameTo(target)) throw ProjectStoreException("无法提交备份槽位 $slot")
+        } finally {
+            temp.delete()
+        }
+        val meta = BackupSlot(
+            index = slot,
+            createdAt = clock(),
+            bytes = target.length(),
+            remark = remark?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_BACKUP_REMARK_CHARS),
+            projectName = snapshot.manifest.name,
+        )
+        writeAtomic(backupSlotMetaFile(projectId, slot), serializeBackupSlot(meta), backup = null)
+        return meta
+    }
+
+    /** 恢复 = 把槽位当作备份包导入为一个新项目；沿用导入的全部校验，绝不覆盖本地项目。 */
+    @Synchronized
+    fun restoreBackupSlot(projectId: String, slot: Int): ProjectSnapshot {
+        require(slot in 1..BACKUP_SLOTS) { "备份槽位无效：$slot" }
+        validateProjectId(projectId)
+        val file = backupSlotFile(projectId, slot)
+        require(file.isFile) { "槽位 $slot 没有备份" }
+        return file.inputStream().use(::importProjectBackup)
+    }
+
+    @Synchronized
+    fun deleteBackupSlot(projectId: String, slot: Int) {
+        require(slot in 1..BACKUP_SLOTS) { "备份槽位无效：$slot" }
+        validateProjectId(projectId)
+        backupSlotFile(projectId, slot).delete()
+        backupSlotMetaFile(projectId, slot).delete()
+        val directory = backupDirectory(projectId)
+        if (directory.isDirectory && directory.listFiles().isNullOrEmpty()) directory.delete()
+    }
+
+    @Synchronized
+    fun deleteProjectBackups(projectId: String) {
+        validateProjectId(projectId)
+        backupDirectory(projectId).deleteRecursively()
+    }
+
+    /** 备份管理页的数据：有至少一个槽位的项目，本地项目可能已删除。 */
+    @Synchronized
+    fun listBackedUpProjects(): List<BackupProjectSummary> {
+        val root = File(rootDirectory, BACKUP_ROOT)
+        return root.listFiles().orEmpty()
+            .filter { it.isDirectory && PROJECT_ID.matches(it.name) }
+            .mapNotNull { directory ->
+                val slots = (1..BACKUP_SLOTS).map { readBackupSlot(directory.name, it) }
+                val occupied = slots.filter(BackupSlot::occupied)
+                if (occupied.isEmpty()) return@mapNotNull null
+                val latest = occupied.maxByOrNull { it.createdAt ?: 0L }
+                BackupProjectSummary(
+                    projectId = directory.name,
+                    projectName = latest?.projectName ?: directory.name,
+                    slots = slots,
+                    localProjectExists = projectDirectory(directory.name).isDirectory,
+                    latestBackupAt = latest?.createdAt,
+                    totalBytes = occupied.sumOf { it.bytes ?: 0L },
+                )
+            }
+            .sortedWith(
+                compareByDescending<BackupProjectSummary> { it.latestBackupAt ?: 0L }
+                    .thenBy { it.projectName.lowercase(Locale.ROOT) },
+            )
+    }
+
+    private fun backupDirectory(projectId: String): File =
+        File(rootDirectory, "$BACKUP_ROOT/$projectId").also(::checkContained)
+
+    private fun backupSlotFile(projectId: String, slot: Int): File =
+        File(backupDirectory(projectId), "slot-$slot.asproject")
+
+    private fun backupSlotMetaFile(projectId: String, slot: Int): File =
+        File(backupDirectory(projectId), "slot-$slot.json")
+
+    private fun readBackupSlot(projectId: String, slot: Int): BackupSlot {
+        val file = backupSlotFile(projectId, slot)
+        if (!file.isFile) return BackupSlot(slot, null, null, null, null)
+        val meta = runCatching {
+            JsonParser.parseString(backupSlotMetaFile(projectId, slot).readText(Charsets.UTF_8)).asJsonObject
+        }.getOrNull()
+        fun text(key: String): String? = meta?.get(key)?.takeIf { it.isJsonPrimitive && !it.isJsonNull }?.asString
+        return BackupSlot(
+            index = slot,
+            createdAt = meta?.get("createdAt")?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asLong }.getOrNull() }
+                ?: file.lastModified(),
+            bytes = file.length(),
+            remark = text("remark"),
+            projectName = text("projectName"),
+        )
+    }
+
+    private fun serializeBackupSlot(slot: BackupSlot): ByteArray = json.toJson(
+        JsonObject().apply {
+            addProperty("createdAt", slot.createdAt)
+            addProperty("bytes", slot.bytes)
+            addProperty("remark", slot.remark)
+            addProperty("projectName", slot.projectName)
+        },
+    ).toByteArray(Charsets.UTF_8)
 
     private fun extractProjectBackup(source: InputStream, staging: File): Set<String> {
         val extracted = linkedSetOf<String>()
@@ -890,6 +1192,59 @@ class ProjectStore(
         writeState(directory, state.copy(updatedAt = clock()))
     }
 
+    /**
+     * 为 Flow 副本重新分配全部结构身份。
+     *
+     * `nodeId` 和 `blockId` 全部换新，`parentId` 与 `childBlocks` 跟着重映射，
+     * 原根积木映射到副本的新根积木。`orderKey`、`kind`、`args` 原样保留，
+     * 所以副本的结构和参数与原件逐节点一致，只是身份不重叠。
+     */
+    private fun reidentifyFlowSource(
+        source: String,
+        originRootBlockId: String,
+        targetRootBlockId: String,
+        sourceFlowId: String,
+    ): String {
+        fun corrupt() = ProjectStoreException("Flow $sourceFlowId 损坏，不能安全复制")
+        fun text(node: JsonObject, key: String): String? =
+            node.get(key)?.takeIf { it.isJsonPrimitive }?.asString
+
+        val nodes = source.lineSequence().filter(String::isNotBlank).map { line ->
+            runCatching { JsonParser.parseString(line).asJsonObject }.getOrElse { throw corrupt() }
+        }.toList()
+        if (nodes.isEmpty()) throw corrupt()
+
+        val nodeIds = HashMap<String, String>()
+        val blockIds = hashMapOf(originRootBlockId to targetRootBlockId)
+        nodes.forEach { node ->
+            val nodeId = text(node, "nodeId") ?: throw corrupt()
+            nodeIds.getOrPut(nodeId) { "node-${UUID.randomUUID()}" }
+            val blockId = text(node, "blockId") ?: throw corrupt()
+            blockIds.getOrPut(blockId) { "block-${UUID.randomUUID()}" }
+            node.getAsJsonObject("childBlocks")?.entrySet()?.forEach { slot ->
+                val childBlockId = slot.value?.takeIf { it.isJsonPrimitive }?.asString ?: throw corrupt()
+                blockIds.getOrPut(childBlockId) { "block-${UUID.randomUUID()}" }
+            }
+        }
+
+        return nodes.joinToString(separator = "\n", postfix = "\n") { node ->
+            val copy = node.deepCopy()
+            copy.addProperty("nodeId", nodeIds.getValue(text(node, "nodeId")!!))
+            copy.addProperty("blockId", blockIds.getValue(text(node, "blockId")!!))
+            text(node, "parentId")?.let { parentId ->
+                copy.addProperty("parentId", nodeIds[parentId] ?: throw corrupt())
+            }
+            node.getAsJsonObject("childBlocks")?.let { slots ->
+                val remapped = JsonObject()
+                slots.entrySet().forEach { slot ->
+                    remapped.addProperty(slot.key, blockIds.getValue(slot.value.asString))
+                }
+                copy.add("childBlocks", remapped)
+            }
+            copy.toString()
+        }
+    }
+
     private fun isFlowReferenced(sources: Map<String, String>, targetFlowId: String): Boolean =
         sources.any { (sourceFlowId, source) ->
             if (sourceFlowId == targetFlowId) return@any false
@@ -988,13 +1343,7 @@ class ProjectStore(
                 manifest.flows.forEach { flow ->
                     require(FLOW_ID.matches(flow.flowId)) { "非法 Flow ID：${flow.flowId}" }
                     require(flow.rootBlockId.isNotEmpty() && flow.rootBlockId.length <= 128) { "非法根积木 ID" }
-                    require(flow.path.startsWith("visual/flows/") && flow.path.endsWith(".jsonl")) {
-                        "非法 Flow 路径：${flow.path}"
-                    }
-                    val fileName = flow.path.removePrefix("visual/flows/")
-                    require(!fileName.contains('/') && !fileName.contains('\\') && FLOW_FILE.matches(fileName)) {
-                        "Flow 路径越界"
-                    }
+                    require(isValidFlowPath(flow.path)) { "非法 Flow 路径：${flow.path}" }
                 }
             }
         }
@@ -1195,6 +1544,98 @@ class ProjectStore(
     private fun projectDirectory(projectId: String): File =
         File(rootDirectory, projectId).also(::checkContained)
 
+    /**
+     * 归一化并校验 Flow 相对路径。
+     *
+     * 参考新版易编精灵：源文件全部放在同一个固定目录，分组只是编辑器里的虚拟视图（见 [readSourceGroups]），
+     * 所以路径固定为单层 `visual/flows/<名称>.jsonl`，固定目录本身不可被占用或改名。
+     * 清单校验和 Flow 增删改走的是同一条规则，否则 [moveFlow] 写出的清单会过不了下一次 [openProject]。
+     */
+    private fun normalizeFlowPath(relativePath: String): String {
+        val clean = relativePath.trim().trim('/')
+        require(isValidFlowPath(clean)) { "非法 Flow 路径：$relativePath" }
+        return clean
+    }
+
+    /** 由显示文件名（可带或不带 `.jsonl`）得到规范路径。 */
+    private fun flowPathForName(fileName: String): String {
+        val name = fileName.trim().removeSuffix(FLOW_FILE_SUFFIX)
+        require(isValidFlowName(name)) { "非法源文件名：$fileName" }
+        return "$VISUAL_FLOW_ROOT/$name$FLOW_FILE_SUFFIX"
+    }
+
+    private fun isValidFlowPath(path: String): Boolean {
+        val prefix = "$VISUAL_FLOW_ROOT/"
+        if (!path.startsWith(prefix) || !path.endsWith(FLOW_FILE_SUFFIX)) return false
+        return isValidFlowName(path.removePrefix(prefix).removeSuffix(FLOW_FILE_SUFFIX))
+    }
+
+    /**
+     * Flow 文件名与分组名共用的字符策略，必须与 `flow-ir` 的 `valid_flow_name` 和 `project.schema.json` 一致：
+     * 允许中文（参考产品的文件名本来就是中文），字符集限定为字母、数字、`_`、`-`、CJK 统一表意文字，
+     * 以及不在首尾的 `.` 和空格；于是 `.`、`..`、隐藏名、路径分隔符和 Windows 保留字符都构造不出来。
+     * [checkContained] 仍是最后一道规范化路径兜底。
+     */
+    private fun isValidFlowName(name: String): Boolean =
+        name.isNotEmpty() &&
+            name.codePointLength() <= MAX_FLOW_NAME_CHARS &&
+            isFlowNameEdgeChar(name.first()) &&
+            isFlowNameEdgeChar(name.last()) &&
+            name.all { isFlowNameEdgeChar(it) || it == '.' || it == ' ' }
+
+    private fun isFlowNameEdgeChar(value: Char): Boolean =
+        value in 'A'..'Z' || value in 'a'..'z' || value in '0'..'9' ||
+            value == '_' || value == '-' || value in '一'..'鿿'
+
+    private fun loadSourceGroups(directory: File, validFlowIds: Set<String>): List<SourceGroup> {
+        val file = File(directory, SOURCE_GROUPS)
+        if (!file.isFile) return emptyList()
+        val document = runCatching {
+            JsonParser.parseString(file.readText(Charsets.UTF_8)).asJsonObject
+        }.getOrNull() ?: return emptyList()
+        if (document.get("version")?.takeIf { it.isJsonPrimitive }?.asInt != SOURCE_GROUPS_VERSION) return emptyList()
+        val groups = document.get("groups")?.takeIf(JsonElement::isJsonArray)?.asJsonArray ?: return emptyList()
+        val seenNames = mutableSetOf<String>()
+        val seenFlows = mutableSetOf<String>()
+        return groups.mapNotNull { element ->
+            val group = element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
+            val name = group.get("name")?.takeIf(JsonElement::isJsonPrimitive)?.asString?.trim() ?: return@mapNotNull null
+            if (!isValidFlowName(name) || !seenNames.add(name)) return@mapNotNull null
+            val flowIds = (group.get("flowIds")?.takeIf(JsonElement::isJsonArray)?.asJsonArray ?: JsonArray())
+                .mapNotNull { it.takeIf(JsonElement::isJsonPrimitive)?.asString }
+                .filter { it in validFlowIds && seenFlows.add(it) }
+            SourceGroup(name, flowIds)
+        }.take(MAX_SOURCE_GROUPS)
+    }
+
+    private fun serializeSourceGroups(groups: List<SourceGroup>): ByteArray {
+        val document = JsonObject().apply {
+            addProperty("version", SOURCE_GROUPS_VERSION)
+            add(
+                "groups",
+                JsonArray().apply {
+                    groups.forEach { group ->
+                        add(
+                            JsonObject().apply {
+                                addProperty("name", group.name)
+                                add("flowIds", JsonArray().apply { group.flowIds.forEach(::add) })
+                            },
+                        )
+                    }
+                },
+            )
+        }
+        return json.toJson(document).toByteArray(Charsets.UTF_8)
+    }
+
+    /** Flow 删除后把它从分组里剔除；分组是派生状态，这里失败不阻断主操作。 */
+    private fun pruneSourceGroups(directory: File, validFlowIds: Set<String>) {
+        val file = File(directory, SOURCE_GROUPS)
+        if (!file.isFile) return
+        val pruned = loadSourceGroups(directory, validFlowIds)
+        runCatching { writeAtomic(file, serializeSourceGroups(pruned), backup = null) }
+    }
+
     private fun checkContained(file: File) {
         val root = rootDirectory.canonicalFile
         val candidate = file.canonicalFile
@@ -1253,7 +1694,6 @@ class ProjectStore(
     private companion object {
         val PROJECT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         val FLOW_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-        val FLOW_FILE = Regex("[0-9A-Za-z._-]+\\.jsonl")
         val RUNTIME_API = Regex("[0-9]+\\.[0-9]+")
         val CAPABILITY = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+")
         val PARAMETER_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
@@ -1274,6 +1714,17 @@ class ProjectStore(
         const val LUA_ENTRY = "main.lua"
         const val LUA_BACKUP = ".studio/main.lua.bak"
         const val FLOW_BACKUP_ROOT = ".studio/flows"
+        const val VISUAL_FLOW_ROOT = "visual/flows"
+        const val FLOW_FILE_SUFFIX = ".jsonl"
+
+        /** Flow 文件名/分组名最大字符数（按码点计），与 `flow-ir` 和 Schema 一致。 */
+        const val MAX_FLOW_NAME_CHARS = 64
+        const val SOURCE_GROUPS = ".studio/source-groups.json"
+        const val SOURCE_GROUPS_VERSION = 1
+        const val MAX_SOURCE_GROUPS = 64
+        const val BACKUP_ROOT = ".backups"
+        const val BACKUP_SLOTS = 3
+        const val MAX_BACKUP_REMARK_CHARS = 64
         const val GENERATION_RECORD = "generated/generation.json"
         const val STALE_GENERATION_RECORD = "generated/generation.stale.json"
         const val MAIN_FLOW = "main"

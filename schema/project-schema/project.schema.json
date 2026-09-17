@@ -22,7 +22,12 @@
         "required": ["flowId", "path", "rootBlockId", "params", "returns"],
         "properties": {
           "flowId": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "path": { "type": "string", "pattern": "^visual/flows/[0-9A-Za-z._-]+\\.jsonl$" },
+          "path": {
+            "type": "string",
+            "maxLength": 83,
+            "pattern": "^visual/flows/[A-Za-z0-9_\\u4E00-\\u9FFF-](?:[A-Za-z0-9_\\u4E00-\\u9FFF. -]{0,62}[A-Za-z0-9_\\u4E00-\\u9FFF-])?\\.jsonl$",
+            "$comment": "单层固定目录；名称 1–64 字，允许字母、数字、_、-、CJK 汉字，. 和空格只能在中间。分组是编辑器的虚拟视图，不进入路径。与 flow-ir valid_flow_name 和 ProjectStore.isValidFlowName 保持一致。"
+          },
           "rootBlockId": { "type": "string", "minLength": 1, "maxLength": 128 },
           "params": {
             "type": "array",

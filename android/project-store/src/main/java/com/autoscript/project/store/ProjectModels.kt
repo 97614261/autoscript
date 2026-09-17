@@ -79,6 +79,38 @@ data class ProjectSnapshot(
     val flowSources: Map<String, String>,
 )
 
+/** 本地备份槽位（参考新版每个项目 3 个槽位）；`createdAt == null` 表示空槽。 */
+data class BackupSlot(
+    val index: Int,
+    val createdAt: Long?,
+    val bytes: Long?,
+    val remark: String?,
+    val projectName: String?,
+) {
+    val occupied: Boolean get() = createdAt != null
+}
+
+/** 备份管理页的一行：一个有槽位备份的项目，本地项目可能已被删除。 */
+data class BackupProjectSummary(
+    val projectId: String,
+    val projectName: String,
+    val slots: List<BackupSlot>,
+    val localProjectExists: Boolean,
+    val latestBackupAt: Long?,
+    val totalBytes: Long,
+)
+
+/**
+ * 源文件管理里的虚拟分组。
+ *
+ * 参考新版易编精灵：分组只是编辑器视图（它存 `分组配置.json`），Flow 文件仍在同一目录，
+ * 所以分组不进入 `project.json`，也不参与备份；一个 Flow 最多属于一个分组。
+ */
+data class SourceGroup(
+    val name: String,
+    val flowIds: List<String> = emptyList(),
+)
+
 class ProjectStoreException(message: String, cause: Throwable? = null) :
     IllegalStateException(message, cause)
 
