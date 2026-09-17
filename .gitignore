@@ -23,6 +23,12 @@ secrets.properties
 /tools/bench/results/
 /artifacts/local/
 
+# 排查构建/设备问题时用 Tee-Object 落的临时日志（见 docs/m27-manual-acceptance.md）
+*.log
+
+# 参考资料：竞品 APK / JAR / 反编译源码，只作对照用，体积大且不属于本工程，永不入库
+/资料/
+
 # OS / editor
 .DS_Store
 Thumbs.db

@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ArtifactRoot = "",
-    [switch]$SkipGradle
+    [switch]$SkipGradle,
+    [switch]$SkipRust
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,12 +32,25 @@ function Invoke-GateStep {
 
 Push-Location $repo
 try {
+    # M27 改动了 flow-ir 的 Flow 路径策略和 project.schema.json，这两项必须一起验。
+    if (-not $SkipRust) {
+        Invoke-GateStep "Flow IR tests" {
+            & cargo test -p flow-ir
+            if ($LASTEXITCODE -ne 0) { throw "flow-ir 测试失败" }
+        }
+        Invoke-GateStep "JSON Schema gate" {
+            & cargo run -p schema-check -- .
+            if ($LASTEXITCODE -ne 0) { throw "Schema 门禁失败" }
+        }
+    }
+
     if (-not $SkipGradle) {
-        Invoke-GateStep "Studio and Runner tests and APKs" {
+        # 不加模块前缀：project-store 和 core-designsystem 的单测也要跑，
+        # 只跑 :apps:studio-android:testDebugUnitTest 会漏掉 ProjectStoreTest。
+        Invoke-GateStep "Android unit tests and APKs" {
             & .\gradlew.bat `
-                :apps:studio-android:testDebugUnitTest `
+                testDebugUnitTest `
                 :apps:studio-android:assembleDebug `
-                :apps:runner-template-android:testDebugUnitTest `
                 :apps:runner-template-android:assembleDebug `
                 --console=plain
             if ($LASTEXITCODE -ne 0) { throw "Gradle门禁失败" }
