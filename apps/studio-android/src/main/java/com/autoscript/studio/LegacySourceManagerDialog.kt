@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import androidx.activity.compose.BackHandler
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -39,81 +42,165 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.autoscript.core.designsystem.AutoScriptPalette
+import com.autoscript.core.designsystem.hairline
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val SOURCE_FOLDER_SUFFIX = "/"
-private val SourceBlue = Color(0xFF2864F0)
-private val SourceText = Color(0xFF161C2B)
-private val SourceMuted = Color(0xFF9CA5B5)
-private val SourceDivider = Color(0xFFE3E7EF)
+/** 源文件管理的所有写操作都交给宿主，宿主通过 [ProjectSourceFiles] 落到 ProjectStore。 */
+internal sealed interface SourceManagerAction {
+    data class CreateFile(val name: String, val group: String?) : SourceManagerAction
+    data class CreateGroup(val name: String) : SourceManagerAction
+    data class RenameFile(val flowId: String, val name: String) : SourceManagerAction
+    data class RenameGroup(val group: String, val name: String) : SourceManagerAction
+    data class SaveAs(val flowId: String, val name: String) : SourceManagerAction
+    data class Delete(val flowIds: List<String>, val groups: List<String>) : SourceManagerAction
+    data class AddToGroup(val flowIds: List<String>, val group: String) : SourceManagerAction
+    data class RemoveFromGroup(val flowIds: List<String>) : SourceManagerAction
+    data class Open(val flowId: String) : SourceManagerAction
+    data class InsertCall(val flowId: String) : SourceManagerAction
+}
+
+private val SourceBlue = AutoScriptPalette.DialogTitle
+private val SourceAction = AutoScriptPalette.DialogAction
+private val SourceText = Color.Black
+private val SourceMuted = AutoScriptPalette.Muted
+private val SourceDivider = AutoScriptPalette.Divider
+private val SourceActive = Color(0xFFF6F8FF)
+
+/** ae1：源文件名与分组名输入框 `LengthFilter(15)`。 */
+private const val MAX_SOURCE_NAME_INPUT = 15
+private const val GROUP_KEY = "g:"
+private const val FILE_KEY = "f:"
 
 private enum class SourceNameAction(val title: String) {
-    NEW_FILE("创建"),
+    NEW("创建"),
     SAVE_AS("另存为"),
     RENAME("重命名"),
     GROUP("添加分组"),
 }
 
+private enum class SourceSortMode(val label: String) {
+    NAME("名称"),
+    SIZE("大小"),
+    TIME("时间"),
+}
+
+private sealed interface SourceRow {
+    val key: String
+
+    data class Up(override val key: String = "..") : SourceRow
+    data class Group(val name: String, val count: Int) : SourceRow {
+        override val key: String get() = GROUP_KEY + name
+    }
+    data class File(val entry: SourceFileEntry) : SourceRow {
+        override val key: String get() = FILE_KEY + entry.flowId
+    }
+}
+
+/**
+ * `service_tk_ywj_xz_cz.xml` 的复刻：40dp 标题行、可隐藏的搜索行、常驻的“已选择N项 / 全选”行、
+ * 45dp 的分组/文件行，以及两套底栏（取消/加入/确定；另存为/重命名/取消/删除/添加分组/移出分组）。
+ * 分组是虚拟视图，进入分组只是过滤，不改变文件位置。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LegacySourceManagerDialog(
-    entries: List<String>,
-    currentSource: String?,
-    onEntriesChanged: (List<String>) -> Unit,
+    tree: SourceFileTree,
+    currentFlowId: String?,
+    busy: Boolean,
+    message: String?,
+    onAction: (SourceManagerAction) -> Unit,
     onDismiss: () -> Unit,
-    onConfirmSource: (path: String, newlyCreated: Boolean) -> Unit,
 ) {
-    var currentFolder by rememberSaveable { mutableStateOf("") }
-    var selectedPath by rememberSaveable(currentSource) { mutableStateOf(currentSource) }
-    var selectedPaths by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var currentGroup by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedFlowId by rememberSaveable(currentFlowId) { mutableStateOf(currentFlowId) }
+    var selectedKeys by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var menuVisible by rememberSaveable { mutableStateOf(false) }
+    var sortMenuVisible by rememberSaveable { mutableStateOf(false) }
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    var sortMode by rememberSaveable { mutableStateOf(SourceSortMode.NAME) }
     var reverseSort by rememberSaveable { mutableStateOf(false) }
     var nameAction by rememberSaveable { mutableStateOf<SourceNameAction?>(null) }
     var nameValue by rememberSaveable { mutableStateOf("") }
-    var newFiles by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
-    var notice by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectionMode = selectedPaths.isNotEmpty()
-    val shownEntries = remember(entries, currentFolder, query, reverseSort) {
-        entries.asSequence()
-            .filter { sourceParent(it) == currentFolder.trimEnd('/') }
-            .filter { query.isBlank() || sourceDisplayName(it).contains(query.trim(), ignoreCase = true) }
-            .sortedWith(compareBy<String> { !it.isSourceFolder() }.thenBy(String.CASE_INSENSITIVE_ORDER) { sourceDisplayName(it) })
-            .let { if (reverseSort) it.toList().asReversed() else it.toList() }
-    }
-    val timestamp = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date()) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var localNotice by rememberSaveable { mutableStateOf<String?>(null) }
+    val timestamp = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
 
-    fun beginNameAction(action: SourceNameAction, suggested: String) {
+    // 分组名不存在了（被宿主删掉）就退回根目录。
+    if (currentGroup != null && tree.groups.none { it.name == currentGroup }) currentGroup = null
+
+    val rows = remember(tree, currentGroup, query, sortMode, reverseSort) {
+        val needle = query.trim()
+        val groupRows = if (currentGroup == null) {
+            tree.groups.map { group -> SourceRow.Group(group.name, tree.entriesIn(group.name).size) }
+        } else {
+            emptyList()
+        }
+        val fileRows = tree.entriesIn(currentGroup).map(SourceRow::File)
+        val comparator = when (sortMode) {
+            SourceSortMode.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { row: SourceRow.File -> row.entry.name }
+            SourceSortMode.SIZE -> compareBy<SourceRow.File> { it.entry.sizeBytes }
+            SourceSortMode.TIME -> compareBy<SourceRow.File> { it.entry.lastModified }
+        }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.entry.name }
+        val visibleGroups = groupRows
+            .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, SourceRow.Group::name))
+            .let { if (reverseSort) it.asReversed() else it }
+        val visibleFiles = fileRows
+            .filter { needle.isEmpty() || it.entry.name.contains(needle, ignoreCase = true) }
+            .sortedWith(comparator)
+            .let { if (reverseSort) it.asReversed() else it }
+        buildList {
+            if (currentGroup != null) add(SourceRow.Up())
+            addAll(visibleGroups)
+            addAll(visibleFiles)
+        }
+    }
+    val selectableKeys = remember(rows) { rows.filterNot { it is SourceRow.Up }.map(SourceRow::key) }
+    val selectionMode = selectedKeys.isNotEmpty()
+    val selectedFlowIds = selectedKeys.filter { it.startsWith(FILE_KEY) }.map { it.removePrefix(FILE_KEY) }
+    val selectedGroups = selectedKeys.filter { it.startsWith(GROUP_KEY) }.map { it.removePrefix(GROUP_KEY) }
+    val allSelected = selectableKeys.isNotEmpty() && selectableKeys.all(selectedKeys::contains)
+
+    fun clearSelection() {
+        selectedKeys = emptyList()
+    }
+
+    fun toggle(key: String) {
+        selectedKeys = if (key in selectedKeys) selectedKeys - key else selectedKeys + key
+    }
+
+    fun beginName(action: SourceNameAction, suggested: String) {
         menuVisible = false
+        localNotice = null
         nameValue = suggested
         nameAction = action
     }
 
-    fun replaceEntries(updated: List<String>) {
-        onEntriesChanged(updated.distinct().sorted())
-    }
-
-    fun leaveSelectionMode() {
-        selectedPaths = emptyList()
-        notice = null
+    fun dispatch(action: SourceManagerAction) {
+        localNotice = null
+        nameAction = null
+        confirmDelete = false
+        clearSelection()
+        onAction(action)
     }
 
     BackHandler {
         when {
             nameAction != null -> nameAction = null
-            selectionMode -> leaveSelectionMode()
+            confirmDelete -> confirmDelete = false
+            selectionMode -> clearSelection()
             searchVisible -> { searchVisible = false; query = "" }
-            currentFolder.isNotEmpty() -> currentFolder = sourceParentFolder(currentFolder)
+            currentGroup != null -> currentGroup = null
             else -> onDismiss()
         }
     }
@@ -122,121 +209,173 @@ internal fun LegacySourceManagerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // 参考根布局是 match_parent + paddingTop/Bottom 5dp，即全屏减上下 5dp，不是居中小弹窗。
         Surface(
-            modifier = Modifier.fillMaxWidth(.96f).fillMaxHeight(.90f).widthIn(max = 520.dp),
+            modifier = Modifier.fillMaxSize().padding(vertical = 5.dp),
             color = Color.White,
-            shape = RoundedCornerShape(3.dp),
+            shape = RoundedCornerShape(2.dp),
             shadowElevation = 8.dp,
         ) {
             Column(Modifier.fillMaxSize()) {
-                if (selectionMode) {
-                    SourceSelectionHeader(
-                        selectedCount = selectedPaths.size,
-                        allSelected = shownEntries.isNotEmpty() && shownEntries.all(selectedPaths::contains),
-                        onSelectAll = {
-                            selectedPaths = if (shownEntries.isNotEmpty() && shownEntries.all(selectedPaths::contains)) {
-                                selectedPaths - shownEntries.toSet()
-                            } else {
-                                (selectedPaths + shownEntries).distinct()
+                // line_tk_ywj_xz_cz_1：标题 + 菜单
+                Row(
+                    Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp, end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        currentGroup ?: "源文件管理",
+                        color = SourceBlue,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box {
+                        Icon(
+                            painter = painterResource(R.drawable.editor_menu_24),
+                            contentDescription = "源文件菜单",
+                            tint = SourceBlue,
+                            modifier = Modifier.size(32.dp).clickable(enabled = !busy) { menuVisible = true }.padding(4.dp),
+                        )
+                        DropdownMenu(
+                            expanded = menuVisible,
+                            onDismissRequest = { menuVisible = false },
+                            containerColor = Color.White,
+                            shape = RoundedCornerShape(2.dp),
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("新建", fontSize = 14.sp) },
+                                onClick = { beginName(SourceNameAction.NEW, nextSourceName(tree, currentGroup, "默认名称")) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("刷新", fontSize = 14.sp) },
+                                onClick = { menuVisible = false; localNotice = "已刷新" },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("搜索", fontSize = 14.sp) },
+                                onClick = { menuVisible = false; searchVisible = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("排序", fontSize = 14.sp) },
+                                onClick = { menuVisible = false; sortMenuVisible = true },
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = sortMenuVisible,
+                            onDismissRequest = { sortMenuVisible = false },
+                            containerColor = Color.White,
+                            shape = RoundedCornerShape(2.dp),
+                        ) {
+                            SourceSortMode.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = { Text((if (sortMode == mode) "● " else "○ ") + mode.label, fontSize = 14.sp) },
+                                    onClick = { sortMode = mode; sortMenuVisible = false },
+                                )
                             }
-                        },
-                    )
-                } else {
-                    SourceManagerHeader(
-                        currentFolder = currentFolder,
-                        menuVisible = menuVisible,
-                        onMenuVisibleChanged = { menuVisible = it },
-                        onBackFolder = { currentFolder = sourceParentFolder(currentFolder) },
-                        onNewFile = {
-                            beginNameAction(SourceNameAction.NEW_FILE, nextSourceName(entries, currentFolder, "默认名称"))
-                        },
-                        onRefresh = { notice = "已刷新" },
-                        onSearch = { menuVisible = false; searchVisible = true },
-                        onSort = { menuVisible = false; reverseSort = !reverseSort },
-                    )
+                            DropdownMenuItem(
+                                text = { Text((if (reverseSort) "☑ " else "☐ ") + "倒序", fontSize = 14.sp) },
+                                onClick = { reverseSort = !reverseSort; sortMenuVisible = false },
+                            )
+                        }
+                    }
                 }
-                if (searchVisible && !selectionMode) {
+                // line_tk_ywj_xz_cz_search
+                if (searchVisible) {
                     SourceSearchBar(query, { query = it.take(60) }) {
                         query = ""
                         searchVisible = false
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(SourceDivider))
-                if (shownEntries.isEmpty()) {
-                    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
+                // line_tk_ywj_xz_cz_2：已选择N项 / 全选（常驻）
+                Row(
+                    Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("已选择${selectedKeys.size}项", color = SourceBlue, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Text("全选", color = SourceText, fontSize = 14.sp)
+                    SourceCheckBox(
+                        checked = allSelected,
+                        enabled = selectableKeys.isNotEmpty(),
+                        modifier = Modifier.padding(end = 9.dp),
+                    ) {
+                        selectedKeys = if (allSelected) selectedKeys - selectableKeys.toSet() else (selectedKeys + selectableKeys).distinct()
+                    }
+                }
+                SourceDividerLine()
+                if (rows.isEmpty() || rows.all { it is SourceRow.Up }) {
+                    Box(Modifier.fillMaxWidth().weight(1f).padding(1.dp)) {
+                        if (rows.isNotEmpty()) SourceUpRow { currentGroup = null }
                         Text(
-                            if (query.isBlank()) "暂无源文件，点击右上角新建" else "没有匹配的源文件",
+                            if (query.isBlank()) "无内容" else "没有匹配的源文件",
                             color = SourceMuted,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(top = 38.dp),
+                            fontSize = 13.sp,
+                            modifier = Modifier.align(Alignment.Center),
                         )
                     }
                 } else {
-                    LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                        items(shownEntries, key = { it }) { path ->
-                            SourceEntryRow(
-                                path = path,
-                                timestamp = timestamp,
-                                checked = path in selectedPaths,
-                                active = path == selectedPath,
-                                selectionMode = selectionMode,
-                                onClick = {
-                                    if (selectionMode) {
-                                        selectedPaths = if (path in selectedPaths) selectedPaths - path else selectedPaths + path
-                                    } else if (path.isSourceFolder()) {
-                                        currentFolder = path
-                                        selectedPath = null
-                                    } else {
-                                        selectedPath = path
-                                    }
-                                },
-                                onLongClick = {
-                                    selectedPaths = (selectedPaths + path).distinct()
-                                    selectedPath = path.takeUnless { it.isSourceFolder() }
-                                },
-                            )
+                    LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(1.dp)) {
+                        items(rows, key = SourceRow::key) { row ->
+                            when (row) {
+                                is SourceRow.Up -> SourceUpRow { currentGroup = null }
+                                is SourceRow.Group -> SourceGroupRow(
+                                    name = row.name,
+                                    count = row.count,
+                                    checked = row.key in selectedKeys,
+                                    onClick = { if (selectionMode) toggle(row.key) else currentGroup = row.name },
+                                    onLongClick = { toggle(row.key) },
+                                    onCheck = { toggle(row.key) },
+                                )
+                                is SourceRow.File -> SourceFileRow(
+                                    entry = row.entry,
+                                    timestamp = timestamp,
+                                    active = row.entry.flowId == selectedFlowId && !selectionMode,
+                                    checked = row.key in selectedKeys,
+                                    onClick = { if (selectionMode) toggle(row.key) else selectedFlowId = row.entry.flowId },
+                                    onLongClick = { toggle(row.key); selectedFlowId = row.entry.flowId },
+                                    onCheck = { toggle(row.key) },
+                                )
+                            }
                         }
                     }
                 }
-                notice?.let {
-                    Text(it, color = SourceBlue, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp))
+                (localNotice ?: message)?.let {
+                    Text(
+                        it,
+                        color = if (it == "已刷新") SourceBlue else AutoScriptPalette.Danger,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp),
+                    )
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(SourceDivider))
+                SourceDividerLine()
                 if (selectionMode) {
+                    val singleFile = selectedFlowIds.size == 1 && selectedGroups.isEmpty()
+                    val singleGroup = selectedGroups.size == 1 && selectedFlowIds.isEmpty()
+                    val groupedSelected = selectedFlowIds.any { tree.entry(it)?.group != null }
                     SourceSelectionActions(
-                        canSaveAs = selectedPaths.size == 1 && !selectedPaths.first().isSourceFolder(),
-                        canRename = selectedPaths.size == 1,
-                        canGroup = selectedPaths.size > 1 && selectedPaths.none { it.isSourceFolder() },
+                        canSaveAs = singleFile && !busy,
+                        canRename = (singleFile || singleGroup) && !busy,
+                        canDelete = !busy,
+                        canGroup = selectedFlowIds.isNotEmpty() && selectedGroups.isEmpty() && !busy,
+                        canUngroup = groupedSelected && !busy,
                         onSaveAs = {
-                            val original = selectedPaths.single()
-                            beginNameAction(SourceNameAction.SAVE_AS, sourceDisplayName(original) + "_副本")
+                            val original = tree.entry(selectedFlowIds.single()) ?: return@SourceSelectionActions
+                            beginName(SourceNameAction.SAVE_AS, nextSourceName(tree, null, original.name + "_副本"))
                         },
                         onRename = {
-                            beginNameAction(SourceNameAction.RENAME, sourceDisplayName(selectedPaths.single()))
+                            val suggested = if (singleFile) tree.entry(selectedFlowIds.single())?.name.orEmpty() else selectedGroups.single()
+                            beginName(SourceNameAction.RENAME, suggested)
                         },
-                        onCancel = ::leaveSelectionMode,
-                        onDelete = {
-                            val deleted = selectedPaths.toSet()
-                            replaceEntries(entries.filterNot { candidate ->
-                                deleted.any { target -> candidate == target || (target.isSourceFolder() && candidate.startsWith(target)) }
-                            })
-                            if (selectedPath?.let { active -> deleted.any { active == it || active.startsWith(it) } } == true) {
-                                selectedPath = null
-                            }
-                            leaveSelectionMode()
-                        },
-                        onGroup = {
-                            beginNameAction(SourceNameAction.GROUP, nextSourceName(entries, currentFolder, "新建分组"))
-                        },
+                        onCancel = ::clearSelection,
+                        onDelete = { confirmDelete = true },
+                        onGroup = { beginName(SourceNameAction.GROUP, currentGroup ?: nextSourceName(tree, null, "新建分组")) },
+                        onUngroup = { dispatch(SourceManagerAction.RemoveFromGroup(selectedFlowIds)) },
                     )
                 } else {
                     SourceNormalActions(
-                        enabled = selectedPath != null,
+                        enabled = selectedFlowId != null && !busy,
                         onCancel = onDismiss,
-                        onJoin = { selectedPath?.let { notice = "已加入 ${sourceDisplayName(it)}" } },
-                        onConfirm = {
-                            selectedPath?.let { onConfirmSource(it, it in newFiles) }
-                        },
+                        onJoin = { selectedFlowId?.let { dispatch(SourceManagerAction.InsertCall(it)) } },
+                        onConfirm = { selectedFlowId?.let { dispatch(SourceManagerAction.Open(it)) } },
                     )
                 }
             }
@@ -244,152 +383,60 @@ internal fun LegacySourceManagerDialog(
     }
 
     nameAction?.let { action ->
+        val suggestions = if (action == SourceNameAction.GROUP) tree.groups.map { it.name } else emptyList()
         SourceNameDialog(
             title = action.title,
             value = nameValue,
-            onValueChange = { nameValue = it.take(40) },
+            suggestions = suggestions,
+            onValueChange = { nameValue = it.take(MAX_SOURCE_NAME_INPUT) },
             onDismiss = { nameAction = null },
-            alternateLabel = if (action == SourceNameAction.NEW_FILE) "分组" else null,
-            confirmLabel = if (action == SourceNameAction.NEW_FILE) "源文件" else "确定",
-            onAlternate = if (action == SourceNameAction.NEW_FILE) {
+            alternateLabel = if (action == SourceNameAction.NEW) "分组" else null,
+            confirmLabel = if (action == SourceNameAction.NEW) "源文件" else "确定",
+            onAlternate = if (action == SourceNameAction.NEW) {
                 {
-                    val cleanName = sourceCleanName(nameValue)
-                    val folderName = if (cleanName.startsWith("默认名称")) {
-                        nextSourceName(entries, currentFolder, "新建文件夹")
-                    } else cleanName
-                    val path = currentFolder + folderName + SOURCE_FOLDER_SUFFIX
+                    val cleanName = nameValue.trim()
                     when {
-                        folderName.isBlank() -> notice = "名称不能为空"
-                        path in entries || path.dropLast(1) in entries -> notice = "名称已存在"
-                        else -> {
-                            replaceEntries(entries + path)
-                            notice = "已新建文件夹 $folderName"
-                            nameAction = null
-                        }
+                        cleanName.isEmpty() -> localNotice = "名称不能为空"
+                        tree.groups.any { it.name == cleanName } -> localNotice = "分组已存在"
+                        else -> dispatch(SourceManagerAction.CreateGroup(cleanName))
                     }
                 }
             } else null,
             onConfirm = {
-                val cleanName = sourceCleanName(nameValue)
-                if (cleanName.isBlank()) {
-                    notice = "名称不能为空"
-                } else {
-                    when (action) {
-                        SourceNameAction.NEW_FILE -> {
-                            val path = currentFolder + cleanName
-                            if (path in entries || "$path/" in entries) notice = "名称已存在" else {
-                                replaceEntries(entries + path)
-                                selectedPath = path
-                                newFiles = (newFiles + path).distinct()
-                                notice = "已新建 $cleanName"
-                            }
-                        }
-                        SourceNameAction.SAVE_AS -> {
-                            val original = selectedPaths.single()
-                            val path = currentFolder + cleanName
-                            if (path in entries || "$path/" in entries) notice = "名称已存在" else {
-                                replaceEntries(entries + path)
-                                newFiles = (newFiles + path).distinct()
-                                selectedPath = path
-                                leaveSelectionMode()
-                                notice = "已另存为 $cleanName"
-                            }
-                        }
-                        SourceNameAction.RENAME -> {
-                            val original = selectedPaths.single()
-                            val renamed = sourceParentPrefix(original) + cleanName + if (original.isSourceFolder()) "/" else ""
-                            if (renamed != original && (renamed in entries || renamed.removeSuffix("/") in entries)) {
-                                notice = "名称已存在"
-                            } else {
-                                replaceEntries(entries.map { candidate ->
-                                    when {
-                                        candidate == original -> renamed
-                                        original.isSourceFolder() && candidate.startsWith(original) -> renamed + candidate.removePrefix(original)
-                                        else -> candidate
-                                    }
-                                })
-                                if (selectedPath == original) selectedPath = renamed
-                                newFiles = newFiles.map { if (it == original) renamed else it }
-                                leaveSelectionMode()
-                                notice = "已重命名为 $cleanName"
-                            }
-                        }
-                        SourceNameAction.GROUP -> {
-                            val folder = currentFolder + cleanName + SOURCE_FOLDER_SUFFIX
-                            if (folder in entries || folder.dropLast(1) in entries) notice = "名称已存在" else {
-                                val moving = selectedPaths.toSet()
-                                replaceEntries(entries.map { candidate ->
-                                    if (candidate in moving) folder + sourceDisplayName(candidate) else candidate
-                                } + folder)
-                                selectedPath = selectedPath?.let { active ->
-                                    if (active in moving) folder + sourceDisplayName(active) else active
-                                }
-                                leaveSelectionMode()
-                                notice = "已添加到分组 $cleanName"
-                            }
-                        }
+                val cleanName = nameValue.trim()
+                if (cleanName.isEmpty()) {
+                    localNotice = "名称不能为空"
+                    return@SourceNameDialog
+                }
+                val nameTaken = tree.entries.any { it.name == cleanName }
+                when (action) {
+                    SourceNameAction.NEW -> if (nameTaken) localNotice = "源文件已存在" else {
+                        dispatch(SourceManagerAction.CreateFile(cleanName, currentGroup))
                     }
-                    if (notice != "名称不能为空" && notice != "名称已存在") nameAction = null
+                    SourceNameAction.SAVE_AS -> if (nameTaken) localNotice = "源文件已存在" else {
+                        dispatch(SourceManagerAction.SaveAs(selectedFlowIds.single(), cleanName))
+                    }
+                    SourceNameAction.RENAME -> when {
+                        selectedGroups.size == 1 -> {
+                            if (tree.groups.any { it.name == cleanName }) localNotice = "分组已存在"
+                            else dispatch(SourceManagerAction.RenameGroup(selectedGroups.single(), cleanName))
+                        }
+                        nameTaken -> localNotice = "源文件已存在"
+                        else -> dispatch(SourceManagerAction.RenameFile(selectedFlowIds.single(), cleanName))
+                    }
+                    SourceNameAction.GROUP -> dispatch(SourceManagerAction.AddToGroup(selectedFlowIds, cleanName))
                 }
             },
         )
     }
-}
 
-@Composable
-private fun SourceManagerHeader(
-    currentFolder: String,
-    menuVisible: Boolean,
-    onMenuVisibleChanged: (Boolean) -> Unit,
-    onBackFolder: () -> Unit,
-    onNewFile: () -> Unit,
-    onRefresh: () -> Unit,
-    onSearch: () -> Unit,
-    onSort: () -> Unit,
-) {
-    Row(
-        Modifier.fillMaxWidth().height(42.dp).padding(start = 15.dp, end = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            if (currentFolder.isEmpty()) "源文件管理" else "‹  ${sourceDisplayName(currentFolder)}",
-            color = SourceBlue,
-            fontSize = 14.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).clickable(enabled = currentFolder.isNotEmpty(), onClick = onBackFolder),
+    if (confirmDelete) {
+        SourceConfirmDialog(
+            text = "是否删除所选 ${selectedKeys.size} 项文件?",
+            confirmLabel = "删除",
+            onDismiss = { confirmDelete = false },
+            onConfirm = { dispatch(SourceManagerAction.Delete(selectedFlowIds, selectedGroups)) },
         )
-        Box {
-            Icon(
-                painter = painterResource(R.drawable.editor_menu_24),
-                contentDescription = "源文件菜单",
-                tint = SourceBlue,
-                modifier = Modifier.size(34.dp).clickable { onMenuVisibleChanged(true) }.padding(5.dp),
-            )
-            DropdownMenu(
-                expanded = menuVisible,
-                onDismissRequest = { onMenuVisibleChanged(false) },
-                containerColor = Color.White,
-                shape = RoundedCornerShape(2.dp),
-            ) {
-                DropdownMenuItem(text = { Text("新建", fontSize = 14.sp) }, onClick = onNewFile)
-                DropdownMenuItem(text = { Text("刷新", fontSize = 14.sp) }, onClick = onRefresh)
-                DropdownMenuItem(text = { Text("搜索", fontSize = 14.sp) }, onClick = onSearch)
-                DropdownMenuItem(text = { Text("排序", fontSize = 14.sp) }, onClick = onSort)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SourceSelectionHeader(selectedCount: Int, allSelected: Boolean, onSelectAll: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(42.dp).padding(start = 15.dp, end = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("已选择${selectedCount}项", color = SourceBlue, fontSize = 14.sp, modifier = Modifier.weight(1f))
-        Text("全选", color = SourceText, fontSize = 14.sp)
-        SourceCheckBox(allSelected, Modifier.padding(start = 9.dp), onSelectAll)
     }
 }
 
@@ -401,67 +448,127 @@ private fun SourceSearchBar(value: String, onValueChange: (String) -> Unit, onCa
             onValueChange = onValueChange,
             singleLine = true,
             textStyle = TextStyle(color = SourceText, fontSize = 12.sp),
-            decorationBox = { inner -> Box(contentAlignment = Alignment.CenterStart) {
-                if (value.isEmpty()) Text("关键字搜索", color = SourceMuted, fontSize = 12.sp)
-                inner()
-            } },
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) Text("关键字搜索", color = SourceMuted, fontSize = 12.sp)
+                    inner()
+                }
+            },
+            modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 5.dp),
         )
-        Text("取消", color = SourceBlue, fontSize = 13.sp, modifier = Modifier.fillMaxHeight().clickable(onClick = onCancel).padding(horizontal = 15.dp, vertical = 11.dp))
+        Text(
+            "取消",
+            color = SourceBlue,
+            fontSize = 13.sp,
+            modifier = Modifier.fillMaxHeight().clickable(onClick = onCancel).padding(horizontal = 15.dp, vertical = 11.dp),
+        )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/** item_tree_list_file_3：返回上一级。 */
 @Composable
-private fun SourceEntryRow(
-    path: String,
-    timestamp: String,
-    checked: Boolean,
-    active: Boolean,
-    selectionMode: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) {
+private fun SourceUpRow(onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().height(58.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .background(if (active && !selectionMode) Color(0xFFF6F8FF) else Color.White)
-            .padding(start = 15.dp, end = 17.dp),
+        Modifier.fillMaxWidth().height(45.dp).clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+        Icon(
+            painterResource(R.drawable.editor_folder_24),
+            contentDescription = null,
+            tint = Color.Unspecified,
+            modifier = Modifier.padding(horizontal = 5.dp).size(35.dp),
+        )
+        Text("..", color = SourceText, fontSize = 14.sp)
+    }
+}
+
+/** item_tree_list_file_1：分组行（文件夹图标 + 名称 + 8sp 说明 + 复选框）。 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SourceGroupRow(
+    name: String,
+    count: Int,
+    checked: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onCheck: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().height(45.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painterResource(R.drawable.editor_folder_24),
+            contentDescription = null,
+            tint = Color.Unspecified,
+            modifier = Modifier.padding(horizontal = 5.dp).size(35.dp),
+        )
+        Column(Modifier.weight(1f).fillMaxHeight().padding(top = 5.dp, bottom = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Text(name, color = SourceText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$count 个源文件 · 文件夹", color = SourceMuted, fontSize = 8.sp)
+        }
+        SourceCheckBox(checked, modifier = Modifier.padding(start = 2.dp, end = 8.dp), onClick = onCheck)
+    }
+}
+
+/** item_tree_list_file_2：文件行（图标 + 名称 + 8sp 修改时间与大小 + 复选框）。 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SourceFileRow(
+    entry: SourceFileEntry,
+    timestamp: SimpleDateFormat,
+    active: Boolean,
+    checked: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onCheck: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().height(45.dp)
+            .background(if (active) SourceActive else Color.White)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.padding(start = 5.dp, top = 5.dp, bottom = 5.dp).size(35.dp).padding(1.dp), contentAlignment = Alignment.Center) {
+            Icon(painterResource(R.drawable.editor_code_file_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(28.dp))
+        }
+        Column(Modifier.weight(1f).fillMaxHeight().padding(start = 3.dp, top = 4.dp, bottom = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Text(
-                (if (path.isSourceFolder()) "▸  " else "") + sourceDisplayName(path),
+                if (entry.isEntry) "${entry.name}（入口）" else entry.name,
                 color = SourceText,
                 fontSize = 14.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                if (path.isSourceFolder()) "$timestamp    文件夹" else "$timestamp    0B",
-                color = SourceMuted,
-                fontSize = 9.sp,
-                modifier = Modifier.padding(top = 5.dp),
-            )
+            Row {
+                Text(timestamp.format(Date(entry.lastModified)), color = SourceMuted, fontSize = 8.sp)
+                Text(formatSourceSize(entry.sizeBytes), color = SourceMuted, fontSize = 8.sp, modifier = Modifier.padding(start = 10.dp))
+            }
         }
-        if (selectionMode) SourceCheckBox(checked, onClick = onClick)
+        SourceCheckBox(checked, modifier = Modifier.padding(start = 2.dp, end = 8.dp), onClick = onCheck)
     }
 }
 
 @Composable
-private fun SourceCheckBox(checked: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier.size(24.dp).border(2.dp, SourceBlue, RoundedCornerShape(2.dp))
-            .background(if (checked) SourceBlue else Color.White, RoundedCornerShape(2.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (checked) Text("✓", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-    }
+private fun SourceCheckBox(
+    checked: Boolean,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Checkbox(
+        checked = checked,
+        onCheckedChange = { onClick() },
+        enabled = enabled,
+        colors = CheckboxDefaults.colors(checkedColor = SourceBlue, uncheckedColor = SourceMuted),
+        modifier = modifier.size(32.dp),
+    )
 }
 
+/** line_tk_ywj_xz_cz_3：取消 | 加入 | 确定。“加入”把所选源文件作为调用节点加入程序树。 */
 @Composable
 private fun SourceNormalActions(enabled: Boolean, onCancel: () -> Unit, onJoin: () -> Unit, onConfirm: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(45.dp)) {
+    Row(Modifier.fillMaxWidth().height(40.dp)) {
         SourceTextAction("取消", true, onCancel, Modifier.weight(1f))
         SourceVerticalDivider()
         SourceTextAction("加入", enabled, onJoin, Modifier.weight(1f))
@@ -470,34 +577,39 @@ private fun SourceNormalActions(enabled: Boolean, onCancel: () -> Unit, onJoin: 
     }
 }
 
+/** line_tk_ywj_xz_cz_4：另存为 / 重命名 / 取消 / 删除 / 添加分组 / 移出分组。 */
 @Composable
 private fun SourceSelectionActions(
     canSaveAs: Boolean,
     canRename: Boolean,
+    canDelete: Boolean,
     canGroup: Boolean,
+    canUngroup: Boolean,
     onSaveAs: () -> Unit,
     onRename: () -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
     onGroup: () -> Unit,
+    onUngroup: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().height(52.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+    Row(Modifier.fillMaxWidth().height(40.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         SourceIconAction(R.drawable.visual_save_24, "另存为", canSaveAs, onSaveAs)
         SourceIconAction(R.drawable.editor_edit_24, "重命名", canRename, onRename)
         SourceIconAction(R.drawable.editor_close_24, "取消", true, onCancel)
-        SourceIconAction(R.drawable.editor_delete_24, "删除", true, onDelete)
+        SourceIconAction(R.drawable.editor_delete_24, "删除", canDelete, onDelete)
         SourceIconAction(R.drawable.editor_folder_add_24, "添加分组", canGroup, onGroup)
+        SourceIconAction(R.drawable.editor_file_move_24, "移出分组", canUngroup, onUngroup)
     }
 }
 
 @Composable
-private fun SourceIconAction(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun SourceIconAction(@DrawableRes icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
     Column(
-        Modifier.width(62.dp).fillMaxHeight().clickable(enabled = enabled, onClick = onClick).padding(top = 4.dp),
+        Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 15.dp, vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(painterResource(icon), label, tint = if (enabled) SourceBlue else SourceMuted, modifier = Modifier.size(24.dp))
-        Text(label, color = if (enabled) SourceText else SourceMuted, fontSize = 9.sp, maxLines = 1)
+        Icon(painterResource(icon), label, tint = if (enabled) SourceBlue else SourceMuted, modifier = Modifier.size(20.dp))
+        Text(label, color = if (enabled) SourceText else SourceMuted, fontSize = 8.sp, maxLines = 1)
     }
 }
 
@@ -514,19 +626,26 @@ private fun SourceTextAction(
         color = when { !enabled -> SourceMuted; primary -> SourceBlue; else -> SourceText },
         fontSize = 14.sp,
         textAlign = TextAlign.Center,
-        modifier = modifier.fillMaxHeight().clickable(enabled = enabled, onClick = onClick).padding(vertical = 12.dp),
+        modifier = modifier.fillMaxHeight().clickable(enabled = enabled, onClick = onClick).padding(vertical = 11.dp),
     )
 }
 
 @Composable
 private fun SourceVerticalDivider() {
-    Box(Modifier.width(1.dp).fillMaxHeight().background(SourceDivider))
+    Box(Modifier.width(hairline()).fillMaxHeight().background(SourceDivider))
 }
 
+@Composable
+private fun SourceDividerLine() {
+    Box(Modifier.fillMaxWidth().height(hairline()).background(SourceDivider))
+}
+
+/** service_tk_new_file.xml：18sp 标题、15sp 输入框、左“取消”、右侧一或两个主按钮。 */
 @Composable
 private fun SourceNameDialog(
     title: String,
     value: String,
+    suggestions: List<String>,
     onValueChange: (String) -> Unit,
     onDismiss: () -> Unit,
     alternateLabel: String?,
@@ -546,24 +665,36 @@ private fun SourceNameDialog(
                 shadowElevation = 9.dp,
             ) {
                 Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
-                    Text(
-                        title,
-                        color = SourceText,
-                        fontSize = 18.sp,
-                        modifier = Modifier.padding(start = 25.dp, end = 25.dp),
+                    Text(title, color = SourceText, fontSize = 18.sp, modifier = Modifier.padding(start = 25.dp, end = 25.dp))
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        singleLine = true,
+                        textStyle = TextStyle(color = SourceText, fontSize = 15.sp),
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(start = 30.dp, top = 10.dp, end = 30.dp, bottom = 5.dp)
+                            .height(42.dp)
+                            .background(Color(0xFFF7F8FA), RoundedCornerShape(2.dp))
+                            .border(1.dp, Color(0xFFC8CED8), RoundedCornerShape(2.dp))
+                            .padding(horizontal = 9.dp, vertical = 10.dp),
                     )
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    singleLine = true,
-                    textStyle = TextStyle(color = SourceText, fontSize = 15.sp),
-                    modifier = Modifier.fillMaxWidth()
-                        .padding(start = 30.dp, top = 10.dp, end = 30.dp, bottom = 5.dp)
-                        .height(42.dp)
-                        .background(Color(0xFFF7F8FA), RoundedCornerShape(2.dp))
-                        .border(1.dp, Color(0xFFC8CED8), RoundedCornerShape(2.dp))
-                        .padding(horizontal = 9.dp, vertical = 10.dp),
-                )
+                    if (suggestions.isNotEmpty()) {
+                        Row(Modifier.fillMaxWidth().padding(start = 30.dp, end = 30.dp, bottom = 4.dp)) {
+                            suggestions.take(4).forEach { suggestion ->
+                                Text(
+                                    suggestion,
+                                    color = SourceBlue,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                        .border(1.dp, Color(0xFFC8CED8), RoundedCornerShape(2.dp))
+                                        .clickable { onValueChange(suggestion) }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
                     Row(
                         Modifier.fillMaxWidth().padding(start = 15.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -582,30 +713,51 @@ private fun SourceNameDialog(
 }
 
 @Composable
+private fun SourceConfirmDialog(text: String, confirmLabel: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(2.dp),
+                shadowElevation = 9.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
+                    Text(text, color = SourceText, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 25.dp))
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 15.dp, top = 14.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SourceNameActionText("取消", onDismiss)
+                        Spacer(Modifier.weight(1f))
+                        SourceNameActionText(confirmLabel, onConfirm, Modifier.padding(end = 15.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SourceNameActionText(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Text(
         label,
-        color = Color(0xFF3F51B5),
+        color = SourceAction,
         fontSize = 14.sp,
         modifier = modifier.clickable(onClick = onClick).padding(horizontal = 15.dp, vertical = 8.dp),
     )
 }
 
-private fun String.isSourceFolder(): Boolean = endsWith(SOURCE_FOLDER_SUFFIX)
+private fun formatSourceSize(bytes: Long): String = when {
+    bytes < 1024 -> "${bytes}B"
+    bytes < 1024 * 1024 -> "${bytes / 1024}KB"
+    else -> "%.1fMB".format(Locale.ROOT, bytes / 1024.0 / 1024.0)
+}
 
-private fun sourceDisplayName(path: String): String = path.trimEnd('/').substringAfterLast('/')
-
-private fun sourceParent(path: String): String = path.trimEnd('/').substringBeforeLast('/', "")
-
-private fun sourceParentPrefix(path: String): String = sourceParent(path).let { if (it.isEmpty()) "" else "$it/" }
-
-private fun sourceParentFolder(folder: String): String = sourceParent(folder).let { if (it.isEmpty()) "" else "$it/" }
-
-private fun sourceCleanName(value: String): String = value.trim().replace('/', '_').replace('\\', '_')
-
-private fun nextSourceName(entries: List<String>, folder: String, prefix: String): String {
+private fun nextSourceName(tree: SourceFileTree, group: String?, prefix: String): String {
+    val names = tree.entries.map(SourceFileEntry::name).toSet() + tree.groups.map { it.name }
+    if (prefix !in names && prefix.endsWith("_副本")) return prefix
     var index = 1
-    val names = entries.filter { sourceParent(it) == folder.trimEnd('/') }.map(::sourceDisplayName).toSet()
     while ("$prefix$index" in names) index++
     return "$prefix$index"
 }

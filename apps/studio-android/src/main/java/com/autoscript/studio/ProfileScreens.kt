@@ -31,12 +31,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.autoscript.core.designsystem.AutoScriptDimens
 
+/** 与参考“我的”页一致：登录/注册、法律文档、开发文档、检查更新（版本与架构信息并入此页）。 */
 internal enum class ProfileSubpage {
     LOGIN,
     REGISTER,
-    SETTINGS,
     LEGAL,
-    ABOUT,
     DOCS,
     UPDATE,
 }
@@ -52,9 +51,7 @@ internal fun ProfileSubpageScreen(
     when (page) {
         ProfileSubpage.LOGIN -> LoginBoundaryScreen(onBack, { onOpenSubpage(ProfileSubpage.REGISTER) }, modifier)
         ProfileSubpage.REGISTER -> RegisterBoundaryScreen(onBack, { onOpenSubpage(ProfileSubpage.LOGIN) }, modifier)
-        ProfileSubpage.SETTINGS -> LocalSettingsScreen(onBack, modifier)
         ProfileSubpage.LEGAL -> LegalDocumentsScreen(onBack, modifier)
-        ProfileSubpage.ABOUT -> AboutScreen(onBack, modifier)
         ProfileSubpage.DOCS -> DeveloperDocsScreen(onBack, modifier)
         ProfileSubpage.UPDATE -> UpdateStatusScreen(onBack, modifier)
     }
@@ -128,30 +125,6 @@ private fun RegisterBoundaryScreen(onBack: () -> Unit, onLogin: () -> Unit, modi
 }
 
 @Composable
-private fun LocalSettingsScreen(onBack: () -> Unit, modifier: Modifier) {
-    ProfilePageShell("应用设置", onBack, modifier) {
-        item {
-            ProfileInfoCard(
-                "本地存储",
-                "项目保存在应用私有目录，通过 .asproject 备份显式导入或导出。",
-            )
-        }
-        item {
-            ProfileInfoCard(
-                "执行模式",
-                "当前固定使用 Root 后端；免 Root 与无障碍后端未启用。",
-            )
-        }
-        item {
-            ProfileInfoCard(
-                "隐私",
-                "脚本、截图和运行日志默认只在本机处理，不接入云同步。",
-            )
-        }
-    }
-}
-
-@Composable
 private fun LegalDocumentsScreen(onBack: () -> Unit, modifier: Modifier) {
     var selected by remember { mutableIntStateOf(0) }
     Column(modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.White)) {
@@ -182,15 +155,6 @@ private fun LegalDocumentsScreen(onBack: () -> Unit, modifier: Modifier) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-    }
-}
-
-@Composable
-private fun AboutScreen(onBack: () -> Unit, modifier: Modifier) {
-    ProfilePageShell("关于 AutoScript", onBack, modifier) {
-        item { ProfileInfoCard("版本", "0.1.0 · 本地 Root 开发阶段") }
-        item { ProfileInfoCard("技术架构", "Kotlin/Compose Studio · Rust 引擎 · PUC Lua 5.4") }
-        item { ProfileInfoCard("运行边界", "Studio 与独立 Runner 分离；项目能力按发布清单授权。") }
     }
 }
 
@@ -226,7 +190,7 @@ private fun LocalApiDocCard(title: String, signature: String, detail: String) {
 private fun UpdateStatusScreen(onBack: () -> Unit, modifier: Modifier) {
     ProfilePageShell("检查更新", onBack, modifier) {
         item {
-            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(AutoScriptDimens.CardRadius)) {
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(AutoScriptDimens.CardRadius), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text("已是本地开发版本", style = MaterialTheme.typography.titleLarge)
                     Text("0.1.0", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
@@ -234,6 +198,9 @@ private fun UpdateStatusScreen(onBack: () -> Unit, modifier: Modifier) {
                 }
             }
         }
+        item { ProfileInfoCard("技术架构", "Kotlin/Compose Studio · Rust 引擎 · PUC Lua 5.4 · 像素视觉与基础字库 OCR") }
+        item { ProfileInfoCard("运行边界", "当前阶段仅 Root 后端；Studio 与独立 Runner 分离，项目能力按发布清单授权。") }
+        item { ProfileInfoCard("本地存储", "项目保存在应用私有目录，通过备份槽位或 .asproject 文件显式导入导出；脚本、截图和日志不接入云同步。") }
     }
 }
 
@@ -270,7 +237,11 @@ private fun ProfilePageShell(
 
 @Composable
 private fun ProfileInfoCard(title: String, text: String) {
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(AutoScriptDimens.CardRadius)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AutoScriptDimens.CardRadius),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -4,7 +4,7 @@ internal enum class StudioDestination(
     val label: String,
     val symbol: String,
 ) {
-    HOME("首页", "⌂"),
+    HOME("主页", "⌂"),
     WORKSPACE("工作台", "▦"),
     PROFILE("我的", "●"),
 }

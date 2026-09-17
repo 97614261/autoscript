@@ -31,6 +31,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -40,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,6 +65,8 @@ import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.autoscript.core.designsystem.AutoScriptPalette
+import com.autoscript.core.designsystem.hairline
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -85,14 +92,32 @@ internal fun LegacyScriptDock(
     consoleLines: List<String> = emptyList(),
     onClose: () -> Unit = {},
     editingEnabled: Boolean = true,
+    /** 可视化项目的源文件树；Lua 项目为 null，标题点击不再弹源文件管理。 */
+    sourceTree: SourceFileTree? = null,
+    currentFlowId: String? = null,
+    sourceBusy: Boolean = false,
+    sourceMessage: String? = null,
+    onSourceAction: (SourceManagerAction) -> Unit = {},
+    /** “文件”弹窗展示的项目沙箱文件（来自 [projectFileCatalog]）。 */
+    projectFiles: List<StudioProjectFile> = emptyList(),
+    onOpenProjectFile: (StudioProjectFile) -> Unit = {},
+    onDeleteProjectFiles: (List<StudioProjectFile>) -> Unit = {},
+    /** 左上菜单“插件”→ 旧版插件管理；只有检错/未调用等需要宿主执行的动作会回调。 */
+    onPluginAction: (LegacyPluginAction) -> Unit = {},
+    capabilities: Set<String> = emptySet(),
+    /** 脚本运行中小球切到 `float_ball_stop_content`（25dp 停止键，`service_tk_ball.xml`）。 */
+    running: Boolean = false,
+    onStop: () -> Unit = {},
+    /** “更多 → 录制动作”与“工具 → 图像工具”的全屏页；为 null 时退回弹窗内预览。 */
+    onOpenRecorder: (() -> Unit)? = null,
+    onOpenImageTools: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable(projectName) { mutableStateOf(false) }
     var functionLibrary by rememberSaveable(projectName) { mutableStateOf(false) }
     var toolDialog by rememberSaveable(projectName) { mutableStateOf<LegacyToolDialog?>(null) }
     var sourceManagerVisible by rememberSaveable(projectName) { mutableStateOf(false) }
-    var sourceFileName by rememberSaveable(projectName) { mutableStateOf<String?>(null) }
-    var sourceEntries by rememberSaveable(projectName) { mutableStateOf<List<String>>(emptyList()) }
+    var pluginManagerVisible by rememberSaveable(projectName) { mutableStateOf(false) }
     var consoleVisible by rememberSaveable(projectName) { mutableStateOf(false) }
     var treeNodes by rememberSaveable(projectName, saver = LegacyTreeNodesStateSaver) {
         mutableStateOf<List<LegacyTreeNode>>(emptyList())
@@ -126,18 +151,12 @@ internal fun LegacyScriptDock(
         } ?: treeNodes
     }
     val displayedSelectedNodeId = if (externallyManaged) programSelectedNodeId else selectedNodeId
-    val displayedSourceName = sourceName ?: sourceFileName
+    val displayedSourceName = sourceName
 
     LaunchedEffect(programNodes) {
         if (programNodes != null) {
             val activeIds = programNodes.asSequence().map(LegacyDockProgramNode::nodeId).toHashSet()
             collapsedProgramNodeIds = collapsedProgramNodeIds.filter(activeIds::contains)
-        }
-    }
-
-    LaunchedEffect(sourceName) {
-        sourceName?.let { activeSource ->
-            if (activeSource !in sourceEntries) sourceEntries = sourceEntries + activeSource
         }
     }
 
@@ -169,7 +188,8 @@ internal fun LegacyScriptDock(
         val density = LocalDensity.current
         val ballSizePx = with(density) { 35.dp.toPx() }
         val minPanelWidthPx = with(density) { 210.dp.toPx() }
-        val minPanelHeightPx = with(density) { 324.dp.toPx() }
+        // 最小高度原来和默认值一样是 324dp，缩放柄往下拖不动；参考的面板约 293dp，比这还矮。
+        val minPanelHeightPx = with(density) { 260.dp.toPx() }
         val maxWidthPx = constraints.maxWidth.toFloat()
         val maxHeightPx = constraints.maxHeight.toFloat()
         val ballPeekPx = with(density) { 10.dp.toPx() }
@@ -178,7 +198,9 @@ internal fun LegacyScriptDock(
         var panelX by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 4.dp.toPx() }) }
         var panelY by rememberSaveable(projectName) { mutableFloatStateOf(Float.NaN) }
         var panelWidthPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 232.dp.toPx() }) }
-        var panelHeightPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 324.dp.toPx() }) }
+        // 默认 300dp：参考截图里面板约占屏高 37%，我们原来的 324dp 在 640dp 高的屏上占到 50%，
+        // 会把项目列表整个盖住。
+        var panelHeightPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 300.dp.toPx() }) }
         val effectiveMinPanelWidthPx = minPanelWidthPx.coerceAtMost(maxWidthPx)
         val effectiveMinPanelHeightPx = minPanelHeightPx.coerceAtMost(maxHeightPx)
         val effectivePanelWidthPx = panelWidthPx.coerceIn(effectiveMinPanelWidthPx, maxWidthPx)
@@ -198,7 +220,8 @@ internal fun LegacyScriptDock(
         } else panelY.coerceIn(0f, maxPanelY)
 
         if (!expanded) {
-            Surface(
+            // service_tk_ball：35dp 外框固定，运行中内容换成 25dp 的停止键，居中于同一外框。
+            Box(
                 modifier = Modifier
                     .offset {
                         IntOffset(
@@ -210,7 +233,9 @@ internal fun LegacyScriptDock(
                     .pointerInput(projectName, maxWidthPx, maxHeightPx) {
                         detectDragGestures(
                             onDragEnd = {
-                                val center = resolvedBallX + ballSizePx / 2f
+                                // 松手时按当前状态判断吸附方向；不能用组合时捕获的 resolvedBallX，那是拖动前的位置。
+                                val currentX = if (ballX.isNaN()) -ballPeekPx else ballX
+                                val center = currentX + ballSizePx / 2f
                                 ballX = if (center < maxWidthPx / 2f) -ballPeekPx else maxWidthPx - ballSizePx + ballPeekPx
                             },
                         ) { change, dragAmount ->
@@ -220,14 +245,35 @@ internal fun LegacyScriptDock(
                             ballX = (currentX + dragAmount.x).coerceIn(-ballPeekPx, maxBallX)
                             ballY = (currentY + dragAmount.y).coerceIn(0f, maxBallY)
                         }
-                    }
-                    .clickable { editorMenuVisible = false; expanded = true },
-                color = Color(0xE6111827),
-                shape = RoundedCornerShape(18.dp),
-                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = .65f)),
-                shadowElevation = 5.dp,
+                    },
+                contentAlignment = Alignment.Center,
             ) {
-                EditorBallIcon(Modifier.fillMaxSize())
+                if (running) {
+                    Surface(
+                        modifier = Modifier.size(25.dp).clickable(onClick = onStop),
+                        color = Color(0xE6111827),
+                        shape = RoundedCornerShape(13.dp),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = .65f)),
+                        shadowElevation = 5.dp,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.editor_popup_power_20),
+                            contentDescription = "停止正在运行的程序",
+                            tint = Color.White,
+                            modifier = Modifier.fillMaxSize().padding(4.dp),
+                        )
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxSize().clickable { editorMenuVisible = false; expanded = true },
+                        color = Color(0xE6111827),
+                        shape = RoundedCornerShape(18.dp),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = .65f)),
+                        shadowElevation = 5.dp,
+                    ) {
+                        EditorBallIcon(Modifier.fillMaxSize())
+                    }
+                }
             }
         } else {
             LegacyDockPanel(
@@ -240,19 +286,11 @@ internal fun LegacyScriptDock(
                 consoleLines = consoleLines,
                 editingEnabled = editingEnabled,
                 onMenu = { editorMenuVisible = !editorMenuVisible },
-                onCreateSource = { if (editingEnabled) sourceManagerVisible = true },
+                onCreateSource = { if (editingEnabled && sourceTree != null) sourceManagerVisible = true },
                 onRun = onRun,
                 onStep = onStep,
-                onFunctions = {
-                    if (editingEnabled) {
-                        if (!externallyManaged && displayedSourceName == null) sourceManagerVisible = true else functionLibrary = true
-                    }
-                },
-                onTool = { entry ->
-                    if (editingEnabled) {
-                        if (!externallyManaged && displayedSourceName == null) sourceManagerVisible = true else toolDialog = entry
-                    }
-                },
+                onFunctions = { if (editingEnabled) functionLibrary = true },
+                onTool = { entry -> if (editingEnabled) toolDialog = entry },
                 onSelectNode = { nodeId ->
                     if (externallyManaged) onProgramNodeSelected(nodeId) else selectedNodeId = nodeId
                 },
@@ -340,7 +378,7 @@ internal fun LegacyScriptDock(
                     },
                     onPlugins = {
                         editorMenuVisible = false
-                        toolDialog = LegacyToolDialog.PLUGINS
+                        pluginManagerVisible = true
                     },
                     onSettings = {
                         editorMenuVisible = false
@@ -365,7 +403,10 @@ internal fun LegacyScriptDock(
                 LegacyMorePopup(
                     modifier = Modifier.offset { IntOffset(moreX.roundToInt(), moreY.roundToInt()) },
                     onShowMain = { moreMenuVisible = false; expanded = false },
-                    onRecord = { moreMenuVisible = false; toolDialog = LegacyToolDialog.RECORDING },
+                    onRecord = {
+                        moreMenuVisible = false
+                        if (onOpenRecorder != null) onOpenRecorder() else toolDialog = LegacyToolDialog.RECORDING
+                    },
                     onVariableCheck = { moreMenuVisible = false; toolDialog = LegacyToolDialog.VARIABLE_CHECK },
                     onSearchReplace = { moreMenuVisible = false; searchingProgram = true },
                     onRuntimeVariables = { moreMenuVisible = false; toolDialog = LegacyToolDialog.RUNTIME_VARIABLES },
@@ -404,7 +445,12 @@ internal fun LegacyScriptDock(
     }
 
     if (functionLibrary) {
+        val functionGroups = remember(externallyManaged) {
+            if (externallyManaged) LegacyFunctionCatalog.visualGroups() else LegacyFunctionCatalog.luaGroups()
+        }
         LegacyFunctionLibrary(
+            groups = functionGroups,
+            capabilities = capabilities,
             onDismiss = { functionLibrary = false; editingNodeId = null },
             onInsert = { snippet ->
                 val editingId = editingNodeId
@@ -432,29 +478,52 @@ internal fun LegacyScriptDock(
             },
         )
     }
-    if (sourceManagerVisible) {
+    if (sourceManagerVisible && sourceTree != null) {
         LegacySourceManagerDialog(
-            entries = sourceEntries,
-            currentSource = displayedSourceName,
-            onEntriesChanged = { sourceEntries = it },
-            onDismiss = { sourceManagerVisible = false },
-            onConfirmSource = { path, newlyCreated ->
-                if (!externallyManaged) {
-                    sourceFileName = path
-                    if (newlyCreated) {
-                        treeNodes = emptyList()
-                        selectedNodeId = null
-                        editingNodeId = null
-                        nextNodeId = 1L
-                        onInsert("-- ${path.substringAfterLast('/')}\n")
-                    }
+            tree = sourceTree,
+            currentFlowId = currentFlowId,
+            busy = sourceBusy,
+            message = sourceMessage,
+            onAction = { action ->
+                if (action is SourceManagerAction.Open || action is SourceManagerAction.InsertCall) {
+                    sourceManagerVisible = false
                 }
-                sourceManagerVisible = false
+                onSourceAction(action)
+            },
+            onDismiss = { sourceManagerVisible = false },
+        )
+    }
+    if (pluginManagerVisible) {
+        LegacyPluginManagerDialog(
+            enabled = externallyManaged && sourceTree != null,
+            onDismiss = { pluginManagerVisible = false },
+            onConfirm = { action ->
+                pluginManagerVisible = false
+                when (action) {
+                    LegacyPluginAction.CREATE,
+                    LegacyPluginAction.DELETE,
+                    LegacyPluginAction.SAVE_AS,
+                    LegacyPluginAction.GROUP,
+                    -> sourceManagerVisible = true
+                    LegacyPluginAction.CHECK,
+                    LegacyPluginAction.CHECK_ALL,
+                    LegacyPluginAction.TEMPLATE,
+                    LegacyPluginAction.UNUSED,
+                    -> onPluginAction(action)
+                }
             },
         )
     }
     toolDialog?.let { dialog ->
-        LegacyToolDialogScreen(dialog, projectName, onDismiss = { toolDialog = null; editingNodeId = null }) { snippet ->
+        LegacyToolDialogScreen(
+            dialog = dialog,
+            projectName = projectName,
+            files = projectFiles,
+            onDismiss = { toolDialog = null; editingNodeId = null },
+            onOpenFile = { file -> toolDialog = null; onOpenProjectFile(file) },
+            onDeleteFiles = onDeleteProjectFiles,
+            onOpenImageTools = onOpenImageTools?.let { open -> { toolDialog = null; open() } },
+        ) { snippet ->
             val editingId = editingNodeId
             val command = legacyDockProgramCommand(snippet)
             if (command != null) {
@@ -762,7 +831,19 @@ private val LegacyFunctionBlue = Color(0xFF339DFF)
 private val EditorBlue = Color(0xFF3A6EFF)
 private val EditorDisabledBlue = Color(0xFFAFC5FF)
 private val EditorBorder = Color(0xFFC7CBD1)
-internal enum class LegacyToolDialog { FILES, TOOLS, IMAGE, JUDGMENT, LOOP, COMMON, FUNCTIONS, RECORDING, PLUGINS, DEBUG, AI, DATA_BACKFILL, VARIABLE_CHECK, RUNTIME_VARIABLES }
+internal enum class LegacyToolDialog { FILES, TOOLS, IMAGE, JUDGMENT, LOOP, COMMON, FUNCTIONS, RECORDING, DEBUG, AI, DATA_BACKFILL, VARIABLE_CHECK, RUNTIME_VARIABLES }
+
+/** 旧版 P06「插件管理」的八个单选项；在本项目里“插件”= Flow（源文件）。 */
+internal enum class LegacyPluginAction(val label: String) {
+    CREATE("插件创建"),
+    DELETE("插件删除"),
+    SAVE_AS("插件另存"),
+    CHECK("插件检错"),
+    CHECK_ALL("全部插件检错"),
+    GROUP("插件分组"),
+    TEMPLATE("存储为模版"),
+    UNUSED("未调用插件"),
+}
 
 internal enum class LegacyInsertPosition {
     LIST_BOTTOM,
@@ -889,6 +970,8 @@ private fun LegacyDockPanel(
     val nodeIndexes = remember(nodes) { nodes.mapIndexed { index, node -> node.id to index }.toMap() }
     val treeListState = rememberLazyListState()
     val treeHorizontalState = rememberScrollState()
+    // pointerInput 只在首次组合时捕获回调；面板缩放、旋转后边界会变，所以每次都取最新的 onDrag。
+    val currentOnDrag by rememberUpdatedState(onDrag)
     LaunchedEffect(selectedNodeId, visibleNodes) {
         val selectedIndex = visibleNodes.indexOfFirst { it.id == selectedNodeId }
         val alreadyVisible = treeListState.layoutInfo.visibleItemsInfo.any { it.index == selectedIndex }
@@ -916,7 +999,7 @@ private fun LegacyDockPanel(
                         .pointerInput(projectName, "title-drag") {
                             detectDragGestures { change, delta ->
                                 change.consume()
-                                onDrag(delta)
+                                currentOnDrag(delta)
                             }
                         }
                         .clickable(onClick = onCreateSource)
@@ -986,30 +1069,36 @@ private fun LegacyDockPanel(
     }
 }
 
+/**
+ * `line_tk_console_container`：参考的性能行（CPU/内存）默认 GONE、只在“性能信息”开关打开时出现，
+ * 我们没有性能采样，所以不画那行占位。空态文案如实说明当前只有引擎/Root 生命周期与失败诊断，
+ * 脚本 `Log(...)` 输出流还没接到 Studio。
+ */
 @Composable
 private fun LegacyConsolePanel(lines: List<String>) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
+    }
     Column(Modifier.fillMaxSize().background(Color.White)) {
-        Text(
-            "CPU --%  |  内存 -- / -- (--%)  |  应用 --",
-            color = EditorBlue,
-            fontSize = 8.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().height(22.dp).padding(horizontal = 8.dp, vertical = 5.dp),
-        )
         if (lines.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    "暂无控制台日志\n运行后 Log(...) 输出会显示在这里",
-                    color = Color(0xFF8A909B),
+                    "暂无运行日志\n运行后引擎状态、Root 状态与失败诊断会显示在这里",
+                    color = Color(0xFF777777),
                     fontSize = 11.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
+            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp), state = listState) {
                 itemsIndexed(lines) { _, line ->
-                    Text(line, color = Color(0xFF202839), fontSize = 10.sp, modifier = Modifier.padding(vertical = 2.dp))
+                    Text(
+                        line,
+                        color = if (line.contains("诊断：") || line.endsWith("失败")) AutoScriptPalette.Danger else Color.Black,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
                 }
             }
         }
@@ -1057,6 +1146,12 @@ private fun LegacyMorePopup(
     }
 }
 
+/**
+ * `tk_bjck.xml`（底栏“编辑”）：顶部 40dp 面包屑（选中节点的祖先链，8sp `lan3`），中间是带复选框的
+ * 35dp 程序树行，底部两行 40dp 图标栏——第二行 撤销/恢复/上移/下移/左移/右移，第一行
+ * 关闭/参数/删除/复制/粘贴/剪切。参考里第一行第二项是“注释”，可视化项目没有注释语义，
+ * 这里映射为编辑节点参数（保留原值回显）。
+ */
 @Composable
 private fun LegacyNodeEditDialog(
     nodes: List<LegacyTreeNode>,
@@ -1067,104 +1162,115 @@ private fun LegacyNodeEditDialog(
     onCommand: (LegacyDockProgramCommand) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val selected = nodes.firstOrNull { it.id == selectedNodeId }
-    val rawLine = selected?.let { node ->
-        JSONObject()
-            .put("nodeId", node.id)
-            .put("kind", node.code)
-            .put("title", node.label)
-            .put("depth", node.depth)
-            .toString()
-    }.orEmpty()
+    val selectedIndex = nodes.indexOfFirst { it.id == selectedNodeId }
+    val hasSelection = selectedIndex >= 0
+    val breadcrumb = remember(nodes, selectedIndex) { legacyBreadcrumb(nodes, selectedIndex) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            modifier = Modifier.fillMaxWidth(.96f).fillMaxHeight(.90f),
+            modifier = Modifier.fillMaxSize().padding(vertical = 5.dp),
             color = Color.White,
             shape = RoundedCornerShape(2.dp),
             shadowElevation = 10.dp,
         ) {
             Column {
                 Text(
-                    rawLine.ifBlank { "请选择程序节点" },
-                    color = Color(0xFF202839),
-                    fontSize = 10.sp,
+                    breadcrumb.ifBlank { "请选择程序节点" },
+                    color = EditorBlue,
+                    fontSize = 8.sp,
+                    lineHeight = 12.sp,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().height(58.dp).padding(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(5.dp).height(40.dp).padding(start = 5.dp),
                 )
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E5EA)))
+                Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                 LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                    itemsIndexed(nodes, key = { _, node -> node.id }) { index, node ->
+                    itemsIndexed(nodes, key = { _, node -> node.id }) { _, node ->
                         Row(
-                            Modifier.fillMaxWidth().height(42.dp)
-                                .background(if (node.id == selectedNodeId) Color(0xFFE6EEF9) else Color.White)
-                                .clickable { onSelectNode(node.id) },
+                            Modifier.fillMaxWidth().height(35.dp)
+                                .background(if (node.id == selectedNodeId) Color(0xFFE7EEFF) else Color.White)
+                                .clickable { onSelectNode(node.id) }
+                                .padding(start = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                if (node.id == selectedNodeId) "☑" else "□",
-                                color = EditorBlue,
-                                fontSize = 17.sp,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                modifier = Modifier.width(35.dp),
+                            Checkbox(
+                                checked = node.id == selectedNodeId,
+                                onCheckedChange = { onSelectNode(node.id) },
+                                colors = CheckboxDefaults.colors(checkedColor = EditorBlue, uncheckedColor = Color(0xFF8A909B)),
+                                modifier = Modifier.size(30.dp),
                             )
-                            Text((index + 1).toString(), color = Color(0xFF8A909B), fontSize = 10.sp, modifier = Modifier.width(25.dp))
                             Text(
                                 node.label,
-                                color = Color(0xFF202839),
-                                fontSize = 13.sp,
+                                color = Color.Black,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f).padding(start = (node.depth * 10).dp, end = 6.dp),
+                                modifier = Modifier.weight(1f).padding(start = (1 + node.depth * 12).dp, end = 6.dp),
                             )
                         }
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E5EA)))
-                val actions = listOf(
-                    "撤销" to "UNDO", "恢复" to "REDO", "上移" to "MOVE_UP", "下移" to "MOVE_DOWN", "左移" to "OUTDENT", "右移" to "INDENT",
-                    "关闭" to "CLOSE", "注释" to "COMMENT", "删除" to "DELETE", "复制" to "COPY", "粘贴" to "PASTE", "剪切" to "CUT",
-                )
-                actions.chunked(6).forEach { rowActions ->
-                    Row(Modifier.fillMaxWidth().height(47.dp)) {
-                        rowActions.forEach { (label, action) ->
-                            Column(
-                                Modifier.weight(1f).fillMaxHeight().clickable(enabled = selected != null || action == "CLOSE") {
-                                    when (action) {
-                                        "CLOSE" -> onDismiss()
-                                        "DELETE" -> onDeleteSelected()
-                                        "COMMENT" -> onEditSelected()
-                                        else -> runCatching { LegacyDockProgramCommand.valueOf(action) }.getOrNull()?.let(onCommand)
-                                    }
-                                },
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                            ) {
-                                Text(
-                                    when (action) {
-                                        "UNDO" -> "↶"; "REDO" -> "↷"; "MOVE_UP" -> "↑"; "MOVE_DOWN" -> "↓"
-                                        "OUTDENT" -> "←"; "INDENT" -> "→"; "CLOSE" -> "×"; "COMMENT" -> "//"
-                                        "DELETE" -> "▰"; "COPY" -> "▣"; "PASTE" -> "▤"; else -> "✂"
-                                    },
-                                    color = if (selected != null || action == "CLOSE") EditorBlue else EditorDisabledBlue,
-                                    fontSize = 19.sp,
-                                )
-                                Text(label, color = Color(0xFF303746), fontSize = 9.sp)
-                            }
-                        }
-                    }
+                Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
+                Row(
+                    Modifier.fillMaxWidth().height(40.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LegacyDockToolbarItem(R.drawable.visual_undo_24, "撤销", true) { onCommand(LegacyDockProgramCommand.UNDO) }
+                    LegacyDockToolbarItem(R.drawable.visual_redo_24, "恢复", true) { onCommand(LegacyDockProgramCommand.REDO) }
+                    LegacyDockToolbarItem(R.drawable.ic_arrow_right_24, "上移", hasSelection, rotation = -90f) { onCommand(LegacyDockProgramCommand.MOVE_UP) }
+                    LegacyDockToolbarItem(R.drawable.ic_arrow_right_24, "下移", hasSelection, rotation = 90f) { onCommand(LegacyDockProgramCommand.MOVE_DOWN) }
+                    LegacyDockToolbarItem(R.drawable.ic_arrow_right_24, "左移", hasSelection, rotation = 180f) { onCommand(LegacyDockProgramCommand.OUTDENT) }
+                    LegacyDockToolbarItem(R.drawable.ic_arrow_right_24, "右移", hasSelection) { onCommand(LegacyDockProgramCommand.INDENT) }
                 }
-                Row(Modifier.fillMaxWidth().height(40.dp)) {
-                    Text(
-                        "修改选中节点参数（保留原值回显）",
-                        color = EditorBlue,
-                        fontSize = 11.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.fillMaxSize().clickable(enabled = selected != null, onClick = onEditSelected).padding(top = 12.dp),
-                    )
+                Row(
+                    Modifier.fillMaxWidth().height(40.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LegacyDockToolbarItem(R.drawable.editor_close_24, "关闭", true, onClick = onDismiss)
+                    LegacyDockToolbarItem(R.drawable.editor_edit_24, "参数", hasSelection, onClick = onEditSelected)
+                    LegacyDockToolbarItem(R.drawable.editor_delete_24, "删除", hasSelection, onClick = onDeleteSelected)
+                    LegacyDockToolbarItem(R.drawable.editor_file_copy_24, "复制", hasSelection) { onCommand(LegacyDockProgramCommand.COPY) }
+                    LegacyDockToolbarItem(R.drawable.editor_file_paste_24, "粘贴", true) { onCommand(LegacyDockProgramCommand.PASTE) }
+                    LegacyDockToolbarItem(R.drawable.ic_content_cut_24, "剪切", hasSelection) { onCommand(LegacyDockProgramCommand.CUT) }
                 }
             }
         }
+    }
+}
+
+/** 选中节点的祖先链，如 `限次循环(3次)>循环体>点击`；按 depth 逆向回溯得到。 */
+private fun legacyBreadcrumb(nodes: List<LegacyTreeNode>, selectedIndex: Int): String {
+    if (selectedIndex !in nodes.indices) return ""
+    val chain = ArrayDeque<String>()
+    var depth = nodes[selectedIndex].depth
+    chain.addFirst(nodes[selectedIndex].label)
+    for (index in selectedIndex - 1 downTo 0) {
+        if (depth == 0) break
+        if (nodes[index].depth < depth) {
+            chain.addFirst(nodes[index].label)
+            depth = nodes[index].depth
+        }
+    }
+    return chain.joinToString(">")
+}
+
+/** tk_bjck 底栏项：图标 + 8sp `lan3` 文字，左右 15dp、上下 3dp 内边距。 */
+@Composable
+private fun LegacyDockToolbarItem(
+    @DrawableRes icon: Int,
+    label: String,
+    enabled: Boolean,
+    rotation: Float = 0f,
+    onClick: () -> Unit,
+) {
+    val tint = if (enabled) EditorBlue else EditorDisabledBlue
+    Column(
+        Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 15.dp, vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(painterResource(icon), contentDescription = label, tint = tint, modifier = Modifier.size(20.dp).rotate(rotation))
+        Text(label, color = tint, fontSize = 8.sp)
     }
 }
 
@@ -1211,7 +1317,8 @@ private fun LegacyProgramTreeRow(
         }
         Text(
             node.label,
-            color = Color(0xFF202839),
+            // item_tree_list 的 tv_name 是纯黑 #000000，不是偏蓝的深灰。
+            color = Color.Black,
             fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1307,7 +1414,7 @@ private fun LegacyInsertPositionDialog(
                         modifier = Modifier.size(34.dp).clickable(onClick = onDismiss).padding(6.dp),
                     )
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(EditorBorder))
+                Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                 options.forEach { (position, label) ->
                     val enabled = when (position) {
                         LegacyInsertPosition.LIST_BOTTOM -> true
@@ -1327,7 +1434,7 @@ private fun LegacyInsertPositionDialog(
                         )
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(EditorBorder))
+                Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                 Row(Modifier.fillMaxWidth().height(42.dp)) {
                     Text(
                         "取消",
@@ -1336,7 +1443,7 @@ private fun LegacyInsertPositionDialog(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.weight(1f).fillMaxHeight().clickable(onClick = onDismiss).padding(top = 11.dp),
                     )
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(EditorBorder))
+                    Box(Modifier.width(hairline()).fillMaxHeight().background(AutoScriptPalette.Divider))
                     Text(
                         "确定",
                         color = EditorBlue,
@@ -1344,46 +1451,6 @@ private fun LegacyInsertPositionDialog(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.weight(1f).fillMaxHeight().clickable { onConfirm(selected) }.padding(top = 11.dp),
                     )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LegacyNewSourceDialog(
-    onDismiss: () -> Unit,
-    onCreateGroup: (String) -> Unit,
-    onCreateSource: (String) -> Unit,
-) {
-    var name by rememberSaveable { mutableStateOf("") }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(.82f).widthIn(max = 420.dp),
-            color = Color.White,
-            shape = RoundedCornerShape(2.dp),
-            shadowElevation = 8.dp,
-        ) {
-            Column(Modifier.padding(top = 20.dp)) {
-                Text("创建", color = Color(0xFF171B25), fontSize = 18.sp, modifier = Modifier.padding(start = 25.dp))
-                BasicTextField(
-                    value = name,
-                    onValueChange = { if (it.length <= 30) name = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = Color(0xFF1C2333), fontSize = 15.sp),
-                    modifier = Modifier.padding(start = 30.dp, top = 10.dp, end = 30.dp, bottom = 5.dp)
-                        .fillMaxWidth().height(36.dp)
-                        .border(1.dp, Color(0xFFC7CBD1), RoundedCornerShape(2.dp))
-                        .padding(horizontal = 8.dp, vertical = 7.dp),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 15.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    LegacyDialogTextButton("取消", onDismiss)
-                    Spacer(Modifier.weight(1f))
-                    LegacyDialogTextButton("分组") { onCreateGroup(name) }
-                    LegacyDialogTextButton("源文件", Modifier.padding(end = 15.dp)) { onCreateSource(name) }
                 }
             }
         }
@@ -1461,6 +1528,7 @@ private fun EditorBottomButton(icon: EditorBottomIcon, enabled: Boolean, onClick
 
 @Composable
 private fun ResizeHandle(modifier: Modifier, onResize: (Offset) -> Unit) {
+    val currentOnResize by rememberUpdatedState(onResize)
     Icon(
         painter = painterResource(R.drawable.editor_resize_24),
         contentDescription = "调整窗口大小",
@@ -1468,35 +1536,48 @@ private fun ResizeHandle(modifier: Modifier, onResize: (Offset) -> Unit) {
         modifier = modifier.pointerInput(Unit) {
             detectDragGestures { change, delta ->
                 change.consume()
-                onResize(delta)
+                currentOnResize(delta)
             }
         },
     )
 }
 
+/**
+ * `service_tk_functionui.xml`：40dp 头（搜索、关闭图标）、1px 分割、三列（权重 1.2/1.2/0.9，30dp 行）。
+ * 第一列分类、第二列条目、第三列是所选条目的“加入”和参数说明；搜索态整体换成结果列表。
+ * 内容只来自 [LegacyFunctionCatalog]：可视化项目是积木目录，Lua 项目是真实脚本 API。
+ */
 @Composable
-private fun LegacyFunctionLibrary(
+internal fun LegacyFunctionLibrary(
+    groups: List<LegacyFunctionGroup>,
+    capabilities: Set<String>,
     onDismiss: () -> Unit,
     onInsert: (String) -> Unit,
 ) {
-    var category by rememberSaveable { mutableStateOf(LegacyFunctionCategory.KEYS) }
-    var groupIndex by rememberSaveable { mutableStateOf(1) }
+    var groupIndex by rememberSaveable { mutableStateOf(0) }
+    var entryIndex by rememberSaveable { mutableStateOf(0) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    val commands = remember(category, groupIndex, query) {
-        val base = if (query.isBlank()) {
-            legacyFunctionCommands(category, groupIndex)
-        } else {
-            LegacyFunctionCategory.entries.flatMap { candidate ->
-                candidate.groups.indices.flatMap { index -> legacyFunctionCommands(candidate, index) }
-            }.distinctBy(LegacyCommand::label)
+    val group = groups.getOrNull(groupIndex)
+    val entries = group?.entries.orEmpty()
+    val entry = entries.getOrNull(entryIndex)
+    val matches = remember(groups, query) {
+        val needle = query.trim()
+        if (needle.isEmpty()) emptyList() else groups.flatMap { candidate ->
+            candidate.entries.filter { item ->
+                item.title.contains(needle, ignoreCase = true) ||
+                    item.blockKind?.contains(needle, ignoreCase = true) == true ||
+                    item.snippet.contains(needle, ignoreCase = true)
+            }.map { candidate.label to it }
         }
-        base.filter { query.isBlank() || it.label.contains(query, ignoreCase = true) || it.snippet.contains(query, ignoreCase = true) }
     }
-    var commandIndex by rememberSaveable(category, groupIndex, query) { mutableStateOf(0) }
+    fun available(item: LegacyFunctionEntry): Boolean =
+        item.blockKind == null || item.requiredCapabilities.all(capabilities::contains)
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // 参考根布局无横向 padding，面板是满宽的。
         Surface(
-            modifier = Modifier.fillMaxWidth(.96f).fillMaxHeight(.64f),
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(.64f),
             color = Color.White,
             shape = RoundedCornerShape(2.dp),
             shadowElevation = 8.dp,
@@ -1531,30 +1612,69 @@ private fun LegacyFunctionLibrary(
                         modifier = Modifier.padding(end = 3.dp).size(34.dp).clickable(onClick = onDismiss).padding(5.dp),
                     )
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE1E4E9)))
-                Row(Modifier.weight(1f).padding(horizontal = 1.dp)) {
-                    Column(Modifier.weight(1.2f).fillMaxHeight().background(Color(0xFFF8F9FB)).verticalScroll(rememberScrollState())) {
-                        LegacyFunctionCategory.entries.forEach { candidate ->
-                            LegacyLibraryTab(candidate.label, category == candidate) {
-                                category = candidate
-                                groupIndex = if (candidate == LegacyFunctionCategory.KEYS) 1 else 0
+                Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
+                if (searching) {
+                    if (query.isBlank()) {
+                        Text(
+                            "输入中文函数名、英文函数名或变量名",
+                            color = Color(0xFF777777),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        )
+                    } else if (matches.isEmpty()) {
+                        Text("没有匹配结果", color = Color(0xFF777777), fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(20.dp))
+                    } else {
+                        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                            itemsIndexed(matches) { _, (label, item) ->
+                                val enabled = available(item)
+                                Row(
+                                    Modifier.fillMaxWidth().height(30.dp).clickable(enabled = enabled) { onInsert(item.snippet) }.padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(item.title, color = if (enabled) Color.Black else Color(0xFF9DA6B4), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                    Text(label, color = Color(0xFF777777), fontSize = 10.sp)
+                                }
                             }
                         }
                     }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFE1E4E9)))
-                    Column(Modifier.weight(1.2f).fillMaxHeight().background(Color(0xFFF8F9FB)).verticalScroll(rememberScrollState())) {
-                        category.groups.forEachIndexed { index, label ->
-                            LegacyLibraryTab(label, groupIndex == index) { groupIndex = index }
+                } else {
+                    Row(Modifier.weight(1f).padding(horizontal = 1.dp)) {
+                        Column(Modifier.weight(1.2f).fillMaxHeight().background(Color(0xFFF5F5F5)).verticalScroll(rememberScrollState())) {
+                            groups.forEachIndexed { index, candidate ->
+                                LegacyLibraryTab(candidate.label, groupIndex == index) {
+                                    groupIndex = index
+                                    entryIndex = 0
+                                }
+                            }
                         }
-                    }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFE1E4E9)))
-                    Column(Modifier.weight(.9f).fillMaxHeight().background(Color(0xFFF5F5F5)).verticalScroll(rememberScrollState())) {
-                        if (commands.isEmpty()) {
-                            Text(if (query.isBlank()) "暂无可用内容" else "没有匹配结果", color = Color(0xFF8A939E), fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                        } else commands.forEachIndexed { index, command ->
-                            LegacyLibraryTab(command.label, commandIndex == index) {
-                                commandIndex = index
-                                onInsert(command.snippet)
+                        // 参考列间竖线用的是 hs2（与三列底色同色），近乎隐形，不是深色描边。
+                        Box(Modifier.width(hairline()).fillMaxHeight().background(AutoScriptPalette.DividerSoft))
+                        Column(Modifier.weight(1.2f).fillMaxHeight().background(Color(0xFFF5F5F5)).verticalScroll(rememberScrollState())) {
+                            entries.forEachIndexed { index, item ->
+                                LegacyLibraryTab(item.title, entryIndex == index, enabled = available(item)) { entryIndex = index }
+                            }
+                        }
+                        // 参考列间竖线用的是 hs2（与三列底色同色），近乎隐形，不是深色描边。
+                        Box(Modifier.width(hairline()).fillMaxHeight().background(AutoScriptPalette.DividerSoft))
+                        Column(Modifier.weight(.9f).fillMaxHeight().background(Color(0xFFF5F5F5)).verticalScroll(rememberScrollState())) {
+                            if (entry == null) {
+                                Text("暂无可用内容", color = Color(0xFF8A939E), fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            } else {
+                                val enabled = available(entry)
+                                LegacyLibraryTab("加入", selected = false, enabled = enabled) { onInsert(entry.snippet) }
+                                Text(entry.detail, color = Color(0xFF777777), fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                                entry.parameters.forEach { parameter ->
+                                    Text("· $parameter", color = Color(0xFF202839), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                                }
+                                if (!enabled) {
+                                    Text(
+                                        "需要能力：${(entry.requiredCapabilities - capabilities).joinToString()}",
+                                        color = AutoScriptPalette.Danger,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1564,72 +1684,143 @@ private fun LegacyFunctionLibrary(
     }
 }
 
-/** Dialog routes reconstructed from FloatingCreateScript and myCreateScriptClickEvent.
- * They are in-app previews until Runtime exposes recording and plugin IPC. */
+/** 右栏九个入口和“更多”菜单的弹窗路由；录制仍是应用内预览，直到 Runtime 提供事件流。 */
 @Composable
-private fun LegacyToolDialogScreen(dialog: LegacyToolDialog, projectName: String, onDismiss: () -> Unit, onInsert: (String) -> Unit) {
-    if (dialog in setOf(
-            LegacyToolDialog.TOOLS,
-            LegacyToolDialog.FILES,
-            LegacyToolDialog.IMAGE,
-            LegacyToolDialog.JUDGMENT,
-            LegacyToolDialog.LOOP,
-            LegacyToolDialog.COMMON,
-            LegacyToolDialog.DEBUG,
-            LegacyToolDialog.AI,
-            LegacyToolDialog.DATA_BACKFILL,
-            LegacyToolDialog.VARIABLE_CHECK,
-            LegacyToolDialog.RUNTIME_VARIABLES,
+private fun LegacyToolDialogScreen(
+    dialog: LegacyToolDialog,
+    projectName: String,
+    files: List<StudioProjectFile>,
+    onDismiss: () -> Unit,
+    onOpenFile: (StudioProjectFile) -> Unit,
+    onDeleteFiles: (List<StudioProjectFile>) -> Unit,
+    onOpenImageTools: (() -> Unit)?,
+    onInsert: (String) -> Unit,
+) {
+    if (dialog != LegacyToolDialog.RECORDING) {
+        EditorEntryDialog(
+            entry = dialog,
+            projectName = projectName,
+            files = files,
+            onDismiss = onDismiss,
+            onInsert = onInsert,
+            onOpenFile = onOpenFile,
+            onDeleteFiles = onDeleteFiles,
+            onOpenImageTools = onOpenImageTools,
         )
-    ) {
-        EditorEntryDialog(dialog, projectName, onDismiss, onInsert)
         return
     }
     Dialog(onDismissRequest = onDismiss) {
         Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(5.dp), color = Color(0xFFF6F6F6)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                when (dialog) {
-                    LegacyToolDialog.TOOLS,
-                    LegacyToolDialog.FILES,
-                    LegacyToolDialog.IMAGE,
-                    LegacyToolDialog.JUDGMENT,
-                    LegacyToolDialog.LOOP,
-                    LegacyToolDialog.COMMON,
-                    LegacyToolDialog.FUNCTIONS,
-                    -> Unit
-                    LegacyToolDialog.RECORDING -> {
-                        Text("录制模式", color = LegacyDockGreenDark, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                        Text("原版会收起编辑面板并显示悬浮录制控制。当前先以应用内控制预览呈现，Runtime 事件流接入后会写入真实动作。", fontSize = 13.sp, color = Color(0xFF596270))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            LegacyDialogControl("● REC", Color(0xFFD84949))
-                            LegacyDialogControl("暂停", LegacyDockGreen)
-                            LegacyDialogControl("结束", Color(0xFF555B65))
-                        }
-                        Text("录制内容：点击、长按、滑动、按键、等待", fontSize = 12.sp, color = Color(0xFF6A7480))
-                    }
-                    LegacyToolDialog.PLUGINS -> {
-                        Text("插件管理", color = LegacyDockGreenDark, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                        Text("选择项目插件", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        listOf("新建插件", "导入插件包", "插件分组管理").forEach { label ->
-                            Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(3.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("▦", color = LegacyDockGreen, modifier = Modifier.padding(end = 10.dp))
-                                Text(label, modifier = Modifier.weight(1f))
-                                Text("›", color = Color(0xFF8A939E), fontSize = 22.sp)
-                            }
-                        }
-                        Text("当前项目暂无已安装插件。插件运行沙箱和签名校验将在 Runtime 插件模型接入后启用。", fontSize = 12.sp, color = Color(0xFF6A7480))
-                    }
-                    LegacyToolDialog.DEBUG,
-                    LegacyToolDialog.AI,
-                    LegacyToolDialog.DATA_BACKFILL,
-                    LegacyToolDialog.VARIABLE_CHECK,
-                    LegacyToolDialog.RUNTIME_VARIABLES,
-                    -> Unit
+                Text("录制模式", color = LegacyDockGreenDark, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                Text("原版会收起编辑面板并显示悬浮录制控制。当前先以应用内控制预览呈现，Runtime 事件流接入后会写入真实动作。", fontSize = 13.sp, color = Color(0xFF596270))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LegacyDialogControl("● REC", Color(0xFFD84949))
+                    LegacyDialogControl("暂停", LegacyDockGreen)
+                    LegacyDialogControl("结束", Color(0xFF555B65))
                 }
+                Text("录制内容：点击、长按、滑动、按键、等待", fontSize = 12.sp, color = Color(0xFF6A7480))
                 Text("关闭", modifier = Modifier.fillMaxWidth().border(1.dp, LegacyFunctionBlue, RoundedCornerShape(3.dp)).clickable(onClick = onDismiss).padding(10.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = LegacyFunctionBlue)
             }
         }
     }
+}
+
+/**
+ * 旧版 P06「插件管理」：白底、60dp 标题 18sp `#33AAFF`、右上问号、2dp `#6699FF` 分割、
+ * 八个单选行、底部 取消/确定。“插件”在本项目里就是源文件（Flow）。
+ */
+@Composable
+private fun LegacyPluginManagerDialog(
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (LegacyPluginAction) -> Unit,
+) {
+    var selected by rememberSaveable { mutableStateOf(LegacyPluginAction.CREATE) }
+    var showHelp by rememberSaveable { mutableStateOf(false) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.91f).widthIn(max = 480.dp),
+            color = Color.White,
+            shape = RoundedCornerShape(2.dp),
+            shadowElevation = 10.dp,
+        ) {
+            Column {
+                Box(Modifier.fillMaxWidth().height(60.dp)) {
+                    Text(
+                        "插件管理",
+                        color = LegacyFunctionBlue,
+                        fontSize = 18.sp,
+                        modifier = Modifier.align(Alignment.CenterStart).padding(start = 10.dp),
+                    )
+                    Icon(
+                        painterResource(R.drawable.ic_help_outline_24),
+                        contentDescription = "说明",
+                        tint = LegacyFunctionBlue,
+                        modifier = Modifier.align(Alignment.TopEnd).size(30.dp).clickable { showHelp = !showHelp }.padding(3.dp),
+                    )
+                }
+                Box(Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF6699FF)))
+                if (showHelp) {
+                    Text(
+                        if (enabled) {
+                            "插件即源文件（Flow）。创建、删除、另存、分组会打开源文件管理；检错用 Rust 编译器校验项目；" +
+                                "未调用插件列出没有被任何调用节点引用的源文件；存储为模版预留。"
+                        } else {
+                            "Lua 项目只有 main.lua，没有可管理的插件。"
+                        },
+                        color = Color(0xFF596270),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                }
+                LegacyPluginAction.entries.forEach { action ->
+                    val available = enabled && action != LegacyPluginAction.TEMPLATE
+                    Row(
+                        Modifier.fillMaxWidth().height(45.dp)
+                            .clickable(enabled = available) { selected = action }
+                            .padding(start = 10.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (action == LegacyPluginAction.TEMPLATE) "${action.label}（预留）" else action.label,
+                            color = if (available) Color.Black else Color(0xFF9DA6B4),
+                            fontSize = 18.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        RadioButton(
+                            selected = selected == action,
+                            onClick = { selected = action },
+                            enabled = available,
+                            colors = RadioButtonDefaults.colors(selectedColor = LegacyFunctionBlue),
+                        )
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E3E3)))
+                }
+                Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    LegacyPluginButton("取消", Modifier.weight(1f), onClick = onDismiss)
+                    Spacer(Modifier.width(4.dp))
+                    LegacyPluginButton("确定", Modifier.weight(1f), enabled = enabled && selected != LegacyPluginAction.TEMPLATE) { onConfirm(selected) }
+                }
+            }
+        }
+    }
+}
+
+/** `guagua_but_style5`：白底灰边 16sp 黑字。 */
+@Composable
+private fun LegacyPluginButton(label: String, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (enabled) Color.Black else Color(0xFF9DA6B4),
+        fontSize = 16.sp,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = modifier.fillMaxHeight()
+            .border(1.dp, EditorBorder, RoundedCornerShape(2.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .wrapContentSize(Alignment.Center),
+    )
 }
 
 @Composable
@@ -1666,69 +1857,26 @@ private fun LegacyDialogControl(label: String, color: Color) {
     Text(label, modifier = Modifier.background(color, RoundedCornerShape(3.dp)).padding(horizontal = 12.dp, vertical = 8.dp), color = Color.White, fontSize = 12.sp)
 }
 
-private enum class LegacyFunctionCategory(val label: String, val groups: List<String>) {
-    VARIABLES("变量管理", listOf("新建变量", "读取变量", "设置变量")),
-    UI("界面函数", listOf("界面操作", "控件操作", "窗口操作")),
-    SCRIPT("脚本函数", listOf("脚本调用", "脚本控制", "参数传递")),
-    KEYS("按键函数", listOf("触摸操作", "设备按键", "文本输入", "无障碍节点")),
-    IMAGE("图像函数", listOf("找图识别", "找色识别", "字库识字", "ONNX OCR")),
-    FILE("文件函数", listOf("文件读取", "文件写入", "目录操作")),
-    NETWORK("网络函数", listOf("HTTP 请求", "下载上传", "Socket")),
-    SYSTEM("系统函数", listOf("应用管理", "设备信息", "系统设置")),
-    DATA("数据函数", listOf("数组操作", "字符操作", "JSON 操作")),
-    MATH("数学函数", listOf("基础运算", "随机数", "数学计算")),
-    OTHER_LANGUAGE("其他语言", listOf("JavaScript", "Shell 命令", "Java 调用")),
-    PLUGIN("插件函数", listOf("项目插件", "插件调用", "插件管理")),
-}
-
-private data class LegacyCommand(val label: String, val snippet: String)
-
-private fun legacyFunctionCommands(category: LegacyFunctionCategory, groupIndex: Int): List<LegacyCommand> = when (category) {
-    LegacyFunctionCategory.KEYS -> when (groupIndex) {
-        0 -> listOf(
-            LegacyCommand("屏幕单击", "Input.tap(x, y)\n"),
-            LegacyCommand("屏幕长按", "Input.longPress(x, y, 800)\n"),
-            LegacyCommand("屏幕滑动", "Input.swipe(x1, y1, x2, y2, 300)\n"),
-        )
-        1 -> listOf(
-            LegacyCommand("设备单击", "Input.keyClick(keyCode)\n"),
-            LegacyCommand("设备按下", "Input.keyDown(keyCode)\n"),
-            LegacyCommand("设备弹起", "Input.keyUp(keyCode)\n"),
-        )
-        2 -> listOf(LegacyCommand("输入文本", "Input.text(\"text\")\n"), LegacyCommand("清空文本", "Input.clearText()\n"))
-        else -> listOf(LegacyCommand("查找节点", "Accessibility.findNode(\"text\")\n"), LegacyCommand("点击节点", "Accessibility.clickNode(node)\n"))
-    }
-    LegacyFunctionCategory.VARIABLES -> listOf(LegacyCommand("设置变量", "local value = \"\"\n"), LegacyCommand("读取变量", "-- value\n"))
-    LegacyFunctionCategory.UI -> listOf(LegacyCommand("显示界面", "Ui.show(\"main\")\n"), LegacyCommand("设置文本", "Ui.setText(id, text)\n"), LegacyCommand("关闭界面", "Ui.close(\"main\")\n"))
-    LegacyFunctionCategory.SCRIPT -> listOf(LegacyCommand("调用脚本", "Script.call(\"scriptName\")\n"), LegacyCommand("停止脚本", "Script.stop()\n"), LegacyCommand("等待", "Task.sleep(1000)\n"))
-    LegacyFunctionCategory.IMAGE -> when (groupIndex) {
-        0 -> listOf(LegacyCommand("区域找图", "Vision.findImage(\"image.png\")\n"), LegacyCommand("特征找图", "Vision.findFeature(\"image.png\")\n"))
-        1 -> listOf(LegacyCommand("多点找色", "Vision.findColor(\"#FFFFFF\")\n"), LegacyCommand("多点比色", "Vision.compareColors(points)\n"))
-        2 -> listOf(LegacyCommand("字库识字", "Vision.findText(\"default.txt\")\n"))
-        else -> listOf(LegacyCommand("ONNX OCR", "Vision.findTextOnnx(\"RapidOCR.onnx\", \"中英文\", 0.8)\n"))
-    }
-    LegacyFunctionCategory.FILE -> listOf(LegacyCommand("读取文本", "File.readText(path)\n"), LegacyCommand("写入文本", "File.writeText(path, text)\n"), LegacyCommand("创建目录", "File.makeDir(path)\n"))
-    LegacyFunctionCategory.NETWORK -> listOf(LegacyCommand("HTTP GET", "Net.get(url)\n"), LegacyCommand("下载文件", "Net.download(url, path)\n"), LegacyCommand("上传文件", "Net.upload(url, path)\n"))
-    LegacyFunctionCategory.SYSTEM -> listOf(LegacyCommand("启动应用", "System.launch(packageName)\n"), LegacyCommand("设备信息", "System.deviceInfo()\n"), LegacyCommand("设置亮度", "System.setBrightness(value)\n"))
-    LegacyFunctionCategory.DATA -> listOf(LegacyCommand("创建数组", "local values = {}\n"), LegacyCommand("JSON 解析", "Json.decode(text)\n"), LegacyCommand("字符替换", "String.replace(text, old, new)\n"))
-    LegacyFunctionCategory.MATH -> listOf(LegacyCommand("随机数", "Math.random(min, max)\n"), LegacyCommand("取绝对值", "Math.abs(value)\n"), LegacyCommand("四舍五入", "Math.round(value)\n"))
-    LegacyFunctionCategory.OTHER_LANGUAGE -> listOf(LegacyCommand("执行 JavaScript", "Language.javascript(code)\n"), LegacyCommand("执行 Shell", "Language.shell(command)\n"))
-    LegacyFunctionCategory.PLUGIN -> listOf(LegacyCommand("调用插件", "Plugin.call(\"pluginName\")\n"), LegacyCommand("插件返回值", "Plugin.result(\"pluginName\")\n"))
-}
-
+/** item_tree_list_functionui_1：30dp 行，黑字居中；选中项加蓝色左标和下划线。 */
 @Composable
-private fun LegacyLibraryTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(Modifier.fillMaxWidth().height(30.dp).clickable(onClick = onClick)) {
+private fun LegacyLibraryTab(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(Modifier.fillMaxWidth().height(30.dp).clickable(enabled = enabled, onClick = onClick)) {
         Box(
             Modifier.align(Alignment.CenterStart).width(1.5.dp).fillMaxHeight()
                 .background(if (selected) Color(0xFF4C8DFF) else Color.Transparent),
         )
         Text(
             label,
-            color = if (selected) Color(0xFF2864F0) else Color(0xFF202839),
+            color = when {
+                !enabled -> Color(0xFF9DA6B4)
+                selected -> Color(0xFF2864F0)
+                else -> Color.Black
+            },
             fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center),
         )
         Box(

@@ -1,8 +1,10 @@
 package com.autoscript.studio
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,10 +18,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -27,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import com.autoscript.core.designsystem.AutoScriptPalette
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,10 +47,14 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val EntryBlue = Color(0xFF3D5AFE)
 private val EntryAccent = Color(0xFF3A6EFF)
@@ -62,8 +73,12 @@ private data class PickerRequest(
 internal fun EditorEntryDialog(
     entry: LegacyToolDialog,
     projectName: String,
+    files: List<StudioProjectFile>,
     onDismiss: () -> Unit,
     onInsert: (String) -> Unit,
+    onOpenFile: (StudioProjectFile) -> Unit = {},
+    onDeleteFiles: (List<StudioProjectFile>) -> Unit = {},
+    onOpenImageTools: (() -> Unit)? = null,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val panelModifier = when (entry) {
@@ -88,13 +103,13 @@ internal fun EditorEntryDialog(
             shadowElevation = 8.dp,
         ) {
             when (entry) {
-                LegacyToolDialog.FILES -> FileManagerPage(projectName, onDismiss, onInsert)
-                LegacyToolDialog.TOOLS -> ToolSettingsPage(onDismiss, onInsert)
+                LegacyToolDialog.FILES -> FileManagerPage(projectName, files, onDismiss, onOpenFile, onDeleteFiles)
+                LegacyToolDialog.TOOLS -> ToolSettingsPage(onDismiss, onInsert, onOpenImageTools)
                 LegacyToolDialog.IMAGE -> ImageRecognitionPage(onDismiss, onInsert)
                 LegacyToolDialog.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
                 LegacyToolDialog.LOOP -> LoopPage(onDismiss, onInsert)
                 LegacyToolDialog.COMMON -> CommonPage(onDismiss, onInsert)
-                LegacyToolDialog.DEBUG -> DebugPage(onDismiss, onInsert)
+                LegacyToolDialog.DEBUG -> DebugPage(onDismiss)
                 LegacyToolDialog.AI -> AiProgrammingPage(onDismiss, onInsert)
                 LegacyToolDialog.DATA_BACKFILL -> DataBackfillPage(onDismiss, onInsert)
                 LegacyToolDialog.VARIABLE_CHECK -> VariableCheckPage(onDismiss)
@@ -105,90 +120,304 @@ internal fun EditorEntryDialog(
     }
 }
 
+private sealed interface FileRow {
+    val key: String
+
+    data class Up(override val key: String = "..") : FileRow
+    data class Folder(val name: String, val path: String, val count: Int) : FileRow {
+        override val key: String get() = "d:$path"
+    }
+    data class Entry(val file: StudioProjectFile) : FileRow {
+        override val key: String get() = "f:${file.path}"
+    }
+}
+
+/**
+ * `service_tk_xt_wj_gl_layout.xml`：40dp 路径行 + 菜单、可隐藏的搜索行、常驻“已选择N项 / 全选”、
+ * 45dp 的文件夹/文件/返回行，以及“取消”与多选图标行两套底栏。
+ * 数据来自项目清单（[projectFileCatalog]），目录按路径推导，`.studio`、`generated` 不会出现。
+ * 清单里的源文件、Lua 入口和 project.json 由各自的管理入口负责，这里只能删除图片/字库资源。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FileManagerPage(projectName: String, onDismiss: () -> Unit, onInsert: (String) -> Unit) {
+private fun FileManagerPage(
+    projectName: String,
+    files: List<StudioProjectFile>,
+    onDismiss: () -> Unit,
+    onOpenFile: (StudioProjectFile) -> Unit,
+    onDeleteFiles: (List<StudioProjectFile>) -> Unit,
+) {
+    var currentDir by remember(projectName) { mutableStateOf("") }
+    var selectedKeys by remember(projectName) { mutableStateOf<List<String>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var menuVisible by remember { mutableStateOf(false) }
     var reverseSort by remember { mutableStateOf(false) }
-    val projectRoot = remember(projectName) { "/项目文件/$projectName" }
-    var currentPath by remember(projectName) { mutableStateOf(projectRoot) }
-    val rootFiles = listOf(
-        Triple("..", true, ""),
-        Triple("Lua", true, "2026-09-04 16:25"),
-        Triple("临时文件", true, "2026-09-04 16:25"),
-        Triple("图片", true, "2026-09-04 16:25"),
-        Triple("字库", true, "2026-09-04 16:25"),
-        Triple("撤销恢复", true, "2026-09-14 15:26"),
-        Triple("源文件", true, "2026-09-14 15:30"),
-        Triple("界面", true, "2026-09-04 16:25"),
-        Triple("config.json", false, "2026-09-04 19:14    155B"),
-        Triple("变量.json", false, "2026-09-04 16:25    0B"),
-        Triple("控制台日志输出.log", false, "2026-09-14 15:30    0B"),
-    )
-    val nestedFiles = listOf(Triple("..", true, ""), Triple("暂无文件", false, "0B"))
-    val source = if (currentPath == projectRoot) rootFiles else nestedFiles
-    val files = source.filter { query.isBlank() || it.first.contains(query, ignoreCase = true) }
-        .let { if (reverseSort) it.reversed() else it }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val timestamp = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+    val rows = remember(files, currentDir, query, reverseSort) {
+        val prefix = if (currentDir.isEmpty()) "" else "$currentDir/"
+        val inScope = files.filter { it.path.startsWith(prefix) }
+        val folders = inScope
+            .mapNotNull { file -> file.path.removePrefix(prefix).substringBefore('/', "").takeIf(String::isNotEmpty) }
+            .distinct()
+            .map { name -> FileRow.Folder(name, prefix + name, inScope.count { it.path.startsWith("$prefix$name/") }) }
+        val entries = inScope.filter { !it.path.removePrefix(prefix).contains('/') }.map(FileRow::Entry)
+        val needle = query.trim()
+        val visibleFolders = folders
+            .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }
+            .sortedBy { it.name.lowercase(Locale.ROOT) }
+        val visibleEntries = entries
+            .filter { needle.isEmpty() || it.file.path.substringAfterLast('/').contains(needle, ignoreCase = true) }
+            .sortedBy { it.file.path.lowercase(Locale.ROOT) }
+        buildList {
+            if (currentDir.isNotEmpty()) add(FileRow.Up())
+            addAll(if (reverseSort) visibleFolders.asReversed() else visibleFolders)
+            addAll(if (reverseSort) visibleEntries.asReversed() else visibleEntries)
+        }
+    }
+    val selectableKeys = rows.filterNot { it is FileRow.Up }.map(FileRow::key)
+    val selectionMode = selectedKeys.isNotEmpty()
+    val selectedPaths = selectedKeys.filter { it.startsWith("f:") }.map { it.removePrefix("f:") }.toSet()
+    val selectedFiles = files.filter { it.path in selectedPaths }
+    val selectedFolders = selectedKeys.count { it.startsWith("d:") }
+    val allSelected = selectableKeys.isNotEmpty() && selectableKeys.all(selectedKeys::contains)
+    val deletable = selectedFolders == 0 && selectedFiles.isNotEmpty() && selectedFiles.all {
+        it.kind == StudioProjectFileKind.IMAGE || it.kind == StudioProjectFileKind.GLYPH_DICTIONARY
+    }
+
+    fun toggle(key: String) {
+        selectedKeys = if (key in selectedKeys) selectedKeys - key else selectedKeys + key
+    }
+
     Column(Modifier.fillMaxSize()) {
+        // line_tk_xt_wj_gl_layout_1：路径 + 菜单
+        Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "/$projectName" + (if (currentDir.isEmpty()) "" else "/$currentDir"),
+                color = EntryBlue,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Box {
+                HeaderIconAction(R.drawable.editor_menu_24, "文件菜单") { menuVisible = true }
+                DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }, containerColor = Color.White) {
+                    DropdownMenuItem(text = { Text("新建", fontSize = 13.sp) }, onClick = {
+                        menuVisible = false
+                        notice = "源文件请在源文件管理中新建，图片和字库请在项目设置中导入"
+                    })
+                    DropdownMenuItem(text = { Text("刷新", fontSize = 13.sp) }, onClick = { menuVisible = false; notice = "已刷新" })
+                    DropdownMenuItem(text = { Text("搜索", fontSize = 13.sp) }, onClick = { menuVisible = false; searching = true })
+                    DropdownMenuItem(text = { Text("排序", fontSize = 13.sp) }, onClick = { menuVisible = false; reverseSort = !reverseSort })
+                }
+            }
+        }
+        // line_tk_xt_wj_gl_search
         if (searching) {
             Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-                BasicTextField(query, { query = it }, singleLine = true, textStyle = TextStyle(fontSize = 12.sp), modifier = Modifier.weight(1f))
-                HeaderAction("取消") { searching = false; query = "" }
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it.take(60) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 12.sp, color = Color(0xFF202839)),
+                    decorationBox = { inner -> Box(contentAlignment = Alignment.CenterStart) { if (query.isEmpty()) Text("关键字搜索", color = EntryMuted, fontSize = 12.sp); inner() } },
+                    modifier = Modifier.weight(1f).padding(end = 5.dp),
+                )
+                Text(
+                    "取消",
+                    color = EntryBlue,
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxHeight().clickable { searching = false; query = "" }.padding(horizontal = 15.dp, vertical = 11.dp),
+                )
             }
-        } else {
-            Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(currentPath, color = EntryBlue, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                Box {
-                    HeaderIconAction(R.drawable.editor_menu_24, "文件菜单") { menuVisible = true }
-                    DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }, containerColor = Color.White) {
-                        DropdownMenuItem(text = { Text("新建", fontSize = 13.sp) }, onClick = {
-                            menuVisible = false
-                            onInsert("-- new file\n")
-                        })
-                        DropdownMenuItem(text = { Text("刷新", fontSize = 13.sp) }, onClick = { menuVisible = false })
-                        DropdownMenuItem(text = { Text("搜索", fontSize = 13.sp) }, onClick = { menuVisible = false; searching = true })
-                        DropdownMenuItem(text = { Text("排序", fontSize = 13.sp) }, onClick = { menuVisible = false; reverseSort = !reverseSort })
-                    }
-                }
-            }
+        }
+        // line_tk_xt_wj_gl_layout_2：已选择N项 / 全选（常驻）
+        Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("已选择${selectedKeys.size}项", color = EntryBlue, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text("全选", fontSize = 14.sp, color = Color.Black)
+            Checkbox(
+                checked = allSelected,
+                onCheckedChange = {
+                    selectedKeys = if (allSelected) selectedKeys - selectableKeys.toSet() else (selectedKeys + selectableKeys).distinct()
+                },
+                enabled = selectableKeys.isNotEmpty(),
+                colors = CheckboxDefaults.colors(checkedColor = EntryBlue, uncheckedColor = EntryMuted),
+                modifier = Modifier.padding(end = 9.dp).size(32.dp),
+            )
         }
         DividerLine()
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            files.forEach { (name, folder, detail) ->
-                Row(
-                    Modifier.fillMaxWidth().height(58.dp).clickable {
-                        when {
-                            name == ".." -> currentPath = currentPath.substringBeforeLast('/', currentPath)
-                            folder -> currentPath += "/$name"
-                            name != "暂无文件" -> onInsert("-- file: $name\n")
-                        }
-                    }.padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        painterResource(if (folder) R.drawable.editor_folder_24 else R.drawable.editor_code_file_24),
-                        contentDescription = null,
-                        tint = Color.Unspecified,
-                        modifier = Modifier.padding(end = 10.dp).size(if (folder) 36.dp else 28.dp),
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(name, fontSize = 14.sp)
-                        if (detail.isNotEmpty()) Text(detail, color = EntryMuted, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+        if (rows.isEmpty()) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text(if (query.isBlank()) "无内容" else "没有匹配的文件", color = EntryMuted, fontSize = 13.sp)
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(1.dp)) {
+                items(rows, key = FileRow::key) { row ->
+                    when (row) {
+                        is FileRow.Up -> FileUpRow { currentDir = currentDir.substringBeforeLast('/', "") }
+                        is FileRow.Folder -> FileFolderRow(
+                            name = row.name,
+                            count = row.count,
+                            checked = row.key in selectedKeys,
+                            onClick = { if (selectionMode) toggle(row.key) else currentDir = row.path },
+                            onLongClick = { toggle(row.key) },
+                            onCheck = { toggle(row.key) },
+                        )
+                        is FileRow.Entry -> FileEntryRow(
+                            file = row.file,
+                            timestamp = timestamp,
+                            checked = row.key in selectedKeys,
+                            onClick = { if (selectionMode) toggle(row.key) else onOpenFile(row.file) },
+                            onLongClick = { toggle(row.key) },
+                            onCheck = { toggle(row.key) },
+                        )
                     }
                 }
             }
         }
-        FooterButtons(listOf("取消" to onDismiss), fontSize = 13)
+        notice?.let { Text(it, color = EntryBlue, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) }
+        DividerLine()
+        if (selectionMode) {
+            // line_tk_xt_wj_gl_layout_4，七项顺序照抄：移动 · 粘贴 · 重命名 · 删除 · 取消 · 复制 · 移动。
+            // 参考里首尾两个“移动”是同一图标（yidong2 / yidong），分别对应剪切式移动和移动到目录。
+            // 清单文件由 Store 管理，移动/粘贴/重命名/复制在这里没有安全语义，明确禁用；只有资源可删除。
+            Row(Modifier.fillMaxWidth().height(40.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                FileIconAction(R.drawable.editor_file_move_24, "移动", false) {}
+                FileIconAction(R.drawable.editor_file_paste_24, "粘贴", false) {}
+                FileIconAction(R.drawable.editor_edit_24, "重命名", false) {}
+                FileIconAction(R.drawable.editor_delete_24, "删除", deletable) { confirmDelete = true }
+                FileIconAction(R.drawable.editor_close_24, "取消", true) { selectedKeys = emptyList() }
+                FileIconAction(R.drawable.editor_file_copy_24, "复制", false) {}
+                FileIconAction(R.drawable.editor_file_move_24, "移动", false) {}
+            }
+        } else {
+            FooterButtons(listOf("取消" to onDismiss), fontSize = 13)
+        }
+    }
+
+    if (confirmDelete) {
+        Dialog(onDismissRequest = { confirmDelete = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(.82f).widthIn(max = 420.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(2.dp),
+                shadowElevation = 9.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
+                    Text("是否删除所选 ${selectedFiles.size} 项文件?", color = Color(0xFF202839), fontSize = 15.sp, modifier = Modifier.padding(horizontal = 25.dp))
+                    Text("仍被积木或脚本引用的资源会被拒绝删除。", color = EntryMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 25.dp, end = 25.dp, top = 6.dp))
+                    Row(Modifier.fillMaxWidth().padding(start = 15.dp, top = 14.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("取消", color = Color(0xFF3F51B5), fontSize = 14.sp, modifier = Modifier.clickable { confirmDelete = false }.padding(horizontal = 15.dp, vertical = 8.dp))
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "删除",
+                            color = Color(0xFF3F51B5),
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(end = 15.dp).clickable {
+                                confirmDelete = false
+                                val targets = selectedFiles
+                                selectedKeys = emptyList()
+                                onDeleteFiles(targets)
+                            }.padding(horizontal = 15.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** item_tree_list_file_3 */
+@Composable
+private fun FileUpRow(onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(45.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+        Icon(painterResource(R.drawable.editor_folder_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.padding(horizontal = 5.dp).size(35.dp))
+        Text("..", fontSize = 14.sp, color = Color.Black)
+    }
+}
+
+/** item_tree_list_file_1 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FileFolderRow(name: String, count: Int, checked: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onCheck: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(45.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(painterResource(R.drawable.editor_folder_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.padding(horizontal = 5.dp).size(35.dp))
+        Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Text(name, fontSize = 14.sp, color = Color.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$count 项 · 文件夹", color = EntryMuted, fontSize = 8.sp)
+        }
+        Checkbox(
+            checked = checked,
+            onCheckedChange = { onCheck() },
+            colors = CheckboxDefaults.colors(checkedColor = EntryBlue, uncheckedColor = EntryMuted),
+            modifier = Modifier.padding(start = 2.dp, end = 8.dp).size(32.dp),
+        )
+    }
+}
+
+/** item_tree_list_file_2 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FileEntryRow(
+    file: StudioProjectFile,
+    timestamp: SimpleDateFormat,
+    checked: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onCheck: () -> Unit,
+) {
+    val icon = when (file.kind) {
+        StudioProjectFileKind.IMAGE -> R.drawable.editor_recognition_preview_24
+        else -> R.drawable.editor_code_file_24
+    }
+    Row(
+        Modifier.fillMaxWidth().height(45.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.padding(start = 5.dp, top = 5.dp, bottom = 5.dp).size(35.dp).padding(1.dp), contentAlignment = Alignment.Center) {
+            Icon(painterResource(icon), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(28.dp))
+        }
+        Column(Modifier.weight(1f).fillMaxHeight().padding(start = 3.dp, top = 4.dp, bottom = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Text(file.path.substringAfterLast('/'), fontSize = 14.sp, color = Color.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row {
+                Text(
+                    file.lastModified?.let { timestamp.format(Date(it)) } ?: file.kind.label,
+                    color = EntryMuted,
+                    fontSize = 8.sp,
+                )
+                Text(formatEntrySize(file.sizeBytes), color = EntryMuted, fontSize = 8.sp, modifier = Modifier.padding(start = 10.dp))
+            }
+        }
+        Checkbox(
+            checked = checked,
+            onCheckedChange = { onCheck() },
+            colors = CheckboxDefaults.colors(checkedColor = EntryBlue, uncheckedColor = EntryMuted),
+            modifier = Modifier.padding(start = 2.dp, end = 8.dp).size(32.dp),
+        )
     }
 }
 
 @Composable
-private fun FileManagerBottomAction(icon: Int, label: String, onClick: () -> Unit = {}) {
-    Column(Modifier.width(44.dp).fillMaxHeight().clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(painterResource(icon), contentDescription = label, tint = EntryAccent, modifier = Modifier.size(23.dp))
-        Text(label, fontSize = 8.sp, color = EntryAccent)
+private fun FileIconAction(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 15.dp, vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(painterResource(icon), contentDescription = label, tint = if (enabled) EntryBlue else EntryMuted, modifier = Modifier.size(20.dp))
+        Text(label, fontSize = 8.sp, color = if (enabled) Color.Black else EntryMuted)
     }
+}
+
+private fun formatEntrySize(bytes: Long): String = when {
+    bytes < 1024 -> "${bytes}B"
+    bytes < 1024 * 1024 -> "${bytes / 1024}KB"
+    else -> "%.1fMB".format(Locale.ROOT, bytes / 1024.0 / 1024.0)
 }
 
 @Composable
@@ -215,26 +444,42 @@ private fun DataBackfillPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) 
     }
 }
 
+/** `service_variable_check_dialog`：静态变量检查需要 Flow/Lua 的变量分析，尚未实现，不能显示“未发现问题”这种假通过。 */
 @Composable
 private fun VariableCheckPage(onDismiss: () -> Unit) {
     EditorColumnPage("变量检查", onDismiss, "关闭", onDismiss) {
         Text("检查未声明、未赋值和类型不匹配的变量", color = EntryMuted, fontSize = 10.sp)
-        Text("当前未发现变量问题", color = EntryAccent, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(top = 30.dp), textAlign = TextAlign.Center)
+        Text(
+            "变量检查尚未接入\n需要 Rust 编译器输出变量分析结果，属于后续阶段",
+            color = EntryMuted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.fillMaxWidth().padding(top = 30.dp),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
+/** `service_runtime_variable_window`：运行时变量需要调试协议，Runtime 尚未提供。 */
 @Composable
 private fun RuntimeVariablesPage(onDismiss: () -> Unit) {
     EditorColumnPage("变量信息", onDismiss, "关闭", onDismiss) {
         Text("运行后在这里显示变量名、类型和当前值", color = EntryMuted, fontSize = 10.sp)
-        Text("暂无运行变量", color = EntryAccent, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(top = 30.dp), textAlign = TextAlign.Center)
+        Text(
+            "运行时变量读取尚未开放\n需要 Runtime 调试协议，属于后续阶段",
+            color = EntryMuted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.fillMaxWidth().padding(top = 30.dp),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
 private const val LEGACY_ENTRY_COMMAND_PREFIX = "--@autoscript-editor:"
 
 @Composable
-private fun ToolSettingsPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
+private fun ToolSettingsPage(onDismiss: () -> Unit, onInsert: (String) -> Unit, onOpenImageTools: (() -> Unit)?) {
     var captureDelay by remember { mutableStateOf("0秒") }
     var picker by remember { mutableStateOf<PickerRequest?>(null) }
     Column(Modifier.fillMaxSize()) {
@@ -253,21 +498,23 @@ private fun ToolSettingsPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) 
                 }
             }
             Spacer(Modifier.height(4.dp))
+            // 图像工具三项都进入同一个图片/标注工作区页；宿主没提供全屏页时退回选项预览。
             ToolPanel("图像工具") {
                 ToolActionRow(R.drawable.editor_recognition_preview_24, "标注截屏") {
-                    picker = PickerRequest("标注截屏", listOf("立即截屏", "延迟截屏", "导入图片")) {}
+                    if (onOpenImageTools != null) onOpenImageTools() else picker = PickerRequest("标注截屏", listOf("立即截屏", "延迟截屏", "导入图片")) {}
                 }
                 DividerLine()
                 ToolActionRow(R.drawable.editor_annotation_24, "打开标注库") {
-                    picker = PickerRequest("标注库", listOf("图片标注", "OCR 标注", "目标检测标注")) {}
+                    if (onOpenImageTools != null) onOpenImageTools() else picker = PickerRequest("标注库", listOf("图片标注", "OCR 标注", "目标检测标注")) {}
                 }
                 DividerLine()
                 ToolActionRow(R.drawable.editor_image_processing_24, "图像处理") {
-                    picker = PickerRequest("图像处理", listOf("裁剪", "缩放", "灰度", "二值化", "颜色过滤")) {}
+                    if (onOpenImageTools != null) onOpenImageTools() else picker = PickerRequest("图像处理", listOf("裁剪", "缩放", "灰度", "二值化", "颜色过滤")) {}
                 }
             }
         }
-        FooterButtons(listOf("移除悬浮球" to onDismiss, "屏幕截图" to { onInsert("Capture.open()\n"); onDismiss() }), fontSize = 13)
+        // 参考的“屏幕截图”是打开截屏工具；本项目对应的真实 API 是 Screen.capture()。
+        FooterButtons(listOf("移除悬浮球" to onDismiss, "屏幕截图" to { onInsert("local captureId = Screen.capture()\n"); onDismiss() }), fontSize = 13)
     }
     picker?.let { request -> PickerDialog(request) { picker = null } }
 }
@@ -304,8 +551,8 @@ private fun ImageRecognitionPage(onDismiss: () -> Unit, onInsert: (String) -> Un
     var imageMode by remember { mutableStateOf("普通找图") }
     var colorMode by remember { mutableStateOf("多点找色") }
     var filterMode by remember { mutableStateOf("未加载") }
-    var onnxModel by remember { mutableStateOf("RapidOCR.onnx") }
-    var ocrLanguage by remember { mutableStateOf("中英文") }
+    var onnxModel by remember { mutableStateOf("未开放") }
+    var ocrLanguage by remember { mutableStateOf("未开放") }
     var similarity by remember { mutableStateOf("0.8") }
     var direction by remember { mutableStateOf("左上到右下") }
     var successAction by remember { mutableStateOf("不执行") }
@@ -402,11 +649,18 @@ private fun ImageRecognitionPage(onDismiss: () -> Unit, onInsert: (String) -> Un
                     DenseTextReturnRow()
                 }
                 else -> {
+                    Text(
+                        "ONNX 高级 OCR 属于后续阶段（基础字库 OCR 请用“字库识字”页），下方选项仅为版式预留，不会插入任何调用。",
+                        color = AutoScriptPalette.Danger,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    )
                     DenseImageSourceBlock(
                         firstLabel = "模型选择:", firstValue = onnxModel,
                         secondLabel = "识别语言:", secondValue = ocrLanguage, preview = "OCR",
-                        onFirst = { picker = PickerRequest("ONNX 模型", listOf("RapidOCR.onnx", "PP-OCRv4-mobile", "导入模型"), onnxModel) { onnxModel = it } },
-                        onSecond = { picker = PickerRequest("识别语言", listOf("中英文", "中文", "英文", "数字"), ocrLanguage) { ocrLanguage = it } },
+                        onFirst = { picker = PickerRequest("ONNX 模型", listOf("未开放"), onnxModel) { onnxModel = it } },
+                        onSecond = { picker = PickerRequest("识别语言", listOf("未开放"), ocrLanguage) { ocrLanguage = it } },
                     )
                     DenseRangeRow(range) { picker = PickerRequest("识别范围", listOf("全屏  0,0,-1,-1", "手动选择区域", "使用范围变量"), range) { range = it } }
                     DenseDirectionRow(direction, similarity,
@@ -417,12 +671,17 @@ private fun ImageRecognitionPage(onDismiss: () -> Unit, onInsert: (String) -> Un
                 }
             }
         }
+        // 片段只用契约里真实存在的 Screen.* / Ocr.* 签名；相似度按 API 口径换算成千分位。
+        // ONNX OCR 是后续阶段，没有对应 API，这里不生成任何调用。
         FooterButtons(listOf("取消" to onDismiss, "图像对比" to {}, "加入" to {
+            val permille = ((similarity.toDoubleOrNull() ?: 0.8) * 1000).toInt().coerceIn(1, 1000)
             val code = when (page) {
-                0 -> "Vision.findImage(\"${legacyLuaEscape(template.takeUnless { it == "未选择" } ?: "template.png")}\", ${similarity.toDoubleOrNull() ?: 0.90})\n"
-                1 -> "Vision.findColor(\"${legacyLuaEscape(colorData.substringBefore('-'))}\")\n"
-                2 -> "Vision.findText(\"${legacyLuaEscape(glyphLibrary.takeUnless { it == "未选择" } ?: "default.txt")}\", ${similarity.toDoubleOrNull() ?: 0.90})\n"
-                else -> "Vision.findTextOnnx(\"${legacyLuaEscape(onnxModel)}\", \"${legacyLuaEscape(ocrLanguage)}\", ${similarity.toDoubleOrNull() ?: 0.90})\n"
+                0 -> "local template = Screen.loadImage(\"assets/images/${legacyLuaEscape(template.takeUnless { it == "未选择" } ?: "template.png")}\")\n" +
+                    "local hit = Screen.findImage(frame, template, 16, $permille, 0, 0, -1, -1)\n"
+                1 -> "local hit = Screen.findMultiColor(frame, \"${legacyLuaEscape(colorData.substringBefore('-').trim())}\", 16, samples, 0, 0, -1, -1)\n"
+                2 -> "local dictionary = Ocr.loadDictionary(\"dictionaries/${legacyLuaEscape(glyphLibrary.takeUnless { it == "未选择" } ?: "main.asglyph")}\")\n" +
+                    "local text = Ocr.glyph(frame, dictionary, \"FFFFFF\", 16, $permille, 0, 0, -1, -1, 2)\n"
+                else -> "-- ONNX OCR 属于后续阶段，当前契约没有对应 API\n"
             }
             onInsert(code); onDismiss()
         }), fontSize = 10)
@@ -810,10 +1069,16 @@ private fun DenseNotice(text: String, title: String? = null) {
 }
 
 @Composable
-private fun DenseDebugSwitch(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+/** 参考是 `IosSwitchView` 45×26；`enabled=false` 时标签带“（未开放）”，不做成看起来能点的假开关。 */
+private fun DenseDebugSwitch(label: String, checked: Boolean, enabled: Boolean = true, onChecked: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        Switch(checked, onChecked, modifier = Modifier.size(45.dp, 26.dp))
+        Text(
+            if (enabled) label else "$label（未开放）",
+            fontSize = 12.sp,
+            color = if (enabled) Color(0xFF202839) else EntryMuted,
+            modifier = Modifier.weight(1f),
+        )
+        IosSwitch(checked = checked, enabled = enabled, onCheckedChange = onChecked)
     }
 }
 
@@ -837,22 +1102,29 @@ private fun DenseRuntimeMode(label: String, options: List<String>, selected: Int
     }
 }
 
+/**
+ * `service_tk_debug_control.xml` + `debug_page_output / switch / runtime` 三个子页。
+ *
+ * R0 契约（`schema/api-schema/functions`，25 个）里没有日志/运行提示 API，也没有调试协议，
+ * 所以“运行输出”不能插入任何真实调用，开关全部禁用并标明未开放。以前这里插入的 `Log.info(...)` /
+ * `Debug.checkpoint()` 都是不存在的函数，Lua 运行时会 `attempt to index global 'Log'`，已删除。
+ */
 @Composable
-private fun DebugPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
+private fun DebugPage(onDismiss: () -> Unit) {
     val tabs = listOf("运行输出", "调试设置", "开发环境")
     var selected by remember { mutableStateOf(0) }
     var outputConsole by remember { mutableStateOf(false) }
     var outputText by remember { mutableStateOf("") }
-    var debugRun by remember { mutableStateOf(true) }
-    var hideEditor by remember { mutableStateOf(false) }
-    var console by remember { mutableStateOf(false) }
-    var crosshair by remember { mutableStateOf(false) }
-    var performance by remember { mutableStateOf(false) }
-    var volumeStop by remember { mutableStateOf(false) }
-    var returnEntry by remember { mutableStateOf(true) }
-    SplitEntryPage("调试功能", tabs, selected, { selected = it }, onDismiss, {
-        onInsert(if (selected == 0) "Log.info(\"${legacyLuaEscape(outputText)}\")\n" else "Debug.checkpoint()\n"); onDismiss()
-    }, headerHint = "调试/运行延迟，控制台日志开启会降低运行速度，仅开发时生效！") {
+    SplitEntryPage(
+        "调试功能",
+        tabs,
+        selected,
+        { selected = it },
+        onDismiss,
+        onAdd = {},
+        headerHint = "调试/运行延迟，控制台日志开启会降低运行速度，仅开发时生效！",
+        showAdd = false,
+    ) {
         when (selected) {
             0 -> {
                 Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -862,33 +1134,42 @@ private fun DebugPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
                                 modifier = Modifier.weight(1f).fillMaxHeight().background(if (outputConsole == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp)).clickable { outputConsole = value }.padding(top = 3.dp))
                         }
                     }
-                    Text("选择变量", color = EntryBlue, fontSize = 10.sp, textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(start = 8.dp).width(95.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).clickable { }.padding(top = 7.dp))
+                    Text("选择变量", color = EntryMuted, fontSize = 10.sp, textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(start = 8.dp).width(95.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(top = 7.dp))
                 }
                 BasicTextField(
                     value = outputText,
                     onValueChange = { outputText = it },
                     textStyle = TextStyle(fontSize = 11.sp, color = Color(0xFF202839)),
-                    modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 7.dp).border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(150.dp).padding(top = 7.dp).border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(8.dp),
                     decorationBox = { field -> Box { if (outputText.isEmpty()) Text("请输入运行提示内容", color = Color(0xFFB3BAC7), fontSize = 11.sp); field() } },
+                )
+                Text(
+                    "运行提示 / 控制台日志节点需要脚本日志 API；当前 R0 契约尚未包含，加入契约后这里才能插入。",
+                    color = AutoScriptPalette.Danger,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
             1 -> {
-                DenseDebugSwitch("调试运行", debugRun) { debugRun = it }
-                DenseDebugSwitch("运行时隐藏编程窗口", hideEditor) { hideEditor = it }
-                DenseDebugSwitch("控制台日志", console) { console = it }
-                DenseDebugSwitch("显示按键准星", crosshair) { crosshair = it }
-                DenseDebugSwitch("性能信息", performance) { performance = it }
-                DenseDebugSwitch("无障碍音量停止", volumeStop) { volumeStop = it }
-                DenseDebugSwitch("停止后返回入口", returnEntry) { returnEntry = it }
-                SettingChoice("运行延迟", "0毫秒")
+                DenseDebugSwitch("调试运行", false, enabled = false) {}
+                DenseDebugSwitch("运行时隐藏编程窗口", false, enabled = false) {}
+                DenseDebugSwitch("控制台日志", false, enabled = false) {}
+                DenseDebugSwitch("显示按键准星", false, enabled = false) {}
+                DenseDebugSwitch("性能信息", false, enabled = false) {}
+                DenseDebugSwitch("无障碍音量停止", false, enabled = false) {}
+                DenseDebugSwitch("停止后返回入口", false, enabled = false) {}
+                SettingChoice("运行延迟", "未开放")
+                Text("调试协议（单步、延迟、准星）属于后续阶段，Runtime 尚未提供。", color = EntryMuted, fontSize = 9.sp, modifier = Modifier.padding(top = 6.dp))
             }
             else -> {
                 Text("开发环境", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(24.dp))
-                DenseRuntimeMode("截图服务", listOf("系统录屏", "Root"), 0)
-                DenseRuntimeMode("按键服务", listOf("无障碍", "Root"), 0)
-                DenseRuntimeMode("截屏显示", listOf("自动", "悬浮窗", "应用内"), 0)
-                DenseDebugSwitch("始终只显示一个弹窗", true) {}
+                DenseRuntimeMode("截图服务", listOf("系统录屏", "Root"), 1)
+                DenseRuntimeMode("按键服务", listOf("无障碍", "Root"), 1)
+                DenseRuntimeMode("截屏显示", listOf("自动", "悬浮窗", "应用内"), 2)
+                DenseDebugSwitch("始终只显示一个弹窗", true, enabled = false) {}
+                Text("R0 阶段只有 Root 后端，系统录屏/无障碍未实现；服务状态见“我的 → 运行环境”。", color = EntryMuted, fontSize = 9.sp, modifier = Modifier.padding(top = 6.dp))
             }
         }
     }
@@ -1111,5 +1392,6 @@ private fun AiSidePanelDialog(kind: String, onDismiss: () -> Unit) {
     }
 }
 
-@Composable private fun DividerLine() = Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E5EA)))
-@Composable private fun DividerVertical() = Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFE2E5EA)))
+// 文件弹窗（service_tk_xt_wj_gl_layout）的分割线是 1.0dp 的 hs，不是 px 发线。
+@Composable private fun DividerLine() = Box(Modifier.fillMaxWidth().height(1.dp).background(AutoScriptPalette.Divider))
+@Composable private fun DividerVertical() = Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))

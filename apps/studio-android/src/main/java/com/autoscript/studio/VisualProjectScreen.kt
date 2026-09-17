@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -12,20 +13,24 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Card
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +39,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.core.model.RuntimeConnectionPhase
 import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.core.model.RuntimeEngineState
@@ -62,6 +72,7 @@ internal fun VisualProjectScreen(
     store: ProjectStore,
     runtimeClient: RuntimeClient,
     runtimeState: RuntimeConnectionState,
+    consoleLines: List<String>,
     active: Boolean,
     initialFlowId: String? = null,
     modifier: Modifier = Modifier,
@@ -106,7 +117,17 @@ internal fun VisualProjectScreen(
     var callArgumentInputs by remember(projectId) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var callArgumentError by remember(projectId) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val sourceFiles = remember(store) { ProjectSourceFiles(store) }
+    var sourceTree by remember(projectId) { mutableStateOf(SourceFileTree()) }
+    var sourceBusy by remember(projectId) { mutableStateOf(false) }
+    var sourceMessage by remember(projectId) { mutableStateOf<String?>(null) }
     val editor = requireNotNull(editors[selectedFlowId])
+
+    LaunchedEffect(snapshot) {
+        sourceTree = withContext(Dispatchers.IO) {
+            runCatching { sourceFiles.load(snapshot) }.getOrDefault(SourceFileTree())
+        }
+    }
     val nodes = remember(editor, editorRevision) { editor.rows }
     val runtimeBusy = action != null
     val running = runtimeState.engineState in setOf(
@@ -358,22 +379,16 @@ internal fun VisualProjectScreen(
     }
 
     if (showNewFlowDialog) {
-        AlertDialog(
-            onDismissRequest = { showNewFlowDialog = false },
-            title = { Text("新建 Flow") },
-            text = {
-                OutlinedTextField(
-                    value = newFlowId,
-                    onValueChange = { newFlowId = it },
-                    singleLine = true,
-                    label = { Text("Flow ID") },
-                    supportingText = { Text("字母或数字开头，可含 . _ -") },
-                )
-            },
-            confirmButton = { TextButton(onClick = ::createFlow) { Text("创建") } },
-            dismissButton = {
-                TextButton(onClick = { showNewFlowDialog = false }) { Text("取消") }
-            },
+        LegacyInputDialog(
+            title = "新建 Flow",
+            value = newFlowId,
+            onValueChange = { newFlowId = it },
+            hint = "Flow ID：字母或数字开头，可含 . _ -",
+            confirmLabel = "创建",
+            confirmEnabled = newFlowId.isNotBlank(),
+            maxLength = 64,
+            onDismiss = { showNewFlowDialog = false },
+            onConfirm = ::createFlow,
         )
     }
 
@@ -382,11 +397,17 @@ internal fun VisualProjectScreen(
         childSlot: String?,
         position: LegacyInsertPosition = LegacyInsertPosition.BELOW,
     ) {
+        val capabilities = snapshot.manifest.capabilities.toSet()
         val query = legacyDockBlockQuery(hint)
-        val matching = BlockCatalog.search(
-            query,
-            snapshot.manifest.capabilities.toSet(),
-        ).filter(BlockSearchResult::isAvailable)
+        // 函数库直接给出积木 kind 时不做模糊搜索；能力不足要明确说明而不是静默落到选择器。
+        val direct = LegacyFunctionCatalog.blockKindOf(hint)?.let(BlockCatalog::find)
+            ?.let { BlockSearchResult(it, it.requiredCapabilities - capabilities) }
+        if (direct != null && !direct.isAvailable) {
+            error = "${direct.contract.title}需要能力：${direct.missingCapabilities.joinToString()}"
+            return
+        }
+        val matching = direct?.let(::listOf)
+            ?: BlockCatalog.search(query, capabilities).filter(BlockSearchResult::isAvailable)
         if (matching.size == 1) {
             val contract = matching.single().contract
             val args = initialBlockArguments(
@@ -508,167 +529,210 @@ internal fun VisualProjectScreen(
         }
     }
 
+    fun ensureEditor(updated: ProjectSnapshot, flowId: String) {
+        val flow = updated.manifest.flows.singleOrNull { it.flowId == flowId } ?: return
+        if (editors[flowId] == null) {
+            editors[flowId] = VisualEditorState.create(updated.flowSources[flowId].orEmpty(), flow.rootBlockId)
+        }
+    }
+
+    /** 源文件管理的动作全部经 [ProjectSourceFiles]；返回新快照的操作会同步给宿主。 */
+    fun handleSourceAction(sourceAction: SourceManagerAction) {
+        if (sourceBusy || runtimeBusy) return
+        sourceBusy = true
+        sourceMessage = null
+        scope.launch {
+            val result = runCatching {
+                when (sourceAction) {
+                    is SourceManagerAction.Open -> {
+                        if (saveAllIfNeeded()) selectedFlowId = sourceAction.flowId
+                        null
+                    }
+                    is SourceManagerAction.InsertCall -> {
+                        val target = snapshot.manifest.flows.firstOrNull { it.flowId == sourceAction.flowId }
+                        if (target == null) error = "源文件不存在" else {
+                            finishDockMutation(
+                                editor.insertFlowCall(target.flowId, defaultFlowCallArguments(target)) != null,
+                                "已加入调用：${target.displayName()}",
+                            )
+                        }
+                        null
+                    }
+                    is SourceManagerAction.CreateFile -> withContext(Dispatchers.IO) {
+                        sourceFiles.createFlow(snapshot, sourceAction.name, sourceAction.group)
+                    }.also { updated ->
+                        val created = updated.manifest.flows.map(ProjectFlow::flowId) -
+                            snapshot.manifest.flows.map(ProjectFlow::flowId).toSet()
+                        created.singleOrNull()?.let { flowId ->
+                            ensureEditor(updated, flowId)
+                            selectedFlowId = flowId
+                        }
+                    }
+                    is SourceManagerAction.SaveAs -> withContext(Dispatchers.IO) {
+                        sourceFiles.copyFlow(snapshot, sourceAction.flowId, sourceAction.name)
+                    }
+                    is SourceManagerAction.RenameFile -> withContext(Dispatchers.IO) {
+                        sourceFiles.renameFlow(snapshot, sourceAction.flowId, sourceAction.name)
+                    }
+                    is SourceManagerAction.Delete -> {
+                        if (!saveAllIfNeeded()) return@runCatching null
+                        val deletion = withContext(Dispatchers.IO) {
+                            if (sourceAction.groups.isNotEmpty()) sourceFiles.deleteGroups(snapshot, sourceAction.groups)
+                            sourceFiles.deleteFlows(snapshot, sourceAction.flowIds)
+                        }
+                        deletion.deleted.forEach(editors::remove)
+                        if (selectedFlowId in deletion.deleted) {
+                            selectedFlowId = requireNotNull(deletion.snapshot.manifest.entryFlowId)
+                        }
+                        if (deletion.failures.isNotEmpty()) sourceMessage = deletion.failures.joinToString("\n")
+                        deletion.snapshot
+                    }
+                    is SourceManagerAction.CreateGroup -> {
+                        withContext(Dispatchers.IO) { sourceFiles.createGroup(snapshot, sourceAction.name) }
+                        null
+                    }
+                    is SourceManagerAction.RenameGroup -> {
+                        withContext(Dispatchers.IO) { sourceFiles.renameGroup(snapshot, sourceAction.group, sourceAction.name) }
+                        null
+                    }
+                    is SourceManagerAction.AddToGroup -> {
+                        withContext(Dispatchers.IO) { sourceFiles.addToGroup(snapshot, sourceAction.group, sourceAction.flowIds) }
+                        null
+                    }
+                    is SourceManagerAction.RemoveFromGroup -> {
+                        withContext(Dispatchers.IO) { sourceFiles.removeFromGroup(snapshot, sourceAction.flowIds) }
+                        null
+                    }
+                }
+            }
+            result.onFailure { failure -> sourceMessage = failure.message ?: "源文件操作失败" }
+            val current = result.getOrNull() ?: snapshot
+            if (current !== snapshot) onSnapshotChanged(current)
+            sourceTree = withContext(Dispatchers.IO) { runCatching { sourceFiles.load(current) }.getOrDefault(sourceTree) }
+            sourceBusy = false
+        }
+    }
+
+    /** 旧版插件管理里需要宿主执行的动作：检错走 Rust 编译，未调用列出没被引用的源文件。 */
+    fun handlePluginAction(pluginAction: LegacyPluginAction) {
+        when (pluginAction) {
+            LegacyPluginAction.CHECK, LegacyPluginAction.CHECK_ALL -> compileOnly()
+            LegacyPluginAction.UNUSED -> {
+                val unused = sourceFiles.unreferencedFlows(snapshot)
+                notice = if (unused.isEmpty()) "所有源文件都被调用或是入口" else "未调用源文件：" + unused.joinToString("、") { it.displayName() }
+            }
+            LegacyPluginAction.TEMPLATE -> notice = "存储为模版属于预留功能，尚未开放"
+            LegacyPluginAction.CREATE,
+            LegacyPluginAction.DELETE,
+            LegacyPluginAction.SAVE_AS,
+            LegacyPluginAction.GROUP,
+            -> Unit // 面板已转到源文件管理
+        }
+    }
+
+    /** “文件”弹窗只允许删除图片和字库资源，走 Store 的引用检查与事务删除。 */
+    fun deleteProjectFiles(files: List<StudioProjectFile>) {
+        if (sourceBusy || runtimeBusy) return
+        val targets = files.filter {
+            it.kind == StudioProjectFileKind.IMAGE || it.kind == StudioProjectFileKind.GLYPH_DICTIONARY
+        }
+        if (targets.isEmpty()) {
+            error = "这里只能删除图片和字库资源"
+            return
+        }
+        sourceBusy = true
+        scope.launch {
+            var current = snapshot
+            val failures = mutableListOf<String>()
+            targets.forEach { file ->
+                val expected = current.manifest.resources.map { it.get("path").asString }.toSet()
+                runCatching {
+                    withContext(Dispatchers.IO) { store.deleteResource(projectId, file.path, expected) }
+                }.onSuccess { current = it }
+                    .onFailure { failures += "${file.path.substringAfterLast('/')}：${it.message ?: "删除失败"}" }
+            }
+            if (current !== snapshot) onSnapshotChanged(current)
+            error = failures.takeIf { it.isNotEmpty() }?.joinToString("\n")
+            if (failures.isEmpty()) notice = "已删除 ${targets.size} 个资源"
+            sourceBusy = false
+        }
+    }
+
     pendingDockInsertHint?.let { hint ->
         val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
         val childSlots = selectedRow?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
-        AlertDialog(
-            onDismissRequest = { pendingDockInsertHint = null },
-            title = { Text("选择插入位置") },
-            text = {
-                Column {
-                    TextButton(
-                        onClick = {
-                            pendingDockInsertHint = null
-                            insertDockBlock(hint, null)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("当前节点之后") }
-                    childSlots.forEach { childSlot ->
-                        TextButton(
-                            onClick = {
-                                pendingDockInsertHint = null
-                                insertDockBlock(hint, childSlot)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("${childBlockLabel(childSlot)}内新增") }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { pendingDockInsertHint = null }) { Text("取消") }
+        LegacyOptionDialog(
+            title = "选择插入位置",
+            options = listOf<Pair<String?, String>>(null to "当前节点之后") +
+                childSlots.map { slot -> slot to "${childBlockLabel(slot)}内新增" },
+            onDismiss = { pendingDockInsertHint = null },
+            onConfirm = { slot ->
+                pendingDockInsertHint = null
+                insertDockBlock(hint, slot)
             },
         )
     }
 
     pendingDockIndentSlots?.let { slots ->
-        AlertDialog(
-            onDismissRequest = { pendingDockIndentSlots = null },
-            title = { Text("选择缩进分支") },
-            text = { Column { slots.forEach { slot ->
-                TextButton(
-                    onClick = {
-                        pendingDockIndentSlots = null
-                        finishDockMutation(editor.indentSelected(slot), "节点已缩进到${childBlockLabel(slot)}")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(childBlockLabel(slot)) }
-            } } },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { pendingDockIndentSlots = null }) { Text("取消") } },
+        LegacyOptionDialog(
+            title = "选择缩进分支",
+            options = slots.map { slot -> slot to childBlockLabel(slot) },
+            onDismiss = { pendingDockIndentSlots = null },
+            onConfirm = { slot ->
+                pendingDockIndentSlots = null
+                finishDockMutation(editor.indentSelected(slot), "节点已缩进到${childBlockLabel(slot)}")
+            },
         )
     }
 
     if (pendingDockPaste) {
         val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
         val slots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
-        AlertDialog(
-            onDismissRequest = { pendingDockPaste = false },
-            title = { Text("选择粘贴位置") },
-            text = { Column {
-                TextButton(onClick = { pendingDockPaste = false; pasteDockClipboard(null) }, Modifier.fillMaxWidth()) {
-                    Text("当前节点之后")
-                }
-                slots.forEach { slot ->
-                    TextButton(onClick = { pendingDockPaste = false; pasteDockClipboard(slot) }, Modifier.fillMaxWidth()) {
-                        Text("${childBlockLabel(slot)}内")
-                    }
-                }
-            } },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { pendingDockPaste = false }) { Text("取消") } },
+        LegacyOptionDialog(
+            title = "选择粘贴位置",
+            options = listOf<Pair<String?, String>>(null to "当前节点之后") +
+                slots.map { slot -> slot to "${childBlockLabel(slot)}内" },
+            onDismiss = { pendingDockPaste = false },
+            onConfirm = { slot ->
+                pendingDockPaste = false
+                pasteDockClipboard(slot)
+            },
         )
     }
 
+    // 顶栏“添加积木”与悬浮面板“函数”走同一个函数库弹窗（service_tk_functionui 版式），
+    // 不再用 Material 默认的 AlertDialog；能力不足的积木在库里直接禁用并标出缺什么。
     if (showBlockPicker) {
-        val results = BlockCatalog.search(
-            blockQuery,
-            snapshot.manifest.capabilities.toSet(),
-            blockCategory,
-        )
-        AlertDialog(
-            onDismissRequest = { showBlockPicker = false; blockPickerAutoSave = false },
-            title = {
-                Text(insertionChildBlockName?.let { "添加积木到 $it" } ?: "添加积木")
-            },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = blockQuery,
-                        onValueChange = { blockQuery = it },
-                        singleLine = true,
-                        label = { Text("搜索名称、类型或关键词") },
-                    )
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                        listOf(
-                            null to "全部",
-                            BlockCategory.FLOW to "流程",
-                            BlockCategory.TASK to "任务",
-                            BlockCategory.CONTROL to "控制",
-                            BlockCategory.VARIABLE to "变量",
-                            BlockCategory.SCREEN to "截图",
-                            BlockCategory.VISION to "视觉",
-                            BlockCategory.OCR to "OCR",
-                        ).forEach { (category, label) ->
-                            TextButton(onClick = { blockCategory = category }) {
-                                Text(if (blockCategory == category) "● $label" else label)
-                            }
-                        }
-                    }
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
-                        items(results, key = { it.contract.kind }) { result ->
-                            val contract = result.contract
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable(enabled = result.isAvailable) {
-                                        val args = initialBlockArguments(
-                                            contract,
-                                            snapshot.manifest.flows,
-                                            snapshot.manifest.resources,
-                                            selectedFlowId,
-                                        )
-                                        if (args == null) {
-                                            error = "缺少积木所需的目标 Flow 或项目资源"
-                                        } else {
-                                            val inserted = editor.insertBlock(
-                                                contract,
-                                                args,
-                                                intoChildBlockName = insertionChildBlockName,
-                                            )
-                                            if (inserted != null) {
-                                                editorRevision++
-                                                if (blockPickerAutoSave) saveCurrent()
-                                            }
-                                            showBlockPicker = false
-                                            blockPickerAutoSave = false
-                                            insertionChildBlockName = null
-                                        }
-                                    }
-                                    .padding(horizontal = 5.dp, vertical = 6.dp),
-                            ) {
-                                Text(contract.title, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "${contract.kind} · ${contract.summary}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                if (!result.isAvailable) {
-                                    Text(
-                                        "缺少能力：${result.missingCapabilities.joinToString()}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                    )
-                                }
-                            }
-                            HorizontalDivider()
+        fun closePicker() {
+            showBlockPicker = false
+            blockPickerAutoSave = false
+            insertionChildBlockName = null
+        }
+        LegacyFunctionLibrary(
+            groups = LegacyFunctionCatalog.visualGroups(),
+            capabilities = snapshot.manifest.capabilities.toSet(),
+            onDismiss = ::closePicker,
+            onInsert = { hint ->
+                val contract = LegacyFunctionCatalog.blockKindOf(hint)?.let(BlockCatalog::find)
+                if (contract == null) {
+                    error = "未找到对应积木"
+                } else {
+                    val args = initialBlockArguments(contract, snapshot.manifest.flows, snapshot.manifest.resources, selectedFlowId)
+                    if (args == null) {
+                        error = "缺少积木所需的目标 Flow 或项目资源"
+                    } else {
+                        val inserted = editor.insertBlock(contract, args, intoChildBlockName = insertionChildBlockName)
+                        if (inserted == null) {
+                            error = "无法把${contract.title}加入当前位置"
+                        } else {
+                            editorRevision++
+                            error = null
+                            notice = "已加入：${contract.title}"
+                            if (blockPickerAutoSave) saveCurrent()
                         }
                     }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showBlockPicker = false; blockPickerAutoSave = false }) { Text("关闭") }
+                closePicker()
             },
         )
     }
@@ -823,25 +887,36 @@ internal fun VisualProjectScreen(
     BackHandler(enabled = active, onBack = onExit)
 
     Box(modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().padding(8.dp)) {
-        Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 1.dp) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Surface(modifier = Modifier.fillMaxWidth(), color = AutoScriptPalette.VisualEditor.PanelBackground, tonalElevation = 0.dp) {
             Column {
+                // 顶栏对齐 `tk_bjck`：40dp、返回图标 + 面包屑式标题；其余操作行保持原有按钮。
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    modifier = Modifier.fillMaxWidth().height(40.dp).background(AutoScriptPalette.VisualEditor.ToolbarBackground).padding(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(
-                            onClick = onExit,
-                            contentPadding = PaddingValues(horizontal = 6.dp),
-                        ) { Text("返回") }
-                        Column {
-                            Text(snapshot.manifest.name, style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            painterResource(R.drawable.visual_back_24),
+                            contentDescription = "返回",
+                            tint = AutoScriptPalette.VisualEditor.ToolbarIcon,
+                            modifier = Modifier.size(36.dp).clickable(onClick = onExit).padding(7.dp),
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${snapshot.manifest.name} > ${snapshot.manifest.flows.firstOrNull { it.flowId == selectedFlowId }?.displayName() ?: selectedFlowId}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AutoScriptPalette.VisualEditor.TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Text(
                                 "可视化积木 · ${snapshot.manifest.flows.size} Flow · ${nodes.size} 节点",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 8.sp,
+                                color = AutoScriptPalette.VisualEditor.TextSecondary,
+                                maxLines = 1,
                             )
                         }
                     }
@@ -985,7 +1060,7 @@ internal fun VisualProjectScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
                         ) {
                             Text(
-                                if (flow.flowId == selectedFlowId) "● ${flow.flowId}" else flow.flowId,
+                                if (flow.flowId == selectedFlowId) "● ${flow.displayName()}" else flow.displayName(),
                                 style = MaterialTheme.typography.labelMedium,
                             )
                         }
@@ -1087,10 +1162,34 @@ internal fun VisualProjectScreen(
             }
         }
     }
+        val projectFiles = remember(snapshot) { projectFileCatalog(snapshot) }
         LegacyScriptDock(
             projectName = snapshot.manifest.name,
             onRun = ::runProject,
-            sourceName = "$selectedFlowId.jsonl",
+            running = canStop,
+            onStop = ::stopProject,
+            consoleLines = consoleLines,
+            sourceName = snapshot.manifest.flows.firstOrNull { it.flowId == selectedFlowId }?.displayName() ?: selectedFlowId,
+            sourceTree = sourceTree,
+            currentFlowId = selectedFlowId,
+            sourceBusy = sourceBusy,
+            sourceMessage = sourceMessage,
+            onSourceAction = ::handleSourceAction,
+            projectFiles = projectFiles,
+            onOpenProjectFile = { file ->
+                when (file.kind) {
+                    StudioProjectFileKind.FLOW -> snapshot.manifest.flows.firstOrNull { it.path == file.path }
+                        ?.let { selectedFlowId = it.flowId }
+                    StudioProjectFileKind.LUA -> notice = "可视化项目没有 main.lua"
+                    StudioProjectFileKind.MANIFEST,
+                    StudioProjectFileKind.IMAGE,
+                    StudioProjectFileKind.GLYPH_DICTIONARY,
+                    -> notice = "图片、字库和 project.json 请通过顶部“项目设置”管理"
+                }
+            },
+            onDeleteProjectFiles = ::deleteProjectFiles,
+            onPluginAction = ::handlePluginAction,
+            capabilities = snapshot.manifest.capabilities.toSet(),
             programNodes = nodes.map { node ->
                 val contract = BlockCatalog.find(node.kind)
                 LegacyDockProgramNode(
@@ -1409,7 +1508,7 @@ private enum class VisualAction {
     STOPPING,
 }
 
-private fun defaultFlowCallArguments(flow: ProjectFlow): JsonObject = JsonObject().apply {
+internal fun defaultFlowCallArguments(flow: ProjectFlow): JsonObject = JsonObject().apply {
     flow.params.forEach { parameter ->
         if (parameter.get("required")?.asBoolean != true) return@forEach
         val name = parameter.get("name")?.asString ?: return@forEach
