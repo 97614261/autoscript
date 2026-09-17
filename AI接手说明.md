@@ -46,7 +46,7 @@ Git 现场：
 2. 下一步是第一次 Gradle 构建，必须先得到用户明确许可。获准后运行 scripts/m27-gate.ps1，把编译错误逐个修掉——这批 Kotlin 代码量很大且从未编译过，预期会有一批 import/签名类错误，属于正常收尾，不要因此推翻设计或重写页面。
 3. 构建通过后在 MuMu 127.0.0.1:16384 跑 scripts/m27-ui-smoke.ps1，再做项目交接文档第 9 节的 16 项手工 UI 验收，产出截图目录和 JSON 报告。smoke 需要工作台里已有名为 VisualSmoke 的可视化项目，且至少有一个积木节点。
 4. 验收中发现的视觉差异按 docs/m27-page-alignment.md 的逐页表格修，不要凭截图猜，行为必须同时核对参考源码/XML。
-5. M27 完成后，先核实并修复三个阻塞完整流程的问题：Timer.every 回调完成路径、StopPlan.release_pointer_ids 被 JNI 丢弃、InputArbiter 未接入真实输入路径。
+5. 这三个阻塞项（Timer.every 回调完成路径、StopPlan.release_pointer_ids 被 JNI 丢弃、InputArbiter 未接入真实输入路径）已于 2026-09-16 核实完毕：它们是同一个缺口的三个症状，前两个在仲裁层接线前属不可达代码，单独修会留下死代码。动手前务必先读 docs/input-runtime-gap.md 的取证与工作范围，不要按原来的三条分头修。
 6. 然后跑通“创建项目→编辑→保存→Flow 编译→Root 截图/识别→输入→日志→备份→release→独立 Runner”的完整流程，最后才进入 M28 全能力补齐。
 
 UI 参考规则：新版主页面看 资料/易编精灵/10_页面布局 和截图；旧版悬浮程序树、函数/插件弹窗看 资料/易编精灵/16_yijianwan分析、17_yijianwan截图、18_插件弹窗。行为必须同时核对源码/XML，不能只凭截图猜。

@@ -133,7 +133,7 @@ smoke 只打开了弹窗并断言底栏，**没做任何实际操作**。这是�
 - 动作录制（没有事件录制流）
 - 图像工具的取色/找图链路（属 M28）
 - 脚本 `Log(...)` 输出进控制台（链路未接）
-- **完整端到端**："创建项目→编辑→保存→Flow 编译→Root 截图/识别→输入→日志→备份→release→独立 Runner"，卡在 `Timer.every` 回调完成路径、`StopPlan.release_pointer_ids` 被 JNI 丢弃、`InputArbiter` 未接真实输入这三个问题上
+- **完整端到端**："创建项目→编辑→保存→Flow 编译→Root 截图/识别→输入→日志→备份→release→独立 Runner"。原先记为三个问题（`Timer.every` 回调完成路径、`StopPlan.release_pointer_ids` 被 JNI 丢弃、`InputArbiter` 未接真实输入），核实后是**同一个缺口的三个症状**：`AutomationBackend` 全仓库无实现，仲裁层从未接线。详见 [`input-runtime-gap.md`](input-runtime-gap.md)
 
 ## 5. 结果记录
 
