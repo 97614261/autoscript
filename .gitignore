@@ -29,6 +29,10 @@ secrets.properties
 # 参考资料：竞品 APK / JAR / 反编译源码，只作对照用，体积大且不属于本工程，永不入库
 /资料/
 
+# Claude Code 的个人放行列表：含本机绝对路径与带时间戳的产物路径，因人因机而异。
+# 团队级规则在 .claude/settings.json，那个要入库。
+/.claude/settings.local.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

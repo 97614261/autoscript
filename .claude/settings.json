@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git check-ignore*)",
+      "Bash(git ls-files*)",
+      "Bash(git branch)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(find *)",
+      "Bash(stat *)",
+      "Bash(md5sum *)",
+      "Bash(sha256sum *)",
+      "Bash(python -c ' *)",
+      "Bash(python - *)",
+      "Bash(source *)",
+      "Bash(bash /tmp/uihelper.sh *)",
+      "Bash(/c/Work/AndroidSDK/platform-tools/adb.exe *)"
+    ],
+    "deny": [
+      "Bash(git reset --hard*)",
+      "Bash(git checkout -- *)",
+      "Bash(git restore .)",
+      "Bash(git clean *)",
+      "Bash(git add .)",
+      "Bash(git add -A*)",
+      "Bash(git add --all*)",
+      "Bash(git push*)",
+      "Bash(git remote set-url*)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}
