@@ -188,7 +188,9 @@ internal fun LegacyScriptDock(
         val density = LocalDensity.current
         val ballSizePx = with(density) { 35.dp.toPx() }
         val minPanelWidthPx = with(density) { 210.dp.toPx() }
-        // 最小高度原来和默认值一样是 324dp，缩放柄往下拖不动；参考的面板约 293dp，比这还矮。
+        // 最小高度原来和默认值一样，缩放柄往下拖不动，所以放开到 260dp。
+        // 注意这低于右侧九个入口需要的 247dp + 头 35dp + 底 40dp，缩到最小时最后一两个入口会被裁掉；
+        // 参考那列是 match_parent 的非滚动 LinearLayout(service_tk.xml:24)，缩小时同样会裁，故不额外加滚动。
         val minPanelHeightPx = with(density) { 260.dp.toPx() }
         val maxWidthPx = constraints.maxWidth.toFloat()
         val maxHeightPx = constraints.maxHeight.toFloat()
@@ -198,9 +200,17 @@ internal fun LegacyScriptDock(
         var panelX by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 4.dp.toPx() }) }
         var panelY by rememberSaveable(projectName) { mutableFloatStateOf(Float.NaN) }
         var panelWidthPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 232.dp.toPx() }) }
-        // 默认 300dp：参考截图里面板约占屏高 37%，我们原来的 324dp 在 640dp 高的屏上占到 50%，
-        // 会把项目列表整个盖住。
-        var panelHeightPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 300.dp.toPx() }) }
+        // 默认 324dp，由右侧九个入口撑出来，不能再按截图比例估。
+        // 参考 service_tk.xml:5 的根容器 line_tk_lashen_width 是 layout_height="wrap_content"，
+        // 即面板高度由内容决定；其中最高的一列就是 line_tk_right_bar(:24)：
+        //   padding 3dp×2 + 9×25dp + 边距(前八个各 1+1dp，第九个 1+3dp) = 251dp，
+        //   中段 :12 有 marginTop/Bottom = -5dp 抵掉 10dp → 实际占 241dp，
+        //   加头 35dp(:6) 与底部 5+5+25+5=40dp(:36-38) ≈ 316dp。
+        // 我们这列没有那对负边距，需要 9×27 + padding 2dp×2 = 247dp，
+        // 加头 35dp + 分隔线 1dp + 底栏 40dp = 323dp，故取 324dp。
+        // 曾按旧版截图「占屏高 37%」改成 300dp，结果第九个入口 AI 被挤出面板点不到——
+        // 旧版截图只有八个入口，不能用来定新版的高度。
+        var panelHeightPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 324.dp.toPx() }) }
         val effectiveMinPanelWidthPx = minPanelWidthPx.coerceAtMost(maxWidthPx)
         val effectiveMinPanelHeightPx = minPanelHeightPx.coerceAtMost(maxHeightPx)
         val effectivePanelWidthPx = panelWidthPx.coerceIn(effectiveMinPanelWidthPx, maxWidthPx)

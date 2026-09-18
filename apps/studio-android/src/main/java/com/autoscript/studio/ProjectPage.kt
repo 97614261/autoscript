@@ -54,6 +54,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1757,7 +1758,14 @@ private fun ProjectEditorDialog(
         val longSide = maxOf(metrics.widthPixels, metrics.heightPixels)
         "${shortSide}x$longSide"
     }
-    var selectedResolution by remember(localResolution) { mutableStateOf("720x1280") }
+    // 按选项身份而不是分辨率数值记选中：本机恰好是 720x1280 时，
+    // 用字符串比较会让「推荐」和「本机」两行同时点亮成选中态。
+    var selectedOption by remember(localResolution) { mutableIntStateOf(0) }
+    val selectedResolution = when (selectedOption) {
+        1 -> "1080x1920"
+        2 -> localResolution
+        else -> "720x1280"
+    }
     val valid = name.trim().isNotEmpty() && name.trim().length <= MAX_PROJECT_NAME_INPUT
     Dialog(
         onDismissRequest = onDismiss,
@@ -1843,21 +1851,21 @@ private fun ProjectEditorDialog(
                                 ResolutionOption(
                                     label = "720x1280",
                                     badge = "推荐",
-                                    selected = selectedResolution == "720x1280",
-                                    onClick = { selectedResolution = "720x1280" },
+                                    selected = selectedOption == 0,
+                                    onClick = { selectedOption = 0 },
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 ResolutionOption(
                                     label = "1080x1920",
-                                    selected = selectedResolution == "1080x1920",
-                                    onClick = { selectedResolution = "1080x1920" },
+                                    selected = selectedOption == 1,
+                                    onClick = { selectedOption = 1 },
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 ResolutionOption(
                                     label = localResolution,
                                     badge = "本机",
-                                    selected = selectedResolution == localResolution,
-                                    onClick = { selectedResolution = localResolution },
+                                    selected = selectedOption == 2,
+                                    onClick = { selectedOption = 2 },
                                 )
                             }
                         }

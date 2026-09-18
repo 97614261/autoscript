@@ -139,6 +139,22 @@ smoke 只打开了弹窗并断言底栏，**没做任何实际操作**。这是�
 
 每轮验收把日期、APK 目录和逐项结论填进来，**不要只写"通过"**——写清楚看到了什么。
 
+### 2026-09-17 轮次
+
+APK `build\m27-20260917-023252`，设备 MuMu（transport 每次重启会变，先 `adb devices` 确认）。
+逐项证据与截图见 [`build/manual-acceptance/findings.md`](../build/manual-acceptance/findings.md)。
+
+- **通过**：第 1、2、5、6、7、8、9、11、13 项；附加验收的删除算术验证、备份槽位确认框、空槽备注、我的页状态栏、设计器全屏
+- **修复**：D1 所有 8sp 副标题被纵向裁切；D2 九个入口放不下导致 AI 点不到；D4 新建项目弹窗两个 720×1280 同时高亮（D1/D2 已设备复验，**D4 尚未构建验证**）
+- **未做**：第 3、4 项（手感判据，需人工）；第 10 项部分、第 12 项与小球运行态（被 [`input-runtime-gap.md`](input-runtime-gap.md) 的输入通道缺口阻塞，跑不起脚本）
+- **判定方式**：全部落到磁盘内容（`run-as cat` 读 `project.json` / `*.jsonl` / `source-groups.json`）或像素实测，不以界面观感为准
+
+三处「不制造假能力」的诚实性验证全部守住：ONNX OCR 页、调试页、AI 未配置——走完插入全流程后 `main.jsonl` 节点数均无变化。
+
+**环境注意**：竞品易编精灵的无障碍服务一旦开启，会让 `screencap` 出 0 字节、`uiautomator dump` 报 `null root node`，且重启 MuMu 无效（设置持久化）。验收期间不要开它或给它授权。详见 findings 的「环境坑」一节。
+
+### 结果模板
+
 ```text
 日期：
 APK：build\m27-______\studio-debug.apk

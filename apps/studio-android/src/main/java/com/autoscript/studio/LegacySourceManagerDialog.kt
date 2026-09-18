@@ -503,9 +503,13 @@ private fun SourceGroupRow(
             tint = Color.Unspecified,
             modifier = Modifier.padding(horizontal = 5.dp).size(35.dp),
         )
-        Column(Modifier.weight(1f).fillMaxHeight().padding(top = 5.dp, bottom = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        // 原来是 fillMaxHeight + SpaceBetween，把两行压进固定的 45dp 里，8sp 副标题的字形被齐根切掉。
+        // 参考 item_tree_list_file_2.xml 的竖向 LinearLayout 是 wrap_content + layout_weight，
+        // 语义是「自然高度再分剩余空间」，永远不会压到自然高度以下；这里改成让 Column 包裹内容、
+        // 由外层 Row 的 CenterVertically 居中，并给 8sp 文本显式收紧行高。
+        Column(Modifier.weight(1f).padding(top = 5.dp, bottom = 5.dp)) {
             Text(name, color = SourceText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("$count 个源文件 · 文件夹", color = SourceMuted, fontSize = 8.sp)
+            Text("$count 个源文件 · 文件夹", color = SourceMuted, fontSize = 8.sp, lineHeight = 10.sp)
         }
         SourceCheckBox(checked, modifier = Modifier.padding(start = 2.dp, end = 8.dp), onClick = onCheck)
     }
@@ -532,7 +536,8 @@ private fun SourceFileRow(
         Box(Modifier.padding(start = 5.dp, top = 5.dp, bottom = 5.dp).size(35.dp).padding(1.dp), contentAlignment = Alignment.Center) {
             Icon(painterResource(R.drawable.editor_code_file_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(28.dp))
         }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(start = 3.dp, top = 4.dp, bottom = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        // 同 SourceFolderRow：固定高度 + SpaceBetween 会把 8sp 的时间与大小切掉下半截。
+        Column(Modifier.weight(1f).padding(start = 3.dp, top = 4.dp, bottom = 5.dp)) {
             Text(
                 if (entry.isEntry) "${entry.name}（入口）" else entry.name,
                 color = SourceText,
@@ -541,8 +546,14 @@ private fun SourceFileRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Row {
-                Text(timestamp.format(Date(entry.lastModified)), color = SourceMuted, fontSize = 8.sp)
-                Text(formatSourceSize(entry.sizeBytes), color = SourceMuted, fontSize = 8.sp, modifier = Modifier.padding(start = 10.dp))
+                Text(timestamp.format(Date(entry.lastModified)), color = SourceMuted, fontSize = 8.sp, lineHeight = 10.sp)
+                Text(
+                    formatSourceSize(entry.sizeBytes),
+                    color = SourceMuted,
+                    fontSize = 8.sp,
+                    lineHeight = 10.sp,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
             }
         }
         SourceCheckBox(checked, modifier = Modifier.padding(start = 2.dp, end = 8.dp), onClick = onCheck)
