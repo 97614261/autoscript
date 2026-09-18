@@ -66,14 +66,21 @@ function Invoke-Adb {
 # 不复位的话后面每一步都会连锁失败，一轮就只能拿到一个真问题。
 function Reset-App {
     try {
+        $before = (Invoke-Adb shell pidof com.autoscript.studio | Out-String).Trim()
         Invoke-Adb shell am force-stop com.autoscript.studio | Out-Null
         Invoke-Adb shell am start -n com.autoscript.studio/.MainActivity | Out-Null
-        $xml = Wait-Text "工作台" 20
-        # 重启后项目卡必然是收起的（expandedProjectIds 是普通 remember，不跨进程保存）。
-        # 如果“打包”还在，说明画面是冻住的旧帧——多半是模拟器卡死，adb 的 force-stop/tap 都没生效。
-        # 这种状态下继续跑只会产出一串互相矛盾的超时，不如立刻停下并说清楚。
-        if ($null -ne (Get-TextBounds $xml "打包")) {
-            throw "App 未真正重启（项目卡仍处于展开态）：设备画面已冻结，请重启 MuMu 后重跑"
+        Wait-Text "工作台" 20 | Out-Null
+        # 判断"是否真的重启了"必须看进程号，不能看界面状态。
+        # 曾经用"项目卡是否仍展开"来判断，前提是"重启后必然收起"——那是错的：
+        # ProjectPage.kt 的 LaunchedEffect 会把第一个项目自动展开，所以重启后
+        # "打包"本来就在。那版判断会在任何一步失败时必然误报"设备已冻结"，
+        # 把真正的失败原因盖掉。之前 8/8 全过、Reset-App 从未执行，才一直没暴露。
+        $after = (Invoke-Adb shell pidof com.autoscript.studio | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($after)) {
+            throw "App 重启后进程不存在：可能启动即崩溃，检查 adb logcat"
+        }
+        if ($before -ne "" -and $before -eq $after) {
+            throw "App 未真正重启（进程号仍是 $after）：force-stop 没生效，设备可能已冻结，请重启 MuMu 后重跑"
         }
     } catch {
         Write-Host "  复位失败：$($_.Exception.Message)" -ForegroundColor DarkYellow
@@ -221,17 +228,55 @@ function Assert-Text {
 }
 
 # 工作台项目卡：展开后才出现 编辑/界面/备份/打包/删除 按钮。
+# 「是否已展开」必须限定在目标项目自己的卡片内：整屏搜“打包”在多项目下会命中
+# 别的卡片，于是跳过点击，后续步骤全作用在错误的项目上。曾因此让第 8 步跑到
+# Lua 项目上找源文件管理——而 Lua 项目的标题本来就不弹那个弹窗。
+# 取「属于这张卡」的那个按钮。整屏取第一个匹配在多项目下会命中别的卡片：
+# 卡片动作行都是同样的 启动/编辑/界面/备份/打包/删除，谁在前面就取到谁。
+function Get-BoundsInCard {
+    param([string]$Xml, [string]$Text, [int[]]$NameBounds)
+    $pattern = '<node[^>]*text="' + [regex]::Escape($Text) + '"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+    foreach ($m in [regex]::Matches($Xml, $pattern)) {
+        $top = [int]$m.Groups[2].Value
+        # 动作行在卡片标题下方，间距远小于一张卡的高度；240px 足够覆盖且不会跨到下一张卡。
+        if ($top -gt $NameBounds[1] -and $top -lt ($NameBounds[1] + 240)) {
+            return @([int]$m.Groups[1].Value, $top, [int]$m.Groups[3].Value, [int]$m.Groups[4].Value)
+        }
+    }
+    return $null
+}
+
+function Test-CardExpanded {
+    param([string]$Xml, [int[]]$NameBounds)
+    return $null -ne (Get-BoundsInCard $Xml "打包" $NameBounds)
+}
+
+# 点目标项目卡里的某个动作按钮。$script:cardNameBounds 由 Open-ProjectCard 设好。
+function Tap-CardAction {
+    param([string]$Xml, [string]$Text)
+    if ($null -eq $script:cardNameBounds) { throw "Tap-CardAction 必须在 Open-ProjectCard 之后调用" }
+    $bounds = Get-BoundsInCard $Xml $Text $script:cardNameBounds
+    if ($null -eq $bounds) { throw "$ProjectName 的卡片里找不到按钮：$Text" }
+    Tap-Bounds $bounds
+}
+
 function Open-ProjectCard {
     Tap-Text "工作台"
     $xml = Wait-Text "项目列表"
-    if ($null -eq (Get-TextBounds $xml $ProjectName)) {
+    $nameBounds = Get-TextBounds $xml $ProjectName
+    if ($null -eq $nameBounds) {
         throw "工作台没有项目：$ProjectName（先在 App 中创建，或传入实际项目名）"
     }
-    if ($null -eq (Get-TextBounds $xml "打包")) {
+    if (-not (Test-CardExpanded $xml $nameBounds)) {
         Tap-Text $ProjectName $xml
         Start-Sleep -Milliseconds 400
         $xml = Wait-Text "打包"
+        $nameBounds = Get-TextBounds $xml $ProjectName
+        if ($null -eq $nameBounds -or -not (Test-CardExpanded $xml $nameBounds)) {
+            throw "点开 $ProjectName 后它的卡片仍未展开（可能点到了别的卡片）"
+        }
     }
+    $script:cardNameBounds = $nameBounds
     return $xml
 }
 
@@ -336,14 +381,14 @@ Invoke-Step "Workspace utility pages" {
 Invoke-Step "Project card tools: designer, package, backup slots" {
     $xml = Open-ProjectCard
     Save-Shot "project-card"
-    Tap-Text "界面" $xml
+    Tap-CardAction $xml "界面"
     $xml = Wait-Text "坐标显示"
     Assert-Text $xml "常用" "脚本界面设计器右栏"
     Assert-Text $xml "属性" "脚本界面设计器右栏"
     Save-Shot "designer"
     Back-ToText "项目列表"
     $xml = Open-ProjectCard
-    Tap-Text "打包" $xml
+    Tap-CardAction $xml "打包"
     # “应用外观”在首屏，“安装信息”是下一个分区，可能要滚；“开始打包 APK”是固定底栏。
     $xml = Wait-Text "应用外观"
     Assert-Text $xml "开始打包 APK" "打包页底栏"
@@ -351,7 +396,7 @@ Invoke-Step "Project card tools: designer, package, backup slots" {
     Scroll-ToText "安装信息" | Out-Null
     Back-ToText "项目列表"
     $xml = Open-ProjectCard
-    Tap-Text "备份" $xml
+    Tap-CardAction $xml "备份"
     # 用固定的“备份槽位 1”判定，不依赖剩余槽位数（已有备份时标题会变成“可用 2 槽位”）。
     $xml = Wait-Text "备份槽位 1"
     Assert-Text $xml "备份槽位 3" "备份槽位页"
@@ -361,7 +406,7 @@ Invoke-Step "Project card tools: designer, package, backup slots" {
 
 Invoke-Step "Floating dock: ball, panel, file dialog, recorder" {
     $xml = Open-ProjectCard
-    Tap-Text "编辑" $xml
+    Tap-CardAction $xml "编辑"
     # 点击编辑后先出现靠边小球，不直接弹面板。
     $xml = Wait-Desc "悬浮操作按钮"
     if ($null -ne (Get-TextBounds $xml "函数")) { throw "编辑后直接弹出了面板，应先显示小球" }
@@ -389,7 +434,7 @@ Invoke-Step "Floating dock: ball, panel, file dialog, recorder" {
 
 Invoke-Step "Source manager and edit window" {
     $xml = Open-ProjectCard
-    Tap-Text "编辑" $xml
+    Tap-CardAction $xml "编辑"
     Tap-Desc "悬浮操作按钮" (Wait-Desc "悬浮操作按钮")
     $xml = Wait-Text "函数"
     # 标题栏文字：有源文件时是当前 Flow 名，否则“点击创建源文件”；两者都应打开源文件管理。
