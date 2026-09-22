@@ -11,7 +11,9 @@
   "childBlocks": ["body"],
   "properties": [
     { "path": "times", "label": "次数", "editor": "integer", "required": true, "defaultValue": "1" },
-    { "path": "indexVariable", "label": "序号变量(可选)", "editor": "string", "required": false }
+    { "path": "timesVariable", "label": "次数变量(可选)", "editor": "string", "required": false },
+    { "path": "indexVariable", "label": "序号变量(可选)", "editor": "string", "required": false },
+    { "path": "elapsedVariable", "label": "循环时间变量(可选)", "editor": "string", "required": false }
   ],
   "migrations": []
 }

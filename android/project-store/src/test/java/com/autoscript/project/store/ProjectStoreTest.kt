@@ -122,6 +122,37 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun createsLuaFoldersAndModulesThatRoundTripThroughBackup() {
+        val created = store.createProject("Lua 树", ProjectSourceMode.LUA)
+        val folder = store.createLuaDirectory(created.manifest.projectId, "lua/tools")
+        val module = store.createLuaFile(folder.manifest.projectId, "lua/tools/math.lua", "return { answer = 42 }\n")
+
+        assertEquals(listOf("lua", "lua/tools"), module.luaDirectories)
+        assertEquals(listOf("lua/tools/math.lua", "main.lua"), module.manifest.luaFiles)
+        assertEquals("return { answer = 42 }\n", module.luaSources.getValue("lua/tools/math.lua"))
+
+        val archive = ByteArrayOutputStream().also { store.exportProjectBackup(module.manifest.projectId, it) }.toByteArray()
+        val imported = store.importProjectBackup(ByteArrayInputStream(archive))
+        assertEquals(module.manifest.luaFiles, imported.manifest.luaFiles)
+        assertEquals(module.luaDirectories, imported.luaDirectories)
+        assertEquals("return { answer = 42 }\n", imported.luaSources.getValue("lua/tools/math.lua"))
+        assertTrue(File(imported.directory, "lua/tools").isDirectory)
+    }
+
+    @Test
+    fun rejectsLuaPathsOutsideTheDedicatedModuleDirectory() {
+        val created = store.createProject("Lua 路径", ProjectSourceMode.LUA)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.createLuaFile(created.manifest.projectId, "../escape.lua")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.createLuaDirectory(created.manifest.projectId, "assets/scripts")
+        }
+        assertFalse(File(created.directory.parentFile, "escape.lua").exists())
+    }
+
+    @Test
     fun backupImportRejectsTraversalAndRemovesItsStagingDirectory() {
         val archive = zipOf("../escape" to "bad".toByteArray())
 

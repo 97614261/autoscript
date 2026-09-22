@@ -11,11 +11,22 @@ Math = Math or {}
 ---@return number value 非负距离。
 function Math.distance(x1, y1, x2, y2) end
 
+Log = Log or {}
+
+---向当前 Runner 的有界调试日志写入一条文本。
+---@param level integer 1=info，2=warn，3=error。
+---@param message string 最多2048字节的 UTF-8 文本。
+function Log.write(level, message) end
+
 System = System or {}
 
 ---读取当前Android显示区域的物理像素尺寸。
 ---@return Size value 包含width和height的尺寸值。
 function System.getScreenSize() end
+
+---读取当前任务运行所使用的单调时钟毫秒值。
+---@return Integer value 自设备启动以来的单调毫秒数。
+function System.elapsedRealtimeMillis() end
 
 Task = Task or {}
 

@@ -14,7 +14,7 @@ import org.junit.Test
 class BlockCatalogTest {
     @Test
     fun generatedCatalogIsUniqueSearchableAndBoundToNodeSchemas() {
-        assertEquals(25, BlockCatalog.all.size)
+        assertEquals(26, BlockCatalog.all.size)
         assertEquals(BlockCatalog.all.size, BlockCatalog.all.map { it.kind }.distinct().size)
         assertTrue(BlockCatalog.all.all { it.nodeSchemaId.startsWith("https://autoscript.local/schema/node/") })
         assertEquals("flow.call", BlockCatalog.search("调用 flow", emptySet()).single().contract.kind)
@@ -32,6 +32,10 @@ class BlockCatalogTest {
         assertEquals(
             "1000",
             BlockCatalog.find("task.sleep")?.properties?.single()?.defaultValue,
+        )
+        assertEquals(
+            setOf("core.task"),
+            BlockCatalog.find("task.log")?.requiredCapabilities,
         )
         assertEquals(
             setOf("control.if", "control.repeat", "control.while"),

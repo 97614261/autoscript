@@ -1,7 +1,12 @@
 package com.autoscript.studio
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,15 +31,21 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -45,11 +56,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.autoscript.core.designsystem.AutoScriptPalette
+import com.autoscript.core.model.RuntimeConnectionState
+import com.autoscript.core.model.RuntimeRootState
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectStore
+import com.autoscript.project.store.ProjectResourceKind
+import com.autoscript.runtime.client.RuntimeClient
+import com.autoscript.runtime.client.ScreenshotPreviewResult
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import kotlin.math.sqrt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private const val MAX_TEMPLATE_EDGE = 4_096
+private const val MAX_TEMPLATE_PIXELS = 4_194_304L
 
 /**
  * `activity_apk_build.xml` + `page_apk_update.xml` + `page_apk_build_log.xml`：64dp 头、36dp Tab、
@@ -444,14 +470,33 @@ private fun PackageLogPage(logs: List<String>, modifier: Modifier, onCopy: () ->
 internal fun ImageToolsScreen(
     snapshot: ProjectSnapshot,
     store: ProjectStore,
+    runtimeClient: RuntimeClient,
+    runtimeState: RuntimeConnectionState,
     onSnapshotChanged: (ProjectSnapshot) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
     var settingsVisible by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
+    var previewBitmap by remember(snapshot.manifest.projectId) { mutableStateOf<Bitmap?>(null) }
+    var previewMessage by remember(snapshot.manifest.projectId) { mutableStateOf<String?>(null) }
+    var previewPending by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
+    var previewSaving by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val context = LocalContext.current
+    val latestPreviewBitmap by rememberUpdatedState(previewBitmap)
+    DisposableEffect(snapshot.manifest.projectId) {
+        onDispose { latestPreviewBitmap?.recycle() }
+    }
     val images = snapshot.manifest.resources.mapNotNull { resource ->
         resource.takeIf { it.get("kind")?.asString == "image" }?.get("path")?.asString
+    }
+    val rootStatus = when (runtimeState.rootState) {
+        RuntimeRootState.READY -> "Root 已就绪"
+        RuntimeRootState.STARTING -> "Root 正在连接"
+        RuntimeRootState.FAILED -> "Root 连接失败"
+        RuntimeRootState.STOPPED -> "Root 尚未启动"
+        RuntimeRootState.UNKNOWN -> "Root 状态未知"
     }
     Column(modifier.fillMaxSize().background(AutoScriptPalette.PageBackground)) {
         UtilityLightHeader("图片与标注", "项目图片 ${images.size} 张", onBack) {
@@ -464,7 +509,7 @@ internal fun ImageToolsScreen(
             )
         }
         Text(
-            "截图、区域标注、取色和模板裁剪共用此工作区；视觉算法在 M28 接入前只做资源管理",
+            "截图、区域标注、取色和模板裁剪共用此工作区。截图只在你主动点击后经 Runtime 的 Root 通道执行。",
             modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 10.dp),
             fontSize = 11.sp,
             color = AutoScriptPalette.TextSecondary,
@@ -479,22 +524,135 @@ internal fun ImageToolsScreen(
                     Column(Modifier.padding(14.dp)) {
                         Text("截图工作区", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary)
                         Text(
-                            "需要 Runtime 截图会话；Root 后端就绪后从悬浮面板“工具 → 屏幕截图”进入。",
+                            "$rootStatus；点击后给你 3 秒切换到目标应用。脚本运行时不会抢占 Root 截图通道。",
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
                             color = AutoScriptPalette.TextSecondary,
                             modifier = Modifier.padding(top = 4.dp),
                         )
                         Text(
-                            "截图会话未就绪",
-                            color = AutoScriptPalette.TextSecondary,
+                            if (previewPending) "正在截图..." else "截取当前屏幕",
+                            color = if (previewPending) AutoScriptPalette.TextSecondary else Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(top = 12.dp).height(42.dp)
-                                .background(Color(0xFFF3F4F6), RoundedCornerShape(10.dp))
+                                .background(
+                                    if (previewPending) Color(0xFFF3F4F6) else AutoScriptPalette.Accent,
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .clickable(enabled = !previewPending && !previewSaving) {
+                                    previewPending = true
+                                    previewMessage = "正在读取当前屏幕"
+                                    scope.launch {
+                                        when (val result = withContext(Dispatchers.IO) { runtimeClient.capturePreview() }) {
+                                            is ScreenshotPreviewResult.Success -> {
+                                                val decoded = withContext(Dispatchers.IO) {
+                                                    BitmapFactory.decodeFile(result.file.path)
+                                                }
+                                                result.file.delete()
+                                                previewBitmap?.recycle()
+                                                previewBitmap = decoded
+                                                previewMessage = if (decoded == null) "截图文件无法解码" else "预览已更新：${decoded.width} x ${decoded.height}"
+                                            }
+                                            is ScreenshotPreviewResult.Unavailable -> {
+                                                previewMessage = result.message
+                                            }
+                                        }
+                                        previewPending = false
+                                    }
+                                }
                                 .padding(top = 12.dp),
                         )
+                        previewMessage?.let { message ->
+                            Text(message, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
+                        }
+                        previewBitmap?.let { bitmap ->
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "当前屏幕预览",
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                                    .pointerInput(bitmap) {
+                                        detectTapGestures { offset ->
+                                            val x = (offset.x / size.width * bitmap.width)
+                                                .toInt()
+                                                .coerceIn(0, bitmap.width - 1)
+                                            val y = (offset.y / size.height * bitmap.height)
+                                                .toInt()
+                                                .coerceIn(0, bitmap.height - 1)
+                                            val color = bitmap.getPixel(x, y) and 0x00ffffff
+                                            previewMessage = "取色：($x, $y) · #${color.toString(16).padStart(6, '0').uppercase()}"
+                                        }
+                                    },
+                            )
+                            Text(
+                                if (previewSaving) "正在保存图片资源..." else "保存整张截图到项目图片",
+                                color = if (previewSaving) AutoScriptPalette.TextSecondary else AutoScriptPalette.Accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(38.dp)
+                                    .background(Color(0xFFF0F6FF), RoundedCornerShape(9.dp))
+                                    .clickable(enabled = !previewSaving) {
+                                        previewSaving = true
+                                        scope.launch {
+                                            val result = withContext(Dispatchers.IO) {
+                                                runCatching {
+                                                    val scale = minOf(
+                                                        1.0,
+                                                        MAX_TEMPLATE_EDGE.toDouble() / bitmap.width,
+                                                        MAX_TEMPLATE_EDGE.toDouble() / bitmap.height,
+                                                        sqrt(MAX_TEMPLATE_PIXELS.toDouble() / (bitmap.width.toLong() * bitmap.height)),
+                                                    )
+                                                    val exportWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                                                    val exportHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                                                    val exported = if (exportWidth == bitmap.width && exportHeight == bitmap.height) {
+                                                        bitmap
+                                                    } else {
+                                                        Bitmap.createScaledBitmap(bitmap, exportWidth, exportHeight, true)
+                                                    }
+                                                    val temporary = File.createTempFile(
+                                                        "captured-screen-",
+                                                        ".png",
+                                                        context.cacheDir,
+                                                    )
+                                                    try {
+                                                        FileOutputStream(temporary).use { output ->
+                                                            require(exported.compress(Bitmap.CompressFormat.PNG, 100, output))
+                                                            output.flush()
+                                                            output.fd.sync()
+                                                        }
+                                                        FileInputStream(temporary).use { input ->
+                                                            store.importResource(
+                                                                projectId = snapshot.manifest.projectId,
+                                                                kind = ProjectResourceKind.IMAGE,
+                                                                sourceName = "screen-${System.currentTimeMillis()}.png",
+                                                                source = input,
+                                                                expectedResourcePaths = snapshot.manifest.resources
+                                                                    .mapNotNull { it.get("path")?.asString }
+                                                                    .toSet(),
+                                                            )
+                                                        }
+                                                    } finally {
+                                                        temporary.delete()
+                                                        if (exported !== bitmap) exported.recycle()
+                                                    }
+                                                }
+                                            }
+                                            result.onSuccess {
+                                                onSnapshotChanged(it)
+                                                previewMessage = "已保存为项目图片：${it.manifest.resources.last().get("path").asString.substringAfterLast('/')}"
+                                            }.onFailure {
+                                                previewMessage = it.message ?: "截图资源保存失败"
+                                            }
+                                            previewSaving = false
+                                        }
+                                    }
+                                    .padding(top = 11.dp),
+                            )
+                        }
                     }
                 }
             }

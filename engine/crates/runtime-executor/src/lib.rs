@@ -25,7 +25,9 @@ use runtime_scheduler::{
 use script_api::{ApiContract, CancelMode, API_CONTRACTS};
 
 const HOST_MARKER: &[u8] = b"__AUTOSCRIPT_HOST_V1";
+const OP_LOG_WRITE: u32 = 1_100;
 const OP_SYSTEM_GET_SCREEN_SIZE: u32 = 2_000;
+const OP_SYSTEM_ELAPSED_REALTIME_MILLIS: u32 = 2_001;
 const OP_TASK_SLEEP: u32 = 3_000;
 const OP_INPUT_TAP: u32 = 4_000;
 const OP_INPUT_SWIPE: u32 = 4_001;
@@ -55,6 +57,8 @@ const OP_OCR_LOAD_DICTIONARY: u32 = 6_000;
 const OP_OCR_RELEASE_DICTIONARY: u32 = 6_001;
 const OP_OCR_GLYPH: u32 = 6_100;
 const MAX_PROJECT_CAPABILITIES: usize = 64;
+const MAX_SCRIPT_LOG_ENTRIES: usize = 200;
+const MAX_SCRIPT_LOG_BYTES: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostRequest {
@@ -248,6 +252,30 @@ impl ExternalHostQueue {
         }
     }
 
+    /// Consumes cancellation for the exact request generation while a backend is dispatching a
+    /// multi-command transaction. This keeps cancellation observable at command boundaries
+    /// without polling the Lua VM or exposing queue internals.
+    #[must_use]
+    pub fn take_cancellation(&self, request_id: RequestId, task: TaskToken) -> Option<CancelMode> {
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state
+            .cancellations
+            .get(&request_id)
+            .is_some_and(|(candidate, _)| *candidate == task)
+        {
+            state
+                .cancellations
+                .remove(&request_id)
+                .map(|(_, mode)| mode)
+        } else {
+            None
+        }
+    }
+
     /// Drops terminal-session work before the same external backend is attached to a fresh VM.
     ///
     /// # Errors
@@ -418,6 +446,7 @@ pub struct RuntimeExecutor<C, H> {
     resume_inputs: BTreeMap<TaskToken, LuaInput>,
     frames: Arc<Mutex<FramePool>>,
     dictionaries: Arc<Mutex<DictionaryStore>>,
+    script_logs: VecDeque<String>,
     allowed_capabilities: Option<BTreeSet<String>>,
     capabilities_locked: bool,
 }
@@ -496,6 +525,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             resume_inputs: BTreeMap::new(),
             frames,
             dictionaries,
+            script_logs: VecDeque::with_capacity(MAX_SCRIPT_LOG_ENTRIES),
             allowed_capabilities: None,
             capabilities_locked: false,
         })
@@ -581,6 +611,12 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         self.scheduler
             .task_outcome(task)
             .and_then(|outcome| outcome.error.as_ref())
+    }
+
+    /// Drains script-authored diagnostic lines without exposing the Lua VM across threads.
+    #[must_use]
+    pub fn drain_script_logs(&mut self) -> Vec<String> {
+        self.script_logs.drain(..).collect()
     }
 
     /// Registers a generated Lua module whose return value is the entry function.
@@ -707,8 +743,10 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             return Ok(());
         }
         match opcode {
+            OP_LOG_WRITE => self.apply_log(task, &values[2..]),
             OP_TASK_SLEEP => self.apply_sleep(task, &values[2..]),
             OP_SYSTEM_GET_SCREEN_SIZE
+            | OP_SYSTEM_ELAPSED_REALTIME_MILLIS
             | OP_INPUT_TAP
             | OP_INPUT_SWIPE
             | OP_INPUT_KEY_EVENT
@@ -1413,6 +1451,40 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         Ok(())
     }
 
+    fn apply_log(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<(), ExecutorError> {
+        let [LuaScalar::Integer(level), LuaScalar::Bytes(message)] = args else {
+            return Err(ExecutorError::InvalidYield(
+                "Log.write requires an integer level and UTF-8 message".to_owned(),
+            ));
+        };
+        let level = match level {
+            1 => "INFO",
+            2 => "WARN",
+            3 => "ERROR",
+            _ => {
+                return Err(ExecutorError::InvalidYield(
+                    "Log.write level must be 1..3".to_owned(),
+                ))
+            }
+        };
+        if message.len() > MAX_SCRIPT_LOG_BYTES {
+            return Err(ExecutorError::InvalidYield(
+                "Log.write message exceeds 2048 UTF-8 bytes".to_owned(),
+            ));
+        }
+        let message = std::str::from_utf8(message)
+            .map_err(|_| ExecutorError::InvalidYield("Log.write message must be UTF-8".to_owned()))?
+            .replace(['\r', '\n'], "\\n");
+        if self.script_logs.len() >= MAX_SCRIPT_LOG_ENTRIES {
+            self.script_logs.pop_front();
+        }
+        self.script_logs
+            .push_back(format!("脚本/{level}: {message}"));
+        self.resume_inputs.insert(task, LuaInput::Boolean(true));
+        self.scheduler.yield_budget(task)?;
+        Ok(())
+    }
+
     fn dispatch_host(
         &mut self,
         task: TaskToken,
@@ -1773,6 +1845,23 @@ fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, Execu
                 LuaScalar::Integer(i64::from(height)),
             ]))
         }
+        HostResult::Success(payload) if opcode == OP_SYSTEM_ELAPSED_REALTIME_MILLIS => {
+            if payload.len() != 8 {
+                return Err(ExecutorError::InvalidYield(
+                    "elapsed realtime payload must be 8 bytes".to_owned(),
+                ));
+            }
+            let milliseconds =
+                u64::from_le_bytes(payload.as_slice().try_into().expect("length checked"));
+            Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Integer(i64::try_from(milliseconds).map_err(|_| {
+                    ExecutorError::InvalidYield(
+                        "elapsed realtime exceeds Lua integer range".to_owned(),
+                    )
+                })?),
+            ]))
+        }
         HostResult::Success(payload)
             if matches!(
                 opcode,
@@ -1948,6 +2037,9 @@ impl HostBackend for VirtualHost {
                         payload.extend_from_slice(&self.screen_height.to_le_bytes());
                         payload
                     }
+                    OP_SYSTEM_ELAPSED_REALTIME_MILLIS if request.args.is_empty() => {
+                        0_u64.to_le_bytes().to_vec()
+                    }
                     OP_INPUT_TAP if request.args.len() == 2 => Vec::new(),
                     OP_INPUT_SWIPE if request.args.len() == 5 => Vec::new(),
                     OP_INPUT_KEY_EVENT if request.args.len() == 1 => Vec::new(),
@@ -2120,6 +2212,30 @@ mod tests {
     }
 
     #[test]
+    fn script_logs_are_bounded_and_drained_without_host_dispatch() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut executor = executor(&clock, VirtualHost::new(1, 1));
+        let task = executor
+            .start_entry_chunk(
+                b"return function() Log.info('captured'); Log.warn('missing\\nretry'); Log.error(7) end",
+                "script-log",
+            )
+            .expect("start");
+        executor.drive().expect("drive logs");
+        assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        assert!(executor.backend().requests().is_empty());
+        assert_eq!(
+            executor.drain_script_logs(),
+            vec![
+                "脚本/INFO: captured".to_owned(),
+                "脚本/WARN: missing\\nretry".to_owned(),
+                "脚本/ERROR: 7".to_owned(),
+            ]
+        );
+        assert!(executor.drain_script_logs().is_empty());
+    }
+
+    #[test]
     fn external_queue_prioritizes_stop_and_cancellation_over_business_work() {
         let clock = ManualClock::new(MonoTime::ZERO);
         let executor = executor(&clock, VirtualHost::new(1, 1));
@@ -2193,6 +2309,31 @@ mod tests {
             queue.wait_next(),
             ExternalHostEvent::Dispatch { .. }
         ));
+    }
+
+    #[test]
+    fn active_backend_can_consume_only_its_exact_cancellation() {
+        let queue = ExternalHostQueue::new(1, 2).expect("queue");
+        let task = TaskToken {
+            id: TaskId(1),
+            generation: TaskGeneration(2),
+        };
+        queue.cancel(RequestId(7), task, CancelMode::Cooperative);
+        assert_eq!(
+            queue.take_cancellation(
+                RequestId(7),
+                TaskToken {
+                    id: TaskId(1),
+                    generation: TaskGeneration(1),
+                },
+            ),
+            None
+        );
+        assert_eq!(
+            queue.take_cancellation(RequestId(7), task),
+            Some(CancelMode::Cooperative)
+        );
+        assert_eq!(queue.take_cancellation(RequestId(7), task), None);
     }
 
     #[test]

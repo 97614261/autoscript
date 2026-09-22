@@ -12,7 +12,31 @@
     "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "name": { "type": "string", "minLength": 1, "maxLength": 128 },
     "sourceMode": { "enum": ["lua", "visual"] },
-    "entryPoint": { "type": "string", "const": "main.lua" },
+    "entryPoint": {
+      "type": "string",
+      "maxLength": 256,
+      "pattern": "^(main\\.lua|lua/(?:[A-Za-z0-9_\\-\\u4E00-\\u9FFF]+/){0,4}[A-Za-z0-9_\\-\\u4E00-\\u9FFF]+\\.lua)$"
+    },
+    "luaFiles": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "maxLength": 256,
+        "pattern": "^(main\\.lua|lua/(?:[A-Za-z0-9_\\-\\u4E00-\\u9FFF]+/){0,4}[A-Za-z0-9_\\-\\u4E00-\\u9FFF]+\\.lua)$"
+      }
+    },
+    "luaDirectories": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "maxLength": 256,
+        "pattern": "^lua(?:/[A-Za-z0-9_\\-\\u4E00-\\u9FFF]+){0,5}$"
+      }
+    },
     "entryFlowId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "flows": {
       "type": "array",
@@ -59,6 +83,10 @@
         }
       }
     },
+    "variables": {
+      "type": "array", "maxItems": 256,
+      "items": { "$ref": "#/$defs/projectVariable" }
+    },
     "resources": {
       "type": "array",
       "maxItems": 256,
@@ -93,6 +121,14 @@
         "orientationPolicy": { "enum": ["follow", "portrait", "landscape"] }
       }
     },
+    "debugSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runDelayMs"],
+      "properties": {
+        "runDelayMs": { "type": "integer", "minimum": 0, "maximum": 60000 }
+      }
+    },
     "runnerUi": {
       "oneOf": [
         { "type": "null" },
@@ -119,6 +155,16 @@
     "licensePolicy": { "type": ["object", "null"] }
   },
   "$defs": {
+    "projectVariable": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "scope", "flowId", "type"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "scope": { "enum": ["global", "flow"] },
+        "flowId": { "type": ["string", "null"], "maxLength": 128 },
+        "type": { "enum": ["integer", "number", "string", "image"] }
+      }
+    },
     "runnerUiField": {
       "type": "object",
       "additionalProperties": false,

@@ -1,5 +1,6 @@
 //! Narrow JNI boundary backed by generation-checked opaque handles.
 
+mod input_runtime;
 mod visual_compile;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -9,18 +10,23 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use automation_core::{
+    AutomationBackend, BackendError, FrameFormat, FrameMetadata, FramePool, InputArbiterConfig,
+    InputCommand, Rotation,
+};
 #[cfg(target_os = "android")]
 use automation_core::{CaptureSeriesHandle, SeriesPublish};
-use automation_core::{FrameFormat, FrameMetadata, FramePool, Rotation};
-use coordinate::{CoordinateSnapshot, ScaleMode, Size};
+use coordinate::{CoordinateSnapshot, DesignPoint, ScaleMode, Size};
 use engine_core::{EngineSession, EngineSessionConfig, EngineState};
+use input_runtime::{InputControl, InputRuntime, InputRuntimeError};
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JObjectArray, JString};
-use jni::sys::{jint, jlong, jstring};
+use jni::sys::{jbyteArray, jint, jlong, jobjectArray, jstring};
 use jni::{JNIEnv, JavaVM};
-#[cfg(target_os = "android")]
 use lua_runtime::LuaScalar;
 use runtime_executor::{ExternalHostEvent, ExternalHostQueue, HostRequest};
-use runtime_scheduler::{HostCompletion, HostResult, SchedulerHandle, SchedulerPoll};
+use runtime_scheduler::{
+    HostCompletion, HostResult, MonoTime, RequestId, SchedulerHandle, SchedulerPoll, TaskToken,
+};
 #[cfg(target_os = "android")]
 use runtime_scheduler::{ResourceId, ResourceKind};
 
@@ -40,6 +46,21 @@ const MAX_DICTIONARY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RUNTIME_DIAGNOSTIC_CHARS: usize = 4_096;
 const MAX_PROJECT_CAPABILITIES: usize = 64;
 const MAX_CAPABILITY_BYTES: usize = 128;
+const MAX_PREVIEW_CAPTURE_BYTES: usize = 20 * 1024 * 1024;
+
+/// A one-shot raw frame requested by Studio, kept separate from script-owned frame handles.
+struct PreviewCapture {
+    width: u32,
+    height: u32,
+    row_stride: u32,
+    format: u8,
+    pixels: Vec<u8>,
+}
+
+struct PreviewCaptureError {
+    message: String,
+    connection_lost: bool,
+}
 
 struct RootDispatch {
     result: HostResult,
@@ -49,10 +70,9 @@ struct RootDispatch {
 #[cfg(target_os = "android")]
 const OP_SYSTEM_GET_SCREEN_SIZE: u32 = 2_000;
 #[cfg(target_os = "android")]
+const OP_SYSTEM_ELAPSED_REALTIME_MILLIS: u32 = 2_001;
 const OP_INPUT_TAP: u32 = 4_000;
-#[cfg(target_os = "android")]
 const OP_INPUT_SWIPE: u32 = 4_001;
-#[cfg(target_os = "android")]
 const OP_INPUT_KEY_EVENT: u32 = 4_002;
 #[cfg(target_os = "android")]
 const OP_SCREEN_CAPTURE: u32 = 5_000;
@@ -99,6 +119,9 @@ enum SessionCommand {
         bytes: Vec<u8>,
         response: SyncSender<Result<(), String>>,
     },
+    DrainScriptLogs {
+        response: SyncSender<Vec<String>>,
+    },
     ControlWake,
 }
 
@@ -112,6 +135,12 @@ enum RootControl {
     Disconnect {
         response: SyncSender<()>,
     },
+    ResetInput {
+        response: SyncSender<()>,
+    },
+    CapturePreview {
+        response: SyncSender<Result<PreviewCapture, String>>,
+    },
     Shutdown,
 }
 
@@ -120,20 +149,119 @@ mod platform_root {
     use std::path::Path;
     use std::time::Duration;
 
-    use coordinate::DesignPoint;
-
     use super::{
-        CaptureSeriesHandle, CoordinateSnapshot, FrameFormat, FrameMetadata, FramePool,
-        HostRequest, HostResult, LuaScalar, ResourceId, ResourceKind, RootDispatch, Rotation,
-        SeriesPublish, OP_INPUT_KEY_EVENT, OP_INPUT_SWIPE, OP_INPUT_TAP, OP_SCREEN_CAPTURE,
-        OP_SCREEN_CAPTURE_SERIES_FRAME, OP_SYSTEM_GET_SCREEN_SIZE,
+        AutomationBackend, BackendError, CaptureSeriesHandle, CoordinateSnapshot, FrameFormat,
+        FrameMetadata, FramePool, HostRequest, HostResult, InputCommand, LuaScalar, PreviewCapture,
+        PreviewCaptureError, RequestId, ResourceId, ResourceKind, RootDispatch, Rotation,
+        SeriesPublish, TaskToken, OP_SCREEN_CAPTURE, OP_SCREEN_CAPTURE_SERIES_FRAME,
+        OP_SYSTEM_ELAPSED_REALTIME_MILLIS, OP_SYSTEM_GET_SCREEN_SIZE,
     };
 
     pub type Client = root_client::AndroidRootClient;
 
+    pub struct InputBackend<'a> {
+        client: &'a mut Client,
+        connection_lost: bool,
+    }
+
+    impl<'a> InputBackend<'a> {
+        pub fn new(client: &'a mut Client) -> Self {
+            Self {
+                client,
+                connection_lost: false,
+            }
+        }
+
+        pub const fn connection_lost(&self) -> bool {
+            self.connection_lost
+        }
+
+        fn map_client_error(&mut self, error: root_client::ClientError) -> BackendError {
+            self.connection_lost |= error.is_connection_lost();
+            BackendError {
+                code: "ROOT_INPUT_FAILED",
+                message: format!("Root input backend rejected the request: {error:?}"),
+                retryable: false,
+                connection_lost: error.is_connection_lost(),
+            }
+        }
+    }
+
+    impl AutomationBackend for InputBackend<'_> {
+        fn dispatch_input(
+            &mut self,
+            _request: RequestId,
+            _task: TaskToken,
+            commands: &[InputCommand],
+        ) -> Result<(), BackendError> {
+            for command in commands {
+                let result = match command {
+                    InputCommand::Tap { x, y } => self.client.tap(*x, *y),
+                    InputCommand::Swipe {
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        duration_ms,
+                    } => self
+                        .client
+                        .swipe((*from_x, *from_y), (*to_x, *to_y), *duration_ms),
+                    InputCommand::KeyEvent { key_code } => self.client.key_event(*key_code),
+                    InputCommand::PointerDown { pointer_id, x, y } => {
+                        self.client.pointer_down(*pointer_id, *x, *y)
+                    }
+                    InputCommand::PointerMove { pointer_id, x, y } => {
+                        self.client.pointer_move(*pointer_id, *x, *y)
+                    }
+                    InputCommand::PointerUp { pointer_id } => self.client.pointer_up(*pointer_id),
+                    InputCommand::Delay { milliseconds } => {
+                        std::thread::sleep(Duration::from_millis(u64::from(*milliseconds)));
+                        Ok(())
+                    }
+                };
+                result.map_err(|error| self.map_client_error(error))?;
+            }
+            Ok(())
+        }
+
+        fn cancel_input(&mut self, request: RequestId) {
+            if let Err(error) = self.client.cancel(request.get()) {
+                self.connection_lost |= error.is_connection_lost();
+            }
+        }
+
+        fn release_pointers(&mut self, pointer_ids: &[u8]) -> Result<(), BackendError> {
+            for pointer_id in pointer_ids {
+                self.client
+                    .pointer_up(*pointer_id)
+                    .map_err(|error| self.map_client_error(error))?;
+            }
+            Ok(())
+        }
+    }
+
     pub fn connect(path: &str, key: [u8; 32], timeout: Duration) -> Result<Client, String> {
         root_client::connect_android(Path::new(path), key, timeout)
             .map_err(|error| format!("{error:?}"))
+    }
+
+    pub fn capture_preview(client: &mut Client) -> Result<PreviewCapture, PreviewCaptureError> {
+        client
+            .capture()
+            .map(|capture| PreviewCapture {
+                width: capture.width,
+                height: capture.height,
+                row_stride: capture.row_stride,
+                format: match capture.format {
+                    root_client::RawCaptureFormat::Rgba8888 => 1,
+                    root_client::RawCaptureFormat::Bgra8888 => 2,
+                },
+                pixels: capture.pixels,
+            })
+            .map_err(|error| PreviewCaptureError {
+                message: format!("RootDaemon failed to capture preview: {error:?}"),
+                connection_lost: error.is_connection_lost(),
+            })
     }
 
     pub fn shutdown(client: &mut Client) -> Result<(), String> {
@@ -144,7 +272,7 @@ mod platform_root {
         client: &mut Client,
         request: &HostRequest,
         display: (u32, u32),
-        coordinates: CoordinateSnapshot,
+        _coordinates: CoordinateSnapshot,
         frames: &std::sync::Mutex<FramePool>,
         timestamp_nanos: u64,
         snapshot_id: u64,
@@ -156,14 +284,9 @@ mod platform_root {
                 payload.extend_from_slice(&display.1.to_le_bytes());
                 success(payload)
             }
-            OP_INPUT_TAP => dispatch_tap(client, &request.args, coordinates),
-            OP_INPUT_SWIPE => dispatch_swipe(client, &request.args, coordinates),
-            OP_INPUT_KEY_EVENT => match parse_key(&request.args) {
-                Ok(key) => client
-                    .key_event(key)
-                    .map_or_else(input_client_failure, |()| success(Vec::new())),
-                Err(()) => input_failure("invalid key event arguments"),
-            },
+            OP_SYSTEM_ELAPSED_REALTIME_MILLIS if request.args.is_empty() => {
+                success((timestamp_nanos / 1_000_000).to_le_bytes().to_vec())
+            }
             OP_SCREEN_CAPTURE if request.args.is_empty() => {
                 capture(client, frames, timestamp_nanos, snapshot_id)
             }
@@ -176,60 +299,6 @@ mod platform_root {
                 false,
             ),
         }
-    }
-
-    fn dispatch_tap(
-        client: &mut Client,
-        args: &[LuaScalar],
-        coordinates: CoordinateSnapshot,
-    ) -> RootDispatch {
-        let Ok((x, y)) = parse_tap(args) else {
-            return input_failure("invalid tap arguments");
-        };
-        let Ok(point) = map_design_point(coordinates, x, y) else {
-            return input_failure("tap point is outside the visible design canvas");
-        };
-        client
-            .tap(point.0, point.1)
-            .map_or_else(input_client_failure, |()| success(Vec::new()))
-    }
-
-    fn dispatch_swipe(
-        client: &mut Client,
-        args: &[LuaScalar],
-        coordinates: CoordinateSnapshot,
-    ) -> RootDispatch {
-        let Ok((start, end, duration)) = parse_swipe(args) else {
-            return input_failure("invalid swipe arguments");
-        };
-        let Ok(start) = map_design_point(coordinates, start.0, start.1) else {
-            return input_failure("swipe start is outside the visible design canvas");
-        };
-        let Ok(end) = map_design_point(coordinates, end.0, end.1) else {
-            return input_failure("swipe end is outside the visible design canvas");
-        };
-        client
-            .swipe(start, end, duration)
-            .map_or_else(input_client_failure, |()| success(Vec::new()))
-    }
-
-    fn map_design_point(coordinates: CoordinateSnapshot, x: i32, y: i32) -> Result<(i32, i32), ()> {
-        let point = coordinates
-            .design_to_display(DesignPoint {
-                x: x as f32,
-                y: y as f32,
-            })
-            .map_err(|_| ())?;
-        Ok((rounded_i32(point.x)?, rounded_i32(point.y)?))
-    }
-
-    #[allow(clippy::cast_possible_truncation)]
-    fn rounded_i32(value: f32) -> Result<i32, ()> {
-        let rounded = value.round();
-        if !rounded.is_finite() || rounded < i32::MIN as f32 || rounded > i32::MAX as f32 {
-            return Err(());
-        }
-        Ok(rounded as i32)
     }
 
     fn capture(
@@ -394,66 +463,68 @@ mod platform_root {
             connection_lost,
         }
     }
-
-    fn parse_tap(args: &[LuaScalar]) -> Result<(i32, i32), ()> {
-        let [LuaScalar::Integer(x), LuaScalar::Integer(y)] = args else {
-            return Err(());
-        };
-        Ok((
-            i32::try_from(*x).map_err(|_| ())?,
-            i32::try_from(*y).map_err(|_| ())?,
-        ))
-    }
-
-    fn parse_swipe(args: &[LuaScalar]) -> Result<((i32, i32), (i32, i32), u32), ()> {
-        let [LuaScalar::Integer(x1), LuaScalar::Integer(y1), LuaScalar::Integer(x2), LuaScalar::Integer(y2), LuaScalar::Integer(duration)] =
-            args
-        else {
-            return Err(());
-        };
-        Ok((
-            (
-                i32::try_from(*x1).map_err(|_| ())?,
-                i32::try_from(*y1).map_err(|_| ())?,
-            ),
-            (
-                i32::try_from(*x2).map_err(|_| ())?,
-                i32::try_from(*y2).map_err(|_| ())?,
-            ),
-            u32::try_from(*duration).map_err(|_| ())?,
-        ))
-    }
-
-    fn parse_key(args: &[LuaScalar]) -> Result<u32, ()> {
-        let [LuaScalar::Integer(key)] = args else {
-            return Err(());
-        };
-        u32::try_from(*key).map_err(|_| ())
-    }
-
-    fn input_failure(message: &str) -> RootDispatch {
-        failure("ROOT_INPUT_FAILED", message, false)
-    }
-
-    fn input_client_failure(error: root_client::ClientError) -> RootDispatch {
-        failure(
-            "ROOT_INPUT_FAILED",
-            "Root input backend rejected the request",
-            error.is_connection_lost(),
-        )
-    }
 }
 
 #[cfg(not(target_os = "android"))]
 mod platform_root {
     use std::time::Duration;
 
-    use super::{CoordinateSnapshot, FramePool, HostRequest, HostResult, RootDispatch};
+    use super::{
+        AutomationBackend, BackendError, CoordinateSnapshot, FramePool, HostRequest, HostResult,
+        InputCommand, PreviewCapture, PreviewCaptureError, RequestId, RootDispatch, TaskToken,
+    };
 
     pub struct Client;
 
+    pub struct InputBackend<'a> {
+        _client: &'a mut Client,
+    }
+
+    impl<'a> InputBackend<'a> {
+        pub fn new(client: &'a mut Client) -> Self {
+            Self { _client: client }
+        }
+
+        pub const fn connection_lost(&self) -> bool {
+            true
+        }
+    }
+
+    impl AutomationBackend for InputBackend<'_> {
+        fn dispatch_input(
+            &mut self,
+            _request: RequestId,
+            _task: TaskToken,
+            _commands: &[InputCommand],
+        ) -> Result<(), BackendError> {
+            Err(unavailable())
+        }
+
+        fn cancel_input(&mut self, _request: RequestId) {}
+
+        fn release_pointers(&mut self, _pointer_ids: &[u8]) -> Result<(), BackendError> {
+            Err(unavailable())
+        }
+    }
+
+    fn unavailable() -> BackendError {
+        BackendError {
+            code: "ROOT_UNAVAILABLE",
+            message: "RootDaemon is only available on Android".to_owned(),
+            retryable: false,
+            connection_lost: true,
+        }
+    }
+
     pub fn connect(_path: &str, _key: [u8; 32], _timeout: Duration) -> Result<Client, String> {
         Err("RootDaemon is only available on Android".to_owned())
+    }
+
+    pub fn capture_preview(_client: &mut Client) -> Result<PreviewCapture, PreviewCaptureError> {
+        Err(PreviewCaptureError {
+            message: "RootDaemon is only available on Android".to_owned(),
+            connection_lost: true,
+        })
     }
 
     #[allow(clippy::unnecessary_wraps)]
@@ -480,6 +551,131 @@ mod platform_root {
     }
 }
 
+fn prepare_input_commands(
+    request: &HostRequest,
+    coordinates: CoordinateSnapshot,
+) -> Option<Result<Vec<InputCommand>, RootDispatch>> {
+    let result = match request.opcode {
+        OP_INPUT_TAP => {
+            let [LuaScalar::Integer(x), LuaScalar::Integer(y)] = request.args.as_slice() else {
+                return Some(Err(input_failure("invalid tap arguments")));
+            };
+            map_design_point(coordinates, *x, *y).map(|(x, y)| vec![InputCommand::Tap { x, y }])
+        }
+        OP_INPUT_SWIPE => {
+            let [LuaScalar::Integer(x1), LuaScalar::Integer(y1), LuaScalar::Integer(x2), LuaScalar::Integer(y2), LuaScalar::Integer(duration)] =
+                request.args.as_slice()
+            else {
+                return Some(Err(input_failure("invalid swipe arguments")));
+            };
+            let Ok(duration_ms) = u32::try_from(*duration) else {
+                return Some(Err(input_failure("invalid swipe duration")));
+            };
+            if !(1..=60_000).contains(&duration_ms) {
+                return Some(Err(input_failure("swipe duration is outside 1ms..60s")));
+            }
+            map_design_point(coordinates, *x1, *y1).and_then(|(from_x, from_y)| {
+                map_design_point(coordinates, *x2, *y2).map(|(to_x, to_y)| {
+                    vec![InputCommand::Swipe {
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        duration_ms,
+                    }]
+                })
+            })
+        }
+        OP_INPUT_KEY_EVENT => {
+            let [LuaScalar::Integer(key_code)] = request.args.as_slice() else {
+                return Some(Err(input_failure("invalid key event arguments")));
+            };
+            u32::try_from(*key_code)
+                .map(|key_code| vec![InputCommand::KeyEvent { key_code }])
+                .map_err(|_| ())
+        }
+        _ => return None,
+    };
+    Some(
+        result.map_err(|()| input_failure("input coordinate is outside the visible design canvas")),
+    )
+}
+
+fn map_design_point(coordinates: CoordinateSnapshot, x: i64, y: i64) -> Result<(i32, i32), ()> {
+    let x = i32::try_from(x).map_err(|_| ())?;
+    let y = i32::try_from(y).map_err(|_| ())?;
+    let point = coordinates
+        .design_to_display(DesignPoint {
+            x: x as f32,
+            y: y as f32,
+        })
+        .map_err(|_| ())?;
+    Ok((rounded_i32(point.x)?, rounded_i32(point.y)?))
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn rounded_i32(value: f32) -> Result<i32, ()> {
+    let rounded = value.round();
+    if !rounded.is_finite() || rounded < i32::MIN as f32 || rounded > i32::MAX as f32 {
+        return Err(());
+    }
+    Ok(rounded as i32)
+}
+
+fn input_failure(message: &str) -> RootDispatch {
+    RootDispatch {
+        result: HostResult::Failure {
+            code: "ROOT_INPUT_FAILED".to_owned(),
+            message: message.to_owned(),
+        },
+        connection_lost: false,
+    }
+}
+
+fn input_runtime_result(result: Result<(), InputRuntimeError>) -> RootDispatch {
+    match result {
+        Ok(()) => RootDispatch {
+            result: HostResult::Success(Vec::new()),
+            connection_lost: false,
+        },
+        Err(InputRuntimeError::Expired) => RootDispatch {
+            result: HostResult::Failure {
+                code: "HOST_TIMEOUT".to_owned(),
+                message: "input request expired before dispatch".to_owned(),
+            },
+            connection_lost: false,
+        },
+        Err(InputRuntimeError::Cancelled) => RootDispatch {
+            result: HostResult::Failure {
+                code: "HOST_CANCELLED".to_owned(),
+                message: "input request was cancelled".to_owned(),
+            },
+            connection_lost: false,
+        },
+        Err(InputRuntimeError::Interrupted) => RootDispatch {
+            result: HostResult::Failure {
+                code: "HOST_CANCELLED".to_owned(),
+                message: "input request was interrupted by stop".to_owned(),
+            },
+            connection_lost: false,
+        },
+        Err(InputRuntimeError::Arbitration(error)) => RootDispatch {
+            result: HostResult::Failure {
+                code: "INPUT_ARBITRATION_FAILED".to_owned(),
+                message: format!("input arbiter rejected the request: {error:?}"),
+            },
+            connection_lost: false,
+        },
+        Err(InputRuntimeError::Backend(error)) => RootDispatch {
+            result: HostResult::Failure {
+                code: error.code.to_owned(),
+                message: error.message,
+            },
+            connection_lost: error.connection_lost,
+        },
+    }
+}
+
 #[derive(Debug)]
 struct NativeSession {
     commands: SyncSender<SessionCommand>,
@@ -496,6 +692,7 @@ struct NativeSession {
     host_queue: ExternalHostQueue,
     root_worker: Mutex<Option<JoinHandle<()>>>,
     root_attached: Arc<AtomicBool>,
+    input_stop_requested: Arc<AtomicBool>,
     wake_callback: Arc<Mutex<Option<WakeCallback>>>,
 }
 
@@ -550,6 +747,8 @@ struct RootWorkerContext {
     snapshot_id: Arc<AtomicU64>,
     coordinates: Arc<Mutex<CoordinateSnapshot>>,
     attached: Arc<AtomicBool>,
+    input_config: InputArbiterConfig,
+    input_stop_requested: Arc<AtomicBool>,
 }
 
 fn spawn_root_worker(
@@ -581,8 +780,9 @@ impl NativeSession {
         let engine_display_width = Arc::clone(&display_width);
         let engine_display_height = Arc::clone(&display_height);
         let engine_coordinates = Arc::clone(&coordinates);
-        let (root_control, root_receiver) = mpsc::sync_channel(2);
+        let (root_control, root_receiver) = mpsc::sync_channel(4);
         let root_attached = Arc::new(AtomicBool::new(false));
+        let input_stop_requested = Arc::new(AtomicBool::new(false));
         let root_worker = spawn_root_worker(
             root_receiver,
             RootWorkerContext {
@@ -595,6 +795,8 @@ impl NativeSession {
                 snapshot_id: Arc::clone(&snapshot_id),
                 coordinates: Arc::clone(&coordinates),
                 attached: Arc::clone(&root_attached),
+                input_config: engine_config.input,
+                input_stop_requested: Arc::clone(&input_stop_requested),
             },
         )?;
         let state = Arc::new(AtomicI32::new(STATE_IDLE));
@@ -680,6 +882,7 @@ impl NativeSession {
             host_queue: session_host_queue,
             root_worker: Mutex::new(Some(root_worker)),
             root_attached,
+            input_stop_requested,
             wake_callback,
         }))
     }
@@ -703,6 +906,7 @@ impl NativeSession {
         }
         self.stop_boot_nanos.store(boot_nanos, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
+        self.input_stop_requested.store(true, Ordering::Release);
         self.stop_handle
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -712,6 +916,7 @@ impl NativeSession {
         // A full business queue is not an error: the worker checks this atomic flag before
         // taking every subsequent business command.
         let _ = self.commands.try_send(SessionCommand::ControlWake);
+        self.host_queue.interrupt();
         Ok(())
     }
 
@@ -775,6 +980,16 @@ impl NativeSession {
             .stop_handle
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = handle;
+        let (input_response, input_wait) = mpsc::sync_channel(1);
+        self.root_control
+            .try_send(RootControl::ResetInput {
+                response: input_response,
+            })
+            .map_err(|error| format!("Root input reset queue rejected request: {error}"))?;
+        self.host_queue.interrupt();
+        input_wait
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|error| format!("Root input reset timed out: {error}"))?;
         Ok(())
     }
 
@@ -816,6 +1031,72 @@ impl NativeSession {
             bytes,
             response,
         })
+    }
+
+    fn drain_script_logs(&self) -> Result<Vec<String>, String> {
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("SESSION_CLOSED".to_owned());
+        }
+        let (response_tx, response_rx) = mpsc::sync_channel(1);
+        self.commands
+            .try_send(SessionCommand::DrainScriptLogs {
+                response: response_tx,
+            })
+            .map_err(|error| format!("engine command queue rejected log drain: {error}"))?;
+        response_rx
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|error| format!("engine log drain timed out: {error}"))
+    }
+
+    fn capture_preview(&self) -> Result<Vec<u8>, String> {
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("SESSION_CLOSED".to_owned());
+        }
+        if !self.root_attached.load(Ordering::Acquire) {
+            return Err("ROOT_BACKEND_NOT_READY".to_owned());
+        }
+        let (response_tx, response_rx) = mpsc::sync_channel(1);
+        self.root_control
+            .try_send(RootControl::CapturePreview {
+                response: response_tx,
+            })
+            .map_err(|error| format!("Root preview queue rejected request: {error}"))?;
+        // The Root worker may be parked waiting for a script-host event.
+        self.host_queue.interrupt();
+        let capture = response_rx
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|error| format!("Root preview timed out: {error}"))??;
+        if capture.pixels.len() > MAX_PREVIEW_CAPTURE_BYTES {
+            return Err("PREVIEW_CAPTURE_TOO_LARGE".to_owned());
+        }
+        let expected = usize::try_from(capture.row_stride)
+            .ok()
+            .and_then(|row_stride| {
+                usize::try_from(capture.height)
+                    .ok()
+                    .and_then(|height| row_stride.checked_mul(height))
+            })
+            .ok_or_else(|| "PREVIEW_CAPTURE_INVALID".to_owned())?;
+        if capture.width == 0
+            || capture.height == 0
+            || capture.row_stride < capture.width.saturating_mul(4)
+            || capture.pixels.len() != expected
+            || !matches!(capture.format, 1 | 2)
+        {
+            return Err("PREVIEW_CAPTURE_INVALID".to_owned());
+        }
+        let mut encoded = Vec::with_capacity(
+            16usize
+                .checked_add(capture.pixels.len())
+                .ok_or_else(|| "PREVIEW_CAPTURE_TOO_LARGE".to_owned())?,
+        );
+        encoded.extend_from_slice(&capture.width.to_le_bytes());
+        encoded.extend_from_slice(&capture.height.to_le_bytes());
+        encoded.extend_from_slice(&capture.row_stride.to_le_bytes());
+        encoded.push(capture.format);
+        encoded.extend_from_slice(&[0, 0, 0]);
+        encoded.extend_from_slice(&capture.pixels);
+        Ok(encoded)
     }
 
     fn attach_root(
@@ -1053,10 +1334,18 @@ fn handle_session_command(
             response,
         } => {
             current_boot_nanos.store(boot_nanos, Ordering::Release);
-            let result = engine
-                .pump(boot_nanos)
-                .map(|_| ())
-                .map_err(|error| format!("{error:?}"));
+            let result = match engine.pump(boot_nanos) {
+                Ok(_) => Ok(()),
+                // Android wake callbacks are asynchronous. A queued wake may arrive after the
+                // preceding pump has already completed or failed the root task. That late pump is
+                // an idempotent no-op and must not replace the real terminal state/diagnostic.
+                Err(engine_core::EngineSessionError::NotRunning)
+                    if matches!(engine.state(), EngineState::Stopped | EngineState::Failed) =>
+                {
+                    Ok(())
+                }
+                Err(error) => Err(format!("{error:?}")),
+            };
             if let Err(error) = &result {
                 *signals
                     .last_diagnostic
@@ -1115,6 +1404,9 @@ fn handle_session_command(
             response,
         } => {
             let _ = response.send(register_dictionary_command(engine, &path, &bytes));
+        }
+        SessionCommand::DrainScriptLogs { response } => {
+            let _ = response.send(engine.drain_script_logs());
         }
         SessionCommand::ControlWake => {}
     }
@@ -1264,9 +1556,31 @@ fn register_dictionary_command(
 
 fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContext) {
     let mut client = None;
+    let mut input = InputRuntime::new(context.input_config);
     loop {
+        if context.input_stop_requested.swap(false, Ordering::AcqRel) {
+            if let Some(connected) = client.as_mut() {
+                let mut backend = platform_root::InputBackend::new(connected);
+                let result = input.stop(&mut backend);
+                if backend.connection_lost()
+                    || matches!(
+                        result,
+                        Err(InputRuntimeError::Backend(BackendError {
+                            connection_lost: true,
+                            ..
+                        }))
+                    )
+                {
+                    client = None;
+                    notify_root_disconnected(context);
+                }
+            } else {
+                input.abandon();
+            }
+        }
+
         if client.is_none() {
-            client = wait_for_root_client(receiver, context);
+            client = wait_for_root_client(receiver, context, &mut input);
             if client.is_none() {
                 return;
             }
@@ -1284,6 +1598,29 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 }
                 context.attached.store(false, Ordering::Release);
                 let _ = response.send(());
+                continue;
+            }
+            Ok(RootControl::ResetInput { response }) => {
+                input.reset();
+                context.input_stop_requested.store(false, Ordering::Release);
+                let _ = response.send(());
+                continue;
+            }
+            Ok(RootControl::CapturePreview { response }) => {
+                let result =
+                    platform_root::capture_preview(client.as_mut().expect("attached client"));
+                match result {
+                    Ok(capture) => {
+                        let _ = response.send(Ok(capture));
+                    }
+                    Err(error) => {
+                        if error.connection_lost {
+                            client = None;
+                            notify_root_disconnected(context);
+                        }
+                        let _ = response.send(Err(error.message));
+                    }
+                }
                 continue;
             }
             Ok(RootControl::Shutdown) => {
@@ -1306,18 +1643,56 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                     .coordinates
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let dispatch = platform_root::dispatch(
-                    client.as_mut().expect("attached client"),
-                    &request,
-                    (
-                        context.display_width.load(Ordering::Acquire),
-                        context.display_height.load(Ordering::Acquire),
+                let dispatch = match prepare_input_commands(&request, coordinates) {
+                    Some(Ok(commands)) => {
+                        let now = MonoTime::from_nanos(context.boot_nanos.load(Ordering::Acquire));
+                        if let Some(expires_at) = now.checked_add(request.timeout) {
+                            let mut backend = platform_root::InputBackend::new(
+                                client.as_mut().expect("attached client"),
+                            );
+                            let result = input.dispatch(
+                                request.request_id,
+                                request.task,
+                                now,
+                                expires_at,
+                                commands,
+                                &mut backend,
+                                || {
+                                    if context.input_stop_requested.load(Ordering::Acquire) {
+                                        InputControl::Stop
+                                    } else if context
+                                        .host_queue
+                                        .take_cancellation(request.request_id, request.task)
+                                        .is_some()
+                                    {
+                                        InputControl::Cancel
+                                    } else {
+                                        InputControl::Continue
+                                    }
+                                },
+                            );
+                            let backend_lost = backend.connection_lost();
+                            let mut dispatch = input_runtime_result(result);
+                            dispatch.connection_lost |= backend_lost;
+                            dispatch
+                        } else {
+                            input_failure("input timeout overflow")
+                        }
+                    }
+                    Some(Err(dispatch)) => dispatch,
+                    None => platform_root::dispatch(
+                        client.as_mut().expect("attached client"),
+                        &request,
+                        (
+                            context.display_width.load(Ordering::Acquire),
+                            context.display_height.load(Ordering::Acquire),
+                        ),
+                        coordinates,
+                        &context.frames,
+                        context.boot_nanos.load(Ordering::Acquire),
+                        context.snapshot_id.load(Ordering::Acquire),
                     ),
-                    coordinates,
-                    &context.frames,
-                    context.boot_nanos.load(Ordering::Acquire),
-                    context.snapshot_id.load(Ordering::Acquire),
-                );
+                };
                 let submitted = completion.submit_host_completion(HostCompletion {
                     request_id: request.request_id,
                     task: request.task,
@@ -1338,22 +1713,30 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 }
             }
             ExternalHostEvent::Cancel { request_id, .. } => {
-                #[cfg(target_os = "android")]
-                if client.as_mut().is_some_and(|client| {
-                    client
-                        .cancel(request_id.0)
-                        .is_err_and(|error| error.is_connection_lost())
-                }) {
+                let mut backend =
+                    platform_root::InputBackend::new(client.as_mut().expect("attached client"));
+                let result = input.cancel(request_id, &mut backend);
+                if backend.connection_lost()
+                    || matches!(
+                        result,
+                        Err(InputRuntimeError::Backend(BackendError {
+                            connection_lost: true,
+                            ..
+                        }))
+                    )
+                {
                     client = None;
                     notify_root_disconnected(context);
                 }
-                #[cfg(not(target_os = "android"))]
-                let _ = request_id;
             }
             ExternalHostEvent::Interrupted => {}
             ExternalHostEvent::Stop => {
                 if let Some(mut connected) = client.take() {
+                    let mut backend = platform_root::InputBackend::new(&mut connected);
+                    let _ = input.stop(&mut backend);
                     let _ = platform_root::shutdown(&mut connected);
+                } else {
+                    input.abandon();
                 }
                 context.attached.store(false, Ordering::Release);
                 return;
@@ -1365,6 +1748,7 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
 fn wait_for_root_client(
     receiver: &Receiver<RootControl>,
     context: &RootWorkerContext,
+    input: &mut InputRuntime,
 ) -> Option<platform_root::Client> {
     loop {
         let Ok(control) = receiver.recv() else {
@@ -1390,6 +1774,14 @@ fn wait_for_root_client(
             RootControl::Disconnect { response } => {
                 context.attached.store(false, Ordering::Release);
                 let _ = response.send(());
+            }
+            RootControl::ResetInput { response } => {
+                input.reset();
+                context.input_stop_requested.store(false, Ordering::Release);
+                let _ = response.send(());
+            }
+            RootControl::CapturePreview { response } => {
+                let _ = response.send(Err("ROOT_BACKEND_NOT_READY".to_owned()));
             }
             RootControl::Shutdown => return None,
         }
@@ -2010,6 +2402,56 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeL
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeCapturePreview(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jbyteArray {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        get_session(handle)?.capture_preview()
+    }));
+    let Ok(Ok(bytes)) = result else {
+        return std::ptr::null_mut();
+    };
+    env.byte_array_from_slice(&bytes)
+        .map_or(std::ptr::null_mut(), JByteArray::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeDrainScriptLogs(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jobjectArray {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        get_session(handle)?.drain_script_logs()
+    }));
+    let lines = result
+        .unwrap_or_else(|_| Ok(Vec::new()))
+        .unwrap_or_else(|_| Vec::new());
+    let Ok(length) = i32::try_from(lines.len()) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(array) = env.new_object_array(length, "java/lang/String", JObject::null()) else {
+        return std::ptr::null_mut();
+    };
+    for (index, line) in lines.iter().enumerate() {
+        let Ok(value) = env.new_string(line) else {
+            return std::ptr::null_mut();
+        };
+        if env
+            .set_object_array_element(&array, index as i32, value)
+            .is_err()
+        {
+            return std::ptr::null_mut();
+        }
+    }
+    array.into_raw()
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeNextWakeNanos(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -2111,6 +2553,37 @@ mod tests {
     }
 
     #[test]
+    fn late_pump_after_completion_is_an_idempotent_no_op() {
+        let handle = create_session(720, 1280).expect("create");
+        let session = get_session(handle).expect("lookup");
+        session
+            .request(|response| SessionCommand::Start {
+                source: b"return function() end".to_vec(),
+                capabilities: Vec::new(),
+                response,
+            })
+            .expect("start");
+        session
+            .request(|response| SessionCommand::Pump {
+                boot_nanos: 0,
+                response,
+            })
+            .expect("complete");
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_STOPPED);
+
+        session
+            .request(|response| SessionCommand::Pump {
+                boot_nanos: 1,
+                response,
+            })
+            .expect("late pump");
+
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_STOPPED);
+        assert_eq!(session.last_diagnostic(), None);
+        destroy_session(handle).expect("destroy");
+    }
+
+    #[test]
     fn idle_session_can_reset_before_loading_a_new_project() {
         let handle = create_session(720, 1280).expect("create");
         let session = get_session(handle).expect("lookup");
@@ -2118,6 +2591,35 @@ mod tests {
         session.reset(1080, 1920).expect("reset idle session");
 
         assert_eq!(session.state.load(Ordering::Acquire), STATE_IDLE);
+        destroy_session(handle).expect("destroy");
+    }
+
+    #[test]
+    fn native_session_drains_script_logs_after_pump() {
+        let handle = create_session(720, 1280).expect("create");
+        let session = get_session(handle).expect("lookup");
+        session
+            .request(|response| SessionCommand::Start {
+                source: b"return function() Log.info('bridge') end".to_vec(),
+                capabilities: vec!["core.task".to_owned()],
+                response,
+            })
+            .expect("start");
+        session
+            .request(|response| SessionCommand::Pump {
+                boot_nanos: 0,
+                response,
+            })
+            .expect("pump");
+
+        assert_eq!(
+            session.drain_script_logs().expect("drain"),
+            vec!["脚本/INFO: bridge".to_owned()]
+        );
+        assert!(session
+            .drain_script_logs()
+            .expect("second drain")
+            .is_empty());
         destroy_session(handle).expect("destroy");
     }
 
@@ -2143,6 +2645,18 @@ mod tests {
         let diagnostic = session.last_diagnostic().expect("diagnostic");
         assert!(diagnostic.starts_with("LUA_RUNTIME_ERROR:"));
         assert!(diagnostic.contains("expected runtime failure"));
+
+        session
+            .request(|response| SessionCommand::Pump {
+                boot_nanos: 1,
+                response,
+            })
+            .expect("late pump after failure");
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_FAILED);
+        assert_eq!(
+            session.last_diagnostic().as_deref(),
+            Some(diagnostic.as_str())
+        );
 
         session.reset(720, 1280).expect("reset");
         assert_eq!(session.state.load(Ordering::Acquire), STATE_IDLE);

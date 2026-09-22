@@ -67,6 +67,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.core.designsystem.hairline
+import com.autoscript.project.store.ProjectDebugSettings
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -98,6 +99,13 @@ internal fun LegacyScriptDock(
     sourceBusy: Boolean = false,
     sourceMessage: String? = null,
     onSourceAction: (SourceManagerAction) -> Unit = {},
+    /** 可视化主编辑器右侧首项：维护项目变量；Lua 仍保留文件入口。 */
+    onManageVariables: () -> Unit = {},
+    /** 当前编辑上下文可选的变量；循环等旧面板通过它弹出真实变量列表。 */
+    availableVariables: List<String> = emptyList(),
+    /** Persisted project debug configuration; Root-only options remain fixed by the Runner. */
+    debugSettings: ProjectDebugSettings = ProjectDebugSettings(),
+    onSaveDebugSettings: (ProjectDebugSettings) -> Unit = {},
     /** “文件”弹窗展示的项目沙箱文件（来自 [projectFileCatalog]）。 */
     projectFiles: List<StudioProjectFile> = emptyList(),
     onOpenProjectFile: (StudioProjectFile) -> Unit = {},
@@ -108,9 +116,12 @@ internal fun LegacyScriptDock(
     /** 脚本运行中小球切到 `float_ball_stop_content`（25dp 停止键，`service_tk_ball.xml`）。 */
     running: Boolean = false,
     onStop: () -> Unit = {},
-    /** “更多 → 录制动作”与“工具 → 图像工具”的全屏页；为 null 时退回弹窗内预览。 */
+    /** “更多 → 录制动作”的全屏页；为 null 时退回弹窗内预览。 */
     onOpenRecorder: (() -> Unit)? = null,
-    onOpenImageTools: (() -> Unit)? = null,
+    /** “工具 → 标注截屏/图像处理”的图像工具悬浮窗。 */
+    onOpenImageTools: ((Long) -> Unit)? = null,
+    /** “工具 → 打开标注库”的项目图片列表页。 */
+    onOpenImageLibrary: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable(projectName) { mutableStateOf(false) }
@@ -297,6 +308,8 @@ internal fun LegacyScriptDock(
                 editingEnabled = editingEnabled,
                 onMenu = { editorMenuVisible = !editorMenuVisible },
                 onCreateSource = { if (editingEnabled && sourceTree != null) sourceManagerVisible = true },
+                onManageVariables = onManageVariables,
+                visualProject = sourceTree != null,
                 onRun = onRun,
                 onStep = onStep,
                 onFunctions = { if (editingEnabled) functionLibrary = true },
@@ -532,7 +545,11 @@ internal fun LegacyScriptDock(
             onDismiss = { toolDialog = null; editingNodeId = null },
             onOpenFile = { file -> toolDialog = null; onOpenProjectFile(file) },
             onDeleteFiles = onDeleteProjectFiles,
-            onOpenImageTools = onOpenImageTools?.let { open -> { toolDialog = null; open() } },
+            onOpenImageTools = onOpenImageTools?.let { open -> { delayMillis -> toolDialog = null; open(delayMillis) } },
+            onOpenImageLibrary = onOpenImageLibrary?.let { open -> { toolDialog = null; open() } },
+            availableVariables = availableVariables,
+            debugSettings = debugSettings,
+            onSaveDebugSettings = onSaveDebugSettings,
         ) { snippet ->
             val editingId = editingNodeId
             val command = legacyDockProgramCommand(snippet)
@@ -961,6 +978,8 @@ private fun LegacyDockPanel(
     editingEnabled: Boolean,
     onMenu: () -> Unit,
     onCreateSource: () -> Unit,
+    onManageVariables: () -> Unit,
+    visualProject: Boolean,
     onRun: () -> Unit,
     onStep: () -> Unit,
     onFunctions: () -> Unit,
@@ -1047,7 +1066,9 @@ private fun LegacyDockPanel(
                     }
                 }
                 Column(modifier = Modifier.width(51.dp).padding(horizontal = 3.dp, vertical = 2.dp)) {
-                    LegacyDockAction("文件", editingEnabled) { onTool(LegacyToolDialog.FILES) }
+                    LegacyDockAction(if (visualProject) "变量" else "文件", editingEnabled) {
+                        if (visualProject) onManageVariables() else onTool(LegacyToolDialog.FILES)
+                    }
                     LegacyDockAction("工具", editingEnabled) { onTool(LegacyToolDialog.TOOLS) }
                     LegacyDockAction("图像", editingEnabled) { onTool(LegacyToolDialog.IMAGE) }
                     LegacyDockAction("判断", editingEnabled) { onTool(LegacyToolDialog.JUDGMENT) }
@@ -1081,8 +1102,7 @@ private fun LegacyDockPanel(
 
 /**
  * `line_tk_console_container`：参考的性能行（CPU/内存）默认 GONE、只在“性能信息”开关打开时出现，
- * 我们没有性能采样，所以不画那行占位。空态文案如实说明当前只有引擎/Root 生命周期与失败诊断，
- * 脚本 `Log(...)` 输出流还没接到 Studio。
+ * 我们没有性能采样，所以不画那行占位。控制台显示脚本输出、引擎/Root 生命周期与失败诊断。
  */
 @Composable
 private fun LegacyConsolePanel(lines: List<String>) {
@@ -1094,7 +1114,7 @@ private fun LegacyConsolePanel(lines: List<String>) {
         if (lines.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    "暂无运行日志\n运行后引擎状态、Root 状态与失败诊断会显示在这里",
+                    "暂无运行日志\n运行后脚本输出、引擎状态、Root 状态与失败诊断会显示在这里",
                     color = Color(0xFF777777),
                     fontSize = 11.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1703,7 +1723,11 @@ private fun LegacyToolDialogScreen(
     onDismiss: () -> Unit,
     onOpenFile: (StudioProjectFile) -> Unit,
     onDeleteFiles: (List<StudioProjectFile>) -> Unit,
-    onOpenImageTools: (() -> Unit)?,
+    onOpenImageTools: ((Long) -> Unit)?,
+    onOpenImageLibrary: (() -> Unit)?,
+    availableVariables: List<String>,
+    debugSettings: ProjectDebugSettings,
+    onSaveDebugSettings: (ProjectDebugSettings) -> Unit,
     onInsert: (String) -> Unit,
 ) {
     if (dialog != LegacyToolDialog.RECORDING) {
@@ -1716,6 +1740,10 @@ private fun LegacyToolDialogScreen(
             onOpenFile = onOpenFile,
             onDeleteFiles = onDeleteFiles,
             onOpenImageTools = onOpenImageTools,
+            onOpenImageLibrary = onOpenImageLibrary,
+            availableVariables = availableVariables,
+            debugSettings = debugSettings,
+            onSaveDebugSettings = onSaveDebugSettings,
         )
         return
     }

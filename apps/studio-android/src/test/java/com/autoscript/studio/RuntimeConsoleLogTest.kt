@@ -70,4 +70,20 @@ class RuntimeConsoleLogTest {
         log.clear()
         assertEquals(0, log.lines.size)
     }
+
+    @Test
+    fun `remote snapshots append only their new suffix and preserve repeated messages`() {
+        val log = RuntimeConsoleLog(now = { "unused" })
+        log.recordRemote(listOf("1ms · 脚本/INFO: ready", "2ms · 脚本/INFO: ready"))
+        log.recordRemote(listOf("1ms · 脚本/INFO: ready", "2ms · 脚本/INFO: ready"))
+        log.recordRemote(listOf("2ms · 脚本/INFO: ready", "3ms · 脚本/WARN: retry"))
+        assertEquals(
+            listOf(
+                "1ms · 脚本/INFO: ready",
+                "2ms · 脚本/INFO: ready",
+                "3ms · 脚本/WARN: retry",
+            ),
+            log.lines,
+        )
+    }
 }

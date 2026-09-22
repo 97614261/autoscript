@@ -51,6 +51,11 @@ sealed interface VisualCompileResult {
     data class Unavailable(val message: String) : VisualCompileResult
 }
 
+sealed interface ScreenshotPreviewResult {
+    data class Success(val file: File) : ScreenshotPreviewResult
+    data class Unavailable(val message: String) : ScreenshotPreviewResult
+}
+
 class RuntimeClient(context: Context) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -394,6 +399,7 @@ class RuntimeClient(context: Context) {
 
     /** Registers every declared project resource in stable path order, then starts the script. */
     fun startProject(
+        projectId: String = "",
         generatedLuaModule: ByteArray,
         resources: List<RuntimeProjectResource>,
         capabilities: List<String>,
@@ -439,6 +445,7 @@ class RuntimeClient(context: Context) {
             }
         }
         val started = startScript(
+            projectId = projectId,
             generatedLuaModule = generatedLuaModule,
             capabilities = capabilities,
             designWidth = designWidth,
@@ -548,6 +555,40 @@ class RuntimeClient(context: Context) {
         }
     }
 
+    /** Keeps a small system camera on top of the target app until one Root screenshot is taken. */
+    fun setCaptureOverlayEnabled(
+        projectId: String,
+        enabled: Boolean,
+        requestId: Long = System.nanoTime(),
+    ): Boolean {
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null) {
+            publishOperationError("Runner会话尚未建立")
+            return false
+        }
+        return try {
+            when (service.setCaptureOverlayEnabled(requestId, generation, projectId, enabled)) {
+                RuntimeProtocol.SURFACE_ACCEPTED -> true
+                RuntimeProtocol.SURFACE_SESSION_MISMATCH -> {
+                    publishOperationError("Runner会话已重建，请刷新后重试")
+                    false
+                }
+                RuntimeProtocol.SURFACE_PERMISSION_DENIED -> {
+                    publishOperationError("尚未授予悬浮窗权限")
+                    false
+                }
+                else -> {
+                    publishOperationError("截图悬浮窗未能启动")
+                    false
+                }
+            }
+        } catch (error: Exception) {
+            publishOperationError(error.message ?: "截图悬浮窗设置失败")
+            false
+        }
+    }
+
     fun recentRuntimeLogs(maximumEntries: Int = 50): List<String> {
         val service = remote
         val generation = lastSessionGeneration
@@ -557,7 +598,45 @@ class RuntimeClient(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    /** Requests a single Root-backed screenshot and copies its FD into the Studio-readable cache. */
+    fun capturePreview(requestId: Long = System.nanoTime()): ScreenshotPreviewResult {
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null) {
+            return ScreenshotPreviewResult.Unavailable("Runner会话尚未建立")
+        }
+        var target: File? = null
+        return try {
+            val descriptor = service.capturePreview(requestId, generation)
+                ?: return ScreenshotPreviewResult.Unavailable("截图失败；请确认Root后端就绪且没有脚本运行")
+            val targetFile = File.createTempFile("studio-preview-", ".png", appContext.cacheDir)
+            target = targetFile
+            ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    val buffer = ByteArray(PREVIEW_COPY_BUFFER_BYTES)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (read == 0) continue
+                        total = Math.addExact(total, read.toLong())
+                        require(total <= MAX_PREVIEW_FILE_BYTES)
+                        output.write(buffer, 0, read)
+                    }
+                    require(total > 0L)
+                    output.flush()
+                    output.fd.sync()
+                }
+            }
+            ScreenshotPreviewResult.Success(targetFile)
+        } catch (error: Exception) {
+            target?.delete()
+            ScreenshotPreviewResult.Unavailable(error.message ?: "读取截图预览失败")
+        }
+    }
+
     fun startScript(
+        projectId: String = "",
         generatedLuaModule: ByteArray,
         capabilities: List<String>,
         designWidth: Int = 720,
@@ -579,6 +658,7 @@ class RuntimeClient(context: Context) {
             when (remote?.startScript(
                 requestId,
                 expectedGeneration,
+                projectId,
                 generatedLuaModule,
                 designWidth,
                 designHeight,
@@ -787,6 +867,8 @@ class RuntimeClient(context: Context) {
         const val MAX_DICTIONARY_BYTES = 8L * 1024 * 1024
         const val MAX_IMAGE_SOURCE_BYTES = 32L * 1024 * 1024
         const val MAX_FLOW_BYTES = 64 * 1024 * 1024
+        const val MAX_PREVIEW_FILE_BYTES = 24L * 1024 * 1024
+        const val PREVIEW_COPY_BUFFER_BYTES = 32 * 1024
         const val MAX_PROJECT_CAPABILITIES = 64
         const val MAX_CAPABILITY_LENGTH = 128
         val CAPABILITY = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+")

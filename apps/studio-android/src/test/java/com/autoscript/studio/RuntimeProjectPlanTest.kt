@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import com.autoscript.project.store.ProjectDesign
+import com.autoscript.project.store.ProjectDebugSettings
 import com.autoscript.project.store.ProjectManifestDocument
 import com.autoscript.project.store.ProjectFlow
 import com.autoscript.project.store.ProjectSnapshot
@@ -12,6 +13,7 @@ import java.io.File
 import java.security.MessageDigest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -49,6 +51,24 @@ class RuntimeProjectPlanTest {
         )
         assertEquals(RuntimeProjectResourceKind.IMAGE, plan.resources[0].kind)
         assertEquals(RuntimeProjectResourceKind.GLYPH_DICTIONARY, plan.resources[1].kind)
+    }
+
+    @Test
+    fun appliesProjectDebugDelayInsideTheCancellableLuaEntry() {
+        val root = temporaryFolder.newFolder("project-delay")
+        val source = "return function() Log.info('ready') end\n"
+        val initial = snapshot(root, resources = emptyList())
+        val snapshot = initial.copy(
+            manifest = initial.manifest.copy(debugSettings = ProjectDebugSettings(runDelayMs = 500)),
+            luaSource = source,
+            luaSources = mapOf("main.lua" to source),
+        )
+
+        val plan = RuntimeProjectPlan.fromSnapshot(snapshot, source).luaSource.toString(Charsets.UTF_8)
+
+        assertTrue(plan.contains("Task.sleep(500)"))
+        assertTrue(plan.contains("__autoscript_entry()"))
+        assertTrue(plan.contains("Log.info('ready')"))
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -89,6 +109,36 @@ class RuntimeProjectPlanTest {
 
         assertArrayEquals(lua, plan.luaSource)
         assertEquals(RuntimeProtocol.SCALE_LETTERBOX, plan.scaleMode)
+    }
+
+    @Test
+    fun freezesDeclaredLuaModulesBehindRestrictedRequire() {
+        val root = temporaryFolder.newFolder("project-modules")
+        val entry = "local math = require(\"tools.math\")\nreturn function() return math.answer end\n"
+        val snapshot = ProjectSnapshot(
+            directory = root,
+            manifest = ProjectManifestDocument(
+                projectId = root.name,
+                name = "modules",
+                sourceMode = ProjectSourceMode.LUA,
+                entryPoint = "main.lua",
+                luaFiles = listOf("lua/tools/math.lua", "main.lua"),
+                luaDirectories = listOf("lua", "lua/tools"),
+            ),
+            luaSource = entry,
+            luaSources = mapOf(
+                "main.lua" to entry,
+                "lua/tools/math.lua" to "return { answer = 42 }\n",
+            ),
+            flowSources = emptyMap(),
+        )
+
+        val source = RuntimeProjectPlan.fromSnapshot(snapshot, entry).luaSource.toString(Charsets.UTF_8)
+
+        assertTrue(source.contains("local __autoscript_modules"))
+        assertTrue(source.contains("[\"tools.math\"]"))
+        assertTrue(source.contains("local function require(name)"))
+        assertTrue(source.contains("Lua 模块不存在"))
     }
 
     @Test(expected = IllegalArgumentException::class)

@@ -30,6 +30,10 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         version: 1,
     },
     SupportedNodeVersion {
+        kind: "task.log",
+        version: 1,
+    },
+    SupportedNodeVersion {
         kind: "input.tap",
         version: 1,
     },
@@ -399,6 +403,8 @@ mod tests {
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"key","blockId":"block-main","parentId":null,"orderKey":"d0","kind":"input.keyevent","nodeVersion":1,"depth":0,"args":{"keyCode":4}}"#,
             "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"log","blockId":"block-main","parentId":null,"orderKey":"e0","kind":"task.log","nodeVersion":1,"depth":0,"args":{"level":"warn","message":"input complete"}}"#,
+            "\n",
         );
         let report = load_jsonl(
             source.as_bytes(),
@@ -423,6 +429,7 @@ mod tests {
         assert!(lua.contains("Input.tap(12,34)"));
         assert!(lua.contains("Input.swipe(1,2,3,4,300)"));
         assert!(lua.contains("Input.keyEvent(4)"));
+        assert!(lua.contains("Log.warn(\"input complete\")"));
     }
 
     #[test]
@@ -490,13 +497,15 @@ mod tests {
         let source = concat!(
             r#"{"flowSchemaVersion":1,"nodeId":"set","blockId":"root","parentId":null,"orderKey":"a0","kind":"variable.set","nodeVersion":1,"depth":0,"args":{"name":"score","value":7}}"#,
             "\n",
-            r#"{"flowSchemaVersion":1,"nodeId":"if","blockId":"root","parentId":null,"orderKey":"b0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"if-then","else":"if-else"},"depth":0,"args":{"variable":"score","operator":"greaterOrEqual","value":7}}"#,
+            r#"{"flowSchemaVersion":1,"nodeId":"if","blockId":"root","parentId":null,"orderKey":"b0","kind":"control.if","nodeVersion":1,"childBlocks":{"then":"if-then","elseIf0":"if-else-if","else":"if-else"},"depth":0,"args":{"variable":"score","operator":"greaterOrEqual","value":7,"valueVariable":"targetScore","elseIf":[{"variable":"score","operator":"equals","value":3}]}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"repeat","blockId":"if-then","parentId":"if","orderKey":"a0","kind":"control.repeat","nodeVersion":1,"childBlocks":{"body":"repeat-body"},"depth":1,"args":{"times":2,"indexVariable":"index"}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"copy","blockId":"repeat-body","parentId":"repeat","orderKey":"a0","kind":"variable.copy","nodeVersion":1,"depth":2,"args":{"name":"result","sourceName":"score"}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"fallback","blockId":"if-else","parentId":"if","orderKey":"a0","kind":"variable.set","nodeVersion":1,"depth":1,"args":{"name":"result","value":null}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"alternate","blockId":"if-else-if","parentId":"if","orderKey":"a0","kind":"variable.set","nodeVersion":1,"depth":1,"args":{"name":"result","value":"alternate"}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"while","blockId":"root","parentId":null,"orderKey":"c0","kind":"control.while","nodeVersion":1,"childBlocks":{"body":"while-body"},"depth":0,"args":{"variable":"running","operator":"equals","value":true,"maxIterations":3}}"#,
             "\n",
@@ -524,14 +533,31 @@ mod tests {
         let lua = std::str::from_utf8(&bundle.main_lua).expect("generated Lua UTF-8");
         let set = lua.find("__vars[\"score\"] = 7").expect("set variable");
         let conditional = lua.find("if __compare").expect("if statement");
-        let repeat = lua.find("for __index = 1, 2 do").expect("repeat loop");
+        assert!(
+            lua.contains(r#"__compare(__vars["score"],"greaterOrEqual", __vars["targetScore"])"#)
+        );
+        assert!(lua.contains("local __loop_times = 2"));
+        let repeat = lua
+            .find("for __index = 1, __loop_times do")
+            .expect("repeat loop");
         let copy = lua
             .find("__vars[\"result\"] = __vars[\"score\"]")
             .expect("copy variable");
         let otherwise = lua.find("__vars[\"result\"] = nil").expect("else branch");
+        let else_if = lua
+            .find("elseif __compare(__vars[\"score\"],\"equals\", 3) then")
+            .expect("elseif branch");
+        let alternate = lua
+            .find("__vars[\"result\"] = \"alternate\"")
+            .expect("elseif body");
         let while_loop = lua.find("while __compare").expect("while loop");
         assert!(set < conditional && conditional < repeat && repeat < copy);
-        assert!(copy < otherwise && otherwise < while_loop);
+        assert!(
+            copy < else_if
+                && else_if < alternate
+                && alternate < otherwise
+                && otherwise < while_loop
+        );
         let source_map: SourceMap =
             serde_json::from_slice(&bundle.source_map_json).expect("source map");
         assert_eq!(
@@ -540,7 +566,16 @@ mod tests {
                 .iter()
                 .map(|entry| entry.node_id.as_str())
                 .collect::<Vec<_>>(),
-            ["set", "if", "repeat", "copy", "fallback", "while", "stop"]
+            [
+                "set",
+                "if",
+                "repeat",
+                "copy",
+                "alternate",
+                "fallback",
+                "while",
+                "stop"
+            ]
         );
     }
 

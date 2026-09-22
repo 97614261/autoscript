@@ -59,6 +59,8 @@ class NativeEngineBridge private constructor() {
         @JvmStatic external fun nativeDetachRoot(handle: Long): Int
         @JvmStatic external fun nativeState(handle: Long): Int
         @JvmStatic external fun nativeLastDiagnostic(handle: Long): String?
+        @JvmStatic external fun nativeCapturePreview(handle: Long): ByteArray?
+        @JvmStatic external fun nativeDrainScriptLogs(handle: Long): Array<String>
         @JvmStatic external fun nativeNextWakeNanos(handle: Long): Long
         @JvmStatic external fun nativeDestroy(handle: Long): Int
     }

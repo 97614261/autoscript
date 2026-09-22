@@ -11,6 +11,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["then", "else"],
+      "patternProperties": {
+        "^elseIf[0-9]+$": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
       "properties": {
         "then": { "type": "string", "minLength": 1, "maxLength": 128 },
         "else": { "type": "string", "minLength": 1, "maxLength": 128 }
@@ -26,7 +29,23 @@
       "properties": {
         "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
         "operator": { "enum": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
-        "value": { "type": ["boolean", "number", "string", "null"] }
+        "value": { "type": ["boolean", "number", "string", "null"] },
+        "valueVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "elseIf": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["variable", "operator", "value"],
+            "properties": {
+              "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+              "operator": { "enum": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
+              "value": { "type": ["boolean", "number", "string", "null"] },
+              "valueVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+            }
+          }
+        }
       }
     }
   }

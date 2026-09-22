@@ -13,7 +13,12 @@
     { "path": "variable", "label": "变量名", "editor": "string", "required": true, "defaultValue": "value" },
     { "path": "operator", "label": "比较方式", "editor": "enum", "required": true, "defaultValue": "equals", "choices": ["equals", "notEquals", "lessThan", "lessOrEqual", "greaterThan", "greaterOrEqual"] },
     { "path": "value", "label": "比较值(JSON)", "editor": "scalar", "required": true, "defaultValue": "true" },
-    { "path": "maxIterations", "label": "最大次数", "editor": "integer", "required": true, "defaultValue": "10000" }
+    { "path": "maxIterations", "label": "最大次数", "editor": "integer", "required": true, "defaultValue": "10000" },
+    { "path": "always", "label": "无限循环", "editor": "boolean", "required": false, "defaultValue": "false" },
+    { "path": "durationMs", "label": "限时(毫秒)", "editor": "integer", "required": false },
+    { "path": "durationVariable", "label": "时长变量(可选)", "editor": "string", "required": false },
+    { "path": "iterationVariable", "label": "循环次数变量(可选)", "editor": "string", "required": false },
+    { "path": "elapsedVariable", "label": "循环时间变量(可选)", "editor": "string", "required": false }
   ],
   "migrations": []
 }

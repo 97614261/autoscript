@@ -50,6 +50,7 @@ internal fun RuntimeEnvironmentScreen(
     state: RuntimeConnectionState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
+    onShowDebug: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
@@ -138,13 +139,27 @@ internal fun RuntimeEnvironmentScreen(
                 RuntimeStatusRow("按键服务", if (rootReady) "Root 输入 · 已连接" else "Root 未就绪，按键未连接", rootReady)
                 RuntimeStatusRow("Runner 服务", phaseLabel(state.phase), connected)
                 RuntimeStatusRow("执行引擎", engineLabel(state.engineState), state.message == null, last = true)
-                state.message?.let {
-                    Text(
-                        it,
-                        color = AutoScriptPalette.Danger,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-                    )
+                state.message?.let { message ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onShowDebug(message) }
+                            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    ) {
+                        Text(
+                            message,
+                            color = AutoScriptPalette.Danger,
+                            fontSize = 11.sp,
+                            maxLines = 3,
+                        )
+                        Text(
+                            "查看调试详情",
+                            color = AutoScriptPalette.Accent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
                 }
             }
         }

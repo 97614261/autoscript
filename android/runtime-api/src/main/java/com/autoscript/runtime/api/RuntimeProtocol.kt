@@ -1,8 +1,16 @@
 package com.autoscript.runtime.api
 
 object RuntimeProtocol {
-    const val VERSION: Int = 14
+    const val VERSION: Int = 17
     const val SERVICE_CLASS: String = "com.autoscript.runtime.service.AutomationRuntimeService"
+
+    /** Private same-package handoff from the Runner screenshot overlay to Studio. */
+    const val ACTION_OPEN_CAPTURE_EDITOR: String =
+        "com.autoscript.runtime.action.OPEN_CAPTURE_EDITOR"
+    const val EXTRA_CAPTURE_PROJECT_ID: String = "capture_project_id"
+    const val EXTRA_CAPTURE_TOKEN: String = "capture_token"
+    const val EXTRA_CAPTURE_WIDTH: String = "capture_width"
+    const val EXTRA_CAPTURE_HEIGHT: String = "capture_height"
 
     const val STATE_IDLE: Int = 1
     const val STATE_RUNNING: Int = 2

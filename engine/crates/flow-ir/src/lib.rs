@@ -15,6 +15,7 @@ pub use project::{
     parse_project_manifest, validate_project_documents, validate_runner_ui, DesignSpec,
     OrientationPolicy, ProjectDocumentError, ProjectFlow, ProjectManifest, ProjectManifestError,
     ProjectParameter, ProjectResource, ProjectResourceKind, ProjectReturn, ProjectSourceMode,
-    RunnerUi, RunnerUiField, RunnerUiFieldKind, ScaleMode, ValueType,
-    LEGACY_PROJECT_FORMAT_VERSION, SUPPORTED_PROJECT_FORMAT_VERSION,
+    ProjectVariable, ProjectVariableScope, ProjectVariableType, RunnerUi, RunnerUiField,
+    RunnerUiFieldKind, ScaleMode, ValueType, LEGACY_PROJECT_FORMAT_VERSION,
+    SUPPORTED_PROJECT_FORMAT_VERSION,
 };

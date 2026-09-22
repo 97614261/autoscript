@@ -220,6 +220,9 @@ impl<D: CommandDispatcher> DaemonSession<D> {
 const fn command_capability(command: Command) -> Option<u64> {
     match command {
         Command::Tap | Command::Swipe | Command::KeyEvent => Some(Capabilities::INPUT_BASIC),
+        Command::PointerDown | Command::PointerMove | Command::PointerUp => {
+            Some(Capabilities::INPUT_POINTER_SINGLE)
+        }
         Command::GetWindowBounds => Some(Capabilities::WINDOW_BOUNDS),
         Command::Capture | Command::CaptureChunk | Command::ReleaseCapture => {
             Some(Capabilities::CAPTURE_RAW)
@@ -282,7 +285,7 @@ mod tests {
             .encode(
                 Command::Hello,
                 1,
-                &(Capabilities::INPUT_BASIC | Capabilities::INPUT_MULTI_TOUCH).to_le_bytes(),
+                &(Capabilities::INPUT_BASIC | Capabilities::INPUT_POINTER_SINGLE).to_le_bytes(),
             )
             .expect("hello");
         let hello_response = receiver.receive(&hello, 101).expect("handshake");
@@ -294,8 +297,20 @@ mod tests {
             receiver.negotiated_capabilities().bits(),
             Capabilities::INPUT_BASIC
         );
-        let ping = sender.encode(Command::Ping, 2, &[]).expect("ping");
-        let response = receiver.receive(&ping, 102).expect("dispatch");
+        let pointer = sender
+            .encode(Command::PointerDown, 2, &[0; 12])
+            .expect("pointer");
+        let response = receiver
+            .receive(&pointer, 102)
+            .expect("capability response");
+        assert_eq!(
+            sender.decode(&response).expect("pointer response").status,
+            root_protocol::StatusCode::BackendUnavailable
+        );
+        assert!(receiver.dispatcher().0.is_empty());
+
+        let ping = sender.encode(Command::Ping, 3, &[]).expect("ping");
+        let response = receiver.receive(&ping, 103).expect("dispatch");
         assert_eq!(
             sender.decode(&response).expect("ping response").status,
             root_protocol::StatusCode::Ok

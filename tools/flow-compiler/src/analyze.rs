@@ -21,6 +21,21 @@ pub(crate) struct SleepArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LogArgs {
+    pub level: LogLevel,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TapArgs {
     pub x: i32,
@@ -60,6 +75,22 @@ pub(crate) struct ComparisonArgs {
     pub variable: String,
     pub operator: ComparisonOperator,
     pub value: Value,
+    #[serde(default)]
+    pub value_variable: Option<String>,
+    #[serde(default)]
+    pub else_if: Vec<ElseIfArgs>,
+}
+
+/// A branch belonging to a `control.if`.  It intentionally repeats the compact
+/// comparison contract instead of accepting Lua expressions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ElseIfArgs {
+    pub variable: String,
+    pub operator: ComparisonOperator,
+    pub value: Value,
+    #[serde(default)]
+    pub value_variable: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,7 +98,11 @@ pub(crate) struct ComparisonArgs {
 pub(crate) struct RepeatArgs {
     pub times: u32,
     #[serde(default)]
+    pub times_variable: Option<String>,
+    #[serde(default)]
     pub index_variable: Option<String>,
+    #[serde(default)]
+    pub elapsed_variable: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,6 +112,16 @@ pub(crate) struct WhileArgs {
     pub operator: ComparisonOperator,
     pub value: Value,
     pub max_iterations: u32,
+    #[serde(default)]
+    pub always: bool,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub duration_variable: Option<String>,
+    #[serde(default)]
+    pub iteration_variable: Option<String>,
+    #[serde(default)]
+    pub elapsed_variable: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -226,6 +271,7 @@ pub(crate) struct GlyphOcrArgs {
 #[derive(Debug, Clone)]
 pub(crate) enum BuiltinNodeArgs {
     Sleep(SleepArgs),
+    Log(LogArgs),
     Tap(TapArgs),
     Swipe(SwipeArgs),
     KeyEvent(KeyEventArgs),
@@ -510,6 +556,7 @@ fn validate_nodes(
                         kind,
                         node,
                         manifest,
+                        flow.declaration.flow_id.as_str(),
                         &capabilities,
                         &mut builtins,
                         errors,
@@ -532,6 +579,7 @@ fn is_builtin_kind(kind: &str) -> bool {
     matches!(
         kind,
         "task.sleep"
+            | "task.log"
             | "input.tap"
             | "input.swipe"
             | "input.keyevent"
@@ -561,6 +609,7 @@ fn validate_builtin_node(
     kind: &str,
     node: &flow_ir::FlowNode,
     manifest: &ProjectManifest,
+    flow_id: &str,
     capabilities: &HashSet<&str>,
     builtins: &mut HashMap<String, BuiltinNodeArgs>,
     errors: &mut Vec<CompileError>,
@@ -572,6 +621,11 @@ fn validate_builtin_node(
             .filter(|value| value.milliseconds >= 0)
             .map(BuiltinNodeArgs::Sleep)
             .ok_or("task.sleep requires non-negative integer milliseconds"),
+        "task.log" => serde_json::from_value::<LogArgs>(node.envelope.args.clone())
+            .ok()
+            .filter(|value| !value.message.is_empty() && value.message.len() <= 2_048)
+            .map(BuiltinNodeArgs::Log)
+            .ok_or("task.log requires level info/warn/error and a non-empty UTF-8 message up to 2048 bytes"),
         "input.tap" => serde_json::from_value::<TapArgs>(node.envelope.args.clone())
             .map(BuiltinNodeArgs::Tap)
             .map_err(|_| "input.tap requires 32-bit integer x and y"),
@@ -586,11 +640,13 @@ fn validate_builtin_node(
             .map(BuiltinNodeArgs::KeyEvent)
             .ok_or("input.keyevent requires keyCode from 0 to 65535"),
         "control.if" => {
-            validate_child_blocks(node, &["then", "else"], errors);
             serde_json::from_value::<ComparisonArgs>(node.envelope.args.clone())
                 .ok()
                 .filter(valid_comparison)
-                .map(BuiltinNodeArgs::If)
+                .map(|value| {
+                    validate_conditional_child_blocks(node, value.else_if.len(), errors);
+                    BuiltinNodeArgs::If(value)
+                })
                 .ok_or("control.if requires a valid variable comparison")
         }
         "control.repeat" => {
@@ -599,7 +655,9 @@ fn validate_builtin_node(
                 .ok()
                 .filter(|value| {
                     value.times <= 1_000_000
+                        && value.times_variable.as_deref().is_none_or(valid_variable_name)
                         && value.index_variable.as_deref().is_none_or(valid_variable_name)
+                        && value.elapsed_variable.as_deref().is_none_or(valid_variable_name)
                 })
                 .map(BuiltinNodeArgs::Repeat)
                 .ok_or("control.repeat requires times from 0 to 1000000 and a valid optional indexVariable")
@@ -611,6 +669,10 @@ fn validate_builtin_node(
                 .filter(|value| {
                     (1..=1_000_000).contains(&value.max_iterations)
                         && valid_comparison_parts(&value.variable, value.operator, &value.value)
+                        && value.duration_ms.is_none_or(|duration| duration > 0 && duration <= 86_400_000)
+                        && value.duration_variable.as_deref().is_none_or(valid_variable_name)
+                        && value.iteration_variable.as_deref().is_none_or(valid_variable_name)
+                        && value.elapsed_variable.as_deref().is_none_or(valid_variable_name)
                 })
                 .map(BuiltinNodeArgs::While)
                 .ok_or(
@@ -647,10 +709,159 @@ fn validate_builtin_node(
     };
     match parsed {
         Ok(arguments) => {
-            builtins.insert(node.envelope.node_id.clone(), arguments);
+            if let Err(reason) = validate_declared_variable_types(manifest, flow_id, &arguments) {
+                invalid_arguments(node, reason, errors);
+            } else {
+                builtins.insert(node.envelope.node_id.clone(), arguments);
+            }
         }
         Err(reason) => invalid_arguments(node, reason, errors),
     }
+}
+
+fn declared_variable_type<'a>(
+    manifest: &'a ProjectManifest,
+    flow_id: &str,
+    name: &str,
+) -> Option<flow_ir::ProjectVariableType> {
+    // A Flow-local declaration intentionally shadows a global declaration of
+    // the same name, matching the editor's local/global chooser.
+    manifest
+        .variables
+        .iter()
+        .find(|variable| {
+            variable.name == name
+                && matches!(variable.scope, flow_ir::ProjectVariableScope::Flow)
+                && variable.flow_id.as_deref() == Some(flow_id)
+        })
+        .or_else(|| {
+            manifest.variables.iter().find(|variable| {
+                variable.name == name
+                    && matches!(variable.scope, flow_ir::ProjectVariableScope::Global)
+            })
+        })
+        .map(|variable| variable.value_type)
+}
+
+fn scalar_matches(value: &Value, expected: flow_ir::ProjectVariableType) -> bool {
+    match expected {
+        flow_ir::ProjectVariableType::Integer => value.as_i64().is_some(),
+        flow_ir::ProjectVariableType::Number => value.as_f64().is_some(),
+        flow_ir::ProjectVariableType::String => value.as_str().is_some(),
+        flow_ir::ProjectVariableType::Image => false,
+    }
+}
+
+fn validate_declared_variable_types(
+    manifest: &ProjectManifest,
+    flow_id: &str,
+    arguments: &BuiltinNodeArgs,
+) -> Result<(), &'static str> {
+    match arguments {
+        BuiltinNodeArgs::VariableSet(value) => {
+            declared_variable_type(manifest, flow_id, &value.name).map_or(Ok(()), |expected| {
+                scalar_matches(&value.value, expected)
+                    .then_some(())
+                    .ok_or("变量赋值与声明类型不匹配")
+            })
+        }
+        BuiltinNodeArgs::VariableCopy(value) => match (
+            declared_variable_type(manifest, flow_id, &value.name),
+            declared_variable_type(manifest, flow_id, &value.source_name),
+        ) {
+            (Some(left), Some(right)) if left != right => Err("复制变量的两端类型不匹配"),
+            _ => Ok(()),
+        },
+        BuiltinNodeArgs::If(value) => {
+            let comparisons = std::iter::once((&value.variable, value.value_variable.as_deref()))
+                .chain(
+                    value
+                        .else_if
+                        .iter()
+                        .map(|branch| (&branch.variable, branch.value_variable.as_deref())),
+                );
+            for (left_name, right_name) in comparisons {
+                if let (Some(left), Some(right)) = (
+                    declared_variable_type(manifest, flow_id, left_name),
+                    right_name.and_then(|name| declared_variable_type(manifest, flow_id, name)),
+                ) {
+                    if left != right {
+                        return Err("判断两端变量类型不匹配");
+                    }
+                }
+            }
+            Ok(())
+        }
+        BuiltinNodeArgs::Repeat(value) => {
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.times_variable.as_deref(),
+                &[flow_ir::ProjectVariableType::Integer],
+                "循环次数变量必须是整型",
+            )?;
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.index_variable.as_deref(),
+                &[flow_ir::ProjectVariableType::Integer],
+                "循环序号变量必须是整型",
+            )?;
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.elapsed_variable.as_deref(),
+                &[
+                    flow_ir::ProjectVariableType::Integer,
+                    flow_ir::ProjectVariableType::Number,
+                ],
+                "循环时间变量必须是数值型",
+            )
+        }
+        BuiltinNodeArgs::While(value) => {
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.duration_variable.as_deref(),
+                &[
+                    flow_ir::ProjectVariableType::Integer,
+                    flow_ir::ProjectVariableType::Number,
+                ],
+                "循环时长变量必须是数值型",
+            )?;
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.iteration_variable.as_deref(),
+                &[flow_ir::ProjectVariableType::Integer],
+                "循环次数变量必须是整型",
+            )?;
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.elapsed_variable.as_deref(),
+                &[
+                    flow_ir::ProjectVariableType::Integer,
+                    flow_ir::ProjectVariableType::Number,
+                ],
+                "循环时间变量必须是数值型",
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn require_declared_variable_type(
+    manifest: &ProjectManifest,
+    flow_id: &str,
+    name: Option<&str>,
+    allowed: &[flow_ir::ProjectVariableType],
+    message: &'static str,
+) -> Result<(), &'static str> {
+    let Some(name) = name else { return Ok(()) };
+    declared_variable_type(manifest, flow_id, name).map_or(Ok(()), |actual| {
+        allowed.contains(&actual).then_some(()).ok_or(message)
+    })
 }
 
 fn validate_builtin_requirements(
@@ -660,7 +871,7 @@ fn validate_builtin_requirements(
     errors: &mut Vec<CompileError>,
 ) {
     match kind {
-        "task.sleep" => require_capability(node, "core.task", capabilities, errors),
+        "task.sleep" | "task.log" => require_capability(node, "core.task", capabilities, errors),
         "input.tap" | "input.swipe" | "input.keyevent" => {
             require_capability(node, "input.basic", capabilities, errors);
         }
@@ -691,6 +902,7 @@ fn validate_builtin_requirements(
     if matches!(
         kind,
         "task.sleep"
+            | "task.log"
             | "input.tap"
             | "input.swipe"
             | "input.keyevent"
@@ -975,8 +1187,43 @@ fn validate_child_blocks(
     }
 }
 
+fn validate_conditional_child_blocks(
+    node: &flow_ir::FlowNode,
+    else_if_count: usize,
+    errors: &mut Vec<CompileError>,
+) {
+    let expected = std::iter::once("then".to_owned())
+        .chain(std::iter::once("else".to_owned()))
+        .chain((0..else_if_count).map(|index| format!("elseIf{index}")))
+        .collect::<HashSet<_>>();
+    let actual = node
+        .envelope
+        .child_blocks
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
+    if actual != expected {
+        invalid_arguments(
+            node,
+            "control.if 的子分支必须包含 then、else 与每个 elseIf 分支",
+            errors,
+        );
+    }
+}
+
 fn valid_comparison(value: &ComparisonArgs) -> bool {
     valid_comparison_parts(&value.variable, value.operator, &value.value)
+        && value
+            .value_variable
+            .as_deref()
+            .is_none_or(valid_variable_name)
+        && value.else_if.iter().all(|branch| {
+            valid_comparison_parts(&branch.variable, branch.operator, &branch.value)
+                && branch
+                    .value_variable
+                    .as_deref()
+                    .is_none_or(valid_variable_name)
+        })
 }
 
 fn valid_comparison_parts(variable: &str, operator: ComparisonOperator, value: &Value) -> bool {

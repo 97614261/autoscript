@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use automation_core::{
     CapturedFrameId, Color, ColorTolerance, FrameHandle, FrameMetadata, FramePool, FramePoolConfig,
-    FrameVisionError, InputArbiter, InputArbiterConfig, PixelPoint, SearchOptions, StopPlan,
-    TemplateMatch, TemplateOptions,
+    FrameVisionError, InputArbiterConfig, PixelPoint, SearchOptions, TemplateMatch,
+    TemplateOptions,
 };
 use coordinate::{
     CoordinateSnapshot, CoordinateSpec, DisplayRect, FrameRotation, Insets, ScaleMode, Size,
@@ -132,7 +132,6 @@ pub struct EngineSession {
     control: EngineControl,
     clock: ManualClock,
     executor: RuntimeExecutor<ManualClock, RuntimeHost>,
-    input: InputArbiter,
     frames: Arc<Mutex<FramePool>>,
     coordinates: CoordinateSnapshot,
     root_task: Option<TaskToken>,
@@ -219,7 +218,6 @@ impl EngineSession {
             control,
             clock,
             executor,
-            input: InputArbiter::new(config.input),
             frames,
             coordinates,
             root_task: None,
@@ -261,6 +259,12 @@ impl EngineSession {
     pub fn root_failure(&self) -> Option<&TaskFailure> {
         self.root_task
             .and_then(|task| self.executor.task_failure(task))
+    }
+
+    /// Returns script-authored diagnostic lines accumulated since the previous call.
+    #[must_use]
+    pub fn drain_script_logs(&mut self) -> Vec<String> {
+        self.executor.drain_script_logs()
     }
 
     /// Registers one decoded project image before the entry task starts.
@@ -613,9 +617,9 @@ impl EngineSession {
     /// # Errors
     ///
     /// Returns an execution or lifecycle error if deterministic shutdown fails.
-    pub fn stop(&mut self, boot_time_nanos: u64) -> Result<StopPlan, EngineSessionError> {
+    pub fn stop(&mut self, boot_time_nanos: u64) -> Result<(), EngineSessionError> {
         if matches!(self.control.state(), EngineState::Stopped) {
-            return Ok(self.input.stop());
+            return Ok(());
         }
         if !matches!(
             self.control.state(),
@@ -623,7 +627,6 @@ impl EngineSession {
         ) {
             return Err(EngineSessionError::NotRunning);
         }
-        let cleanup = self.input.stop();
         self.control.transition(EngineState::Stopping)?;
         self.clock.set(MonoTime::from_nanos(boot_time_nanos));
         self.executor.handle().request_stop();
@@ -632,7 +635,7 @@ impl EngineSession {
             .map_err(|error| EngineSessionError::Executor(format!("{error:?}")))?;
         self.next = SchedulerPoll::Stopped;
         self.control.transition(EngineState::Stopped)?;
-        Ok(cleanup)
+        Ok(())
     }
 
     #[must_use]

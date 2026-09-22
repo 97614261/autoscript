@@ -71,6 +71,7 @@ pub enum InputError {
     TaskQueueFull(TaskToken),
     EmptyTransaction,
     TooManyCommands,
+    DelayTooLong,
     InvalidPointerSequence,
     TransactionAlreadyActive,
     NoActiveTransaction,
@@ -246,6 +247,49 @@ impl InputArbiter {
         Ok(())
     }
 
+    /// Removes one queued or active transaction and returns the pointer cleanup it requires.
+    #[must_use]
+    pub fn cancel(&mut self, transaction: TransactionId) -> Option<StopPlan> {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.id == transaction)
+        {
+            self.active = None;
+            self.dispatched_index = 0;
+            let release_pointer_ids = self.pressed_pointers.iter().copied().collect();
+            self.pressed_pointers.clear();
+            return Some(StopPlan {
+                discarded: vec![transaction],
+                release_pointer_ids,
+            });
+        }
+
+        let queued = self.by_task.iter().find_map(|(task, queue)| {
+            queue
+                .iter()
+                .position(|candidate| candidate.id == transaction)
+                .map(|position| (*task, position))
+        });
+        let Some((task, position)) = queued else {
+            return None;
+        };
+        let empty = {
+            let queue = self.by_task.get_mut(&task).expect("task queue exists");
+            let _ = queue.remove(position);
+            queue.is_empty()
+        };
+        self.queued = self.queued.saturating_sub(1);
+        if empty {
+            self.by_task.remove(&task);
+            self.round_robin.retain(|queued_task| *queued_task != task);
+        }
+        Some(StopPlan {
+            discarded: vec![transaction],
+            release_pointer_ids: Vec::new(),
+        })
+    }
+
     /// Rejects new input, discards queued work and returns the exact pointer cleanup plan.
     #[must_use]
     pub fn stop(&mut self) -> StopPlan {
@@ -276,6 +320,9 @@ fn validate_pointer_sequence(commands: &[InputCommand]) -> Result<(), InputError
     let mut down = BTreeSet::new();
     for command in commands {
         match command {
+            InputCommand::Delay { milliseconds } if *milliseconds > 60_000 => {
+                return Err(InputError::DelayTooLong);
+            }
             InputCommand::PointerDown { pointer_id, .. } if !down.insert(*pointer_id) => {
                 return Err(InputError::InvalidPointerSequence);
             }
@@ -392,5 +439,49 @@ mod tests {
             arbiter.next(MonoTime::from_nanos(100)).expect("expiry"),
             InputDecision::Expired(TransactionId(2))
         );
+
+        let mut delayed = transaction(3, task(1));
+        delayed.commands = vec![InputCommand::Delay {
+            milliseconds: 60_001,
+        }];
+        assert_eq!(arbiter.enqueue(delayed), Err(InputError::DelayTooLong));
+    }
+
+    #[test]
+    fn cancel_removes_queued_work_and_releases_an_active_pointer() {
+        let mut arbiter = InputArbiter::new(InputArbiterConfig::default());
+        let active = InputTransaction {
+            id: TransactionId(1),
+            task: task(1),
+            expires_at: MonoTime::from_nanos(100),
+            commands: vec![
+                InputCommand::PointerDown {
+                    pointer_id: 0,
+                    x: 4,
+                    y: 5,
+                },
+                InputCommand::PointerUp { pointer_id: 0 },
+            ],
+        };
+        arbiter.enqueue(active).expect("active");
+        arbiter.enqueue(transaction(2, task(2))).expect("queued");
+        let InputDecision::Dispatch(selected) = arbiter.next(MonoTime::ZERO).expect("next") else {
+            panic!("transaction expected");
+        };
+        arbiter
+            .note_dispatched(selected.id, &selected.commands[0])
+            .expect("down");
+
+        let plan = arbiter.cancel(TransactionId(1)).expect("active cancelled");
+        assert_eq!(plan.release_pointer_ids, [0]);
+        assert_eq!(plan.discarded, [TransactionId(1)]);
+        assert_eq!(
+            arbiter
+                .cancel(TransactionId(2))
+                .expect("queued cancelled")
+                .discarded,
+            [TransactionId(2)]
+        );
+        assert_eq!(arbiter.next(MonoTime::ZERO), Ok(InputDecision::Idle));
     }
 }

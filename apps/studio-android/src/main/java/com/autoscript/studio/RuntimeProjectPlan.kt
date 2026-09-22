@@ -23,7 +23,9 @@ internal data class RuntimeProjectPlan(
             require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
                 "当前批次只能运行手写Lua项目"
             }
-            return create(snapshot, source.toByteArray(Charsets.UTF_8))
+            val entryPath = requireNotNull(snapshot.manifest.entryPoint) { "Lua 项目缺少入口" }
+            val files = snapshot.luaSources + (entryPath to source)
+            return create(snapshot, bundleLuaProject(snapshot, files, entryPath).toByteArray(Charsets.UTF_8))
         }
 
         fun fromVisualSnapshot(
@@ -86,7 +88,7 @@ internal data class RuntimeProjectPlan(
                 "项目能力声明格式无效"
             }
             return RuntimeProjectPlan(
-                luaSource = luaSource,
+                luaSource = withRunDelay(luaSource, snapshot.manifest.debugSettings.runDelayMs),
                 resources = resources,
                 capabilities = capabilities,
                 designWidth = design.width,
@@ -98,6 +100,83 @@ internal data class RuntimeProjectPlan(
                     else -> throw IllegalArgumentException("不支持的缩放模式：${design.scaleMode}")
                 },
             )
+        }
+
+        /**
+         * Delay lives inside the task scheduler instead of blocking the Binder or a UI thread.
+         * The original module remains self-contained and is evaluated once to obtain its entry
+         * function; cancellation during `Task.sleep` uses the normal runtime cancellation path.
+         */
+        private fun withRunDelay(source: ByteArray, delayMs: Int): ByteArray {
+            require(delayMs in 0..60_000) { "运行延迟无效" }
+            if (delayMs == 0) return source
+            val original = source.toString(Charsets.UTF_8)
+            return buildString {
+                append("-- @autoscript debug run delay\n")
+                append("local __autoscript_entry = (function()\n")
+                append(original)
+                if (!original.endsWith('\n')) append('\n')
+                append("end)()\n")
+                append("return function()\n")
+                append("  Task.sleep(").append(delayMs).append(")\n")
+                append("  return __autoscript_entry()\n")
+                append("end\n")
+            }.toByteArray(Charsets.UTF_8)
+        }
+
+        /**
+         * The runtime intentionally receives one frozen module.  Package project modules into a
+         * lexical `require` implementation instead of giving Lua a file-system capability.
+         * `lua/foo/bar.lua` is imported as `require("foo.bar")`.
+         */
+        private fun bundleLuaProject(
+            snapshot: ProjectSnapshot,
+            sources: Map<String, String>,
+            entryPath: String,
+        ): String {
+            val declared = snapshot.manifest.luaFiles.ifEmpty { listOf(entryPath) }
+            require(entryPath in declared) { "Lua 入口不在项目文件清单中" }
+            require(declared.all { it in sources }) { "Lua 项目存在未加载的文件" }
+            val modules = declared.filter { it != entryPath }.sorted()
+            if (modules.isEmpty()) return requireNotNull(sources[entryPath])
+            return buildString {
+                append("-- @autoscript bundled Lua project; do not edit while running\n")
+                append("local __autoscript_modules = {\n")
+                modules.forEach { path ->
+                    append("  [").append(luaQuoted(moduleName(path))).append("] = function()\n")
+                    append(requireNotNull(sources[path]))
+                    if (!sources.getValue(path).endsWith('\n')) append('\n')
+                    append("  end,\n")
+                }
+                append("}\nlocal __autoscript_loaded = {}\n")
+                append("local function require(name)\n")
+                append("  if __autoscript_loaded[name] ~= nil then return __autoscript_loaded[name] end\n")
+                append("  local loader = __autoscript_modules[name]\n")
+                append("  if loader == nil then error('Lua 模块不存在: ' .. tostring(name), 2) end\n")
+                append("  local value = loader()\n")
+                append("  if value == nil then value = true end\n")
+                append("  __autoscript_loaded[name] = value\n  return value\nend\n")
+                append(requireNotNull(sources[entryPath]))
+            }
+        }
+
+        private fun moduleName(path: String): String {
+            require(path.startsWith("lua/") && path.endsWith(".lua")) { "不可作为模块的 Lua 路径：$path" }
+            return path.removePrefix("lua/").removeSuffix(".lua").replace('/', '.')
+        }
+
+        private fun luaQuoted(value: String): String = buildString {
+            append('"')
+            value.forEach { character ->
+                when (character) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    else -> append(character)
+                }
+            }
+            append('"')
         }
 
         private fun isCanonicalResourcePath(path: String): Boolean =

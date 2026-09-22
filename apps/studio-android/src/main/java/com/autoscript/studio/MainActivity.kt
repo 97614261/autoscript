@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.graphics.Color as AndroidColor
 import java.io.File
@@ -70,14 +71,22 @@ import com.autoscript.core.designsystem.AutoScriptTheme
 import androidx.core.view.WindowInsetsControllerCompat
 import com.autoscript.core.designsystem.hairline
 import com.autoscript.core.model.RuntimeConnectionState
+import com.autoscript.core.model.RuntimeConnectionPhase
+import com.autoscript.core.model.RuntimeEngineState
 import com.autoscript.runtime.client.RuntimeClient
+import com.autoscript.runtime.api.RuntimeProtocol
 import com.autoscript.project.store.ProjectStore
 import kotlin.random.Random
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private var captureHandoff by mutableStateOf<StudioCaptureHandoff?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        captureHandoff = intent.toCaptureHandoffOrNull()
         window.statusBarColor = AndroidColor.rgb(245, 247, 251)
         window.navigationBarColor = AndroidColor.WHITE
         // 用 WindowInsetsControllerCompat 而不是已废弃的 systemUiVisibility：
@@ -86,17 +95,35 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
         }
-        setContent { AutoScriptTheme { StudioApp() } }
+        setContent {
+            AutoScriptTheme {
+                StudioApp(
+                    captureHandoff = captureHandoff,
+                    onCaptureHandoffConsumed = { captureHandoff = null },
+                )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureHandoff = intent.toCaptureHandoffOrNull()
     }
 }
 
 @Composable
-private fun StudioApp() {
+private fun StudioApp(
+    captureHandoff: StudioCaptureHandoff?,
+    onCaptureHandoffConsumed: () -> Unit,
+) {
     var navigation by remember { mutableStateOf(StudioNavigationState()) }
     var runtimeEnvironmentVisible by remember { mutableStateOf(false) }
     var profileSubpage by remember { mutableStateOf<ProfileSubpage?>(null) }
     var workspaceFullScreen by remember { mutableStateOf(false) }
     var runtimeState by remember { mutableStateOf(RuntimeConnectionState()) }
+    var runtimeDebugMessage by remember { mutableStateOf<String?>(null) }
+    var runtimeFailureObserved by remember { mutableStateOf(false) }
     // 悬浮面板控制台的唯一数据源：每次状态快照都记一次真实变化，不是静态占位。
     val console = remember { RuntimeConsoleLog() }
     val runtimeClient = rememberRuntimeClient {
@@ -106,6 +133,34 @@ private fun StudioApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val projectStore = remember(context) {
         ProjectStore(File(context.applicationContext.filesDir, "projects"))
+    }
+
+    LaunchedEffect(captureHandoff?.token) {
+        if (captureHandoff != null) {
+            navigation = navigation.navigateTo(StudioDestination.WORKSPACE)
+            runtimeEnvironmentVisible = false
+            profileSubpage = null
+        }
+    }
+
+    LaunchedEffect(runtimeState.engineState, runtimeState.message) {
+        if (runtimeState.engineState == RuntimeEngineState.FAILED) {
+            val message = runtimeState.message
+            if (!runtimeFailureObserved && !message.isNullOrBlank()) {
+                runtimeDebugMessage = message
+            }
+            runtimeFailureObserved = true
+        } else {
+            runtimeFailureObserved = false
+        }
+    }
+
+    LaunchedEffect(runtimeState.phase) {
+        while (runtimeState.phase == RuntimeConnectionPhase.CONNECTED) {
+            val logs = withContext(Dispatchers.IO) { runtimeClient.recentRuntimeLogs() }
+            console.recordRemote(logs)
+            delay(500)
+        }
     }
 
     Scaffold(
@@ -131,6 +186,7 @@ private fun StudioApp() {
                     state = runtimeState,
                     onBack = { runtimeEnvironmentVisible = false },
                     onRefresh = runtimeClient::refresh,
+                    onShowDebug = { runtimeDebugMessage = it },
                     modifier = Modifier.fillMaxSize(),
                 )
             } else when (navigation.destination) {
@@ -142,6 +198,8 @@ private fun StudioApp() {
                     consoleLines = console.lines,
                     active = true,
                     onFullScreenChanged = { workspaceFullScreen = it },
+                    captureHandoff = captureHandoff,
+                    onCaptureHandoffConsumed = onCaptureHandoffConsumed,
                     modifier = Modifier.fillMaxSize(),
                 )
                 StudioDestination.PROFILE -> profileSubpage?.let { page ->
@@ -159,7 +217,35 @@ private fun StudioApp() {
             }
         }
     }
+    runtimeDebugMessage?.let { message ->
+        RuntimeDebugDialog(
+            message = message,
+            onDismiss = { runtimeDebugMessage = null },
+        )
+    }
 }
+
+/** A bounded one-shot cache reference, never a filesystem path supplied by an intent. */
+internal data class StudioCaptureHandoff(
+    val projectId: String,
+    val token: String,
+    val width: Int,
+    val height: Int,
+)
+
+private fun Intent?.toCaptureHandoffOrNull(): StudioCaptureHandoff? {
+    if (this?.action != RuntimeProtocol.ACTION_OPEN_CAPTURE_EDITOR) return null
+    val projectId = getStringExtra(RuntimeProtocol.EXTRA_CAPTURE_PROJECT_ID) ?: return null
+    val token = getStringExtra(RuntimeProtocol.EXTRA_CAPTURE_TOKEN) ?: return null
+    val width = getIntExtra(RuntimeProtocol.EXTRA_CAPTURE_WIDTH, 0)
+    val height = getIntExtra(RuntimeProtocol.EXTRA_CAPTURE_HEIGHT, 0)
+    if (!STUDIO_PROJECT_ID.matches(projectId) || !CAPTURE_TOKEN.matches(token)) return null
+    if (width !in 1..8_192 || height !in 1..8_192) return null
+    return StudioCaptureHandoff(projectId, token, width, height)
+}
+
+private val STUDIO_PROJECT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+private val CAPTURE_TOKEN = Regex("[a-f0-9]{32}")
 
 /** `activity_main.xml` 的 `BottomNavigationView`：22dp 图标、labeled、上下 3dp 内边距。 */
 @Composable

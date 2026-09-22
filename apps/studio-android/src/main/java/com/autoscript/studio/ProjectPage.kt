@@ -1,5 +1,8 @@
 package com.autoscript.studio
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,10 +69,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -77,6 +82,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -94,9 +100,14 @@ import com.autoscript.core.model.RuntimeConnectionPhase
 import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.core.model.RuntimeEngineState
 import com.autoscript.runtime.client.RuntimeClient
+import com.autoscript.runtime.client.ScreenshotPreviewResult
 import com.autoscript.runtime.client.ScriptValidationResult
 import com.autoscript.runtime.client.VisualCompileResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -108,6 +119,8 @@ internal fun ProjectPage(
     consoleLines: List<String>,
     active: Boolean,
     onFullScreenChanged: (Boolean) -> Unit,
+    captureHandoff: StudioCaptureHandoff?,
+    onCaptureHandoffConsumed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var projects by remember { mutableStateOf<List<ProjectSummary>>(emptyList()) }
@@ -117,6 +130,17 @@ internal fun ProjectPage(
     var requestedFlowId by remember { mutableStateOf<String?>(null) }
     var designingRunnerUi by remember { mutableStateOf(false) }
     var showingImageTools by remember { mutableStateOf(false) }
+    var showingImageLibrary by remember { mutableStateOf(false) }
+    // 图像工具悬浮窗的状态。截图是 Root 通道的真实画面，不是占位图。
+    var imageToolBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var imageToolCapturing by remember { mutableStateOf(false) }
+    var imageToolCropping by remember { mutableStateOf(false) }
+    var imageToolMessage by remember { mutableStateOf<String?>(null) }
+    var imageToolRequestId by remember { mutableIntStateOf(0) }
+    var imageToolCaptureJob by remember { mutableStateOf<Job?>(null) }
+    var handoffCaptureBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var handoffCaptureToken by remember { mutableStateOf<String?>(null) }
+    var imageToolCropJob by remember { mutableStateOf<Job?>(null) }
     var showingPackager by remember { mutableStateOf(false) }
     var showingRecorder by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
@@ -151,13 +175,58 @@ internal fun ProjectPage(
     val sourceFiles = remember(store) { ProjectSourceFiles(store) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val currentExportTarget by rememberUpdatedState(exportTarget)
+
+    fun clearImageToolState(cancelWork: Boolean = true) {
+        imageToolRequestId += 1
+        if (cancelWork) {
+            imageToolCaptureJob?.cancel()
+            imageToolCropJob?.cancel()
+        }
+        imageToolCaptureJob = null
+        imageToolCropJob = null
+        imageToolCapturing = false
+        imageToolCropping = false
+        imageToolBitmap?.recycle()
+        imageToolBitmap = null
+        imageToolMessage = null
+    }
 
     SideEffect {
         onFullScreenChanged(opened != null || workspacePanel != WorkspacePanel.PROJECTS || backupSlotsTarget != null)
     }
     DisposableEffect(Unit) {
-        onDispose { onFullScreenChanged(false) }
+        onDispose {
+            onFullScreenChanged(false)
+            handoffCaptureBitmap?.recycle()
+        }
+    }
+
+    LaunchedEffect(captureHandoff?.token) {
+        val handoff = captureHandoff ?: return@LaunchedEffect
+        loading = true
+        error = null
+        val result = runCatching {
+            withContext(Dispatchers.IO) {
+                val snapshot = store.openProject(handoff.projectId)
+                require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
+                    "截图入口当前只支持 Lua 代码项目"
+                }
+                snapshot to decodeCaptureHandoff(context, handoff)
+            }
+        }
+        result.onSuccess { (snapshot, bitmap) ->
+            handoffCaptureBitmap?.recycle()
+            handoffCaptureBitmap = bitmap
+            handoffCaptureToken = handoff.token
+            opened = snapshot
+            editingOpenedProject = true
+        }.onFailure { failure ->
+            error = failure.message ?: "无法打开截图工具"
+        }
+        loading = false
+        onCaptureHandoffConsumed()
     }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -328,6 +397,7 @@ internal fun ProjectPage(
                     }
                     require(
                         runtimeClient.startProject(
+                            projectId = project.projectId,
                             generatedLuaModule = plan.luaSource,
                             resources = plan.resources,
                             capabilities = plan.capabilities,
@@ -438,6 +508,60 @@ internal fun ProjectPage(
         notice = "已加入：${contract.contract.title}"
         error = null
         saveFloatingFlow()
+    }
+
+    /**
+     * 图像工具的输出必须回到它打开时的悬浮编辑器，不能只停在系统剪贴板。
+     * 可视化项目目前只有点击/滑动可无损映射为真实积木；其余 Lua 片段不能伪装成已插入。
+     */
+    fun emitImageToolSnippet(snippet: ImageToolCodeGen.Snippet) {
+        val project = floatingEditorProject
+        if (project == null) {
+            clipboard.setText(AnnotatedString(snippet.code))
+            imageToolMessage = "没有可写入的编辑器，代码已复制：${snippet.summary}"
+            return
+        }
+        if (project.sourceMode == ProjectSourceMode.VISUAL) {
+            val visualKind = when {
+                snippet.code.trimStart().startsWith("Input.tap(") -> "input.tap"
+                snippet.code.trimStart().startsWith("Input.swipe(") -> "input.swipe"
+                else -> null
+            }
+            if (visualKind == null) {
+                clipboard.setText(AnnotatedString(snippet.code))
+                imageToolMessage = "当前可视化项目只能直接加入单击/滑动；此 Lua 片段已复制"
+                return
+            }
+            insertFloatingBlock("${LegacyFunctionCatalog.BLOCK_HINT_PREFIX}$visualKind\n${snippet.code}", null)
+            imageToolMessage = if (error == null) "已加入程序树：${snippet.summary}" else error ?: "加入程序树失败"
+            return
+        }
+        LuaSnippetGate.reject(snippet.code)?.let { reason ->
+            imageToolMessage = reason
+            return
+        }
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val snapshot = store.openProject(project.projectId)
+                    require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
+                        "当前项目不是 Lua 源码项目"
+                    }
+                    val current = snapshot.luaSource.orEmpty()
+                    val separator = if (current.isEmpty() || current.endsWith('\n')) "" else "\n"
+                    store.saveLua(
+                        projectId = project.projectId,
+                        source = current + separator + snippet.code,
+                        expectedSource = current,
+                    )
+                }
+            }.onSuccess {
+                imageToolMessage = "已加入 main.lua：${snippet.summary}"
+                error = null
+            }.onFailure { failure ->
+                imageToolMessage = failure.message ?: "加入 main.lua 失败"
+            }
+        }
     }
 
     fun finishFloatingMutation(changed: Boolean, message: String) {
@@ -835,11 +959,14 @@ internal fun ProjectPage(
     fun leaveOpenedProject() {
         designingRunnerUi = false
         showingImageTools = false
+        showingImageLibrary = false
         showingPackager = false
         showingRecorder = false
         editingOpenedProject = false
         requestedFlowId = null
         opened = null
+        // 悬浮窗的截图是 Root 抓的真实屏幕，离开项目时必须回收，不能随项目切换泄漏。
+        clearImageToolState()
     }
 
     val runnerUiProject = opened?.takeIf { designingRunnerUi }
@@ -859,11 +986,16 @@ internal fun ProjectPage(
         return
     }
 
-    val imageToolsProject = opened?.takeIf { showingImageTools }
-    if (imageToolsProject != null) {
+    // 取图/取色/坐标那套工具已改为悬浮窗（见下方 ImageToolWindow 挂载处）：
+    // 参考产品那个工具本来就是浮在编辑器之上的，全屏会把被取图的界面挡掉。
+    // 这里保留的是「打开标注库」——浏览与导入项目图片，职责不同，仍适合全屏列表。
+    val imageLibraryProject = opened?.takeIf { showingImageLibrary }
+    if (imageLibraryProject != null) {
         ImageToolsScreen(
-            snapshot = imageToolsProject,
+            snapshot = imageLibraryProject,
             store = store,
+            runtimeClient = runtimeClient,
+            runtimeState = runtimeState,
             onSnapshotChanged = { opened = it },
             onBack = ::leaveOpenedProject,
             modifier = modifier,
@@ -902,8 +1034,14 @@ internal fun ProjectPage(
             runtimeState = runtimeState,
             consoleLines = consoleLines,
             active = active,
+            initialImageToolBitmap = handoffCaptureBitmap,
+            initialImageToolToken = handoffCaptureToken,
             modifier = modifier,
             onSnapshotChanged = { opened = it },
+            onInitialImageToolConsumed = {
+                handoffCaptureBitmap = null
+                handoffCaptureToken = null
+            },
             onExit = ::leaveOpenedProject,
         )
         return
@@ -1031,7 +1169,14 @@ internal fun ProjectPage(
                                 expandedProjectIds + project.projectId
                             }
                         },
-                        onOpen = { floatingEditorProject = project },
+                        onOpen = {
+                            // "编辑"必须进入项目声明的正式编辑器：Lua 进源码页，Flow 进程序树。
+                            // LegacyScriptDock 只由明确的旧式悬浮入口打开，不能再劫持卡片入口。
+                            editingOpenedProject = true
+                            requestedFlowId = null
+                            floatingEditorProject = null
+                            runStoreAction(openResult = true) { store.openProject(project.projectId) }
+                        },
                         onRun = { runProject(project) },
                         onSettings = { openSettings(project) },
                         onUi = {
@@ -1056,8 +1201,139 @@ internal fun ProjectPage(
             }
             // LegacyScriptDock 自己的 BackHandler 只在面板展开（或菜单打开）时启用，
             // 收成小球后返回键会穿透到 Activity 直接退出 App。这里兜底：退出悬浮编辑，回项目列表。
-            BackHandler(enabled = floatingEditorProject != null) {
+            BackHandler(enabled = floatingEditorProject != null && !showingImageTools) {
                 floatingEditorProject = null
+            }
+            // 图像工具的截图：参考产品是先把自己的悬浮窗 hideFloating() 藏起来、截好图存成
+            // temporaryBMP.bmp，再打开工具页去加载它——工具页里根本没有"截图"按钮。
+            // 这里沿用本仓库既有的 3 秒延时（给用户切到目标应用），期间 ImageToolWindow
+            // 什么都不渲染，倒计时提示走工作台的 notice 横幅。
+            fun captureForImageTool(delayMillis: Long = 0L) {
+                if (imageToolCapturing || imageToolCropping) return
+                val requestId = imageToolRequestId + 1
+                imageToolRequestId = requestId
+                imageToolCapturing = true
+                imageToolMessage = null
+                notice = if (delayMillis > 0) "请在 ${delayMillis / 1_000} 秒内切换到需要取图的界面" else null
+                imageToolCaptureJob = scope.launch {
+                    var decoded: Bitmap? = null
+                    try {
+                        delay(delayMillis)
+                        when (val result = withContext(Dispatchers.IO) { runtimeClient.capturePreview() }) {
+                            is ScreenshotPreviewResult.Success -> {
+                                decoded = try {
+                                    withContext(Dispatchers.IO) { BitmapFactory.decodeFile(result.file.path) }
+                                } finally {
+                                    result.file.delete()
+                                }
+                                ensureActive()
+                                if (requestId == imageToolRequestId && showingImageTools) {
+                                    imageToolBitmap?.recycle()
+                                    imageToolBitmap = decoded
+                                    decoded = null
+                                    imageToolMessage = imageToolBitmap?.let { "截图 ${it.width}×${it.height}" }
+                                        ?: "截图文件无法解码"
+                                }
+                            }
+                            is ScreenshotPreviewResult.Unavailable -> if (requestId == imageToolRequestId) {
+                                imageToolMessage = result.message
+                            }
+                        }
+                    } catch (_: CancellationException) {
+                        // Closing the tool or leaving the project deliberately cancels this request.
+                    } catch (error: Exception) {
+                        if (requestId == imageToolRequestId) {
+                            imageToolMessage = error.message ?: "截图失败"
+                        }
+                    } finally {
+                        decoded?.recycle()
+                        if (requestId == imageToolRequestId) {
+                            notice = null
+                            imageToolCapturing = false
+                            imageToolCaptureJob = null
+                        }
+                    }
+                }
+            }
+            val imageToolSnapshot = opened?.takeIf { showingImageTools }
+            if (imageToolSnapshot != null) {
+                // ImageToolWindow 自带 BackHandler 关窗；这里不再叠一层，避免两个
+                // BackHandler 争同一次返回键（LegacyScriptDock 那次踩过类似的坑）。
+                ImageToolWindow(
+                    bitmap = imageToolBitmap,
+                    // 基准分辨率在 manifest.design 里；ProjectSummary 上那对同名字段是列表用的投影。
+                    designWidth = imageToolSnapshot.manifest.design.width,
+                    designHeight = imageToolSnapshot.manifest.design.height,
+                    scaleMode = imageToolSnapshot.manifest.design.scaleMode,
+                    capturing = imageToolCapturing,
+                    message = imageToolMessage,
+                    onCapture = { captureForImageTool() },
+                    onEmit = ::emitImageToolSnippet,
+                    onCropToTemplate = { roi ->
+                        val source = imageToolBitmap
+                        if (source == null) {
+                            imageToolMessage = "请先截图"
+                        } else {
+                            val sourceCopy = runCatching {
+                                source.copy(source.config ?: Bitmap.Config.ARGB_8888, false)
+                            }.getOrElse {
+                                imageToolMessage = it.message ?: "无法准备模板图片"
+                                return@ImageToolWindow
+                            }
+                            val requestId = imageToolRequestId + 1
+                            imageToolRequestId = requestId
+                            imageToolCropping = true
+                            imageToolCropJob = scope.launch {
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            cropAndImportTemplate(store, imageToolSnapshot, sourceCopy, roi, context)
+                                        }
+                                    }
+                                    if (requestId != imageToolRequestId) return@launch
+                                    result.onSuccess { (snapshot, path) ->
+                                    opened = snapshot
+                                    // 存完模板顺手给出能用的找图代码：路径这时才确定，
+                                    // 提前猜路径会生成一段运行时必然失败的调用。
+                                    val snippet = runCatching {
+                                        ImageToolCodeGen.findImage(
+                                            resourcePath = path,
+                                            roi = roi,
+                                            mapping = ImageToolCodeGen.DesignMapping(
+                                                captureWidth = sourceCopy.width,
+                                                captureHeight = sourceCopy.height,
+                                                designWidth = imageToolSnapshot.manifest.design.width,
+                                                designHeight = imageToolSnapshot.manifest.design.height,
+                                                scaleMode = imageToolSnapshot.manifest.design.scaleMode,
+                                            ),
+                                        )
+                                    }.getOrNull()
+                                    val name = path.substringAfterLast('/')
+                                    imageToolMessage = if (snippet?.rejection == null && snippet != null) {
+                                        emitImageToolSnippet(snippet)
+                                        imageToolMessage ?: "已存为模板：$name"
+                                    } else {
+                                        "已存为模板：$name"
+                                    }
+                                    }.onFailure {
+                                        imageToolMessage = it.message ?: "模板保存失败"
+                                    }
+                                } finally {
+                                    sourceCopy.recycle()
+                                    if (requestId == imageToolRequestId) {
+                                        imageToolCropping = false
+                                        imageToolCropJob = null
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onClose = {
+                        showingImageTools = false
+                        clearImageToolState()
+                    },
+                    modifier = Modifier.zIndex(1f),
+                )
             }
             floatingEditorProject?.let { project ->
                 val visualSnapshot = floatingEditorSnapshot
@@ -1087,6 +1363,27 @@ internal fun ProjectPage(
                     sourceBusy = floatingSourceBusy,
                     sourceMessage = floatingSourceMessage,
                     onSourceAction = ::handleFloatingSourceAction,
+                    debugSettings = visualSnapshot?.manifest?.debugSettings
+                        ?: com.autoscript.project.store.ProjectDebugSettings(),
+                    onSaveDebugSettings = { settings ->
+                        val current = visualSnapshot ?: return@LegacyScriptDock
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    store.updateDebugSettings(
+                                        projectId = current.manifest.projectId,
+                                        debugSettings = settings,
+                                        expected = current.manifest.debugSettings,
+                                    )
+                                }
+                            }.onSuccess { updated ->
+                                floatingEditorSnapshot = updated
+                                notice = "调试设置已保存"
+                            }.onFailure { failure ->
+                                error = failure.message ?: "保存调试设置失败"
+                            }
+                        }
+                    },
                     projectFiles = visualSnapshot?.let { current -> remember(current) { projectFileCatalog(current) } }.orEmpty(),
                     onOpenProjectFile = { file ->
                         val current = visualSnapshot ?: return@LegacyScriptDock
@@ -1119,9 +1416,17 @@ internal fun ProjectPage(
                         }
                     },
                     onOpenImageTools = visualSnapshot?.let { current ->
-                        {
+                        { delayMillis ->
                             opened = current
                             showingImageTools = true
+                            // 和参考一样：进入工具就先截图，工具打开时图已经在了。
+                            captureForImageTool(delayMillis)
+                        }
+                    },
+                    onOpenImageLibrary = visualSnapshot?.let { current ->
+                        {
+                            opened = current
+                            showingImageLibrary = true
                             floatingEditorProject = null
                         }
                     },
@@ -1995,6 +2300,31 @@ private fun backupFileName(projectName: String): String {
         if (character.isISOControl() || character in "\\/:*?\"<>|") '_' else character
     }.joinToString("").trim().take(80).ifEmpty { "AutoScript项目" }
     return "$safeName.asproject"
+}
+
+/** Reads and consumes a Runner-owned one-shot capture without accepting an arbitrary file path. */
+private fun decodeCaptureHandoff(context: android.content.Context, handoff: StudioCaptureHandoff): Bitmap {
+    val directory = File(context.applicationContext.cacheDir, "capture-handoffs").canonicalFile
+    val capture = File(directory, "${handoff.token}.png").canonicalFile
+    require(capture.parentFile == directory && capture.isFile) { "截图交接文件已失效" }
+    try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(capture.path, bounds)
+        require(bounds.outWidth == handoff.width && bounds.outHeight == handoff.height) {
+            "截图尺寸与交接信息不一致"
+        }
+        require(handoff.width.toLong() * handoff.height.toLong() <= 4_800_000L) {
+            "截图尺寸超出编辑器预算"
+        }
+        return requireNotNull(
+            BitmapFactory.decodeFile(
+                capture.path,
+                BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
+            ),
+        ) { "截图文件无法解码" }
+    } finally {
+        capture.delete()
+    }
 }
 
 private const val IMPORT_BUSY_ID = "__import_backup__"

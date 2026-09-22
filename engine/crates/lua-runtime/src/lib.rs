@@ -259,6 +259,7 @@ impl LuaTaskRegistry {
                     Screen = {}
                     Ocr = {}
                     Legacy = {}
+                    Log = {}
 
                     local function integer(value, name, minimum, maximum)
                         if type(value) ~= "number" or value % 1 ~= 0 or value < minimum or value > maximum then
@@ -282,10 +283,28 @@ impl LuaTaskRegistry {
                         if ok == false then error((code or "TASK_SLEEP") .. ": " .. (message or "failed"), 2) end
                     end
 
+                    local function writeLog(level, message)
+                        local valueType = type(message)
+                        if valueType ~= "string" and valueType ~= "number" and valueType ~= "boolean" and valueType ~= "nil" then
+                            error("Log message must be a string, number, boolean, or nil", 3)
+                        end
+                        host(1100, level, tostring(message))
+                    end
+
+                    function Log.info(message) writeLog(1, message) end
+                    function Log.warn(message) writeLog(2, message) end
+                    function Log.error(message) writeLog(3, message) end
+
                     function System.getScreenSize()
                         local ok, width, height, code, message = coroutine.yield(marker, 2000)
                         if not ok then error((code or "HOST_ERROR") .. ": " .. (message or "failed"), 2) end
                         return { width = width, height = height }
+                    end
+
+                    function System.elapsedRealtimeMillis()
+                        local ok, milliseconds, code, message = coroutine.yield(marker, 2001)
+                        if not ok then error((code or "HOST_ERROR") .. ": " .. (message or "failed"), 2) end
+                        return milliseconds
                     end
 
                     function Math.distance(x1, y1, x2, y2)
@@ -615,6 +634,7 @@ impl LuaTaskRegistry {
                     LoadDictionary = Ocr.loadDictionary
                     ReleaseDictionary = Ocr.releaseDictionary
                     GlyphOcr = Ocr.glyph
+                    Print = Log.info
                 "#[..],
             )
             .set_name("runtime-api")

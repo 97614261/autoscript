@@ -261,9 +261,86 @@ internal class VisualEditorState private constructor(
         return commit(document)
     }
 
+    /**
+     * Returns the selected node itself or its closest structural owner with one
+     * of [kinds].  It deliberately follows `parentId`, never visual row depth,
+     * so metrics stay correct after indent/outdent and source migration.
+     */
+    fun nearestAncestorOfKind(nodeId: String? = selectedNodeId, kinds: Set<String>): String? {
+        val document = editableDocument() ?: return null
+        val byId = document.nodes.associateBy(EditableNode::nodeId)
+        var current = nodeId?.let(byId::get)
+        val seen = mutableSetOf<String>()
+        while (current != null && seen.add(current.nodeId)) {
+            if (current.kind in kinds) return current.nodeId
+            current = current.parentId?.let(byId::get)
+        }
+        return null
+    }
+
+    /** Adds one native `elseif` branch to a selected conditional node. */
+    fun addElseIfBranch(nodeId: String? = selectedNodeId): Boolean {
+        val document = editableDocument() ?: return false
+        val ownerId = nodeId ?: return false
+        val node = document.nodes.firstOrNull { it.nodeId == ownerId && it.kind == "control.if" }
+            ?: return false
+        val args = node.json.getAsJsonObject("args")?.deepCopy() ?: return false
+        val branches = args.getAsJsonArray("elseIf")?.deepCopy() ?: JsonArray()
+        if (branches.size() >= MAX_ELSE_IF_BRANCHES) return false
+        branches.add(JsonObject().apply {
+            addProperty("variable", "value")
+            addProperty("operator", "equals")
+            addProperty("value", true)
+        })
+        args.add("elseIf", branches)
+        val existingBlockIds = document.nodes.flatMapTo(mutableSetOf()) { candidate ->
+            listOf(candidate.blockId) + candidate.childBlocks.values
+        }.apply { add(rootBlockId) }
+        val childBlocks = node.json.getAsJsonObject("childBlocks")?.deepCopy() ?: return false
+        childBlocks.addProperty("elseIf${branches.size() - 1}", uniqueId("block", existingBlockIds))
+        node.json.add("args", args)
+        node.json.add("childBlocks", childBlocks)
+        return commit(document)
+    }
+
+    /** Removes the final `elseif` branch and all nodes owned by it. */
+    fun removeLastElseIfBranch(nodeId: String? = selectedNodeId): Boolean {
+        val document = editableDocument() ?: return false
+        val ownerId = nodeId ?: return false
+        val node = document.nodes.firstOrNull { it.nodeId == ownerId && it.kind == "control.if" }
+            ?: return false
+        val args = node.json.getAsJsonObject("args")?.deepCopy() ?: return false
+        val branches = args.getAsJsonArray("elseIf")?.deepCopy() ?: return false
+        if (branches.size() == 0) return false
+        val index = branches.size() - 1
+        val childBlocks = node.json.getAsJsonObject("childBlocks")?.deepCopy() ?: return false
+        val ownedBlock = childBlocks.get("elseIf$index")?.asString ?: return false
+        val removed = mutableSetOf<String>()
+        fun collect(blockId: String) {
+            document.nodes.filter { it.blockId == blockId }.forEach { child ->
+                if (removed.add(child.nodeId)) child.childBlocks.values.forEach(::collect)
+            }
+        }
+        collect(ownedBlock)
+        document.nodes.removeAll { it.nodeId in removed }
+        branches.remove(index)
+        if (branches.size() == 0) args.remove("elseIf") else args.add("elseIf", branches)
+        childBlocks.remove("elseIf$index")
+        node.json.add("args", args)
+        node.json.add("childBlocks", childBlocks)
+        return commit(document)
+    }
+
     fun nodeArguments(nodeId: String): JsonObject? = editableDocument()?.nodes
         ?.firstOrNull { it.nodeId == nodeId }
         ?.json?.getAsJsonObject("args")?.deepCopy()
+
+    fun childBlockNames(nodeId: String): List<String> = editableDocument()?.nodes
+        ?.firstOrNull { it.nodeId == nodeId }
+        ?.childBlocks?.keys?.toList().orEmpty()
+
+    fun elseIfBranchCount(nodeId: String): Int = nodeArguments(nodeId)
+        ?.getAsJsonArray("elseIf")?.size() ?: 0
 
     fun flowCallTarget(nodeId: String): String? = editableDocument()?.nodes
         ?.firstOrNull { it.nodeId == nodeId && it.kind == "flow.call" }
@@ -414,6 +491,7 @@ internal class VisualEditorState private constructor(
         }
 
         private const val MAX_HISTORY = 100
+        private const val MAX_ELSE_IF_BRANCHES = 32
     }
 }
 

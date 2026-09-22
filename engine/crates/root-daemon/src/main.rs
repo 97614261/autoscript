@@ -20,10 +20,15 @@ mod android {
     use root_protocol::{Capabilities, Command, Frame, StatusCode};
 
     const INPUT_BINARY: &str = "/system/bin/input";
+    const GETPROP_BINARY: &str = "/system/bin/getprop";
     const SCREENCAP_BINARY: &str = "/system/bin/screencap";
     const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
     const MAX_CAPTURE_CHUNK_BYTES: usize = 60 * 1024;
     const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+    // Emulator input injection can be rejected while a host-originated pointer is unwinding.
+    // Only retry complete, stateless commands; low-level pointer commands must stay single-shot.
+    const INPUT_RETRY_DELAYS: [Duration; 2] =
+        [Duration::from_millis(80), Duration::from_millis(200)];
 
     pub fn run() -> Result<(), String> {
         let arguments = Arguments::parse()?;
@@ -44,14 +49,16 @@ mod android {
             .map_err(io_error)?;
         let peer_uid = peer_uid(&stream).map_err(io_error)?;
         let started = Instant::now();
+        let mut capability_bits = Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW;
+        if supports_pointer_commands() {
+            capability_bits |= Capabilities::INPUT_POINTER_SINGLE;
+        }
         let mut session = DaemonSession::new(
             key,
             peer_uid,
             DaemonSessionConfig {
                 expected_runner_uid: arguments.expected_uid,
-                server_capabilities: Capabilities::from_bits(
-                    Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
-                ),
+                server_capabilities: Capabilities::from_bits(capability_bits),
                 required_client_capabilities: 0,
                 idle_timeout_ms: u64::try_from(arguments.idle_timeout.as_millis())
                     .map_err(|error| error.to_string())?,
@@ -227,6 +234,7 @@ mod android {
     struct AndroidDispatcher {
         next_capture_id: u64,
         capture: Option<StagedCapture>,
+        active_pointer: Option<(u8, i32, i32)>,
     }
 
     struct StagedCapture {
@@ -250,11 +258,11 @@ mod android {
                 Command::Tap => {
                     let x = read_i32(&frame.payload, 0);
                     let y = read_i32(&frame.payload, 4);
-                    run_input(&["tap".to_owned(), x.to_string(), y.to_string()])
+                    run_input_retryable(&["tap".to_owned(), x.to_string(), y.to_string()])
                 }
                 Command::Swipe => {
                     let duration = read_u32(&frame.payload, 16);
-                    run_input(&[
+                    run_input_retryable(&[
                         "swipe".to_owned(),
                         read_i32(&frame.payload, 0).to_string(),
                         read_i32(&frame.payload, 4).to_string(),
@@ -263,10 +271,13 @@ mod android {
                         duration.to_string(),
                     ])
                 }
-                Command::KeyEvent => run_input(&[
+                Command::KeyEvent => run_input_retryable(&[
                     "keyevent".to_owned(),
                     read_u32(&frame.payload, 0).to_string(),
                 ]),
+                Command::PointerDown => self.pointer_down(&frame.payload),
+                Command::PointerMove => self.pointer_move(&frame.payload),
+                Command::PointerUp => self.pointer_up(&frame.payload),
                 Command::GetWindowBounds => StatusCode::BackendUnavailable,
                 Command::Cancel => StatusCode::Ok,
                 Command::Ping | Command::Shutdown => StatusCode::Ok,
@@ -283,6 +294,54 @@ mod android {
     }
 
     impl AndroidDispatcher {
+        fn pointer_down(&mut self, payload: &[u8]) -> StatusCode {
+            let Some((pointer_id, x, y)) = parse_pointer_position(payload) else {
+                return StatusCode::InvalidRequest;
+            };
+            if self.active_pointer.is_some() {
+                return StatusCode::InvalidRequest;
+            }
+            let status = run_pointer("DOWN", x, y);
+            if status == StatusCode::Ok {
+                self.active_pointer = Some((pointer_id, x, y));
+            }
+            status
+        }
+
+        fn pointer_move(&mut self, payload: &[u8]) -> StatusCode {
+            let Some((pointer_id, x, y)) = parse_pointer_position(payload) else {
+                return StatusCode::InvalidRequest;
+            };
+            if !self
+                .active_pointer
+                .is_some_and(|(active_id, _, _)| active_id == pointer_id)
+            {
+                return StatusCode::InvalidRequest;
+            }
+            let status = run_pointer("MOVE", x, y);
+            if status == StatusCode::Ok {
+                self.active_pointer = Some((pointer_id, x, y));
+            }
+            status
+        }
+
+        fn pointer_up(&mut self, payload: &[u8]) -> StatusCode {
+            let Some(pointer_id) = parse_pointer_id(payload) else {
+                return StatusCode::InvalidRequest;
+            };
+            let Some((active_id, x, y)) = self.active_pointer else {
+                return StatusCode::InvalidRequest;
+            };
+            if active_id != pointer_id {
+                return StatusCode::InvalidRequest;
+            }
+            let status = run_pointer("UP", x, y);
+            if status == StatusCode::Ok {
+                self.active_pointer = None;
+            }
+            status
+        }
+
         fn capture(&mut self) -> DispatchResponse {
             let id = self.next_capture_id.checked_add(1);
             let Some(id) = id else {
@@ -342,6 +401,14 @@ mod android {
                 DispatchResponse::success()
             } else {
                 empty_response(StatusCode::InvalidRequest)
+            }
+        }
+    }
+
+    impl Drop for AndroidDispatcher {
+        fn drop(&mut self) {
+            if let Some((_, x, y)) = self.active_pointer.take() {
+                let _ = run_pointer("UP", x, y);
             }
         }
     }
@@ -430,6 +497,49 @@ mod android {
             Ok(_) => StatusCode::BackendFailure,
             Err(_) => StatusCode::BackendUnavailable,
         }
+    }
+
+    fn run_input_retryable(arguments: &[String]) -> StatusCode {
+        let mut status = run_input(arguments);
+        for delay in INPUT_RETRY_DELAYS {
+            if status != StatusCode::BackendFailure {
+                break;
+            }
+            std::thread::sleep(delay);
+            status = run_input(arguments);
+        }
+        status
+    }
+
+    fn run_pointer(action: &str, x: i32, y: i32) -> StatusCode {
+        run_input(&[
+            "touchscreen".to_owned(),
+            "motionevent".to_owned(),
+            action.to_owned(),
+            x.to_string(),
+            y.to_string(),
+        ])
+    }
+
+    fn supports_pointer_commands() -> bool {
+        ProcessCommand::new(GETPROP_BINARY)
+            .arg("ro.build.version.sdk")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .and_then(|sdk| sdk.trim().parse::<u32>().ok())
+            .is_some_and(|sdk| sdk >= 26)
+    }
+
+    fn parse_pointer_position(payload: &[u8]) -> Option<(u8, i32, i32)> {
+        let pointer_id = parse_pointer_id(payload)?;
+        Some((pointer_id, read_i32(payload, 4), read_i32(payload, 8)))
+    }
+
+    fn parse_pointer_id(payload: &[u8]) -> Option<u8> {
+        let pointer_id = *payload.first()?;
+        (pointer_id == 0 && payload.get(1..4) == Some(&[0, 0, 0])).then_some(pointer_id)
     }
 
     fn read_i32(bytes: &[u8], offset: usize) -> i32 {

@@ -29,6 +29,7 @@ import com.autoscript.runtime.api.ScriptValidationReply
 import com.autoscript.runtime.api.VisualCompileReply
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.security.SecureRandom
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
@@ -47,6 +48,9 @@ class AutomationRuntimeService : Service() {
     private val lastNotifiedRootStateRef = AtomicInteger(UNPUBLISHED_STATE)
     private val foregroundActive = AtomicBoolean(false)
     private val floatingControlEnabled = AtomicBoolean(true)
+    private val captureOverlayEnabled = AtomicBoolean(false)
+    /** The only Studio-specific context retained by Runner; it is an opaque validated ID. */
+    private val lastProjectIdRef = AtomicReference<String?>(null)
     private val runtimeLogs = ArrayDeque<String>(MAX_RUNTIME_LOG_ENTRIES)
     private val runtimeLogLock = Any()
     private val sessionRandom = SecureRandom()
@@ -60,9 +64,18 @@ class AutomationRuntimeService : Service() {
         override fun run() {
             val handle = nativeHandleRef.get()
             if (handle == 0L) return
+            val state = NativeEngineBridge.nativeState(handle)
+            if (state != RuntimeProtocol.STATE_RUNNING && state != RuntimeProtocol.STATE_PAUSED) {
+                notifyRuntimeStateIfChanged()
+                return
+            }
             val now = SystemClock.elapsedRealtimeNanos()
             NativeEngineBridge.nativePump(handle, now)
+            drainNativeScriptLogs(handle)
             notifyRuntimeStateIfChanged()
+            // Native wake and a scheduled deadline can enqueue the same singleton Runnable.
+            // Drop stale copies before scheduling the next authoritative wake.
+            engineHandler.removeCallbacks(this)
             scheduleFromNative(handle, now)
         }
     }
@@ -294,6 +307,7 @@ class AutomationRuntimeService : Service() {
         override fun startScript(
             requestId: Long,
             expectedGeneration: Long,
+            projectId: String,
             generatedLuaModule: ByteArray,
             designWidth: Int,
             designHeight: Int,
@@ -313,6 +327,9 @@ class AutomationRuntimeService : Service() {
                 return RuntimeProtocol.START_INVALID_PROJECT
             }
             if (!validCapabilities(capabilities)) return RuntimeProtocol.START_INVALID_PROJECT
+            if (projectId.isNotEmpty() && !isValidProjectId(projectId)) {
+                return RuntimeProtocol.START_INVALID_PROJECT
+            }
             if (rootStateRef.get() != RootDaemonController.State.READY) {
                 return RuntimeProtocol.START_BACKEND_NOT_READY
             }
@@ -341,6 +358,7 @@ class AutomationRuntimeService : Service() {
                 finishForegroundRun()
                 return RuntimeProtocol.START_INVALID_SCRIPT
             }
+            lastProjectIdRef.set(projectId.takeIf(String::isNotEmpty))
             synchronized(runtimeLogLock) { runtimeLogs.clear() }
             engineHandler.removeCallbacks(pump)
             engineHandler.post(pump)
@@ -415,6 +433,69 @@ class AutomationRuntimeService : Service() {
             return RuntimeProtocol.SURFACE_ACCEPTED
         }
 
+        override fun setCaptureOverlayEnabled(
+            requestId: Long,
+            expectedGeneration: Long,
+            projectId: String,
+            enabled: Boolean,
+        ): Int {
+            if (expectedGeneration != sessionGenerationRef.get()) {
+                return RuntimeProtocol.SURFACE_SESSION_MISMATCH
+            }
+            if (enabled && (!isValidProjectId(projectId) || !overlayController.canShow())) {
+                captureOverlayEnabled.set(false)
+                overlayController.hide()
+                return RuntimeProtocol.SURFACE_PERMISSION_DENIED
+            }
+            captureOverlayEnabled.set(enabled)
+            if (!enabled) {
+                if (currentRuntimeState() !in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING)) {
+                    finishForegroundRun()
+                }
+                return RuntimeProtocol.SURFACE_ACCEPTED
+            }
+            lastProjectIdRef.set(projectId)
+            return if (ensureForegroundForRun()) {
+                overlayController.showCapture(currentRuntimeState())
+                RuntimeProtocol.SURFACE_ACCEPTED
+            } else {
+                captureOverlayEnabled.set(false)
+                RuntimeProtocol.SURFACE_PERMISSION_DENIED
+            }
+        }
+
+        override fun capturePreview(
+            requestId: Long,
+            expectedGeneration: Long,
+        ): ParcelFileDescriptor? {
+            if (expectedGeneration != sessionGenerationRef.get()) {
+                appendPreviewRuntimeLog("截图预览失败：Runner会话已重建")
+                return null
+            }
+            if (rootStateRef.get() != RootDaemonController.State.READY) {
+                appendPreviewRuntimeLog("截图预览失败：Root后端尚未就绪")
+                return null
+            }
+            if (currentRuntimeState() !in setOf(RuntimeProtocol.STATE_IDLE, RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED)) {
+                appendPreviewRuntimeLog("截图预览失败：脚本运行时不能占用截图通道")
+                return null
+            }
+            val handle = nativeHandleRef.get()
+            if (handle == 0L) {
+                appendPreviewRuntimeLog("截图预览失败：Native会话不可用")
+                return null
+            }
+            val raw = NativeEngineBridge.nativeCapturePreview(handle)
+            if (raw == null) {
+                appendPreviewRuntimeLog("截图预览失败：Root后端拒绝截图或连接已断开")
+                return null
+            }
+            return runCatching { writePreviewCapture(raw) }
+                .onSuccess { appendPreviewRuntimeLog("截图预览已生成") }
+                .onFailure { appendPreviewRuntimeLog("截图预览失败：画面格式无效或超出预览预算") }
+                .getOrNull()
+        }
+
         override fun getRecentRuntimeLogs(
             expectedGeneration: Long,
             maximumEntries: Int,
@@ -438,6 +519,7 @@ class AutomationRuntimeService : Service() {
             onPause = { engineHandler.post { pauseNativeEngine() } },
             onResume = { engineHandler.post { resumeNativeEngine() } },
             onStop = { engineHandler.post { stopNativeEngine() } },
+            onCapture = { engineHandler.post(::captureOverlayForStudio) },
         )
         val displaySize = currentDisplaySize()
         nativeHandleRef.set(NativeEngineBridge.nativeCreate(displaySize.x, displaySize.y))
@@ -550,7 +632,6 @@ class AutomationRuntimeService : Service() {
         }
         when (state) {
             RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED -> {
-                overlayController.hide()
                 finishForegroundRun()
             }
             RuntimeProtocol.STATE_RUNNING,
@@ -648,6 +729,12 @@ class AutomationRuntimeService : Service() {
     @Synchronized
     private fun finishForegroundRun() {
         if (!foregroundActive.getAndSet(false)) return
+        if (captureOverlayEnabled.get()) {
+            foregroundActive.set(true)
+            overlayController.showCapture(currentRuntimeState())
+            updateForegroundNotification()
+            return
+        }
         overlayController.hide()
         removeForegroundNotification()
         stopSelf()
@@ -705,7 +792,7 @@ class AutomationRuntimeService : Service() {
             RuntimeProtocol.STATE_RUNNING -> "脚本运行中"
             RuntimeProtocol.STATE_PAUSED -> "脚本已暂停"
             RuntimeProtocol.STATE_STOPPING -> "脚本停止中"
-            else -> "正在启动脚本"
+            else -> if (captureOverlayEnabled.get()) "截图工具已就绪" else "正在启动脚本"
         }
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
@@ -747,6 +834,31 @@ class AutomationRuntimeService : Service() {
                     runtimeLogs.addLast("错误 · ${diagnostic.take(MAX_RUNTIME_LOG_LENGTH - 5)}")
                 }
             }
+        }
+    }
+
+    private fun drainNativeScriptLogs(handle: Long) {
+        NativeEngineBridge.nativeDrainScriptLogs(handle)
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .take(MAX_SCRIPT_LOG_BATCH)
+            .forEach(::appendScriptRuntimeLog)
+    }
+
+    private fun appendScriptRuntimeLog(line: String) {
+        val entry = "${SystemClock.elapsedRealtime()}ms · ${line.take(MAX_RUNTIME_LOG_LENGTH - 16)}"
+        synchronized(runtimeLogLock) {
+            while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
+            runtimeLogs.addLast(entry)
+        }
+    }
+
+    private fun appendPreviewRuntimeLog(message: String) {
+        val entry = "${SystemClock.elapsedRealtime()}ms · ${message.take(MAX_RUNTIME_LOG_LENGTH - 16)}"
+        synchronized(runtimeLogLock) {
+            while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
+            runtimeLogs.addLast(entry)
         }
     }
 
@@ -828,12 +940,152 @@ class AutomationRuntimeService : Service() {
         return DecodedTemplate(width, height, rgba)
     }
 
+    /** Converts a bounded JNI raw frame into a PNG FD so Binder never carries image bytes. */
+    private fun writePreviewCapture(raw: ByteArray): ParcelFileDescriptor {
+        require(raw.size >= PREVIEW_HEADER_BYTES)
+        val output = File.createTempFile("runtime-preview-", ".png", cacheDir)
+        return try {
+            writePreviewCaptureToFile(raw, output)
+            ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_READ_ONLY)
+        } finally {
+            output.delete()
+        }
+    }
+
+    /** Writes the one-shot Studio handoff directly, avoiding an unnecessary FD-to-file copy. */
+    private fun writePreviewCaptureToFile(raw: ByteArray, output: File) {
+        require(raw.size >= PREVIEW_HEADER_BYTES)
+        val width = readLittleEndianInt(raw, 0)
+        val height = readLittleEndianInt(raw, 4)
+        val rowStride = readLittleEndianInt(raw, 8)
+        val format = raw[12].toInt() and 0xff
+        val pixelCount = width.toLong() * height.toLong()
+        val expectedPixels = rowStride.toLong() * height.toLong()
+        require(width in 1..MAX_PREVIEW_DIMENSION && height in 1..MAX_PREVIEW_DIMENSION)
+        require(pixelCount in 1..MAX_PREVIEW_PIXELS)
+        require(rowStride >= width * 4)
+        require(format == PREVIEW_RGBA || format == PREVIEW_BGRA)
+        require(expectedPixels <= MAX_PREVIEW_RAW_BYTES)
+        require(raw.size.toLong() == PREVIEW_HEADER_BYTES + expectedPixels)
+
+        val colors = IntArray(pixelCount.toInt())
+        for (y in 0 until height) {
+            var source = PREVIEW_HEADER_BYTES + y * rowStride
+            var target = y * width
+            repeat(width) {
+                val first = raw[source].toInt() and 0xff
+                val second = raw[source + 1].toInt() and 0xff
+                val third = raw[source + 2].toInt() and 0xff
+                val alpha = raw[source + 3].toInt() and 0xff
+                colors[target] = if (format == PREVIEW_RGBA) {
+                    (alpha shl 24) or (first shl 16) or (second shl 8) or third
+                } else {
+                    (alpha shl 24) or (third shl 16) or (second shl 8) or first
+                }
+                source += 4
+                target += 1
+            }
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        try {
+            bitmap.setPixels(colors, 0, width, 0, 0, width, height)
+            FileOutputStream(output).use { stream ->
+                require(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
+                stream.flush()
+                stream.fd.sync()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /**
+     * Captures while another app is visible, then hands a one-shot private PNG to Studio.
+     * This runs on the engine thread, the same serialization point used for Root operations.
+     */
+    private fun captureOverlayForStudio() {
+        overlayController.showCaptureMessage("正在截图…")
+        val projectId = lastProjectIdRef.get()
+        if (projectId == null) {
+            reportOverlayCaptureFailure("当前没有可返回的 Studio 项目")
+            return
+        }
+        if (rootStateRef.get() != RootDaemonController.State.READY) {
+            reportOverlayCaptureFailure("Root 后端尚未就绪")
+            return
+        }
+        if (currentRuntimeState() !in setOf(
+                RuntimeProtocol.STATE_IDLE,
+                RuntimeProtocol.STATE_STOPPED,
+                RuntimeProtocol.STATE_FAILED,
+            )
+        ) {
+            reportOverlayCaptureFailure("请先停止脚本再截图")
+            return
+        }
+        val handle = nativeHandleRef.get()
+        val raw = handle.takeIf { it != 0L }?.let(NativeEngineBridge::nativeCapturePreview)
+        if (raw == null) {
+            reportOverlayCaptureFailure("Root 后端拒绝截图或连接已断开")
+            return
+        }
+        val width = readLittleEndianInt(raw, 0)
+        val height = readLittleEndianInt(raw, 4)
+        val token = newCaptureToken()
+        val handoffDirectory = File(cacheDir, CAPTURE_HANDOFF_DIRECTORY)
+        val output = File(handoffDirectory, "$token.png")
+        try {
+            require(handoffDirectory.exists() || handoffDirectory.mkdirs())
+            require(handoffDirectory.isDirectory)
+            writePreviewCaptureToFile(raw, output)
+            require(output.length() in 1..MAX_PREVIEW_FILE_BYTES)
+            startActivity(
+                Intent(RuntimeProtocol.ACTION_OPEN_CAPTURE_EDITOR)
+                    .setPackage(packageName)
+                    .putExtra(RuntimeProtocol.EXTRA_CAPTURE_PROJECT_ID, projectId)
+                    .putExtra(RuntimeProtocol.EXTRA_CAPTURE_TOKEN, token)
+                    .putExtra(RuntimeProtocol.EXTRA_CAPTURE_WIDTH, width)
+                    .putExtra(RuntimeProtocol.EXTRA_CAPTURE_HEIGHT, height)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+            appendPreviewRuntimeLog("截图已交给 Studio 图像工具")
+            // This is a one-shot capture session. Studio owns the decoded bitmap from here on.
+            captureOverlayEnabled.set(false)
+            finishForegroundRun()
+        } catch (failure: Exception) {
+            output.delete()
+            val detail = failure.message?.replace(Regex("\\s+"), " ")?.take(120)
+            reportOverlayCaptureFailure(
+                "${failure.javaClass.simpleName}${detail?.let { "：$it" }.orEmpty()}",
+            )
+        }
+    }
+
+    private fun reportOverlayCaptureFailure(reason: String) {
+        appendPreviewRuntimeLog("截图失败：$reason")
+        overlayController.showCaptureMessage("截图失败：$reason")
+    }
+
+    private fun newCaptureToken(): String {
+        val bytes = ByteArray(CAPTURE_TOKEN_BYTES).also(sessionRandom::nextBytes)
+        return bytes.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun readLittleEndianInt(bytes: ByteArray, offset: Int): Int =
+        (bytes[offset].toInt() and 0xff) or
+            ((bytes[offset + 1].toInt() and 0xff) shl 8) or
+            ((bytes[offset + 2].toInt() and 0xff) shl 16) or
+            ((bytes[offset + 3].toInt() and 0xff) shl 24)
+
     private fun isValidTemplatePath(path: String): Boolean =
         path.length in 1..MAX_TEMPLATE_PATH_LENGTH &&
             path.startsWith("assets/images/") &&
             '\\' !in path &&
             '\u0000' !in path &&
             path.split('/').all { it.isNotEmpty() && it != "." && it != ".." }
+
+    private fun isValidProjectId(value: String): Boolean =
+        PROJECT_ID.matches(value)
 
     private fun readDictionary(descriptor: ParcelFileDescriptor): ByteArray {
         val initialCapacity = descriptor.statSize
@@ -968,6 +1220,14 @@ class AutomationRuntimeService : Service() {
         const val MAX_TEMPLATE_DIMENSION = 4_096
         const val MAX_TEMPLATE_PIXELS = 4_194_304L
         const val MAX_TEMPLATE_PATH_LENGTH = 256
+        const val MAX_PREVIEW_DIMENSION = 8_192
+        const val MAX_PREVIEW_PIXELS = 4_800_000L
+        const val MAX_PREVIEW_RAW_BYTES = 20L * 1024 * 1024
+        const val MAX_PREVIEW_FILE_BYTES = 24L * 1024 * 1024
+        const val PREVIEW_COPY_BUFFER_BYTES = 32 * 1024
+        const val PREVIEW_HEADER_BYTES = 16
+        const val PREVIEW_RGBA = 1
+        const val PREVIEW_BGRA = 2
         const val MAX_DICTIONARY_BYTES = 8 * 1024 * 1024
         const val MAX_FLOW_BYTES = 64 * 1024 * 1024
         const val MAX_RUNTIME_DIAGNOSTIC_LENGTH = 4_096
@@ -993,6 +1253,9 @@ class AutomationRuntimeService : Service() {
         const val ACTION_RESUME_SCRIPT = "com.autoscript.runtime.action.RESUME_SCRIPT"
         const val MAX_RUNTIME_LOG_ENTRIES = 200
         const val MAX_RUNTIME_LOG_LENGTH = 512
+        const val MAX_SCRIPT_LOG_BATCH = 50
+        const val CAPTURE_HANDOFF_DIRECTORY = "capture-handoffs"
+        const val CAPTURE_TOKEN_BYTES = 16
         val PROJECT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         val FLOW_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         val CAPABILITY = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+")

@@ -130,6 +130,17 @@ class ProjectStore(
             }
             writeManifest(directory, manifest, keepBackup = true)
         }
+        // v2 Lua projects preceded the file-tree declaration.  Preserve their physical
+        // main.lua and upgrade the manifest transactionally on first open.
+        if (manifest.sourceMode == ProjectSourceMode.LUA &&
+            (manifest.luaFiles.isEmpty() || manifest.luaDirectories.isEmpty())
+        ) {
+            manifest = manifest.copy(
+                luaFiles = manifest.luaFiles.ifEmpty { listOf(requireNotNull(manifest.entryPoint)) },
+                luaDirectories = manifest.luaDirectories.ifEmpty { listOf(LUA_MODULE_ROOT) },
+            )
+            writeManifest(directory, manifest, keepBackup = true)
+        }
         validateManifest(manifest)
         require(manifest.projectId == projectId) { "项目目录与 projectId 不一致" }
         ensureDeclaredFiles(directory, manifest)
@@ -144,10 +155,18 @@ class ProjectStore(
                 lastOpenedAt = clock(),
             ),
         )
+        val luaSources = if (manifest.sourceMode == ProjectSourceMode.LUA) {
+            manifest.luaFiles.associateWith { path ->
+                if (path == manifest.entryPoint) readTextWithRecovery(directory, path, LUA_BACKUP)
+                else readLuaFile(directory, path)
+            }
+        } else emptyMap()
         return ProjectSnapshot(
             directory = directory,
             manifest = manifest,
-            luaSource = manifest.entryPoint?.let { readTextWithRecovery(directory, it, LUA_BACKUP) },
+            luaSource = manifest.entryPoint?.let(luaSources::get),
+            luaSources = luaSources,
+            luaDirectories = manifest.luaDirectories,
             flowSources = manifest.flows.associate { flow ->
                 flow.flowId to File(directory, flow.path).readText(Charsets.UTF_8)
             },
@@ -314,28 +333,111 @@ class ProjectStore(
     }
 
     @Synchronized
+    fun updateDebugSettings(
+        projectId: String,
+        debugSettings: ProjectDebugSettings,
+        expected: ProjectDebugSettings,
+    ): ProjectSnapshot {
+        val current = openProject(projectId)
+        if (current.manifest.debugSettings != expected) throw ProjectManifestConflictException()
+        validateDebugSettings(debugSettings)
+        writeManifest(
+            current.directory,
+            current.manifest.copy(debugSettings = debugSettings),
+            keepBackup = true,
+        )
+        touchProject(current.directory)
+        return openProject(projectId)
+    }
+
+    @Synchronized
+    fun updateVariables(projectId: String, variables: List<ProjectVariable>, expected: List<ProjectVariable>): ProjectSnapshot {
+        val current = openProject(projectId)
+        if (current.manifest.variables != expected) throw ProjectManifestConflictException()
+        validateVariables(variables, current.manifest.flows)
+        invalidateGeneration(current.directory)
+        writeManifest(current.directory, current.manifest.copy(variables = variables), keepBackup = true)
+        touchProject(current.directory)
+        return openProject(projectId)
+    }
+
+    @Synchronized
     fun saveLua(
         projectId: String,
         source: String,
         expectedSource: String? = null,
     ): ProjectSnapshot {
         val current = openProject(projectId)
-        val directory = current.directory
         val manifest = current.manifest
-        require(manifest.sourceMode == ProjectSourceMode.LUA) { "只有 Lua 项目可以保存 main.lua" }
+        require(manifest.sourceMode == ProjectSourceMode.LUA) { "只有 Lua 项目可以保存 Lua 源码" }
         if (expectedSource != null && current.luaSource != expectedSource) {
             throw ProjectWriteConflictException()
         }
-        val sourceBytes = source.toByteArray(Charsets.UTF_8)
-        require(sourceBytes.size <= MAX_LUA_SOURCE_BYTES) { "Lua 源码不能超过 16 MiB" }
-        writeAtomic(
-            File(directory, LUA_ENTRY),
-            sourceBytes,
-            File(directory, LUA_BACKUP),
-        )
-        val state = readState(directory)
-        writeState(directory, state.copy(updatedAt = clock()))
+        return saveLuaFileInternal(current, requireNotNull(manifest.entryPoint), source)
+    }
+
+    /** Creates a persisted Lua module.  Names are project-relative (`lua/foo.lua`). */
+    @Synchronized
+    fun createLuaFile(projectId: String, path: String, content: String = DEFAULT_LUA_MODULE): ProjectSnapshot {
+        val current = openProject(projectId)
+        require(current.manifest.sourceMode == ProjectSourceMode.LUA) { "只有 Lua 项目可以创建 Lua 文件" }
+        val normalized = normalizeLuaPath(path)
+        require(normalized !in current.manifest.luaFiles) { "Lua 文件已存在：$normalized" }
+        val source = content.toByteArray(Charsets.UTF_8)
+        require(source.size <= MAX_LUA_SOURCE_BYTES) { "Lua 源码不能超过 16 MiB" }
+        val target = File(current.directory, normalized)
+        checkContained(target)
+        require(!target.exists()) { "Lua 文件已存在：$normalized" }
+        writeAtomic(target, source, backup = null)
+        try {
+            invalidateGeneration(current.directory)
+            writeManifest(
+                current.directory,
+                current.manifest.copy(
+                    luaFiles = (current.manifest.luaFiles + normalized).sorted(),
+                    luaDirectories = (current.manifest.luaDirectories + luaParentDirectories(normalized)).distinct().sorted(),
+                ),
+                keepBackup = true,
+            )
+        } catch (failure: Throwable) {
+            target.delete()
+            throw failure
+        }
+        touchProject(current.directory)
         return openProject(projectId)
+    }
+
+    /** Creates an empty, restricted Lua folder.  It becomes authoritative once it contains a Lua file. */
+    @Synchronized
+    fun createLuaDirectory(projectId: String, path: String): ProjectSnapshot {
+        val current = openProject(projectId)
+        require(current.manifest.sourceMode == ProjectSourceMode.LUA) { "只有 Lua 项目可以创建 Lua 文件夹" }
+        val normalized = normalizeLuaDirectory(path)
+        val target = File(current.directory, normalized)
+        checkContained(target)
+        require(!target.exists()) { "Lua 文件夹已存在：$normalized" }
+        require(target.mkdirs()) { "无法创建 Lua 文件夹：$normalized" }
+        writeManifest(
+            current.directory,
+            current.manifest.copy(
+                luaDirectories = (current.manifest.luaDirectories + luaDirectoryChain(normalized)).distinct().sorted(),
+            ),
+            keepBackup = true,
+        )
+        touchProject(current.directory)
+        return openProject(projectId)
+    }
+
+    @Synchronized
+    fun saveLuaFile(projectId: String, path: String, source: String, expectedSource: String? = null): ProjectSnapshot {
+        val current = openProject(projectId)
+        require(current.manifest.sourceMode == ProjectSourceMode.LUA) { "只有 Lua 项目可以保存 Lua 源码" }
+        val normalized = normalizeLuaPath(path)
+        require(normalized in current.manifest.luaFiles) { "Lua 文件不在项目清单中：$normalized" }
+        if (expectedSource != null && current.luaSources[normalized] != expectedSource) {
+            throw ProjectWriteConflictException()
+        }
+        return saveLuaFileInternal(current, normalized, source)
     }
 
     @Synchronized
@@ -888,7 +990,9 @@ class ProjectStore(
     private fun validateImportedBackupFiles(directory: File, manifest: ProjectManifestDocument) {
         ensureDeclaredFiles(directory, manifest)
         when (manifest.sourceMode) {
-            ProjectSourceMode.LUA -> decodeLuaSource(File(directory, LUA_ENTRY).readBytes())
+            ProjectSourceMode.LUA -> manifest.luaFiles.forEach { path ->
+                decodeLuaSource(File(directory, path).readBytes())
+            }
             ProjectSourceMode.VISUAL -> manifest.flows.forEach { flow ->
                 val file = File(directory, flow.path)
                 require(file.length() in 1..MAX_FLOW_SOURCE_BYTES.toLong()) {
@@ -911,7 +1015,7 @@ class ProjectStore(
     private fun backupPaths(manifest: ProjectManifestDocument): List<String> = buildList {
         add(MANIFEST)
         when (manifest.sourceMode) {
-            ProjectSourceMode.LUA -> add(requireNotNull(manifest.entryPoint))
+            ProjectSourceMode.LUA -> addAll(manifest.luaFiles.sorted())
             ProjectSourceMode.VISUAL -> addAll(manifest.flows.map(ProjectFlow::path).sorted())
         }
         addAll(manifest.resources.map { it.get("path").asString }.sorted())
@@ -921,7 +1025,7 @@ class ProjectStore(
         require(path.length in 1..256 && '\\' !in path && '\u0000' !in path) { "非法备份路径" }
         require(path.split('/').none { it.isEmpty() || it == "." || it == ".." }) { "备份路径越界" }
         require(
-            path == MANIFEST || path == LUA_ENTRY ||
+            path == MANIFEST || isValidLuaPath(path) ||
                 (path.startsWith("visual/flows/") && path.endsWith(".jsonl")) ||
                 path.startsWith("assets/images/") || path.startsWith("dictionaries/"),
         ) { "备份包含非法文件：$path" }
@@ -930,7 +1034,7 @@ class ProjectStore(
 
     private fun backupEntryLimit(path: String): Long = when {
         path == MANIFEST -> MAX_PROJECT_MANIFEST_BYTES
-        path == LUA_ENTRY -> MAX_LUA_SOURCE_BYTES.toLong()
+        isValidLuaPath(path) -> MAX_LUA_SOURCE_BYTES.toLong()
         path.startsWith("visual/flows/") -> MAX_FLOW_SOURCE_BYTES.toLong()
         path.startsWith("assets/images/") -> MAX_IMAGE_RESOURCE_BYTES
         path.startsWith("dictionaries/") -> MAX_GLYPH_DICTIONARY_BYTES
@@ -979,6 +1083,9 @@ class ProjectStore(
             validateJsonShape(normalized)
             if (!normalized.has("flows")) normalized.add("flows", com.google.gson.JsonArray())
             if (!normalized.has("resources")) normalized.add("resources", com.google.gson.JsonArray())
+            if (!normalized.has("debugSettings")) {
+                normalized.add("debugSettings", JsonObject().apply { addProperty("runDelayMs", 0) })
+            }
             val manifest = json.fromJson(normalized, ProjectManifestDocument::class.java)
             validateManifest(manifest)
             LoadedManifest(manifest, bytes, version == LEGACY_PROJECT_FORMAT_VERSION)
@@ -1169,7 +1276,7 @@ class ProjectStore(
 
     private fun isResourceReferenced(snapshot: ProjectSnapshot, path: String): Boolean =
         when (snapshot.manifest.sourceMode) {
-            ProjectSourceMode.LUA -> snapshot.luaSource?.contains(path) == true
+            ProjectSourceMode.LUA -> snapshot.luaSources.values.any { it.contains(path) }
             ProjectSourceMode.VISUAL -> snapshot.flowSources.any { (flowId, source) ->
                 source.lineSequence().filter(String::isNotBlank).any { line ->
                     val node = runCatching { JsonParser.parseString(line).asJsonObject }
@@ -1263,7 +1370,20 @@ class ProjectStore(
 
     private fun ensureDeclaredFiles(directory: File, manifest: ProjectManifestDocument) {
         when (manifest.sourceMode) {
-            ProjectSourceMode.LUA -> Unit
+            ProjectSourceMode.LUA -> {
+                manifest.luaDirectories.forEach { path ->
+                    val folder = File(directory, path)
+                    checkContained(folder)
+                    if (!folder.exists() && !folder.mkdirs()) throw ProjectStoreException("无法恢复 Lua 文件夹：$path")
+                    require(folder.isDirectory) { "Lua 文件夹不是目录：$path" }
+                }
+                manifest.luaFiles.forEach { path ->
+                    val file = File(directory, path)
+                    checkContained(file)
+                    // The legacy entry retains atomic recovery from its .bak/.previous file.
+                    if (path != manifest.entryPoint) require(file.isFile) { "缺少 Lua 文件：$path" }
+                }
+            }
             ProjectSourceMode.VISUAL -> manifest.flows.forEach { flow ->
                 val file = File(directory, flow.path)
                 checkContained(file)
@@ -1295,6 +1415,23 @@ class ProjectStore(
         return decodeLuaSource(bytes)
     }
 
+    private fun readLuaFile(directory: File, path: String): String {
+        val target = File(directory, path)
+        checkContained(target)
+        require(target.isFile) { "缺少 Lua 文件：$path" }
+        return decodeLuaSource(target.readBytes())
+    }
+
+    private fun saveLuaFileInternal(current: ProjectSnapshot, path: String, source: String): ProjectSnapshot {
+        val sourceBytes = source.toByteArray(Charsets.UTF_8)
+        require(sourceBytes.size <= MAX_LUA_SOURCE_BYTES) { "Lua 源码不能超过 16 MiB" }
+        val backup = if (path == current.manifest.entryPoint) File(current.directory, LUA_BACKUP) else null
+        writeAtomic(File(current.directory, path), sourceBytes, backup)
+        invalidateGeneration(current.directory)
+        touchProject(current.directory)
+        return openProject(current.manifest.projectId)
+    }
+
     private fun decodeLuaSource(bytes: ByteArray): String {
         require(bytes.size <= MAX_LUA_SOURCE_BYTES) { "Lua 源码不能超过 16 MiB" }
         return bytes.toString(Charsets.UTF_8)
@@ -1319,14 +1456,31 @@ class ProjectStore(
             "非法能力声明"
         }
         validateResources(manifest.resources)
+        validateVariables(manifest.variables, manifest.flows)
+        validateDebugSettings(manifest.debugSettings)
         validateRunnerUi(manifest.runnerUi)
         when (manifest.sourceMode) {
             ProjectSourceMode.LUA -> {
-                require(manifest.entryPoint == LUA_ENTRY) { "Lua 项目入口必须是 main.lua" }
+                val entry = requireNotNull(manifest.entryPoint) { "Lua 项目缺少入口" }
+                require(isValidLuaPath(entry)) { "Lua 项目入口路径无效" }
+                // Empty is the v2 pre-file-tree representation and is upgraded on openProject.
+                val luaFiles = manifest.luaFiles.ifEmpty { listOf(entry) }
+                val luaDirectories = manifest.luaDirectories.ifEmpty { listOf(LUA_MODULE_ROOT) }
+                require(luaFiles.size <= MAX_LUA_FILES) { "Lua 文件清单超过上限" }
+                require(luaFiles == luaFiles.distinct().sorted()) { "Lua 文件清单必须有序且不可重复" }
+                require(luaFiles.all(::isValidLuaPath)) { "Lua 文件路径无效" }
+                require(entry in luaFiles) { "Lua 项目入口不在 Lua 文件清单中" }
+                require(luaDirectories.size <= MAX_LUA_DIRECTORIES) { "Lua 文件夹清单超过上限" }
+                require(luaDirectories == luaDirectories.distinct().sorted()) { "Lua 文件夹清单必须有序且不可重复" }
+                require(luaDirectories.all(::isValidLuaDirectory)) { "Lua 文件夹路径无效" }
+                require(LUA_MODULE_ROOT in luaDirectories) { "Lua 根文件夹缺失" }
+                require(luaFiles.flatMap(::luaParentDirectories).all { it in luaDirectories }) { "Lua 文件父文件夹缺失" }
                 require(manifest.entryFlowId == null && manifest.flows.isEmpty()) { "Lua 项目不能声明 Flow 入口" }
             }
             ProjectSourceMode.VISUAL -> {
                 require(manifest.entryPoint == null) { "可视化项目不能声明 Lua 入口" }
+                require(manifest.luaFiles.isEmpty()) { "可视化项目不能声明 Lua 文件" }
+                require(manifest.luaDirectories.isEmpty()) { "可视化项目不能声明 Lua 文件夹" }
                 val entry = requireNotNull(manifest.entryFlowId) { "可视化项目缺少入口 Flow" }
                 require(manifest.flows.isNotEmpty() && manifest.flows.any { it.flowId == entry }) {
                     "入口 Flow 不存在"
@@ -1366,6 +1520,21 @@ class ProjectStore(
             ) { "资源类型与路径不匹配" }
             require(paths.add(path)) { "资源路径重复" }
         }
+    }
+
+    private fun validateVariables(variables: List<ProjectVariable>, flows: List<ProjectFlow>) {
+        require(variables.size <= 256) { "变量数量超过256" }
+        val keys = mutableSetOf<Pair<ProjectVariableScope, String>>()
+        variables.forEach { variable ->
+            require(PARAMETER_NAME.matches(variable.name) && variable.name.length <= 64) { "非法变量名：${variable.name}" }
+            require(keys.add(variable.scope to "${variable.flowId.orEmpty()}:${variable.name}")) { "变量声明重复：${variable.name}" }
+            if (variable.scope == ProjectVariableScope.GLOBAL) require(variable.flowId == null) { "全局变量不能指定 Flow" }
+            else require(variable.flowId != null && flows.any { it.flowId == variable.flowId }) { "局部变量缺少有效 Flow" }
+        }
+    }
+
+    private fun validateDebugSettings(settings: ProjectDebugSettings) {
+        require(settings.runDelayMs in 0..60_000) { "运行延迟必须在 0 至 60000 毫秒之间" }
     }
 
     private fun validateRunnerUi(runnerUi: JsonObject?) {
@@ -1504,6 +1673,8 @@ class ProjectStore(
         name = name,
         sourceMode = ProjectSourceMode.LUA,
         entryPoint = LUA_ENTRY,
+        luaFiles = listOf(LUA_ENTRY),
+        luaDirectories = listOf(LUA_MODULE_ROOT),
         design = design,
     )
 
@@ -1569,6 +1740,54 @@ class ProjectStore(
         if (!path.startsWith(prefix) || !path.endsWith(FLOW_FILE_SUFFIX)) return false
         return isValidFlowName(path.removePrefix(prefix).removeSuffix(FLOW_FILE_SUFFIX))
     }
+
+    private fun normalizeLuaPath(relativePath: String): String {
+        val clean = relativePath.trim().replace('\\', '/').trim('/')
+        require(isValidLuaPath(clean)) { "非法 Lua 文件路径：$relativePath" }
+        return clean
+    }
+
+    private fun normalizeLuaDirectory(relativePath: String): String {
+        val clean = relativePath.trim().replace('\\', '/').trim('/')
+        require(clean.startsWith("$LUA_MODULE_ROOT/") && clean.length > LUA_MODULE_ROOT.length + 1) {
+            "Lua 文件夹必须在 $LUA_MODULE_ROOT/ 内"
+        }
+        require(isValidLuaDirectory(clean)) {
+            "非法 Lua 文件夹路径：$relativePath"
+        }
+        return clean
+    }
+
+    private fun isValidLuaDirectory(path: String): Boolean {
+        if (path == LUA_MODULE_ROOT) return true
+        if (!path.startsWith("$LUA_MODULE_ROOT/")) return false
+        val segments = path.split('/')
+        return segments.size in 2..MAX_LUA_PATH_DEPTH && segments.all(::isValidLuaPathSegment)
+    }
+
+    private fun luaParentDirectories(path: String): List<String> {
+        if (path == LUA_ENTRY) return emptyList()
+        val segments = path.split('/')
+        return (1 until segments.size).map { segments.take(it).joinToString("/") }
+    }
+
+    private fun luaDirectoryChain(path: String): List<String> =
+        luaParentDirectories(path) + path
+
+    private fun isValidLuaPath(path: String): Boolean {
+        if (path == LUA_ENTRY) return true
+        if (!path.startsWith("$LUA_MODULE_ROOT/") || !path.endsWith(LUA_FILE_SUFFIX) || path.length > MAX_LUA_PATH_LENGTH) return false
+        val segments = path.split('/')
+        return segments.size in 2..MAX_LUA_PATH_DEPTH &&
+            segments.dropLast(1).all(::isValidLuaPathSegment) &&
+            isValidLuaFileStem(segments.last().removeSuffix(LUA_FILE_SUFFIX))
+    }
+
+    private fun isValidLuaPathSegment(value: String): Boolean =
+        value.isNotEmpty() && value.length <= MAX_LUA_FILE_NAME_CHARS &&
+            value.all { it.isLetterOrDigit() || it == '_' || it == '-' || it in '一'..'鿿' }
+
+    private fun isValidLuaFileStem(value: String): Boolean = isValidLuaPathSegment(value)
 
     /**
      * Flow 文件名与分组名共用的字符策略，必须与 `flow-ir` 的 `valid_flow_name` 和 `project.schema.json` 一致：
@@ -1700,11 +1919,11 @@ class ProjectStore(
         val VALUE_TYPES = setOf("boolean", "integer", "number", "string")
         val MANIFEST_KEYS = setOf(
             "formatVersion", "flowSchemaVersion", "runtimeApi", "projectId", "name", "sourceMode",
-            "entryPoint", "entryFlowId", "flows", "resources", "capabilities", "design", "ownerId",
+            "entryPoint", "luaFiles", "luaDirectories", "entryFlowId", "flows", "variables", "resources", "capabilities", "design", "debugSettings", "ownerId",
             "cloudId", "syncState", "signature", "licensePolicy", "runnerUi",
         )
         val OPTIONAL_MANIFEST_KEYS = setOf(
-            "entryPoint", "entryFlowId", "ownerId", "cloudId", "syncState", "signature", "licensePolicy",
+            "entryPoint", "luaFiles", "luaDirectories", "entryFlowId", "ownerId", "cloudId", "syncState", "signature", "licensePolicy",
             "runnerUi",
         )
         const val MANIFEST = "project.json"
@@ -1713,6 +1932,14 @@ class ProjectStore(
         const val STATE = ".studio/state.properties"
         const val LUA_ENTRY = "main.lua"
         const val LUA_BACKUP = ".studio/main.lua.bak"
+        const val LUA_MODULE_ROOT = "lua"
+        const val LUA_FILE_SUFFIX = ".lua"
+        const val MAX_LUA_FILES = 128
+        const val MAX_LUA_DIRECTORIES = 128
+        const val MAX_LUA_PATH_DEPTH = 6
+        const val MAX_LUA_PATH_LENGTH = 256
+        const val MAX_LUA_FILE_NAME_CHARS = 64
+        const val DEFAULT_LUA_MODULE = "return {}\n"
         const val FLOW_BACKUP_ROOT = ".studio/flows"
         const val VISUAL_FLOW_ROOT = "visual/flows"
         const val FLOW_FILE_SUFFIX = ".jsonl"

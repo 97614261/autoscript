@@ -25,11 +25,36 @@ enum class ProjectSourceMode {
     VISUAL,
 }
 
+enum class ProjectVariableScope {
+    @SerializedName("global") GLOBAL,
+    @SerializedName("flow") FLOW,
+}
+
+enum class ProjectVariableType {
+    @SerializedName("integer") INTEGER,
+    @SerializedName("number") NUMBER,
+    @SerializedName("string") STRING,
+    @SerializedName("image") IMAGE,
+}
+
+/** Declared variable metadata; Flow nodes only reference this stable declaration by name. */
+data class ProjectVariable(
+    val name: String,
+    val scope: ProjectVariableScope,
+    val flowId: String? = null,
+    val type: ProjectVariableType,
+)
+
 data class ProjectDesign(
     val width: Int = 720,
     val height: Int = 1280,
     val scaleMode: String = "letterbox",
     val orientationPolicy: String = "follow",
+)
+
+/** Runtime-affecting debug controls. Values are per project and travel with a backup/export. */
+data class ProjectDebugSettings(
+    val runDelayMs: Int = 0,
 )
 
 data class ProjectFlow(
@@ -48,11 +73,17 @@ data class ProjectManifestDocument(
     val name: String,
     val sourceMode: ProjectSourceMode,
     val entryPoint: String? = null,
+    /** Authoritative Lua source files. `entryPoint` is always one member for Lua projects. */
+    val luaFiles: List<String> = emptyList(),
+    /** Persisted Lua folders, including empty folders that a ZIP would otherwise drop. */
+    val luaDirectories: List<String> = emptyList(),
     val entryFlowId: String? = null,
     val flows: List<ProjectFlow> = emptyList(),
+    val variables: List<ProjectVariable> = emptyList(),
     val resources: List<JsonObject> = emptyList(),
     val capabilities: List<String> = listOf("core.task"),
     val design: ProjectDesign = ProjectDesign(),
+    val debugSettings: ProjectDebugSettings = ProjectDebugSettings(),
     val runnerUi: JsonObject? = null,
     val ownerId: String? = null,
     val cloudId: String? = null,
@@ -76,6 +107,9 @@ data class ProjectSnapshot(
     val directory: File,
     val manifest: ProjectManifestDocument,
     val luaSource: String?,
+    /** Every declared Lua source, keyed by its project-relative canonical path. */
+    val luaSources: Map<String, String> = emptyMap(),
+    val luaDirectories: List<String> = emptyList(),
     val flowSources: Map<String, String>,
 )
 

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "opcode": 2001,
+  "name": "System.elapsedRealtimeMillis",
+  "since": "1.5",
+  "capability": "core.task",
+  "execution": "host_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": 1000,
+  "resourceOwnership": "none",
+  "summary": "读取当前任务运行所使用的单调时钟毫秒值。",
+  "params": [],
+  "returns": { "type": "Integer", "nullable": false, "summary": "自设备启动以来的单调毫秒数。" },
+  "legacyAliases": []
+}

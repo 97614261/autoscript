@@ -56,6 +56,8 @@ pub enum ClientError {
     RequestIdExhausted,
     Remote(StatusCode),
     InvalidDuration,
+    InvalidPointerId,
+    UnsupportedCapability,
     InvalidCapture,
     CaptureTooLarge,
     Closed,
@@ -107,6 +109,25 @@ impl<T: PacketTransport> RootClient<T> {
         key: [u8; 32],
         requested_capabilities: Capabilities,
     ) -> Result<Self, ClientError> {
+        Self::connect_with_required(
+            transport,
+            key,
+            requested_capabilities,
+            requested_capabilities.bits(),
+        )
+    }
+
+    /// Connects while allowing desired capabilities to be absent from an older Android backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any required capability is not negotiated.
+    pub fn connect_with_required(
+        transport: T,
+        key: [u8; 32],
+        requested_capabilities: Capabilities,
+        required_capabilities: u64,
+    ) -> Result<Self, ClientError> {
         let mut client = Self {
             transport,
             channel: SecureChannel::new(key)?,
@@ -123,7 +144,7 @@ impl<T: PacketTransport> RootClient<T> {
                 .map_err(|_| ClientError::UnexpectedResponse)?,
         );
         let negotiated = Capabilities::from_bits(bits);
-        if !negotiated.supports(requested_capabilities.bits()) {
+        if !negotiated.supports(required_capabilities) {
             return Err(ClientError::UnexpectedResponse);
         }
         client.negotiated_capabilities = negotiated;
@@ -176,6 +197,42 @@ impl<T: PacketTransport> RootClient<T> {
     /// Returns a transport, protocol, correlation, or backend error.
     pub fn key_event(&mut self, key_code: u32) -> Result<(), ClientError> {
         self.transact_empty(Command::KeyEvent, &key_code.to_le_bytes())
+    }
+
+    /// Starts one single-pointer gesture in physical display coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-zero pointer ID or a rejected daemon command.
+    pub fn pointer_down(&mut self, pointer_id: u8, x: i32, y: i32) -> Result<(), ClientError> {
+        self.pointer_position(Command::PointerDown, pointer_id, x, y)
+    }
+
+    /// Moves the active single pointer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-zero pointer ID or a rejected daemon command.
+    pub fn pointer_move(&mut self, pointer_id: u8, x: i32, y: i32) -> Result<(), ClientError> {
+        self.pointer_position(Command::PointerMove, pointer_id, x, y)
+    }
+
+    /// Releases the active single pointer at its last daemon-tracked position.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-zero pointer ID or a rejected daemon command.
+    pub fn pointer_up(&mut self, pointer_id: u8) -> Result<(), ClientError> {
+        if pointer_id != 0 {
+            return Err(ClientError::InvalidPointerId);
+        }
+        if !self
+            .negotiated_capabilities
+            .supports(Capabilities::INPUT_POINTER_SINGLE)
+        {
+            return Err(ClientError::UnsupportedCapability);
+        }
+        self.transact_empty(Command::PointerUp, &[pointer_id, 0, 0, 0])
     }
 
     /// Verifies that the daemon is responsive.
@@ -283,6 +340,29 @@ impl<T: PacketTransport> RootClient<T> {
         }
     }
 
+    fn pointer_position(
+        &mut self,
+        command: Command,
+        pointer_id: u8,
+        x: i32,
+        y: i32,
+    ) -> Result<(), ClientError> {
+        if pointer_id != 0 {
+            return Err(ClientError::InvalidPointerId);
+        }
+        if !self
+            .negotiated_capabilities
+            .supports(Capabilities::INPUT_POINTER_SINGLE)
+        {
+            return Err(ClientError::UnsupportedCapability);
+        }
+        let mut payload = Vec::with_capacity(12);
+        payload.extend_from_slice(&[pointer_id, 0, 0, 0]);
+        payload.extend_from_slice(&x.to_le_bytes());
+        payload.extend_from_slice(&y.to_le_bytes());
+        self.transact_empty(command, &payload)
+    }
+
     fn transact(&mut self, command: Command, payload: &[u8]) -> Result<Vec<u8>, ClientError> {
         if self.closed {
             return Err(ClientError::Closed);
@@ -341,10 +421,15 @@ pub fn connect_android(
     stream
         .set_write_timeout(Some(timeout))
         .map_err(|error| ClientError::Transport(TransportError::Io(error)))?;
-    RootClient::connect(
+    RootClient::connect_with_required(
         stream,
         key,
-        Capabilities::from_bits(Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW),
+        Capabilities::from_bits(
+            Capabilities::INPUT_BASIC
+                | Capabilities::INPUT_POINTER_SINGLE
+                | Capabilities::CAPTURE_RAW,
+        ),
+        Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
     )
 }
 
@@ -424,7 +509,9 @@ mod tests {
             DaemonSessionConfig {
                 expected_runner_uid: 10_123,
                 server_capabilities: Capabilities::from_bits(
-                    Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
+                    Capabilities::INPUT_BASIC
+                        | Capabilities::INPUT_POINTER_SINGLE
+                        | Capabilities::CAPTURE_RAW,
                 ),
                 required_client_capabilities: 0,
                 idle_timeout_ms: 5_000,
@@ -440,7 +527,45 @@ mod tests {
                 now_ms: 0,
             },
             key,
-            Capabilities::from_bits(Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW),
+            Capabilities::from_bits(
+                Capabilities::INPUT_BASIC
+                    | Capabilities::INPUT_POINTER_SINGLE
+                    | Capabilities::CAPTURE_RAW,
+            ),
+        )
+        .expect("client")
+    }
+
+    fn connect_without_pointer_capability() -> RootClient<LoopbackTransport> {
+        let key = [32; 32];
+        let daemon = DaemonSession::new(
+            key,
+            10_123,
+            DaemonSessionConfig {
+                expected_runner_uid: 10_123,
+                server_capabilities: Capabilities::from_bits(
+                    Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
+                ),
+                required_client_capabilities: 0,
+                idle_timeout_ms: 5_000,
+                now_ms: 0,
+            },
+            RecordingDispatcher::default(),
+        )
+        .expect("daemon");
+        RootClient::connect_with_required(
+            LoopbackTransport {
+                daemon,
+                responses: VecDeque::new(),
+                now_ms: 0,
+            },
+            key,
+            Capabilities::from_bits(
+                Capabilities::INPUT_BASIC
+                    | Capabilities::INPUT_POINTER_SINGLE
+                    | Capabilities::CAPTURE_RAW,
+            ),
+            Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
         )
         .expect("client")
     }
@@ -453,6 +578,9 @@ mod tests {
             .supports(Capabilities::INPUT_BASIC));
         client.tap(-2, 40).expect("tap");
         client.swipe((1, 2), (3, 4), 500).expect("swipe");
+        client.pointer_down(0, 10, 20).expect("pointer down");
+        client.pointer_move(0, 11, 21).expect("pointer move");
+        client.pointer_up(0).expect("pointer up");
         client.ping().expect("ping");
         client.shutdown().expect("shutdown");
         assert!(matches!(client.ping(), Err(ClientError::Closed)));
@@ -468,6 +596,16 @@ mod tests {
         assert!(matches!(
             client.key_event(0),
             Err(ClientError::Remote(StatusCode::BackendFailure))
+        ));
+    }
+
+    #[test]
+    fn optional_pointer_capability_does_not_block_basic_android_seven_input() {
+        let mut client = connect_without_pointer_capability();
+        client.tap(1, 2).expect("basic input remains available");
+        assert!(matches!(
+            client.pointer_down(0, 1, 2),
+            Err(ClientError::UnsupportedCapability)
         ));
     }
 

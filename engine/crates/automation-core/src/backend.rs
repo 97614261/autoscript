@@ -7,10 +7,13 @@ pub struct BackendError {
     pub code: &'static str,
     pub message: String,
     pub retryable: bool,
+    pub connection_lost: bool,
 }
 
 pub trait AutomationBackend {
-    /// Dispatches one already-arbitrated atomic input transaction.
+    /// Dispatches one contiguous slice of an already-arbitrated input transaction.
+    /// The caller retains the transaction lock across calls, which lets it acknowledge
+    /// commands individually and release a pointer if stop arrives between commands.
     ///
     /// # Errors
     ///

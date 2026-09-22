@@ -19,17 +19,25 @@ internal data class LegacyFunctionGroup(
 
 /**
  * 函数库内容只来自项目真实注册的能力：可视化项目用 `schema/block-catalog` 生成的积木目录，
- * Lua 项目用 `schema/api-schema/functions` 里的 25 个脚本 API。不再出现未实现的片段。
+ * Lua 项目用 `schema/api-schema/functions` 里的真实脚本 API。不再出现未实现的片段。
  */
 internal object LegacyFunctionCatalog {
     /** 可视化项目的函数库把积木 kind 编成一行提示；宿主用 [blockKindOf] 还原后直接查目录，不做模糊搜索。 */
     const val BLOCK_HINT_PREFIX = "--@autoscript-block:"
+    /** 循环面板的参数不能安全地表示成 Lua；这里用仅限编辑器内部的结构化提示传递。 */
+    const val LOOP_HINT_PREFIX = "--@autoscript-loop:"
 
-    fun blockKindOf(snippet: String): String? = snippet.lineSequence().firstOrNull()
-        ?.takeIf { it.startsWith(BLOCK_HINT_PREFIX) }
-        ?.removePrefix(BLOCK_HINT_PREFIX)
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
+    fun blockKindOf(snippet: String): String? {
+        val line = snippet.lineSequence().firstOrNull()?.trim().orEmpty()
+        return when {
+            line.startsWith(BLOCK_HINT_PREFIX) -> line.removePrefix(BLOCK_HINT_PREFIX)
+                .trim().takeIf(String::isNotEmpty)
+            line.startsWith(LOOP_HINT_PREFIX + "repeat:") -> "control.repeat"
+            line.startsWith(LOOP_HINT_PREFIX + "forever") ||
+                line.startsWith(LOOP_HINT_PREFIX + "timed:") -> "control.while"
+            else -> null
+        }
+    }
 
     fun visualGroups(): List<LegacyFunctionGroup> = BlockCatalog.all
         .groupBy { it.category }
@@ -72,17 +80,66 @@ internal object LegacyFunctionCatalog {
             parameters = parameters.toList(),
         )
 
+    private fun template(title: String, snippet: String, detail: String): LegacyFunctionEntry =
+        LegacyFunctionEntry(
+            title = title,
+            detail = detail,
+            snippet = snippet.trimIndent().trimEnd() + "\n",
+            blockKind = null,
+            requiredCapabilities = emptySet(),
+            parameters = emptyList(),
+        )
+
     private val LUA_GROUPS = listOf(
         LegacyFunctionGroup(
             "任务",
-            listOf(lua("等待", "Task.sleep", "milliseconds", detail = "挂起当前任务指定毫秒。")),
+            // 方法库是“快速插入”，所以常用动作必须给可运行的字面量，而不是把
+            // milliseconds / x / message 当成未定义的 Lua 全局变量塞进编辑器。
+            listOf(lua("等待", "Task.sleep", "1000", detail = "挂起当前任务 1000 毫秒。")),
+        ),
+        LegacyFunctionGroup(
+            "判断",
+            listOf(
+                template("条件判断", """
+                    if condition then
+                        -- 条件成立时执行
+                    end
+                """, "按条件执行一段代码。将 condition 改为实际判断表达式。"),
+                template("条件分支", """
+                    if condition then
+                        -- 条件成立时执行
+                    else
+                        -- 条件不成立时执行
+                    end
+                """, "在条件成立和不成立时分别执行不同代码。"),
+            ),
+        ),
+        LegacyFunctionGroup(
+            "循环",
+            listOf(
+                template("计数循环", """
+                    for index = 1, 10 do
+                        -- 每次循环执行
+                    end
+                """, "从 1 循环到 10；可修改起点、终点和循环变量。"),
+                template("条件循环", """
+                    while condition do
+                        -- 条件成立时持续执行
+                    end
+                """, "condition 为 true 时重复执行；循环内应包含退出条件或等待。"),
+                template("重复直到", """
+                    repeat
+                        -- 至少执行一次
+                    until condition
+                """, "先执行一次，再重复到 condition 为 true。"),
+            ),
         ),
         LegacyFunctionGroup(
             "按键",
             listOf(
-                lua("点击", "Input.tap", "x", "y", detail = "在设计坐标执行一次 Root 点击。"),
-                lua("滑动", "Input.swipe", "x1", "y1", "x2", "y2", "durationMs", detail = "从起点滑到终点，1–5000 毫秒。"),
-                lua("设备按键", "Input.keyEvent", "keyCode", detail = "发送 Android KeyEvent 键码。"),
+                lua("点击", "Input.tap", "0", "0", detail = "在设计坐标执行一次 Root 点击；建议用截图工具插入实际坐标。"),
+                lua("滑动", "Input.swipe", "0", "0", "100", "100", "300", detail = "从起点滑到终点，1–5000 毫秒。"),
+                lua("设备按键", "Input.keyEvent", "4", detail = "发送 Android KeyEvent 键码；默认 4 为返回键。"),
             ),
         ),
         LegacyFunctionGroup(
@@ -91,7 +148,7 @@ internal object LegacyFunctionCatalog {
                 lua("截图", "Screen.capture", detail = "采集一帧，返回采集编号。"),
                 lua("缓存帧", "Screen.cache", "captureId", detail = "把采集结果固定为任务持有的帧句柄。"),
                 lua("释放帧", "Screen.release", "frame", detail = "释放帧句柄占用的内存。"),
-                lua("连续截图", "Screen.captureSeries", "maxFrames", "durationMs", "targetFps", "allowPartial"),
+                lua("连续截图", "Screen.captureSeries", "1", "1000", "10", "false"),
                 lua("载入图片", "Screen.loadImage", "path", detail = "载入 assets/images/ 下的模板图片。"),
                 lua("取点颜色", "Screen.getColor", "frame", "x", "y"),
                 lua("单点比色", "Screen.compareColor", "frame", "x", "y", "rgb", "tolerance"),
@@ -111,6 +168,14 @@ internal object LegacyFunctionCatalog {
             ),
         ),
         LegacyFunctionGroup(
+            "调试",
+            listOf(
+                lua("信息日志", "Log.info", "\"message\"", detail = "向运行控制台输出一条信息。"),
+                lua("警告日志", "Log.warn", "\"message\"", detail = "向运行控制台输出一条警告。"),
+                lua("错误日志", "Log.error", "\"message\"", detail = "向运行控制台输出一条错误。"),
+            ),
+        ),
+        LegacyFunctionGroup(
             "旧版兼容",
             listOf(
                 lua("多点找色", "Legacy.duoDianZhaoSe", "frame", "left", "top", "width", "height", "parameters", "direction", "minimumMatchPercent"),
@@ -122,8 +187,9 @@ internal object LegacyFunctionCatalog {
         LegacyFunctionGroup(
             "其它",
             listOf(
-                lua("两点距离", "Math.distance", "x1", "y1", "x2", "y2"),
+                lua("两点距离", "Math.distance", "0", "0", "100", "100"),
                 lua("屏幕尺寸", "System.getScreenSize", detail = "返回当前屏幕宽高。"),
+                lua("单调运行时间", "System.elapsedRealtimeMillis", detail = "返回设备启动后的单调毫秒数，适合计算循环耗时。"),
             ),
         ),
     )

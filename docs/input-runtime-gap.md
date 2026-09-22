@@ -1,5 +1,11 @@
 # 输入与定时器运行时缺口：三个「阻塞点」的核实结论
 
+> 2026-09-18 状态更新：输入部分已按
+> `docs/adr/0001-root-input-runtime-ownership.md` 接线。tap/swipe/keyevent 已进入
+> `InputTransaction -> InputArbiter -> AutomationBackend -> RootClient`，stop/reset 和
+> 单触点协议也已落地。本文保留为原始缺口取证；`Timer.every` 仍未实现。同步的
+> `/system/bin/input swipe` 只能在命令边界响应 stop，持久化可取消注入后端仍是后续项。
+
 面向：接手完整端到端流程的人
 
 `AI接手说明.md` 第 5 条要求「先核实并修复三个阻塞完整流程的问题」。核实做完了，结论是**这不是三个问题，是同一个缺口的三个症状**，而且其中两个单独去修会产出可证明永不执行的代码。本文记录取证路径，便于复核。

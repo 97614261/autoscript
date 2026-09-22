@@ -16,9 +16,7 @@ internal const val MAX_CONSOLE_LINES = 200
 /**
  * 悬浮面板“控制台”的数据源：Runner 连接、引擎状态、Root 状态和失败诊断的**真实**变化记录。
  *
- * Studio 现在只收到 [RuntimeConnectionState] 快照（含失败终态的有界诊断），
- * 脚本内 `Log(...)` 的输出流尚未经 AIDL 送到 Studio；空态文案要如实说明这一点，
- * 不能写成“运行后 Log 会显示在这里”。
+ * Runtime 服务端提供有界日志快照，脚本的 `Log.*` 与生命周期诊断在此增量合并。
  */
 internal class RuntimeConsoleLog(
     private val now: () -> String = {
@@ -27,6 +25,7 @@ internal class RuntimeConsoleLog(
 ) {
     val lines: SnapshotStateList<String> = mutableStateListOf()
     private var previous: RuntimeConnectionState? = null
+    private var remoteSnapshot: List<String> = emptyList()
 
     fun record(state: RuntimeConnectionState) {
         val delta = runtimeConsoleDelta(previous, state)
@@ -39,6 +38,18 @@ internal class RuntimeConsoleLog(
 
     fun clear() {
         lines.clear()
+        remoteSnapshot = emptyList()
+    }
+
+    /** AIDL 返回的是日志快照；只追加此前未见的行，避免轮询重复刷屏。 */
+    fun recordRemote(snapshot: List<String>) {
+        val nextSnapshot = snapshot.asSequence().map(String::trim).filter(String::isNotEmpty)
+            .toList().takeLast(MAX_CONSOLE_LINES)
+        val overlap = (minOf(remoteSnapshot.size, nextSnapshot.size) downTo 0)
+            .first { count -> remoteSnapshot.takeLast(count) == nextSnapshot.take(count) }
+        nextSnapshot.drop(overlap).forEach(lines::add)
+        remoteSnapshot = nextSnapshot
+        while (lines.size > MAX_CONSOLE_LINES) lines.removeAt(0)
     }
 }
 

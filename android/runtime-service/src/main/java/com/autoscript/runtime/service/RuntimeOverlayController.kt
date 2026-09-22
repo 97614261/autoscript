@@ -12,8 +12,10 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.autoscript.runtime.api.RuntimeProtocol
 import kotlin.math.abs
 
@@ -22,27 +24,52 @@ internal class RuntimeOverlayController(
     private val onPause: () -> Unit,
     private val onResume: () -> Unit,
     private val onStop: () -> Unit,
+    private val onCapture: () -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val windowManager = appContext.getSystemService(WindowManager::class.java)
     private var root: LinearLayout? = null
+    private var toggleView: TextView? = null
     private var statusView: TextView? = null
     private var pauseView: TextView? = null
     private var stopView: TextView? = null
+    private var captureView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var expanded = false
+    private var captureOnly = false
     @Volatile private var runtimeState = RuntimeProtocol.STATE_IDLE
 
     fun canShow(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
         Settings.canDrawOverlays(appContext)
 
     fun show(state: Int) {
+        show(state, captureOnly = false)
+    }
+
+    /** A one-shot screenshot session shows only the camera bubble, not script controls. */
+    fun showCapture(state: Int) {
+        show(state, captureOnly = true)
+    }
+
+    private fun show(state: Int, captureOnly: Boolean) {
         runtimeState = state
+        val presentationChanged = this.captureOnly != captureOnly
+        this.captureOnly = captureOnly
+        if (captureOnly) expanded = false
         if (!canShow()) return
         mainHandler.post {
             if (!canShow()) return@post
-            if (root == null) addOverlay()
+            // ensureForegroundForRun() may have already created the full runner controls.
+            // A capture-only session has a different shape, icon and touch target, so merely
+            // hiding sibling views leaves the old camera TextView alive and visually misleading.
+            if (presentationChanged && root != null) removeOverlayView()
+            if (root == null) {
+                // A previous run may have ended while the controls were expanded. Reusing that
+                // state lets the next script's injected tap hit its own pause/stop buttons.
+                expanded = false
+                addOverlay()
+            }
             render()
         }
     }
@@ -54,12 +81,27 @@ internal class RuntimeOverlayController(
 
     fun hide() {
         mainHandler.post {
-            root?.let { view -> runCatching { windowManager.removeView(view) } }
-            root = null
-            statusView = null
-            pauseView = null
-            stopView = null
-            layoutParams = null
+            removeOverlayView()
+            expanded = false
+            captureOnly = false
+        }
+    }
+
+    private fun removeOverlayView() {
+        root?.let { view -> runCatching { windowManager.removeView(view) } }
+        root = null
+        toggleView = null
+        statusView = null
+        pauseView = null
+        stopView = null
+        captureView = null
+        layoutParams = null
+    }
+
+    /** Shows capture progress/failures above the target app; Runner logs alone are invisible there. */
+    fun showCaptureMessage(message: String) {
+        mainHandler.post {
+            Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -67,18 +109,50 @@ internal class RuntimeOverlayController(
         val container = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(7), dp(5), dp(7), dp(5))
+            setPadding(
+                if (captureOnly) 0 else dp(7),
+                if (captureOnly) 0 else dp(5),
+                if (captureOnly) 0 else dp(7),
+                if (captureOnly) 0 else dp(5),
+            )
             background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor(Color.argb(230, 31, 41, 55))
-                setStroke(dp(1), Color.argb(220, 104, 211, 145))
+                if (captureOnly) {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.rgb(31, 94, 255))
+                    setStroke(dp(1), Color.argb(210, 163, 190, 255))
+                } else {
+                    cornerRadius = dp(18).toFloat()
+                    setColor(Color.argb(230, 31, 41, 55))
+                    setStroke(dp(1), Color.argb(220, 104, 211, 145))
+                }
             }
             elevation = dp(6).toFloat()
+        }
+        // 截图专用状态与 Lua 编辑器的相机浮球使用同一蓝色圆形和同一白色相机图标，
+        // 不再用系统字体的 emoji，避免不同设备上图标形状不一致。
+        val capture: View = if (captureOnly) {
+            ImageView(appContext).apply {
+                setImageResource(R.drawable.runtime_capture_camera_24)
+                contentDescription = "截图"
+                scaleType = ImageView.ScaleType.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(35), dp(35))
+                setOnClickListener { onCapture() }
+                setOnTouchListener(DragTouchListener())
+            }
+        } else {
+            actionText("📷").apply {
+                textSize = 16f
+                contentDescription = "截图"
+                setTextColor(Color.rgb(142, 196, 255))
+                setOnClickListener { onCapture() }
+                setOnTouchListener(DragTouchListener())
+            }
         }
         val toggle = actionText("AS").apply {
             setTextColor(Color.rgb(104, 211, 145))
             setOnTouchListener(DragTouchListener())
         }
+        toggleView = toggle
         statusView = actionText("")
         pauseView = actionText("暂停").apply {
             setOnClickListener {
@@ -89,6 +163,7 @@ internal class RuntimeOverlayController(
             setTextColor(Color.rgb(255, 138, 128))
             setOnClickListener { onStop() }
         }
+        container.addView(capture)
         container.addView(toggle)
         container.addView(statusView)
         container.addView(pauseView)
@@ -114,11 +189,21 @@ internal class RuntimeOverlayController(
             .onSuccess {
                 root = container
                 layoutParams = params
+                captureView = capture
+                // A persistent capture control should start at the right edge so it does not
+                // cover the target app's primary content. Dragging retains the user's position.
+                container.post {
+                    val current = layoutParams ?: return@post
+                    val displayWidth = appContext.resources.displayMetrics.widthPixels
+                    current.x = (displayWidth - container.width - dp(12)).coerceAtLeast(0)
+                    runCatching { windowManager.updateViewLayout(container, current) }
+                }
             }
     }
 
     private fun render() {
-        val visible = if (expanded) View.VISIBLE else View.GONE
+        toggleView?.visibility = if (captureOnly) View.GONE else View.VISIBLE
+        val visible = if (expanded && !captureOnly) View.VISIBLE else View.GONE
         statusView?.visibility = visible
         pauseView?.visibility = visible
         stopView?.visibility = visible
@@ -134,6 +219,13 @@ internal class RuntimeOverlayController(
         stopView?.isEnabled = runtimeState == RuntimeProtocol.STATE_RUNNING ||
             runtimeState == RuntimeProtocol.STATE_PAUSED ||
             runtimeState == RuntimeProtocol.STATE_STOPPING
+        val canCapture = runtimeState == RuntimeProtocol.STATE_IDLE ||
+            runtimeState == RuntimeProtocol.STATE_STOPPED ||
+            runtimeState == RuntimeProtocol.STATE_FAILED
+        // Capture mode must still receive a tap when a run is active: the service then tells
+        // the user to stop the script instead of leaving a dimmed, apparently dead icon.
+        captureView?.alpha = if (canCapture || captureOnly) 1f else 0.42f
+        captureView?.isEnabled = canCapture || captureOnly
     }
 
     private fun actionText(value: String) = TextView(appContext).apply {
@@ -175,8 +267,12 @@ internal class RuntimeOverlayController(
                     if (abs(event.rawX - downRawX) < dp(6).toFloat() &&
                         abs(event.rawY - downRawY) < dp(6).toFloat()
                     ) {
-                        expanded = !expanded
-                        render()
+                        if (view === captureView) {
+                            if (view.isEnabled) view.performClick()
+                        } else {
+                            expanded = !expanded
+                            render()
+                        }
                     }
                     return true
                 }

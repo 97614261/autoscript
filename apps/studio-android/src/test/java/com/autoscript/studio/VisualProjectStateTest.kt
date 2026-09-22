@@ -35,6 +35,23 @@ class VisualProjectStateTest {
     }
 
     @Test
+    fun debugOutputBecomesTypedLogBlockForVisualProjects() {
+        val snippet = "Log.warn(\"network is slow\")\\n"
+        assertEquals("输出日志", legacyDockBlockQuery(snippet))
+
+        val log = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("task.log")),
+            snippet,
+            JsonObject().apply {
+                addProperty("level", "info")
+                addProperty("message", "识别完成")
+            },
+        )
+        assertEquals("warn", log.get("level").asString)
+        assertEquals("network is slow", log.get("message").asString)
+    }
+
+    @Test
     fun legacyDockMigratesControlStructureAndKeepsExplicitBranching() {
         val conditionDefaults = JsonObject().apply {
             addProperty("variable", "value")
@@ -58,6 +75,42 @@ class VisualProjectStateTest {
         )
         assertEquals(7, repeat.get("times").asInt)
         assertEquals("index", repeat.get("indexVariable").asString)
+
+        val variableRepeat = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("control.repeat")),
+            "--@autoscript-loop:repeat:variable:attempts",
+            repeatDefaults,
+        )
+        assertEquals(0, variableRepeat.get("times").asInt)
+        assertEquals("attempts", variableRepeat.get("timesVariable").asString)
+
+        val timed = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("control.while")),
+            "--@autoscript-loop:timed:fixed:2500",
+            JsonObject().apply {
+                addProperty("variable", "value")
+                addProperty("operator", "equals")
+                addProperty("value", true)
+                addProperty("maxIterations", 10_000)
+            },
+        )
+        assertTrue(timed.get("always").asBoolean)
+        assertEquals(2500, timed.get("durationMs").asInt)
+    }
+
+    @Test
+    fun loopMetricUsesNearestStructuralLoopRatherThanRenderedDepth() {
+        val source = listOf(
+            node(
+                "loop", "block-root", "a0", "control.repeat", depth = 0,
+                childBlocks = "\"childBlocks\":{\"body\":\"block-body\"},",
+            ).replace("\"args\":{}", "\"args\":{\"times\":1}"),
+            node("nested", "block-body", "a0", "task.noop", parent = "loop", depth = 1),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.selectedNodeId = "nested"
+
+        assertEquals("loop", editor.nearestAncestorOfKind(kinds = setOf("control.repeat", "control.while")))
     }
 
     @Test
@@ -215,6 +268,35 @@ class VisualProjectStateTest {
         editor.selectedNodeId = owner
         assertEquals(null, editor.insertBlock(noop, JsonObject(), owner, "missing"))
         assertEquals(before, editor.currentSource)
+    }
+
+    @Test
+    fun editorOwnsElseIfBranchStructureAsOneTransaction() {
+        var id = 0
+        val editor = VisualEditorState.create("", "block-root") { "elseif-${++id}" }
+        val conditional = requireNotNull(BlockCatalog.find("control.if"))
+        val owner = requireNotNull(editor.insertBlock(
+            conditional,
+            JsonObject().apply {
+                addProperty("variable", "score")
+                addProperty("operator", "equals")
+                addProperty("value", 1)
+            },
+        ))
+        editor.selectedNodeId = owner
+        assertTrue(editor.addElseIfBranch())
+        assertEquals(listOf("then", "else", "elseIf0"), editor.childBlockNames(owner))
+        assertEquals(1, editor.elseIfBranchCount(owner))
+
+        val noop = requireNotNull(BlockCatalog.find("task.noop"))
+        val child = requireNotNull(editor.insertBlock(noop, JsonObject(), owner, "elseIf0"))
+        assertTrue(editor.rows.any { it.nodeId == child && it.childSlot == "elseIf0" })
+
+        editor.selectedNodeId = owner
+        assertTrue(editor.removeLastElseIfBranch())
+        assertEquals(listOf("then", "else"), editor.childBlockNames(owner))
+        assertEquals(0, editor.elseIfBranchCount(owner))
+        assertFalse(editor.rows.any { it.nodeId == child })
     }
 
     @Test

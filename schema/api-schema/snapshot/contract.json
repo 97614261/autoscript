@@ -49,6 +49,41 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 1100,
+      "name": "Log.write",
+      "since": "1.5",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "log_write",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "向当前 Runner 的有界调试日志写入一条文本。",
+      "params": [
+        {
+          "name": "level",
+          "type": "integer",
+          "required": true,
+          "summary": "1=info，2=warn，3=error。"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "summary": "最多2048字节的 UTF-8 文本。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "日志接受后立即返回。"
+      },
+      "legacyAliases": [
+        "Log"
+      ]
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 2000,
       "name": "System.getScreenSize",
       "since": "1.0",
@@ -64,6 +99,26 @@
         "type": "Size",
         "nullable": false,
         "summary": "包含width和height的尺寸值。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 2001,
+      "name": "System.elapsedRealtimeMillis",
+      "since": "1.5",
+      "capability": "core.task",
+      "execution": "host_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": 1000,
+      "resourceOwnership": "none",
+      "summary": "读取当前任务运行所使用的单调时钟毫秒值。",
+      "params": [],
+      "returns": {
+        "type": "Integer",
+        "nullable": false,
+        "summary": "自设备启动以来的单调毫秒数。"
       },
       "legacyAliases": []
     },

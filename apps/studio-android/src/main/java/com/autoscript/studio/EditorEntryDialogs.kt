@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -34,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import com.autoscript.core.designsystem.AutoScriptPalette
+import com.autoscript.project.store.ProjectDebugSettings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -78,20 +81,28 @@ internal fun EditorEntryDialog(
     onInsert: (String) -> Unit,
     onOpenFile: (StudioProjectFile) -> Unit = {},
     onDeleteFiles: (List<StudioProjectFile>) -> Unit = {},
-    onOpenImageTools: (() -> Unit)? = null,
+    onOpenImageTools: ((Long) -> Unit)? = null,
+    onOpenImageLibrary: (() -> Unit)? = null,
+    onRemoveCaptureOverlay: (() -> Unit)? = null,
+    availableVariables: List<String> = emptyList(),
+    debugSettings: ProjectDebugSettings = ProjectDebugSettings(),
+    onSaveDebugSettings: (ProjectDebugSettings) -> Unit = {},
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val panelModifier = when (entry) {
             LegacyToolDialog.FILES -> Modifier.fillMaxWidth(.96f).fillMaxHeight(.88f).widthIn(max = 520.dp)
             LegacyToolDialog.JUDGMENT -> Modifier.width(132.dp).height(132.dp)
-            LegacyToolDialog.COMMON,
-            LegacyToolDialog.DEBUG,
-            -> Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp)
+            LegacyToolDialog.COMMON -> Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp)
+            // 调试页是左侧导航 + 右侧配置卡的桌面式弹窗；与普通短表单不同，
+            // 需要一整屏高度来保留三张参考页的结构，而不是让内容挤在 390dp 内。
+            LegacyToolDialog.DEBUG -> Modifier.fillMaxWidth(.96f).widthIn(max = 600.dp).fillMaxHeight(.72f)
             LegacyToolDialog.IMAGE -> Modifier.fillMaxWidth(.96f).widthIn(max = 550.dp).height(310.dp)
             LegacyToolDialog.LOOP -> Modifier.fillMaxWidth(.96f).widthIn(max = 540.dp).height(350.dp)
             else -> Modifier.fillMaxWidth(.90f).widthIn(max = 520.dp).height(
                 when (entry) {
                     LegacyToolDialog.AI -> 520.dp
+                    // 工具页按单屏内容量固定，避免卡片之间留出大段无用空白。
+                    LegacyToolDialog.TOOLS -> 342.dp
                     else -> 390.dp
                 },
             )
@@ -104,12 +115,18 @@ internal fun EditorEntryDialog(
         ) {
             when (entry) {
                 LegacyToolDialog.FILES -> FileManagerPage(projectName, files, onDismiss, onOpenFile, onDeleteFiles)
-                LegacyToolDialog.TOOLS -> ToolSettingsPage(onDismiss, onInsert, onOpenImageTools)
+                LegacyToolDialog.TOOLS -> ToolSettingsPage(
+                    onDismiss,
+                    onInsert,
+                    onOpenImageTools,
+                    onOpenImageLibrary,
+                    onRemoveCaptureOverlay,
+                )
                 LegacyToolDialog.IMAGE -> ImageRecognitionPage(onDismiss, onInsert)
                 LegacyToolDialog.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
-                LegacyToolDialog.LOOP -> LoopPage(onDismiss, onInsert)
+                LegacyToolDialog.LOOP -> LoopPage(onDismiss, onInsert, availableVariables)
                 LegacyToolDialog.COMMON -> CommonPage(onDismiss, onInsert)
-                LegacyToolDialog.DEBUG -> DebugPage(onDismiss)
+                LegacyToolDialog.DEBUG -> DebugPage(onDismiss, onInsert, debugSettings, onSaveDebugSettings)
                 LegacyToolDialog.AI -> AiProgrammingPage(onDismiss, onInsert)
                 LegacyToolDialog.DATA_BACKFILL -> DataBackfillPage(onDismiss, onInsert)
                 LegacyToolDialog.VARIABLE_CHECK -> VariableCheckPage(onDismiss)
@@ -479,42 +496,59 @@ private fun RuntimeVariablesPage(onDismiss: () -> Unit) {
 private const val LEGACY_ENTRY_COMMAND_PREFIX = "--@autoscript-editor:"
 
 @Composable
-private fun ToolSettingsPage(onDismiss: () -> Unit, onInsert: (String) -> Unit, onOpenImageTools: (() -> Unit)?) {
+private fun ToolSettingsPage(
+    onDismiss: () -> Unit,
+    onInsert: (String) -> Unit,
+    onOpenImageTools: ((Long) -> Unit)?,
+    onOpenImageLibrary: (() -> Unit)?,
+    onRemoveCaptureOverlay: (() -> Unit)?,
+) {
     var captureDelay by remember { mutableStateOf("0秒") }
     var picker by remember { mutableStateOf<PickerRequest?>(null) }
     Column(Modifier.fillMaxSize()) {
-        Text("工具", color = EntryBlue, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 14.dp, vertical = 11.dp))
+        Text("工具", color = EntryBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(31.dp).padding(horizontal = 14.dp, vertical = 6.dp))
         DividerLine()
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 8.dp, top = 10.dp, end = 8.dp, bottom = 15.dp)) {
+        Column(Modifier.weight(1f).padding(start = 8.dp, top = 3.dp, end = 8.dp, bottom = 3.dp)) {
             ToolPanel("截屏工具") {
                 ToolActionRow(R.drawable.editor_capture_camera_24, "截屏延迟", trailing = captureDelay) {
                     picker = PickerRequest("截屏延迟", listOf("0秒", "1秒", "2秒", "3秒", "5秒"), captureDelay) { captureDelay = it }
                 }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             ToolPanel("识别工具") {
-                ToolActionRow(R.drawable.editor_recognition_preview_24, "测试识别") {
+                ToolActionRow(R.drawable.editor_recognition_preview_24, "测试识别（待实现）", enabled = false) {
                     picker = PickerRequest("测试识别", listOf("找图", "找色", "字库找字", "ONNX OCR")) {}
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            // 图像工具三项都进入同一个图片/标注工作区页；宿主没提供全屏页时退回选项预览。
+            Spacer(Modifier.height(2.dp))
+            // 「标注截屏」「图像处理」进图像工具悬浮窗（取图/取色/多点/坐标）；
+            // 「打开标注库」进项目图片列表页，两者职责不同，不再指向同一个回调。
+            // 宿主没提供对应入口时退回选项预览。
             ToolPanel("图像工具") {
                 ToolActionRow(R.drawable.editor_recognition_preview_24, "标注截屏") {
-                    if (onOpenImageTools != null) onOpenImageTools() else picker = PickerRequest("标注截屏", listOf("立即截屏", "延迟截屏", "导入图片")) {}
+                    if (onOpenImageTools != null) onOpenImageTools(captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L) else picker = PickerRequest("标注截屏", listOf("立即截屏", "延迟截屏", "导入图片")) {}
                 }
                 DividerLine()
-                ToolActionRow(R.drawable.editor_annotation_24, "打开标注库") {
-                    if (onOpenImageTools != null) onOpenImageTools() else picker = PickerRequest("标注库", listOf("图片标注", "OCR 标注", "目标检测标注")) {}
+                ToolActionRow(R.drawable.editor_annotation_24, "打开标注库（待实现）", enabled = false) {
+                    if (onOpenImageLibrary != null) onOpenImageLibrary() else picker = PickerRequest("标注库", listOf("图片标注", "OCR 标注", "目标检测标注")) {}
                 }
                 DividerLine()
                 ToolActionRow(R.drawable.editor_image_processing_24, "图像处理") {
-                    if (onOpenImageTools != null) onOpenImageTools() else picker = PickerRequest("图像处理", listOf("裁剪", "缩放", "灰度", "二值化", "颜色过滤")) {}
+                    if (onOpenImageTools != null) onOpenImageTools(captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L) else picker = PickerRequest("图像处理", listOf("裁剪", "缩放", "灰度", "二值化", "颜色过滤")) {}
                 }
             }
         }
         // 参考的“屏幕截图”是打开截屏工具；本项目对应的真实 API 是 Screen.capture()。
-        FooterButtons(listOf("移除悬浮球" to onDismiss, "屏幕截图" to { onInsert("local captureId = Screen.capture()\n"); onDismiss() }), fontSize = 13)
+        ToolSettingsFooter(
+            dismiss = { onRemoveCaptureOverlay?.invoke() ?: onDismiss() },
+            onCapture = {
+                val delayMillis = captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L
+                if (onOpenImageTools != null) onOpenImageTools(delayMillis) else {
+                    onInsert("local captureId = Screen.capture()\n")
+                    onDismiss()
+                }
+            },
+        )
     }
     picker?.let { request -> PickerDialog(request) { picker = null } }
 }
@@ -522,23 +556,41 @@ private fun ToolSettingsPage(onDismiss: () -> Unit, onInsert: (String) -> Unit, 
 @Composable
 private fun ToolPanel(title: String, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth().background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp)).border(1.dp, EntryBorder, RoundedCornerShape(3.dp))) {
-        Text(title, color = EntryAccent, fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 8.dp, bottom = 8.dp))
+        Text(title, color = EntryAccent, fontSize = 9.sp, modifier = Modifier.fillMaxWidth().height(20.dp).padding(start = 10.dp, top = 4.dp))
         content()
     }
 }
 
 @Composable
-private fun ToolActionRow(icon: Int, label: String, trailing: String? = null, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(48.dp).clickable(onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(24.dp).background(EntryAccent, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(icon), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(17.dp))
+private fun ToolActionRow(
+    icon: Int,
+    label: String,
+    trailing: String? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val rowColor = if (enabled) AutoScriptPalette.TextPrimary else EntryMuted
+    val iconColor = if (enabled) EntryAccent else EntryBorder
+    Row(Modifier.fillMaxWidth().height(31.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(19.dp).background(iconColor, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
+            Icon(painterResource(icon), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(14.dp))
         }
-        Text(label, fontSize = 13.sp, modifier = Modifier.padding(start = 9.dp).weight(1f))
+        Text(label, color = rowColor, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (trailing != null) {
-            DenseSpinner(trailing, Modifier.width(118.dp), arrow = false, onClick = onClick)
+            DenseSpinner(trailing, Modifier.width(92.dp), arrow = false, onClick = onClick)
         } else {
-            Text("›", color = EntryMuted, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 4.dp))
+            Text(if (enabled) "›" else "—", color = EntryMuted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 4.dp))
         }
+    }
+}
+
+@Composable
+private fun ToolSettingsFooter(dismiss: () -> Unit, onCapture: () -> Unit) {
+    DividerLine()
+    Row(Modifier.fillMaxWidth().height(32.dp)) {
+        CenteredFooterAction("移除悬浮球", AutoScriptPalette.Danger, dismiss, Modifier.weight(1f))
+        DividerVertical()
+        CenteredFooterAction("屏幕截图", EntryAccent, onCapture, Modifier.weight(1f), bold = true)
     }
 }
 
@@ -834,9 +886,11 @@ private fun DenseSpinner(
 private fun JudgmentPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         listOf(
-            "如果" to "if value == true then\n    \nend\n",
-            "否则如果" to "-- 否则如果\n",
-            "否则" to "-- 否则\n",
+            // The host resolves the latter two actions against the selected `control.if`.
+            // This prevents detached Lua fragments from entering a visual Flow.
+            "如果" to "${LegacyFunctionCatalog.BLOCK_HINT_PREFIX}control.if\n",
+            "否则如果" to "--@autoscript-control:elseIf\n",
+            "否则" to "--@autoscript-control:else\n",
         ).forEach { (label, snippet) ->
             Text(
                 label,
@@ -852,15 +906,26 @@ private fun JudgmentPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
 }
 
 @Composable
-private fun LoopPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
+private fun LoopPage(
+    onDismiss: () -> Unit,
+    onInsert: (String) -> Unit,
+    availableVariables: List<String>,
+) {
     var variableMode by remember { mutableStateOf(false) }
-    var mode by remember { mutableStateOf(0) }
+    // 循环入口直接落在实际的参数页。限次循环是唯一不依赖额外运行时状态的
+    // 默认项；用户仍可在同一页切换其它循环语义，不再需要经过一个中转选择页。
+    var mode by remember { mutableStateOf(1) }
     var count by remember { mutableStateOf("3") }
     var time by remember { mutableStateOf("3") }
     var timeUnit by remember { mutableStateOf("秒") }
+    var countVariable by remember { mutableStateOf<String?>(null) }
+    var timeVariable by remember { mutableStateOf<String?>(null) }
+    var loopCountVariable by remember { mutableStateOf<String?>(null) }
+    var loopTimeVariable by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<PickerRequest?>(null) }
+    var validationError by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize()) {
-        Text("循环类型", color = EntryBlue, fontSize = 17.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(40.dp).padding(top = 9.dp))
+        Text("${when (mode) { 0 -> "无限循环"; 1 -> "限次循环"; 2 -> "限时循环"; 3 -> "获取循环次数"; else -> "获取循环时间" }}", color = EntryBlue, fontSize = 17.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(40.dp).padding(top = 9.dp))
         DividerLine()
         Box(Modifier.padding(top = 10.dp)) {
             LoopValueModeChoice(variableMode) { variableMode = it }
@@ -868,31 +933,55 @@ private fun LoopPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 6.dp)) {
             DenseLoopRow("无限循环", mode == 0, { mode = 0 }) { Spacer(Modifier.fillMaxWidth()) }
             DenseLoopRow("限次循环", mode == 1, { mode = 1 }) {
-                if (variableMode) DenseVariableSelector("整", "未选择")
+                if (variableMode) DenseVariableSelector("整", countVariable ?: "未选择") {
+                    picker = variablePicker(availableVariables, countVariable) { countVariable = it }
+                }
                 else DenseLoopValue(count, { count = it }, "$count(次)") {}
             }
             DenseLoopRow("限时循环", mode == 2, { mode = 2 }) {
-                if (variableMode) DenseVariableSelector("浮", "未选择")
+                if (variableMode) DenseVariableSelector("浮", timeVariable ?: "未选择") {
+                    picker = variablePicker(availableVariables, timeVariable) { timeVariable = it }
+                }
                 else DenseLoopValue(time, { time = it }, "$time($timeUnit)") {
                     picker = PickerRequest("时间单位", listOf("毫秒", "秒", "分钟"), timeUnit) { timeUnit = it }
                 }
             }
-            DenseLoopRow("获取循环次数", mode == 3, { mode = 3 }) { DenseVariableSelector("整", "未选择") }
-            DenseLoopRow("获取循环时间", mode == 4, { mode = 4 }) { DenseVariableSelector("浮", "未选择") }
+            DenseLoopRow("获取循环次数", mode == 3, { mode = 3 }) {
+                DenseVariableSelector("整", loopCountVariable ?: "未选择") {
+                    picker = variablePicker(availableVariables, loopCountVariable) { loopCountVariable = it }
+                }
+            }
+            DenseLoopRow("获取循环时间", mode == 4, { mode = 4 }) {
+                DenseVariableSelector("浮", loopTimeVariable ?: "未选择") {
+                    picker = variablePicker(availableVariables, loopTimeVariable) { loopTimeVariable = it }
+                }
+            }
+        }
+        validationError?.let { message ->
+            Text(message, color = Color(0xFFD14949), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp))
         }
         FooterButtons(listOf("取消" to onDismiss, "加入" to {
+            val prefix = LegacyFunctionCatalog.LOOP_HINT_PREFIX
             val snippet = when (mode) {
-                0 -> "while value == true do\n    \nend\n-- maxIterations=10000\n"
-                1 -> "for i = 1, ${count.toLongOrNull()?.coerceAtLeast(1) ?: 1} do\n    \nend\n"
-                2 -> {
-                    val multiplier = when (timeUnit) { "分钟" -> 60_000L; "秒" -> 1_000L; else -> 1L }
-                    val durationMs = ((time.toDoubleOrNull() ?: 0.0) * multiplier).toLong().coerceAtLeast(1)
-                    "while elapsedMs < $durationMs do\n    \nend\n-- maxIterations=10000\n"
-                }
-                3 -> "Runtime.getLoopCount()\n"
-                else -> "Runtime.getLoopElapsedMs()\n"
+                0 -> "${prefix}forever"
+                1 -> if (variableMode) countVariable?.let { "${prefix}repeat:variable:$it" }
+                    else "${prefix}repeat:fixed:${count.toLongOrNull()?.coerceIn(0, 1_000_000) ?: 1}"
+                2 -> if (variableMode) timeVariable?.let { "${prefix}timed:variable:$it" }
+                    else {
+                        val multiplier = when (timeUnit) { "分钟" -> 60_000L; "秒" -> 1_000L; else -> 1L }
+                        val duration = ((time.toDoubleOrNull() ?: 0.0) * multiplier).toLong().coerceIn(1, 86_400_000)
+                        "${prefix}timed:fixed:$duration"
+                    }
+                3 -> loopCountVariable?.let { "${prefix}metric:count:$it" }
+                else -> loopTimeVariable?.let { "${prefix}metric:elapsed:$it" }
             }
-            onInsert(snippet); onDismiss()
+            if (snippet == null) {
+                validationError = "请先选择变量"
+            } else {
+                validationError = null
+                onInsert(snippet)
+                onDismiss()
+            }
         }))
     }
     picker?.let { request -> PickerDialog(request) { picker = null } }
@@ -913,7 +1002,8 @@ private fun LoopValueModeChoice(variableMode: Boolean, onSelected: (Boolean) -> 
                 textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f).fillMaxHeight()
                     .background(if (variableMode == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
-                    .clickable { onSelected(value) }.padding(top = 4.dp),
+                    .clickable { onSelected(value) }
+                    .wrapContentSize(Alignment.Center),
             )
         }
     }
@@ -950,7 +1040,7 @@ private fun DenseLoopValue(value: String, onValue: (String) -> Unit, unit: Strin
 }
 
 @Composable
-private fun DenseVariableSelector(type: String, name: String) {
+private fun DenseVariableSelector(type: String, name: String, onSelect: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(30.dp).background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp))
             .border(1.dp, EntryBorder, RoundedCornerShape(3.dp)),
@@ -960,9 +1050,15 @@ private fun DenseVariableSelector(type: String, name: String) {
         DividerVertical()
         Text(name, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
         DividerVertical()
-        Text("选择变量", fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(.72f).fillMaxHeight().clickable { }.padding(top = 8.dp))
+        Text("选择变量", fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(.72f).fillMaxHeight().clickable(onClick = onSelect).wrapContentSize(Alignment.Center))
     }
 }
+
+private fun variablePicker(
+    variables: List<String>,
+    selected: String?,
+    onSelected: (String) -> Unit,
+): PickerRequest = PickerRequest("选择变量", variables, selected, onSelected)
 
 @Composable
 private fun CommonPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
@@ -1102,74 +1198,263 @@ private fun DenseRuntimeMode(label: String, options: List<String>, selected: Int
     }
 }
 
-/**
- * `service_tk_debug_control.xml` + `debug_page_output / switch / runtime` 三个子页。
- *
- * R0 契约（`schema/api-schema/functions`，25 个）里没有日志/运行提示 API，也没有调试协议，
- * 所以“运行输出”不能插入任何真实调用，开关全部禁用并标明未开放。以前这里插入的 `Log.info(...)` /
- * `Debug.checkpoint()` 都是不存在的函数，Lua 运行时会 `attempt to index global 'Log'`，已删除。
- */
+/** `service_tk_debug_control.xml` 的三栏内容复刻：标题区、左导航、右配置卡和固定底栏。 */
 @Composable
-private fun DebugPage(onDismiss: () -> Unit) {
+private fun DebugPage(
+    onDismiss: () -> Unit,
+    onInsert: (String) -> Unit,
+    initialSettings: ProjectDebugSettings,
+    onSaveSettings: (ProjectDebugSettings) -> Unit,
+) {
     val tabs = listOf("运行输出", "调试设置", "开发环境")
     var selected by remember { mutableStateOf(0) }
     var outputConsole by remember { mutableStateOf(false) }
     var outputText by remember { mutableStateOf("") }
-    SplitEntryPage(
-        "调试功能",
-        tabs,
-        selected,
-        { selected = it },
-        onDismiss,
-        onAdd = {},
-        headerHint = "调试/运行延迟，控制台日志开启会降低运行速度，仅开发时生效！",
-        showAdd = false,
-    ) {
-        when (selected) {
-            0 -> {
-                Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f).fillMaxHeight().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp)) {
-                        listOf(false to "运行提示", true to "控制台日志").forEach { (value, label) ->
-                            Text(label, color = if (outputConsole == value) EntryBlue else EntryMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                                modifier = Modifier.weight(1f).fillMaxHeight().background(if (outputConsole == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp)).clickable { outputConsole = value }.padding(top = 3.dp))
+    var runDelayMs by remember(initialSettings) { mutableStateOf(initialSettings.runDelayMs) }
+    var delayPicker by remember { mutableStateOf<PickerRequest?>(null) }
+    Column(Modifier.fillMaxSize()) {
+        DebugHeader()
+        DividerLine()
+        Row(Modifier.weight(1f)) {
+            DebugNavigation(tabs, selected) { selected = it }
+            DividerVertical()
+            Box(Modifier.weight(1f).fillMaxHeight().padding(12.dp)) {
+                when (selected) {
+                    0 -> DebugOutputPanel(
+                        outputConsole = outputConsole,
+                        onOutputConsoleChange = { outputConsole = it },
+                        outputText = outputText,
+                        onOutputTextChange = { outputText = it },
+                    )
+                    1 -> DebugSettingsPanel(runDelayMs) {
+                        val choices = listOf(0, 100, 300, 500, 1_000, 3_000, 5_000, 10_000)
+                        delayPicker = PickerRequest(
+                            title = "运行延迟",
+                            options = choices.map { "${it}毫秒" },
+                            selected = "${runDelayMs}毫秒",
+                        ) { choice ->
+                            runDelayMs = choice.removeSuffix("毫秒").toIntOrNull()?.coerceIn(0, 60_000)
+                                ?: runDelayMs
                         }
                     }
-                    Text("选择变量", color = EntryMuted, fontSize = 10.sp, textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(start = 8.dp).width(95.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(top = 7.dp))
+                    else -> DebugEnvironmentPanel()
                 }
-                BasicTextField(
-                    value = outputText,
-                    onValueChange = { outputText = it },
-                    textStyle = TextStyle(fontSize = 11.sp, color = Color(0xFF202839)),
-                    modifier = Modifier.fillMaxWidth().height(150.dp).padding(top = 7.dp).border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(8.dp),
-                    decorationBox = { field -> Box { if (outputText.isEmpty()) Text("请输入运行提示内容", color = Color(0xFFB3BAC7), fontSize = 11.sp); field() } },
+            }
+        }
+        FooterButtons(
+            listOf(
+                "取消" to onDismiss,
+                (if (selected == 0) "加入" else "保存") to {
+                    if (selected != 0) {
+                        onSaveSettings(ProjectDebugSettings(runDelayMs = runDelayMs))
+                    } else {
+                        val level = if (outputConsole) "info" else "warn"
+                        val text = outputText.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+                        onInsert("Log.$level(\"$text\")\n")
+                    }
+                },
+            ),
+        )
+    }
+    delayPicker?.let { request -> PickerDialog(request) { delayPicker = null } }
+}
+
+@Composable
+private fun DebugHeader() {
+    Row(
+        Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("调试功能", color = EntryAccent, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(118.dp))
+        Text(
+            "调试/运行延迟，控制台日志开启会降低运行速度，仅开发时生效！",
+            color = EntryAccent,
+            // 720px 宽实机也必须保持参考图的一行说明，不能挤成两行占用标题区。
+            fontSize = 6.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int) -> Unit) {
+    Column(Modifier.width(116.dp).fillMaxHeight().background(Color.White)) {
+        tabs.forEachIndexed { index, label ->
+            Box(
+                Modifier.fillMaxWidth().height(48.dp).clickable { onSelected(index) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.align(Alignment.CenterStart).width(2.dp).fillMaxHeight()
+                        .background(if (selected == index) EntryAccent else Color.Transparent),
                 )
                 Text(
-                    "运行提示 / 控制台日志节点需要脚本日志 API；当前 R0 契约尚未包含，加入契约后这里才能插入。",
-                    color = AutoScriptPalette.Danger,
-                    fontSize = 10.sp,
-                    lineHeight = 14.sp,
-                    modifier = Modifier.padding(top = 8.dp),
+                    label,
+                    color = if (selected == index) EntryAccent else Color(0xFF282E38),
+                    fontSize = 13.sp,
+                    fontWeight = if (selected == index) FontWeight.Bold else FontWeight.Normal,
+                    style = CenteredDialogButtonTextStyle,
+                    textAlign = TextAlign.Center,
                 )
             }
-            1 -> {
-                DenseDebugSwitch("调试运行", false, enabled = false) {}
-                DenseDebugSwitch("运行时隐藏编程窗口", false, enabled = false) {}
-                DenseDebugSwitch("控制台日志", false, enabled = false) {}
-                DenseDebugSwitch("显示按键准星", false, enabled = false) {}
-                DenseDebugSwitch("性能信息", false, enabled = false) {}
-                DenseDebugSwitch("无障碍音量停止", false, enabled = false) {}
-                DenseDebugSwitch("停止后返回入口", false, enabled = false) {}
-                SettingChoice("运行延迟", "未开放")
-                Text("调试协议（单步、延迟、准星）属于后续阶段，Runtime 尚未提供。", color = EntryMuted, fontSize = 9.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
+@Composable
+private fun DebugOutputPanel(
+    outputConsole: Boolean,
+    onOutputConsoleChange: (Boolean) -> Unit,
+    outputText: String,
+    onOutputTextChange: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).fillMaxHeight().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp),
+            ) {
+                listOf(false to "运行提示", true to "控制台日志").forEach { (value, label) ->
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight()
+                            .background(if (outputConsole == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
+                            .clickable { onOutputConsoleChange(value) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label,
+                            color = if (outputConsole == value) EntryAccent else EntryMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Clip,
+                            style = CenteredDialogButtonTextStyle,
+                        )
+                    }
+                }
             }
-            else -> {
-                Text("开发环境", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(24.dp))
-                DenseRuntimeMode("截图服务", listOf("系统录屏", "Root"), 1)
-                DenseRuntimeMode("按键服务", listOf("无障碍", "Root"), 1)
-                DenseRuntimeMode("截屏显示", listOf("自动", "悬浮窗", "应用内"), 2)
-                DenseDebugSwitch("始终只显示一个弹窗", true, enabled = false) {}
-                Text("R0 阶段只有 Root 后端，系统录屏/无障碍未实现；服务状态见“我的 → 运行环境”。", color = EntryMuted, fontSize = 9.sp, modifier = Modifier.padding(top = 6.dp))
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier.width(64.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Text("选择变量", color = EntryAccent, fontSize = 11.sp, style = CenteredDialogButtonTextStyle) }
+        }
+        Spacer(Modifier.height(9.dp))
+        Box(
+            Modifier.fillMaxWidth().weight(1f).border(1.dp, EntryBorder, RoundedCornerShape(4.dp)).padding(10.dp),
+        ) {
+            BasicTextField(
+                value = outputText,
+                onValueChange = onOutputTextChange,
+                textStyle = TextStyle(fontSize = 13.sp, color = Color(0xFF202839)),
+                modifier = Modifier.fillMaxSize(),
+                decorationBox = { field ->
+                    Box(Modifier.fillMaxSize()) {
+                        if (outputText.isEmpty()) Text("请输入运行提示内容", color = Color(0xFFB3BAC7), fontSize = 13.sp)
+                        field()
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DebugSettingsPanel(runDelayMs: Int, onPickDelay: () -> Unit) {
+    val rows = listOf("调试运行", "运行时隐藏编程窗口", "控制台日志", "显示按键准星", "性能信息", "无障碍音量停止", "停止后返回入口")
+    Column(Modifier.fillMaxSize()) {
+        DebugBorderCard(Modifier.weight(1f)) {
+            rows.forEachIndexed { index, label ->
+                DebugPreviewSwitchRow(label, checked = index != 1)
+                if (index != rows.lastIndex) DividerLine()
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        DebugBorderCard(Modifier.height(98.dp)) {
+            Row(Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("运行延迟", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text(
+                    "${runDelayMs}毫秒",
+                    color = EntryAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable(onClick = onPickDelay),
+                )
+            }
+            Box(Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 16.dp, vertical = 20.dp)) {
+                Box(Modifier.fillMaxWidth().height(2.dp).align(Alignment.Center).background(Color(0xFFE9ECF1)))
+                Box(Modifier.size(12.dp).align(Alignment.CenterStart).background(EntryAccent, RoundedCornerShape(12.dp)))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugEnvironmentPanel() {
+    Column(Modifier.fillMaxSize()) {
+        DebugBorderCard(Modifier.weight(1f)) {
+            Text("开发环境", fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(43.dp).padding(horizontal = 10.dp, vertical = 12.dp))
+            DebugSegmentRow("截图服务", listOf("系统录屏", "Root"), 1)
+            DividerLine()
+            DebugSegmentRow("按键服务", listOf("无障碍", "Root"), 1)
+            DividerLine()
+            DebugSegmentRow("截屏显示", listOf("自动", "悬浮窗", "应用内"), 0)
+            DividerLine()
+            DebugPreviewSwitchRow("始终只显示一个弹窗", checked = false)
+        }
+    }
+}
+
+@Composable
+private fun DebugBorderCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Column(modifier.fillMaxWidth().border(1.dp, EntryBorder, RoundedCornerShape(4.dp)), content = { content() })
+}
+
+@Composable
+private fun DebugPreviewSwitchRow(label: String, checked: Boolean) {
+    Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        DebugStaticSwitch(checked)
+    }
+}
+
+/** 只作参考布局展示；正式接入运行配置前不把开关做成可点击的假功能。 */
+@Composable
+private fun DebugStaticSwitch(checked: Boolean) {
+    Box(
+        Modifier.size(width = 45.dp, height = 26.dp)
+            .background(if (checked) Color(0xFF31C75A) else Color(0xFFD1D5DB), RoundedCornerShape(13.dp))
+            .padding(2.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(Modifier.size(22.dp).background(Color.White, RoundedCornerShape(11.dp)))
+    }
+}
+
+@Composable
+private fun DebugSegmentRow(label: String, options: List<String>, selected: Int) {
+    Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 13.sp, modifier = Modifier.width(76.dp))
+        Row(Modifier.weight(1f).height(30.dp).background(Color(0xFFF4F6FA), RoundedCornerShape(6.dp)).padding(2.dp)) {
+            options.forEachIndexed { index, option ->
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().background(if (selected == index) Color.White else Color.Transparent, RoundedCornerShape(5.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        option,
+                        color = if (selected == index) EntryAccent else EntryMuted,
+                        fontSize = 10.sp,
+                        fontWeight = if (selected == index) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                        textAlign = TextAlign.Center,
+                        style = CenteredDialogButtonTextStyle,
+                    )
+                }
             }
         }
     }
@@ -1285,19 +1570,23 @@ private fun PickerDialog(request: PickerRequest, onDismiss: () -> Unit) {
             Column {
                 Text(request.title, color = EntryBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp, vertical = 10.dp))
                 DividerLine()
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).height((request.options.size.coerceAtMost(6) * 40).dp)) {
-                    request.options.forEach { option ->
-                        Row(
-                            Modifier.fillMaxWidth().height(40.dp)
-                                .background(if (selected == option) Color(0xFFEAF0FF) else Color.White)
-                                .clickable { selected = option }
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(option, color = Color(0xFF202839), fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            if (selected == option) Text("✓", color = EntryAccent, fontSize = 15.sp)
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).height((request.options.size.coerceIn(1, 6) * 40).dp)) {
+                    if (request.options.isEmpty()) {
+                        Text("暂无可选变量，请先在“变量”中添加。", color = EntryMuted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center))
+                    } else {
+                        request.options.forEach { option ->
+                            Row(
+                                Modifier.fillMaxWidth().height(40.dp)
+                                    .background(if (selected == option) Color(0xFFEAF0FF) else Color.White)
+                                    .clickable { selected = option }
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(option, color = Color(0xFF202839), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                if (selected == option) Text("✓", color = EntryAccent, fontSize = 15.sp)
+                            }
+                            DividerLine()
                         }
-                        DividerLine()
                     }
                 }
                 FooterButtons(listOf("取消" to onDismiss, "确定" to {
@@ -1386,11 +1675,47 @@ private fun AiSidePanelDialog(kind: String, onDismiss: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(40.dp)) {
         buttons.forEachIndexed { index, (label, action) ->
             if (index > 0) DividerVertical()
-            Text(label, color = if (index == buttons.lastIndex) EntryAccent else Color(0xFF202839), fontSize = fontSize.sp, fontWeight = if (index == buttons.lastIndex) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f).fillMaxHeight().clickable(onClick = action).padding(top = 12.dp))
+            CenteredFooterAction(
+                label = label,
+                color = if (index == buttons.lastIndex) EntryAccent else Color(0xFF202839),
+                onClick = action,
+                modifier = Modifier.weight(1f),
+                fontSize = fontSize,
+                bold = index == buttons.lastIndex,
+            )
         }
     }
 }
+
+/** Shared dialog-action base: center by layout, never by a font-specific top padding. */
+@Composable
+private fun CenteredFooterAction(
+    label: String,
+    color: Color,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    fontSize: Int = 12,
+    bold: Boolean = false,
+) {
+    Box(
+        modifier = modifier.fillMaxHeight().clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = color,
+            fontSize = fontSize.sp,
+            lineHeight = fontSize.sp,
+            style = CenteredDialogButtonTextStyle,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+private val CenteredDialogButtonTextStyle = TextStyle(
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+)
 
 // 文件弹窗（service_tk_xt_wj_gl_layout）的分割线是 1.0dp 的 hs，不是 px 发线。
 @Composable private fun DividerLine() = Box(Modifier.fillMaxWidth().height(1.dp).background(AutoScriptPalette.Divider))

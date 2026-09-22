@@ -20,9 +20,15 @@ pub struct ProjectManifest {
     #[serde(default)]
     pub entry_point: Option<String>,
     #[serde(default)]
+    pub lua_files: Vec<String>,
+    #[serde(default)]
+    pub lua_directories: Vec<String>,
+    #[serde(default)]
     pub entry_flow_id: Option<String>,
     #[serde(default)]
     pub flows: Vec<ProjectFlow>,
+    #[serde(default)]
+    pub variables: Vec<ProjectVariable>,
     #[serde(default)]
     pub resources: Vec<ProjectResource>,
     pub capabilities: Vec<String>,
@@ -56,6 +62,33 @@ pub struct ProjectFlow {
     pub root_block_id: String,
     pub params: Vec<ProjectParameter>,
     pub returns: Option<ProjectReturn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectVariable {
+    pub name: String,
+    pub scope: ProjectVariableScope,
+    #[serde(default)]
+    pub flow_id: Option<String>,
+    #[serde(rename = "type")]
+    pub value_type: ProjectVariableType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectVariableScope {
+    Global,
+    Flow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectVariableType {
+    Integer,
+    Number,
+    String,
+    Image,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -181,6 +214,8 @@ pub enum ProjectManifestError {
     DuplicateCapability(String),
     InvalidParameter(String),
     DuplicateParameter(String),
+    InvalidVariable(String),
+    DuplicateVariable(String),
     TooManyResources,
     InvalidResourcePath(String),
     DuplicateResourcePath(String),
@@ -293,9 +328,52 @@ fn validate_manifest(manifest: &ProjectManifest) -> Result<(), ProjectManifestEr
         return Err(ProjectManifestError::InvalidDesignSize);
     }
     validate_source_mode(manifest)?;
+    validate_variables(manifest)?;
     validate_resources(&manifest.resources)?;
     validate_capabilities(&manifest.capabilities)?;
     validate_runner_ui(manifest.runner_ui.as_ref())
+}
+
+fn validate_variables(manifest: &ProjectManifest) -> Result<(), ProjectManifestError> {
+    if manifest.variables.len() > 256 {
+        return Err(ProjectManifestError::InvalidVariable(
+            "too many variables".to_owned(),
+        ));
+    }
+    let flow_ids = manifest
+        .flows
+        .iter()
+        .map(|flow| flow.flow_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut declarations = HashSet::with_capacity(manifest.variables.len());
+    for variable in &manifest.variables {
+        if variable.name.len() > 64 || !valid_identifier(&variable.name) {
+            return Err(ProjectManifestError::InvalidVariable(variable.name.clone()));
+        }
+        let key = match variable.scope {
+            ProjectVariableScope::Global => {
+                if variable.flow_id.is_some() {
+                    return Err(ProjectManifestError::InvalidVariable(variable.name.clone()));
+                }
+                format!("global:{}", variable.name)
+            }
+            ProjectVariableScope::Flow => {
+                let Some(flow_id) = variable.flow_id.as_deref() else {
+                    return Err(ProjectManifestError::InvalidVariable(variable.name.clone()));
+                };
+                if !flow_ids.contains(flow_id) {
+                    return Err(ProjectManifestError::InvalidVariable(variable.name.clone()));
+                }
+                format!("flow:{flow_id}:{}", variable.name)
+            }
+        };
+        if !declarations.insert(key) {
+            return Err(ProjectManifestError::DuplicateVariable(
+                variable.name.clone(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Validates the optional dynamic form exposed by a packaged runner.
@@ -406,6 +484,44 @@ fn validate_source_mode(manifest: &ProjectManifest) -> Result<(), ProjectManifes
                     entry_point.to_owned(),
                 ));
             }
+            let lua_files: Vec<&str> = if manifest.lua_files.is_empty() {
+                vec![entry_point]
+            } else {
+                manifest.lua_files.iter().map(String::as_str).collect()
+            };
+            if lua_files.len() > 128
+                || lua_files.iter().any(|path| !valid_lua_entry_point(path))
+                || !lua_files.windows(2).all(|pair| pair[0] < pair[1])
+                || !lua_files.iter().any(|path| *path == entry_point)
+            {
+                return Err(ProjectManifestError::InvalidEntryPoint(
+                    entry_point.to_owned(),
+                ));
+            }
+            let lua_directories: Vec<&str> = if manifest.lua_directories.is_empty() {
+                vec!["lua"]
+            } else {
+                manifest
+                    .lua_directories
+                    .iter()
+                    .map(String::as_str)
+                    .collect()
+            };
+            if lua_directories.len() > 128
+                || lua_directories
+                    .iter()
+                    .any(|path| !valid_lua_directory(path))
+                || !lua_directories.windows(2).all(|pair| pair[0] < pair[1])
+                || !lua_directories.contains(&"lua")
+                || lua_files
+                    .iter()
+                    .flat_map(|path| lua_parent_directories(path))
+                    .any(|parent| !lua_directories.contains(&parent))
+            {
+                return Err(ProjectManifestError::InvalidEntryPoint(
+                    entry_point.to_owned(),
+                ));
+            }
         }
         ProjectSourceMode::Visual => {
             if manifest.entry_point.is_some() {
@@ -492,7 +608,64 @@ fn validate_flows(
 }
 
 fn valid_lua_entry_point(value: &str) -> bool {
-    value == "main.lua"
+    if value == "main.lua" {
+        return true;
+    }
+    let Some(relative) = value.strip_prefix("lua/") else {
+        return false;
+    };
+    let segments: Vec<&str> = relative.split('/').collect();
+    if !(1..=5).contains(&segments.len()) {
+        return false;
+    }
+    let Some(file) = segments.last().and_then(|name| name.strip_suffix(".lua")) else {
+        return false;
+    };
+    segments[..segments.len() - 1]
+        .iter()
+        .all(|segment| valid_lua_path_segment(segment))
+        && valid_lua_path_segment(file)
+}
+
+fn valid_lua_path_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 64
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || character == '_'
+                || character == '-'
+                || ('\u{4e00}'..='\u{9fff}').contains(&character)
+        })
+}
+
+fn valid_lua_directory(value: &str) -> bool {
+    let Some(relative) = value.strip_prefix("lua") else {
+        return false;
+    };
+    if relative.is_empty() {
+        return true;
+    }
+    let Some(relative) = relative.strip_prefix('/') else {
+        return false;
+    };
+    let segments: Vec<&str> = relative.split('/').collect();
+    (1..=5).contains(&segments.len())
+        && segments
+            .iter()
+            .all(|segment| valid_lua_path_segment(segment))
+}
+
+fn lua_parent_directories(path: &str) -> Vec<&str> {
+    if path == "main.lua" {
+        return Vec::new();
+    }
+    let parts: Vec<&str> = path.split('/').collect();
+    (1..parts.len())
+        .map(|index| match index {
+            1 => "lua",
+            _ => &path[..parts[..index].iter().map(|part| part.len()).sum::<usize>() + index - 1],
+        })
+        .collect()
 }
 
 fn valid_identifier(value: &str) -> bool {
@@ -719,6 +892,34 @@ mod tests {
             .expect("valid manifest");
         assert_eq!(parsed.flows[0].flow_id, "main");
         assert_eq!(parsed.source_mode, ProjectSourceMode::Visual);
+    }
+
+    #[test]
+    fn typed_global_and_flow_variables_are_validated() {
+        let source = manifest("visual/flows/main.jsonl", "main").replace(
+            r#""capabilities""#,
+            r#""variables":[{"name":"total","scope":"global","flowId":null,"type":"integer"},{"name":"frame","scope":"flow","flowId":"main","type":"image"}],"capabilities""#,
+        );
+        let parsed = parse_project_manifest(source.as_bytes()).expect("typed variables");
+        assert_eq!(parsed.variables.len(), 2);
+
+        let invalid = source.replace(
+            r#""name":"frame","scope":"flow","flowId":"main""#,
+            r#""name":"frame","scope":"flow","flowId":"missing""#,
+        );
+        assert_eq!(
+            parse_project_manifest(invalid.as_bytes()).expect_err("missing Flow must fail"),
+            ProjectManifestError::InvalidVariable("frame".to_owned()),
+        );
+
+        let duplicate = source.replace(
+            r#"],"capabilities""#,
+            r#",{"name":"total","scope":"global","flowId":null,"type":"number"}],"capabilities""#,
+        );
+        assert!(matches!(
+            parse_project_manifest(duplicate.as_bytes()),
+            Err(ProjectManifestError::DuplicateVariable(name)) if name == "total"
+        ));
     }
 
     #[test]

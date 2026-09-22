@@ -75,6 +75,7 @@ enum RenderEvent<'a> {
     Block(&'a str, usize),
     Node(&'a flow_ir::FlowNode, usize),
     Line(usize, &'static str),
+    OwnedLine(usize, String),
 }
 
 fn render_flow_body<'a>(
@@ -89,6 +90,7 @@ fn render_flow_body<'a>(
     while let Some(event) = events.pop() {
         match event {
             RenderEvent::Line(indent, line) => writer.indented(indent, line),
+            RenderEvent::OwnedLine(indent, line) => writer.indented(indent, &line),
             RenderEvent::Block(block_id, indent) => {
                 for node in blocks.get(block_id).into_iter().flatten().rev() {
                     events.push(RenderEvent::Node(node, indent));
@@ -137,6 +139,7 @@ fn render_node<'a>(
             );
         }
         "task.sleep"
+        | "task.log"
         | "input.tap"
         | "input.swipe"
         | "input.keyevent"
@@ -209,6 +212,24 @@ fn render_if<'a>(
     events.push(RenderEvent::Line(indent, "end"));
     events.push(RenderEvent::Block(child_block(node, "else")?, indent + 1));
     events.push(RenderEvent::Line(indent, "else"));
+    for (index, branch) in arguments.else_if.iter().enumerate().rev() {
+        events.push(RenderEvent::Block(
+            child_block(node, &format!("elseIf{index}"))?,
+            indent + 1,
+        ));
+        events.push(RenderEvent::OwnedLine(
+            indent,
+            format!(
+                "elseif {} then",
+                comparison_expression(
+                    &branch.variable,
+                    branch.operator,
+                    &branch.value,
+                    branch.value_variable.as_deref(),
+                )?
+            ),
+        ));
+    }
     events.push(RenderEvent::Block(child_block(node, "then")?, indent + 1));
     Ok(())
 }
@@ -226,15 +247,39 @@ fn render_repeat<'a>(
         return Err(invalid_builtin_variant());
     };
     writer.indented(indent, "do");
-    let start = writer.next_line();
     writer.indented(
         indent + 1,
-        &format!("for __index = 1, {} do", arguments.times),
+        "local __loop_started_at = System.elapsedRealtimeMillis()",
     );
+    writer.indented(indent + 1, "local __loop_count = 0");
+    if let Some(name) = &arguments.times_variable {
+        writer.indented(
+            indent + 1,
+            &format!("local __loop_times = __vars[{}]", lua_string(name)?),
+        );
+        writer.indented(indent + 1, "if type(__loop_times) ~= \"number\" or __loop_times % 1 ~= 0 or __loop_times < 0 or __loop_times > 1000000 then error(\"control.repeat timesVariable is invalid\", 0) end");
+    } else {
+        writer.indented(
+            indent + 1,
+            &format!("local __loop_times = {}", arguments.times),
+        );
+    }
+    let start = writer.next_line();
+    writer.indented(indent + 1, "for __index = 1, __loop_times do");
+    writer.indented(indent + 2, "__loop_count = __index");
     if let Some(name) = &arguments.index_variable {
         writer.indented(
             indent + 2,
             &format!("__vars[{}] = __index", lua_string(name)?),
+        );
+    }
+    if let Some(name) = &arguments.elapsed_variable {
+        writer.indented(
+            indent + 2,
+            &format!(
+                "__vars[{}] = System.elapsedRealtimeMillis() - __loop_started_at",
+                lua_string(name)?
+            ),
         );
     }
     push_source_entry(flow_id, node, start, writer.current_line(), entries);
@@ -258,12 +303,52 @@ fn render_while<'a>(
     };
     writer.indented(indent, "do");
     writer.indented(indent + 1, "local __iterations = 0");
+    writer.indented(
+        indent + 1,
+        "local __loop_started_at = System.elapsedRealtimeMillis()",
+    );
+    if let Some(name) = &arguments.duration_variable {
+        writer.indented(
+            indent + 1,
+            &format!("local __loop_duration = __vars[{}]", lua_string(name)?),
+        );
+        writer.indented(indent + 1, "if type(__loop_duration) ~= \"number\" or __loop_duration <= 0 then error(\"control.while durationVariable is invalid\", 0) end");
+    } else if let Some(duration) = arguments.duration_ms {
+        writer.indented(indent + 1, &format!("local __loop_duration = {duration}"));
+    }
     let start = writer.next_line();
     writer.indented(
         indent + 1,
-        &format!("while {} do", render_while_comparison(arguments)?),
+        &format!(
+            "while {}{} do",
+            if arguments.always {
+                "true".to_owned()
+            } else {
+                render_while_comparison(arguments)?
+            },
+            if arguments.duration_ms.is_some() || arguments.duration_variable.is_some() {
+                " and System.elapsedRealtimeMillis() - __loop_started_at < __loop_duration"
+            } else {
+                ""
+            }
+        ),
     );
     writer.indented(indent + 2, "__iterations = __iterations + 1");
+    if let Some(name) = &arguments.iteration_variable {
+        writer.indented(
+            indent + 2,
+            &format!("__vars[{}] = __iterations", lua_string(name)?),
+        );
+    }
+    if let Some(name) = &arguments.elapsed_variable {
+        writer.indented(
+            indent + 2,
+            &format!(
+                "__vars[{}] = System.elapsedRealtimeMillis() - __loop_started_at",
+                lua_string(name)?
+            ),
+        );
+    }
     writer.indented(
         indent + 2,
         &format!(
@@ -314,6 +399,14 @@ fn push_source_entry(
 fn render_builtin(arguments: &BuiltinNodeArgs) -> Result<String, CompileError> {
     match arguments {
         BuiltinNodeArgs::Sleep(value) => Ok(format!("Task.sleep({})", value.milliseconds)),
+        BuiltinNodeArgs::Log(value) => {
+            let level = match value.level {
+                crate::analyze::LogLevel::Info => "info",
+                crate::analyze::LogLevel::Warn => "warn",
+                crate::analyze::LogLevel::Error => "error",
+            };
+            Ok(format!("Log.{level}({})", lua_string(&value.message)?))
+        }
         BuiltinNodeArgs::Tap(value) => Ok(format!("Input.tap({},{})", value.x, value.y)),
         BuiltinNodeArgs::Swipe(value) => Ok(format!(
             "Input.swipe({},{},{},{},{})",
@@ -616,23 +709,38 @@ fn render_glyph_ocr(value: &crate::analyze::GlyphOcrArgs) -> Result<String, Comp
 }
 
 fn render_comparison(arguments: &crate::analyze::ComparisonArgs) -> Result<String, CompileError> {
-    comparison_expression(&arguments.variable, arguments.operator, &arguments.value)
+    comparison_expression(
+        &arguments.variable,
+        arguments.operator,
+        &arguments.value,
+        arguments.value_variable.as_deref(),
+    )
 }
 
 fn render_while_comparison(arguments: &crate::analyze::WhileArgs) -> Result<String, CompileError> {
-    comparison_expression(&arguments.variable, arguments.operator, &arguments.value)
+    comparison_expression(
+        &arguments.variable,
+        arguments.operator,
+        &arguments.value,
+        None,
+    )
 }
 
 fn comparison_expression(
     variable: &str,
     operator: ComparisonOperator,
     value: &Value,
+    value_variable: Option<&str>,
 ) -> Result<String, CompileError> {
+    let right = match value_variable {
+        Some(name) => format!("__vars[{}]", lua_string(name)?),
+        None => lua_literal(value)?,
+    };
     Ok(format!(
         "__compare(__vars[{}],{}, {})",
         lua_string(variable)?,
         lua_string(comparison_operator(operator))?,
-        lua_literal(value)?
+        right
     ))
 }
 

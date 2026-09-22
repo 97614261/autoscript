@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAGIC: [u8; 4] = *b"ASRD";
 const HEADER_BYTES: usize = 32;
@@ -16,6 +16,7 @@ impl Capabilities {
     pub const INPUT_MULTI_TOUCH: u64 = 1 << 1;
     pub const WINDOW_BOUNDS: u64 = 1 << 2;
     pub const CAPTURE_RAW: u64 = 1 << 3;
+    pub const INPUT_POINTER_SINGLE: u64 = 1 << 4;
 
     #[must_use]
     pub const fn from_bits(bits: u64) -> Self {
@@ -97,6 +98,9 @@ pub enum Command {
     Capture = 9,
     CaptureChunk = 10,
     ReleaseCapture = 11,
+    PointerDown = 12,
+    PointerMove = 13,
+    PointerUp = 14,
 }
 
 impl Command {
@@ -113,6 +117,9 @@ impl Command {
             9 => Some(Self::Capture),
             10 => Some(Self::CaptureChunk),
             11 => Some(Self::ReleaseCapture),
+            12 => Some(Self::PointerDown),
+            13 => Some(Self::PointerMove),
+            14 => Some(Self::PointerUp),
             _ => None,
         }
     }
@@ -361,7 +368,11 @@ fn validate_command_payload(
         )
         | (FrameKind::Response, StatusCode::Ok, Command::Hello) => payload.len() == 8,
         (FrameKind::Request, StatusCode::Ok, Command::Swipe) => payload.len() == 20,
+        (FrameKind::Request, StatusCode::Ok, Command::PointerDown | Command::PointerMove) => {
+            payload.len() == 12
+        }
         (FrameKind::Request, StatusCode::Ok, Command::KeyEvent) => payload.len() == 4,
+        (FrameKind::Request, StatusCode::Ok, Command::PointerUp) => payload.len() == 4,
         (FrameKind::Request, StatusCode::Ok, Command::CaptureChunk)
         | (FrameKind::Response, StatusCode::Ok, Command::GetWindowBounds) => payload.len() == 16,
         (FrameKind::Response, StatusCode::Ok, Command::Capture) => payload.len() == 32,
@@ -515,6 +526,16 @@ mod tests {
             sender.encode(Command::Tap, 1, &[0; 7]),
             Err(ProtocolError::InvalidCommandPayload(Command::Tap))
         );
+        assert_eq!(
+            sender.encode(Command::PointerDown, 2, &[0; 11]),
+            Err(ProtocolError::InvalidCommandPayload(Command::PointerDown))
+        );
+        sender
+            .encode(Command::PointerDown, 3, &[0; 12])
+            .expect("pointer payload");
+        sender
+            .encode(Command::PointerUp, 4, &[0; 4])
+            .expect("pointer release payload");
     }
 
     #[test]
