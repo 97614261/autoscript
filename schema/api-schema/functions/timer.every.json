@@ -1,0 +1,6 @@
+{
+  "schemaVersion":1,"opcode":3003,"name":"Timer.every","since":"1.7","capability":"core.task","execution":"async_task","cancelMode":"cooperative","sideEffect":"task","timeoutMs":null,"resourceOwnership":"task",
+  "summary":"创建非重入周期回调；错过tick合并，回调失败终止所有者，父任务结束自动取消。",
+  "params":[{"name":"milliseconds","type":"integer","required":true,"summary":"10–60000毫秒。"},{"name":"callback","type":"function","required":true,"summary":"VM内无参数回调，不能通过宿主边界。"}],
+  "returns":{"type":"integer","nullable":false,"summary":"定时器ID，仅创建者可取消。"},"legacyAliases":[]
+}

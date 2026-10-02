@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <size android:width="48dp" android:height="48dp" />
+            <solid android:color="@color/zhigou_icon_background" />
+        </shape>
+    </item>
+    <item android:width="40dp" android:height="40dp" android:gravity="center">
+        <bitmap
+            android:src="@drawable/zhigou_brand_mark"
+            android:gravity="fill"
+            android:filter="true" />
+    </item>
+</layer-list>

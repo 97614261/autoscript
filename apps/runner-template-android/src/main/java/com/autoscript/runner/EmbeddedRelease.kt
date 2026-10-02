@@ -32,6 +32,8 @@ internal data class EmbeddedRelease(
 internal data class RunnerUiDefinition(
     val description: String?,
     val fields: List<RunnerUiFieldDefinition>,
+    val script: com.autoscript.script.ui.ScriptUiDefinition? = null,
+    val rawJson: com.google.gson.JsonObject? = null,
 )
 
 internal data class RunnerUiFieldDefinition(
@@ -124,7 +126,7 @@ internal object EmbeddedReleaseLoader {
             totalBytes = Math.addExact(totalBytes, bytes.size.toLong())
             require(totalBytes <= MAX_RELEASE_BYTES) { "发布包载荷超过 512 MiB" }
             val target = File(canonicalRoot, resource.logicalPath).canonicalFile
-            require(target.toPath().startsWith(canonicalRoot.toPath()) && target != canonicalRoot) {
+            require(target.path.startsWith(canonicalRoot.path + File.separator) && target != canonicalRoot) {
                 "发布资源路径越界"
             }
             writeVerifiedResource(target, bytes, resource.sha256)
@@ -283,6 +285,14 @@ internal object EmbeddedReleaseLoader {
     }
 
     private fun parseRunnerUi(value: JSONObject): RunnerUiDefinition {
+        if (value.has("version")) {
+            val script = com.autoscript.script.ui.ScriptUiDefinition.parse(value.toString())
+            return RunnerUiDefinition(script.description, script.fields.map { f ->
+                val kind = RunnerUiFieldKind.valueOf(f.kind.uppercase())
+                val initial = when (kind) { RunnerUiFieldKind.INTEGER -> RunnerUiValue.Integer(f.initialValue.toLong()); RunnerUiFieldKind.BOOLEAN -> RunnerUiValue.BooleanValue(f.initialValue.toBooleanStrict()); else -> RunnerUiValue.Text(f.initialValue) }
+                RunnerUiFieldDefinition(f.id, f.label, kind, f.required, initial, f.minimum, f.maximum, f.options)
+            }, script, com.google.gson.JsonParser.parseString(value.toString()).asJsonObject)
+        }
         value.requireKeys("description", "fields")
         val description = if (value.isNull("description")) null else value.requiredText("description")
         require(
@@ -452,6 +462,14 @@ internal object EmbeddedReleaseLoader {
                 field.maximum?.let { digestField(digest, it.toString()) }
                 digestField(digest, field.options.size.toString())
                 field.options.forEach { digestField(digest, it) }
+                ui.script?.takeIf { it.version == 2 }?.let { script ->
+                    val raw = (ui.rawJson ?: script.toJson()).getAsJsonArray("fields").single { it.asJsonObject.get("id").asString == field.id }.asJsonObject.get("ui")
+                    digestField(digest, com.autoscript.script.ui.canonicalUiJson(raw))
+                }
+            }
+            ui.script?.takeIf { it.version == 2 }?.let { script ->
+                digestField(digest, "2")
+                digestField(digest, com.autoscript.script.ui.canonicalUiJson((ui.rawJson ?: script.toJson()).get("pages")))
             }
         }
         release.resources.forEach { resource ->
@@ -629,7 +647,7 @@ internal object EmbeddedReleaseLoader {
     private const val MAX_CAPABILITY_LENGTH = 128
     private const val MAX_RUNNER_UI_FIELDS = 32
     private const val MAX_SOURCE_MAP_ENTRIES = 100_000
-    private const val SUPPORTED_RUNTIME_API = "1.5"
+    private const val SUPPORTED_RUNTIME_API = "1.7"
     private val PROJECT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
     private val APPLICATION_ID = Regex("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")
     private val RUNTIME_API = Regex("[0-9]+\\.[0-9]+")

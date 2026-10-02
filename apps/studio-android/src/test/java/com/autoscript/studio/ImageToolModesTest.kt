@@ -30,9 +30,9 @@ class ImageToolModesTest {
     }
 
     @Test
-    fun firstBatchModesAreEnabled() {
+    fun implementedImageAndInputModesAreEnabled() {
         val enabled = ImageToolMode.entries.filter { it.enabled }.map { it.label }.toSet()
-        assertEquals(setOf("裁剪", "范围", "取色", "多点", "单击", "滑动"), enabled)
+        assertEquals(setOf("裁剪", "范围", "取色", "多点", "单击", "长按", "滑动", "拖动", "按下", "移动", "弹起"), enabled)
     }
 
     /** OCR / 节点 / 录制是本轮明确不做的三项。 */
@@ -74,6 +74,22 @@ class ImageToolModesTest {
         var selection = ImageToolSelection()
         listOf(1, 2, 3).forEach { selection = selection.withPoint(ImageToolMode.SWIPE, point(it)) }
         assertEquals(listOf(point(2), point(3)), selection.points)
+    }
+
+    @Test
+    fun gestureModesExposeTheCorrectFloatingPickControls() {
+        assertTrue(ImageToolMode.LONG_PRESS.usesCrosshair)
+        assertTrue(ImageToolMode.DRAG.usesSlideMarkers)
+        assertTrue(ImageToolMode.POINTER_DOWN.usesCrosshair)
+        assertTrue(ImageToolMode.POINTER_MOVE.usesCrosshair)
+        assertTrue(!ImageToolMode.POINTER_UP.usesCrosshair)
+        assertTrue(listOf(ImageToolMode.POINTER_DOWN, ImageToolMode.POINTER_MOVE, ImageToolMode.POINTER_UP).all { it.needsPointerInput })
+        assertEquals(
+            listOf(point(2), point(3)),
+            listOf(1, 2, 3).fold(ImageToolSelection()) { state, x ->
+                state.withPoint(ImageToolMode.DRAG, point(x))
+            }.points,
+        )
     }
 
     /** 多点：锚点 + 64 个采样点是契约上限，再点不应继续增长。 */

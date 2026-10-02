@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn generated_contracts_are_sorted_and_unique() {
-        assert_eq!(API_CONTRACTS.len(), 26);
+        assert_eq!(API_CONTRACTS.len(), 42);
         assert!(API_CONTRACTS
             .windows(2)
             .all(|pair| pair[0].opcode < pair[1].opcode));

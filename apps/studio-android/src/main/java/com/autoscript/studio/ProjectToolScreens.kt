@@ -482,6 +482,7 @@ internal fun ImageToolsScreen(
     var previewMessage by remember(snapshot.manifest.projectId) { mutableStateOf<String?>(null) }
     var previewPending by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
     var previewSaving by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
+    var choosingScreenshotFolder by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val context = LocalContext.current
     val latestPreviewBitmap by rememberUpdatedState(previewBitmap)
@@ -596,6 +597,47 @@ internal fun ImageToolsScreen(
                                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(38.dp)
                                     .background(Color(0xFFF0F6FF), RoundedCornerShape(9.dp))
                                     .clickable(enabled = !previewSaving) {
+                                        choosingScreenshotFolder = true
+                                    }
+                                    .padding(top = 11.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            if (images.isEmpty()) {
+                item {
+                    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+                        Text("暂无图片，点右上角“导入”从项目设置添加。", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(18.dp))
+                    }
+                }
+            }
+            items(images, key = { it }) { path ->
+                Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
+                    Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(34.dp).background(AutoScriptPalette.AccentSoft, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                            Icon(painterResource(R.drawable.editor_recognition_preview_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(20.dp))
+                        }
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(path.substringAfterLast('/'), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(path, fontSize = 9.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (choosingScreenshotFolder) {
+        ImageTemplateSaveDialog(
+            imagePaths = images,
+            defaultName = "screen-${System.currentTimeMillis()}.png",
+            onDismiss = { choosingScreenshotFolder = false },
+            onSave = { folder, name ->
+                choosingScreenshotFolder = false
+                val bitmap = previewBitmap
+                if (bitmap == null) {
+                    previewMessage = "请先截图"
+                } else {
                                         previewSaving = true
                                         scope.launch {
                                             val result = withContext(Dispatchers.IO) {
@@ -628,11 +670,12 @@ internal fun ImageToolsScreen(
                                                             store.importResource(
                                                                 projectId = snapshot.manifest.projectId,
                                                                 kind = ProjectResourceKind.IMAGE,
-                                                                sourceName = "screen-${System.currentTimeMillis()}.png",
+                                                                sourceName = name,
                                                                 source = input,
                                                                 expectedResourcePaths = snapshot.manifest.resources
                                                                     .mapNotNull { it.get("path")?.asString }
                                                                     .toSet(),
+                                                                imageDirectory = folder,
                                                             )
                                                         }
                                                     } finally {
@@ -643,40 +686,15 @@ internal fun ImageToolsScreen(
                                             }
                                             result.onSuccess {
                                                 onSnapshotChanged(it)
-                                                previewMessage = "已保存为项目图片：${it.manifest.resources.last().get("path").asString.substringAfterLast('/')}"
+                                                previewMessage = "已保存为项目图片：${it.manifest.resources.last().get("path").asString}"
                                             }.onFailure {
                                                 previewMessage = it.message ?: "截图资源保存失败"
                                             }
                                             previewSaving = false
                                         }
-                                    }
-                                    .padding(top = 11.dp),
-                            )
-                        }
-                    }
                 }
-            }
-            if (images.isEmpty()) {
-                item {
-                    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
-                        Text("暂无图片，点右上角“导入”从项目设置添加。", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(18.dp))
-                    }
-                }
-            }
-            items(images, key = { it }) { path ->
-                Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
-                    Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(34.dp).background(AutoScriptPalette.AccentSoft, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-                            Icon(painterResource(R.drawable.editor_recognition_preview_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(20.dp))
-                        }
-                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                            Text(path.substringAfterLast('/'), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(path, fontSize = 9.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                        }
-                    }
-                }
-            }
-        }
+            },
+        )
     }
     if (settingsVisible) {
         ProjectSettingsDialog(

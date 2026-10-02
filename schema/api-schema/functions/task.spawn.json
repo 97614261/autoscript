@@ -1,0 +1,6 @@
+{
+  "schemaVersion":1,"opcode":3001,"name":"Task.spawn","since":"1.7","capability":"core.task","execution":"async_task","cancelMode":"cooperative","sideEffect":"task","timeoutMs":null,"resourceOwnership":"task",
+  "summary":"在同一Lua VM启动子任务；父任务结束时自动取消，失败向父任务传播。",
+  "params":[{"name":"callback","type":"function","required":true,"summary":"无参数回调，只保存在VM内，宿主边界仅传不透明登记ID。"}],
+  "returns":{"type":"integer","nullable":false,"summary":"子任务ID，仅创建者可取消。"},"legacyAliases":[]
+}

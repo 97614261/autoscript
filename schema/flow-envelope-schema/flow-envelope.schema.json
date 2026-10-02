@@ -14,6 +14,7 @@
     "orderKey": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9A-Za-z]+$" },
     "kind": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
     "nodeVersion": { "type": "integer", "minimum": 1 },
+    "disabled": { "type": "boolean", "default": false },
     "childBlocks": {
       "type": "object",
       "propertyNames": { "pattern": "^[a-z][a-zA-Z0-9]*$" },

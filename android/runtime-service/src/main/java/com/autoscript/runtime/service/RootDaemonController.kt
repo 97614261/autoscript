@@ -138,6 +138,7 @@ internal class RootDaemonController(
                 key.absolutePath,
                 ready.absolutePath,
                 IDLE_TIMEOUT_MILLIS.toString(),
+                context.applicationInfo.sourceDir,
             ).joinToString(separator = " ", transform = ::shellQuote)
             ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
         }.getOrElse {

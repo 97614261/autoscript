@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/control.loopcheck/1/control.loopcheck.schema.json",
+  "title": "当前位置检测循环阈值并退出最近循环",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "control.loopcheck" }, "nodeVersion": { "const": 1 },
+    "childBlocks": { "type": "object", "maxProperties": 0 },
+    "args": {
+      "type": "object", "additionalProperties": false, "required": ["metric", "limit"],
+      "properties": {
+        "metric": { "enum": ["count", "elapsed"] }, "limit": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "limitVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "unit": { "enum": ["milliseconds", "seconds", "minutes"], "default": "milliseconds" }
+      }
+    }
+  }
+}

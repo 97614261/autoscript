@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1201,
+  "name": "UI.getValue",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "读取控件字符串值。",
+  "params": [
+    {
+      "name": "id",
+      "type": "string",
+      "required": true,
+      "summary": "id"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "读取控件字符串值。"
+  },
+  "legacyAliases": []
+}

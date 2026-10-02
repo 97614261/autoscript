@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "kind": "ui.command",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ui.command/1/ui.command.schema.json",
+  "title": "界面操作",
+  "category": "task",
+  "summary": "更新文字、显示、启用、选项、进度或切页，也可恢复或最小化界面。",
+  "searchTerms": [
+    "界面",
+    "ui",
+    "界面操作"
+  ],
+  "requiredCapabilities": [
+    "ui.control"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "controlId",
+      "label": "控件 ID（窗口操作填 window）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "window"
+    },
+    {
+      "path": "operation",
+      "label": "操作",
+      "editor": "enum",
+      "required": true,
+      "defaultValue": "show",
+      "choices": [
+        "text",
+        "visible",
+        "enabled",
+        "items",
+        "progress",
+        "page",
+        "show",
+        "hide",
+        "minimize"
+      ]
+    },
+    {
+      "path": "value",
+      "label": "值（选项用换行分隔）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "true"
+    },
+    {
+      "path": "valueVariable",
+      "label": "来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

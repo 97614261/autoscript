@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.pointerdown",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.pointerdown/1/input.pointerdown.schema.json",
+  "title": "按下",
+  "category": "task",
+  "summary": "在设计坐标按下并保持 Root 触点，直到执行弹起。",
+  "searchTerms": ["pointerDown", "touch down", "按住", "手指按下"],
+  "requiredCapabilities": ["input.basic"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "x", "label": "X 坐标", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "y", "label": "Y 坐标", "editor": "integer", "required": true, "defaultValue": "0" }
+  ],
+  "migrations": []
+}

@@ -6,8 +6,17 @@ class NativeEngineBridge private constructor() {
             System.loadLibrary("engine_jni")
         }
 
+        private val visualCompilerLoaded: Boolean by lazy {
+            try { System.loadLibrary("studio_compiler_jni"); true }
+            catch (_: UnsatisfiedLinkError) { false }
+            catch (_: SecurityException) { false }
+        }
+
+        @JvmStatic fun ensureVisualCompilerLoaded(): Boolean = visualCompilerLoaded
+
         @JvmStatic external fun nativeCreate(width: Int, height: Int): Long
         @JvmStatic external fun nativeSetWakeListener(handle: Long, listener: Any): Int
+        @JvmStatic external fun nativeSetVisionListener(handle: Long, listener: Any): Int
         @JvmStatic external fun nativeRegisterTemplate(
             handle: Long,
             name: String,
@@ -34,6 +43,7 @@ class NativeEngineBridge private constructor() {
             capabilities: Array<String>,
         ): Int
         @JvmStatic external fun nativePump(handle: Long, bootNanos: Long): Int
+        @JvmStatic external fun nativeConfigureUiValues(handle: Long, valuesJson: String): Int
         @JvmStatic external fun nativeUpdateDisplay(
             handle: Long,
             snapshotId: Long,
@@ -50,6 +60,10 @@ class NativeEngineBridge private constructor() {
         @JvmStatic external fun nativeStop(handle: Long, bootNanos: Long): Int
         @JvmStatic external fun nativePause(handle: Long, bootNanos: Long): Int
         @JvmStatic external fun nativeResume(handle: Long, bootNanos: Long): Int
+        @JvmStatic external fun nativeStep(handle: Long, bootNanos: Long): Int
+        @JvmStatic external fun nativeDebugSnapshot(handle: Long): String?
+        @JvmStatic external fun nativePushUiEvent(handle: Long, id: String, event: String, value: String, dispatch: Boolean): Int
+        @JvmStatic external fun nativeInputFeatures(handle: Long): Int
         @JvmStatic external fun nativeAttachRoot(
             handle: Long,
             socketPath: String,
@@ -60,7 +74,13 @@ class NativeEngineBridge private constructor() {
         @JvmStatic external fun nativeState(handle: Long): Int
         @JvmStatic external fun nativeLastDiagnostic(handle: Long): String?
         @JvmStatic external fun nativeCapturePreview(handle: Long): ByteArray?
+        @JvmStatic external fun nativeTestTemplate(
+            frameWidth: Int, frameHeight: Int, frameRgba: ByteArray,
+            templateWidth: Int, templateHeight: Int, templateRgba: ByteArray,
+            tolerance: Int, similarityPermille: Int,
+        ): IntArray?
         @JvmStatic external fun nativeDrainScriptLogs(handle: Long): Array<String>
+        @JvmStatic external fun nativeDrainScriptPrompts(handle: Long): Array<String>
         @JvmStatic external fun nativeNextWakeNanos(handle: Long): Long
         @JvmStatic external fun nativeDestroy(handle: Long): Int
     }

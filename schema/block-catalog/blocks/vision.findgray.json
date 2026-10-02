@@ -1,0 +1,14 @@
+{
+ "schemaVersion":1,"kind":"vision.findgray","nodeVersion":1,"nodeSchemaId":"https://autoscript.local/schema/node/vision.findgray/1/schema.json",
+ "title":"灰度找图 · OpenCV","category":"vision","summary":"灰度最高分匹配，不支持缩放旋转；默认自动截图。","searchTerms":["opencv","灰度","找图"],"requiredCapabilities":["vision.opencv","vision.template","screen.capture"],"childBlocks":[],
+ "properties":[
+ {"path":"frameVariable","label":"帧变量","editor":"string","required":true,"defaultValue":"frame"},
+ {"path":"imagePath","label":"模板图片","editor":"resource","resourceKind":"image","required":true},
+ {"path":"similarityPermille","label":"灰度最低得分(‰)","editor":"integer","required":true,"defaultValue":"900"},
+ {"path":"region","label":"区域(L,T,R,B)","editor":"rect","required":true,"defaultValue":"0,0,720,1280"},
+ {"path":"autoCapture","label":"自动截图","editor":"boolean","required":false,"defaultValue":"true"},
+ {"path":"foundVariable","label":"找到变量(1/0)","editor":"string","required":true,"defaultValue":"grayFound"},
+ {"path":"xVariable","label":"X变量","editor":"string","required":true,"defaultValue":"foundX"},
+ {"path":"yVariable","label":"Y变量","editor":"string","required":true,"defaultValue":"foundY"},
+ {"path":"scoreVariable","label":"得分变量","editor":"string","required":true,"defaultValue":"grayScore"}],"migrations":[]
+}

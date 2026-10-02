@@ -65,7 +65,7 @@ internal object BlockMigrationEngine {
         var changed = false
         val migrated = lines.mapIndexed { index, rawLine ->
             val line = rawLine.removeSuffix("\r")
-            if (line.isBlank()) return FlowMigrationResult.Failure(index + 1, "Flow包含空白行")
+            if (line.isBlank()) return FlowMigrationResult.Failure(index + 1, "插件包含空白行")
             val node = runCatching { JsonParser.parseString(line).asJsonObject }.getOrElse {
                 return FlowMigrationResult.Failure(index + 1, "节点JSON损坏")
             }

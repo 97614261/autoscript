@@ -91,6 +91,10 @@ android {
 tasks.named("preBuild").configure { dependsOn(syncRootDaemons) }
 
 dependencies {
+    implementation(project(":android:script-ui"))
     implementation(project(":android:runtime-api"))
     implementation(project(":android:engine-jni"))
+    implementation("org.opencv:opencv:4.10.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+    testImplementation(libs.junit4)
 }

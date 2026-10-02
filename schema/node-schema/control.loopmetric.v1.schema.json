@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/control.loopmetric/1/control.loopmetric.schema.json",
+  "title": "当前位置读取最近循环指标",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "control.loopmetric" }, "nodeVersion": { "const": 1 },
+    "childBlocks": { "type": "object", "maxProperties": 0 },
+    "args": {
+      "type": "object", "additionalProperties": false, "required": ["metric", "name"],
+      "properties": {
+        "metric": { "enum": ["count", "elapsed"] },
+        "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "unit": { "enum": ["milliseconds", "seconds", "minutes"], "default": "milliseconds" }
+      }
+    }
+  }
+}

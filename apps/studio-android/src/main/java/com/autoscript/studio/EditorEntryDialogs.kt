@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,16 +29,21 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectDebugSettings
+import com.autoscript.project.store.ProjectVariable
+import com.autoscript.project.store.ProjectFlow
+import com.autoscript.project.store.ProjectVariableScope
+import com.autoscript.project.store.ProjectVariableType
+import com.autoscript.project.store.RunPromptFilters
+import com.autoscript.project.store.PopupStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
@@ -72,9 +80,52 @@ private data class PickerRequest(
     val onSelected: (String) -> Unit,
 )
 
+/** Editing and insertion reuse the same loop/jump/debug panels, with typed initial values. */
+@Composable
+internal fun ConfiguredEntryArgumentsDialog(
+    contract: com.autoscript.studio.generated.BlockContract,
+    arguments: com.google.gson.JsonObject,
+    variables: List<ProjectVariable>, flows: List<ProjectFlow>, currentFlowId: String,
+    knownVariables: List<String>, debugSettings: ProjectDebugSettings,
+    onManageVariables: (() -> Unit)?, onDismiss: () -> Unit, onConfirm: (com.google.gson.JsonObject) -> Unit,
+    confirmLabel: String,
+    knownLabels: List<String> = emptyList(),
+): Boolean {
+    val kind = contract.kind
+    if (kind in setOf("control.repeat", "control.loopmetric", "control.loopcheck", "task.sleep") ||
+        (kind == "control.while" && arguments.get("always")?.asBoolean == true)) {
+        val initial = remember(kind, arguments) { loopDraftFromArguments(kind, arguments) }
+        VisualLoopDialog(variables, currentFlowId, flows, onDismiss, { hint ->
+            loopInsertionFromHint(hint)?.takeIf { it.kind == kind }?.let { onConfirm(it.arguments) }
+        }, onManageVariables, initial, kind, confirmLabel)
+        return true
+    }
+    val jump = kind in setOf("control.break", "control.label", "control.goto", "flow.return", "flow.call",
+        "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
+        (kind != "flow.return" || arguments.size() == 0) && (kind != "flow.call" || arguments.getAsJsonObject("arguments")?.size() in listOf(null, 0))
+    val debug = kind in setOf("task.prompt", "task.runprompt", "task.log", "task.comment")
+    if (!jump && !debug) return false
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 560.dp).heightIn(max = 540.dp).fillMaxHeight(.68f),
+            color = Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 9.dp) {
+            val accept: (String) -> Unit = { hint ->
+                val defaults = arguments.deepCopy()
+                if (debug) defaults.remove("valueVariable")
+                val updated = legacyDockBlockArguments(contract, hint, defaults)
+                if (kind == "task.log") arguments.get("level")?.let { updated.add("level", it.deepCopy()) }
+                onConfirm(updated)
+            }
+            if (jump) CommonPage(onDismiss, accept, true, knownVariables, knownLabels, currentFlowId, flows,
+                variables, onManageVariables, kind, arguments, confirmLabel)
+            else DebugPage(onDismiss, accept, knownVariables, variables, true, debugSettings, {}, kind, arguments, confirmLabel)
+        }
+    }
+    return true
+}
+
 @Composable
 internal fun EditorEntryDialog(
-    entry: LegacyToolDialog,
+    entry: EditorToolPanel,
     projectName: String,
     files: List<StudioProjectFile>,
     onDismiss: () -> Unit,
@@ -82,27 +133,44 @@ internal fun EditorEntryDialog(
     onOpenFile: (StudioProjectFile) -> Unit = {},
     onDeleteFiles: (List<StudioProjectFile>) -> Unit = {},
     onOpenImageTools: ((Long) -> Unit)? = null,
+    onOpenImageToolMode: ((ImageToolMode, Long) -> Unit)? = null,
+    onCreateImageBlock: ((String) -> Unit)? = null,
     onOpenImageLibrary: (() -> Unit)? = null,
+    onTestRecognition: (() -> Unit)? = null,
     onRemoveCaptureOverlay: (() -> Unit)? = null,
     availableVariables: List<String> = emptyList(),
+    availableLabels: List<String> = emptyList(),
+    projectVariables: List<ProjectVariable> = emptyList(),
+    currentFlowId: String = "",
+    projectFlows: List<ProjectFlow> = emptyList(),
+    onManageVariables: (() -> Unit)? = null,
+    /** The visual editor exposes Flow variables through the generated `__vars` table. */
+    visualMode: Boolean = false,
     debugSettings: ProjectDebugSettings = ProjectDebugSettings(),
     onSaveDebugSettings: (ProjectDebugSettings) -> Unit = {},
 ) {
+    if (entry == EditorToolPanel.LOOP) {
+        VisualLoopDialog(projectVariables, currentFlowId, projectFlows, onDismiss, onInsert, onManageVariables)
+        return
+    }
+    if (entry == EditorToolPanel.IMAGE && onCreateImageBlock != null) {
+        LaunchedEffect(entry) { onCreateImageBlock("vision.findimage") }
+        return
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val panelModifier = when (entry) {
-            LegacyToolDialog.FILES -> Modifier.fillMaxWidth(.96f).fillMaxHeight(.88f).widthIn(max = 520.dp)
-            LegacyToolDialog.JUDGMENT -> Modifier.width(132.dp).height(132.dp)
-            LegacyToolDialog.COMMON -> Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp)
+            EditorToolPanel.FILES -> Modifier.fillMaxWidth(.96f).fillMaxHeight(.88f).widthIn(max = 520.dp)
+            EditorToolPanel.JUDGMENT -> Modifier.width(132.dp).height(132.dp)
+            EditorToolPanel.COMMON -> Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp)
             // 调试页是左侧导航 + 右侧配置卡的桌面式弹窗；与普通短表单不同，
             // 需要一整屏高度来保留三张参考页的结构，而不是让内容挤在 390dp 内。
-            LegacyToolDialog.DEBUG -> Modifier.fillMaxWidth(.96f).widthIn(max = 600.dp).fillMaxHeight(.72f)
-            LegacyToolDialog.IMAGE -> Modifier.fillMaxWidth(.96f).widthIn(max = 550.dp).height(310.dp)
-            LegacyToolDialog.LOOP -> Modifier.fillMaxWidth(.96f).widthIn(max = 540.dp).height(350.dp)
+            EditorToolPanel.DEBUG -> Modifier.fillMaxWidth(.96f).widthIn(max = 600.dp).fillMaxHeight(.72f)
+            EditorToolPanel.IMAGE -> Modifier.fillMaxWidth(.96f).widthIn(max = 550.dp).height(310.dp)
             else -> Modifier.fillMaxWidth(.90f).widthIn(max = 520.dp).height(
                 when (entry) {
-                    LegacyToolDialog.AI -> 520.dp
+                    EditorToolPanel.AI -> 520.dp
                     // 工具页按单屏内容量固定，避免卡片之间留出大段无用空白。
-                    LegacyToolDialog.TOOLS -> 342.dp
+                    EditorToolPanel.TOOLS -> 342.dp
                     else -> 390.dp
                 },
             )
@@ -114,23 +182,33 @@ internal fun EditorEntryDialog(
             shadowElevation = 8.dp,
         ) {
             when (entry) {
-                LegacyToolDialog.FILES -> FileManagerPage(projectName, files, onDismiss, onOpenFile, onDeleteFiles)
-                LegacyToolDialog.TOOLS -> ToolSettingsPage(
+                EditorToolPanel.FILES -> FileManagerPage(projectName, files, onDismiss, onOpenFile, onDeleteFiles)
+                EditorToolPanel.TOOLS -> ToolSettingsPage(
                     onDismiss,
                     onInsert,
                     onOpenImageTools,
                     onOpenImageLibrary,
                     onRemoveCaptureOverlay,
+                    onTestRecognition,
                 )
-                LegacyToolDialog.IMAGE -> ImageRecognitionPage(onDismiss, onInsert)
-                LegacyToolDialog.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
-                LegacyToolDialog.LOOP -> LoopPage(onDismiss, onInsert, availableVariables)
-                LegacyToolDialog.COMMON -> CommonPage(onDismiss, onInsert)
-                LegacyToolDialog.DEBUG -> DebugPage(onDismiss, onInsert, debugSettings, onSaveDebugSettings)
-                LegacyToolDialog.AI -> AiProgrammingPage(onDismiss, onInsert)
-                LegacyToolDialog.DATA_BACKFILL -> DataBackfillPage(onDismiss, onInsert)
-                LegacyToolDialog.VARIABLE_CHECK -> VariableCheckPage(onDismiss)
-                LegacyToolDialog.RUNTIME_VARIABLES -> RuntimeVariablesPage(onDismiss)
+                EditorToolPanel.IMAGE -> ImageRecognitionPage(onDismiss, onInsert, files, onOpenImageTools)
+                EditorToolPanel.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
+                EditorToolPanel.LOOP -> Unit // Shared adaptive dialog is handled above.
+                EditorToolPanel.COMMON -> CommonPage(onDismiss, onInsert, visualMode, availableVariables,
+                    availableLabels, currentFlowId, projectFlows, projectVariables, onManageVariables)
+                EditorToolPanel.DEBUG -> DebugPage(
+                    onDismiss = onDismiss,
+                    onInsert = onInsert,
+                    availableVariables = availableVariables,
+                    projectVariables = projectVariables,
+                    visualMode = visualMode,
+                    initialSettings = debugSettings,
+                    onSaveSettings = onSaveDebugSettings,
+                )
+                EditorToolPanel.AI -> AiProgrammingPage(onDismiss, onInsert)
+                EditorToolPanel.DATA_BACKFILL -> DataBackfillPage(onDismiss, onInsert)
+                EditorToolPanel.VARIABLE_CHECK -> VariableCheckPage(onDismiss)
+                EditorToolPanel.RUNTIME_VARIABLES -> RuntimeVariablesPage(onDismiss)
                 else -> Unit
             }
         }
@@ -502,6 +580,7 @@ private fun ToolSettingsPage(
     onOpenImageTools: ((Long) -> Unit)?,
     onOpenImageLibrary: (() -> Unit)?,
     onRemoveCaptureOverlay: (() -> Unit)?,
+    onTestRecognition: (() -> Unit)?,
 ) {
     var captureDelay by remember { mutableStateOf("0秒") }
     var picker by remember { mutableStateOf<PickerRequest?>(null) }
@@ -516,8 +595,8 @@ private fun ToolSettingsPage(
             }
             Spacer(Modifier.height(2.dp))
             ToolPanel("识别工具") {
-                ToolActionRow(R.drawable.editor_recognition_preview_24, "测试识别（待实现）", enabled = false) {
-                    picker = PickerRequest("测试识别", listOf("找图", "找色", "字库找字", "ONNX OCR")) {}
+                ToolActionRow(R.drawable.editor_recognition_preview_24, if (onTestRecognition != null) "测试识别 · 模板找图" else "测试识别（未接入）", enabled = onTestRecognition != null) {
+                    onTestRecognition?.invoke()
                 }
             }
             Spacer(Modifier.height(2.dp))
@@ -529,8 +608,8 @@ private fun ToolSettingsPage(
                     if (onOpenImageTools != null) onOpenImageTools(captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L) else picker = PickerRequest("标注截屏", listOf("立即截屏", "延迟截屏", "导入图片")) {}
                 }
                 DividerLine()
-                ToolActionRow(R.drawable.editor_annotation_24, "打开标注库（待实现）", enabled = false) {
-                    if (onOpenImageLibrary != null) onOpenImageLibrary() else picker = PickerRequest("标注库", listOf("图片标注", "OCR 标注", "目标检测标注")) {}
+                ToolActionRow(R.drawable.editor_annotation_24, if (onOpenImageLibrary != null) "打开标注库" else "打开标注库（未接入）", enabled = onOpenImageLibrary != null) {
+                    onOpenImageLibrary?.invoke()
                 }
                 DividerLine()
                 ToolActionRow(R.drawable.editor_image_processing_24, "图像处理") {
@@ -595,11 +674,20 @@ private fun ToolSettingsFooter(dismiss: () -> Unit, onCapture: () -> Unit) {
 }
 
 @Composable
-private fun ImageRecognitionPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
+private fun ImageRecognitionPage(
+    onDismiss: () -> Unit,
+    onInsert: (String) -> Unit,
+    files: List<StudioProjectFile>,
+    onOpenImageTools: ((Long) -> Unit)?,
+) {
     val pages = listOf("区域找图", "多点找色", "字库识字", "ONNX OCR")
-    var page by remember { mutableStateOf(1) }
+    var page by remember { mutableStateOf(0) }
     var recognitionFrequency by remember { mutableStateOf("识别频率[1]") }
-    var template by remember { mutableStateOf("未选择") }
+    var captureDelaySeconds by remember { mutableStateOf(0) }
+    val imageFiles = files.filter { it.kind == StudioProjectFileKind.IMAGE && it.sizeBytes > 0 }
+    var template by remember(imageFiles) {
+        mutableStateOf(imageFiles.maxByOrNull { it.lastModified ?: 0L }?.path ?: "未选择")
+    }
     var imageMode by remember { mutableStateOf("普通找图") }
     var colorMode by remember { mutableStateOf("多点找色") }
     var filterMode by remember { mutableStateOf("未加载") }
@@ -645,7 +733,11 @@ private fun ImageRecognitionPage(onDismiss: () -> Unit, onInsert: (String) -> Un
                 0 -> {
                     DenseImageSourceBlock(
                         firstLabel = "模版选择:", firstValue = template, secondLabel = "识别方式:", secondValue = imageMode, preview = "预览",
-                        onFirst = { picker = PickerRequest("选择模板图片", listOf("template.png", "button_start.png", "target.png", "从截屏中创建"), template) { template = it } },
+                        onFirst = {
+                            picker = PickerRequest("选择模板图片", imageFiles.map { it.path } + "从截屏中创建", template) {
+                                if (it == "从截屏中创建") onOpenImageTools?.invoke(captureDelaySeconds * 1_000L) else template = it
+                            }
+                        },
                         onSecond = { picker = PickerRequest("识别方式", listOf("普通找图", "透明图", "灰度图", "特征匹配"), imageMode) { imageMode = it } },
                     )
                     DenseRangeRow(range) { picker = PickerRequest("识别范围", listOf("全屏  0,0,-1,-1", "手动选择区域", "使用范围变量", "跟随上次结果"), range) { range = it } }
@@ -725,7 +817,17 @@ private fun ImageRecognitionPage(onDismiss: () -> Unit, onInsert: (String) -> Un
         }
         // 片段只用契约里真实存在的 Screen.* / Ocr.* 签名；相似度按 API 口径换算成千分位。
         // ONNX OCR 是后续阶段，没有对应 API，这里不生成任何调用。
-        FooterButtons(listOf("取消" to onDismiss, "图像对比" to {}, "加入" to {
+        Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("截图延迟：${captureDelaySeconds}秒  ▾", color = EntryAccent, fontSize = 11.sp,
+                modifier = Modifier.clickable {
+                    picker = PickerRequest("截图延迟", listOf("0秒", "1秒", "3秒", "5秒"), "${captureDelaySeconds}秒") {
+                        captureDelaySeconds = it.removeSuffix("秒").toInt()
+                    }
+                }.padding(horizontal = 6.dp))
+        }
+        FooterButtons(listOf("取消" to onDismiss, "截图取图" to {
+            onOpenImageTools?.invoke(captureDelaySeconds * 1_000L)
+        }, "加入" to {
             val permille = ((similarity.toDoubleOrNull() ?: 0.8) * 1000).toInt().coerceIn(1, 1000)
             val code = when (page) {
                 0 -> "local template = Screen.loadImage(\"assets/images/${legacyLuaEscape(template.takeUnless { it == "未选择" } ?: "template.png")}\")\n" +
@@ -877,6 +979,7 @@ private fun DenseSpinner(
             fontSize = 10.sp,
             lineHeight = 13.sp,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             textAlign = if (centered) TextAlign.Center else TextAlign.Start,
         )
     }
@@ -888,7 +991,7 @@ private fun JudgmentPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
         listOf(
             // The host resolves the latter two actions against the selected `control.if`.
             // This prevents detached Lua fragments from entering a visual Flow.
-            "如果" to "${LegacyFunctionCatalog.BLOCK_HINT_PREFIX}control.if\n",
+            "如果" to "${FunctionCatalog.BLOCK_HINT_PREFIX}control.if\n",
             "否则如果" to "--@autoscript-control:elseIf\n",
             "否则" to "--@autoscript-control:else\n",
         ).forEach { (label, snippet) ->
@@ -905,154 +1008,11 @@ private fun JudgmentPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
     }
 }
 
-@Composable
-private fun LoopPage(
-    onDismiss: () -> Unit,
-    onInsert: (String) -> Unit,
-    availableVariables: List<String>,
-) {
-    var variableMode by remember { mutableStateOf(false) }
-    // 循环入口直接落在实际的参数页。限次循环是唯一不依赖额外运行时状态的
-    // 默认项；用户仍可在同一页切换其它循环语义，不再需要经过一个中转选择页。
-    var mode by remember { mutableStateOf(1) }
-    var count by remember { mutableStateOf("3") }
-    var time by remember { mutableStateOf("3") }
-    var timeUnit by remember { mutableStateOf("秒") }
-    var countVariable by remember { mutableStateOf<String?>(null) }
-    var timeVariable by remember { mutableStateOf<String?>(null) }
-    var loopCountVariable by remember { mutableStateOf<String?>(null) }
-    var loopTimeVariable by remember { mutableStateOf<String?>(null) }
-    var picker by remember { mutableStateOf<PickerRequest?>(null) }
-    var validationError by remember { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxSize()) {
-        Text("${when (mode) { 0 -> "无限循环"; 1 -> "限次循环"; 2 -> "限时循环"; 3 -> "获取循环次数"; else -> "获取循环时间" }}", color = EntryBlue, fontSize = 17.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(40.dp).padding(top = 9.dp))
-        DividerLine()
-        Box(Modifier.padding(top = 10.dp)) {
-            LoopValueModeChoice(variableMode) { variableMode = it }
-        }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 6.dp)) {
-            DenseLoopRow("无限循环", mode == 0, { mode = 0 }) { Spacer(Modifier.fillMaxWidth()) }
-            DenseLoopRow("限次循环", mode == 1, { mode = 1 }) {
-                if (variableMode) DenseVariableSelector("整", countVariable ?: "未选择") {
-                    picker = variablePicker(availableVariables, countVariable) { countVariable = it }
-                }
-                else DenseLoopValue(count, { count = it }, "$count(次)") {}
-            }
-            DenseLoopRow("限时循环", mode == 2, { mode = 2 }) {
-                if (variableMode) DenseVariableSelector("浮", timeVariable ?: "未选择") {
-                    picker = variablePicker(availableVariables, timeVariable) { timeVariable = it }
-                }
-                else DenseLoopValue(time, { time = it }, "$time($timeUnit)") {
-                    picker = PickerRequest("时间单位", listOf("毫秒", "秒", "分钟"), timeUnit) { timeUnit = it }
-                }
-            }
-            DenseLoopRow("获取循环次数", mode == 3, { mode = 3 }) {
-                DenseVariableSelector("整", loopCountVariable ?: "未选择") {
-                    picker = variablePicker(availableVariables, loopCountVariable) { loopCountVariable = it }
-                }
-            }
-            DenseLoopRow("获取循环时间", mode == 4, { mode = 4 }) {
-                DenseVariableSelector("浮", loopTimeVariable ?: "未选择") {
-                    picker = variablePicker(availableVariables, loopTimeVariable) { loopTimeVariable = it }
-                }
-            }
-        }
-        validationError?.let { message ->
-            Text(message, color = Color(0xFFD14949), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp))
-        }
-        FooterButtons(listOf("取消" to onDismiss, "加入" to {
-            val prefix = LegacyFunctionCatalog.LOOP_HINT_PREFIX
-            val snippet = when (mode) {
-                0 -> "${prefix}forever"
-                1 -> if (variableMode) countVariable?.let { "${prefix}repeat:variable:$it" }
-                    else "${prefix}repeat:fixed:${count.toLongOrNull()?.coerceIn(0, 1_000_000) ?: 1}"
-                2 -> if (variableMode) timeVariable?.let { "${prefix}timed:variable:$it" }
-                    else {
-                        val multiplier = when (timeUnit) { "分钟" -> 60_000L; "秒" -> 1_000L; else -> 1L }
-                        val duration = ((time.toDoubleOrNull() ?: 0.0) * multiplier).toLong().coerceIn(1, 86_400_000)
-                        "${prefix}timed:fixed:$duration"
-                    }
-                3 -> loopCountVariable?.let { "${prefix}metric:count:$it" }
-                else -> loopTimeVariable?.let { "${prefix}metric:elapsed:$it" }
-            }
-            if (snippet == null) {
-                validationError = "请先选择变量"
-            } else {
-                validationError = null
-                onInsert(snippet)
-                onDismiss()
-            }
-        }))
-    }
-    picker?.let { request -> PickerDialog(request) { picker = null } }
-}
-
-@Composable
-private fun LoopValueModeChoice(variableMode: Boolean, onSelected: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 12.dp)
-            .background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp),
-    ) {
-        listOf(false to "固定值", true to "变量").forEach { (value, label) ->
-            Text(
-                label,
-                color = if (variableMode == value) EntryBlue else EntryMuted,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f).fillMaxHeight()
-                    .background(if (variableMode == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
-                    .clickable { onSelected(value) }
-                    .wrapContentSize(Alignment.Center),
-            )
-        }
-    }
-}
 
 private fun legacyLuaEscape(value: String): String = value
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
 
-@Composable
-private fun DenseLoopRow(label: String, selected: Boolean, onSelect: () -> Unit, value: @Composable () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onSelect), verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = selected, onClick = onSelect, modifier = Modifier.size(30.dp))
-            Text(label, fontSize = 13.sp, color = Color(0xFF20242C), maxLines = 1)
-        }
-        Box(Modifier.weight(1.5f), contentAlignment = Alignment.Center) { value() }
-    }
-}
-
-@Composable
-private fun DenseLoopValue(value: String, onValue: (String) -> Unit, unit: String, onUnit: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        BasicTextField(
-            value = value,
-            onValueChange = onValue,
-            singleLine = true,
-            textStyle = TextStyle(fontSize = 13.sp, color = Color(0xFF20242C), textAlign = TextAlign.Center),
-            modifier = Modifier.weight(1f).height(30.dp).background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp))
-                .border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(vertical = 7.dp),
-        )
-        DenseSpinner(unit, Modifier.padding(start = 6.dp).weight(1.15f), arrow = true, onClick = onUnit, centered = true)
-    }
-}
-
-@Composable
-private fun DenseVariableSelector(type: String, name: String, onSelect: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(30.dp).background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp))
-            .border(1.dp, EntryBorder, RoundedCornerShape(3.dp)),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(type, color = EntryAccent, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(.28f))
-        DividerVertical()
-        Text(name, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
-        DividerVertical()
-        Text("选择变量", fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(.72f).fillMaxHeight().clickable(onClick = onSelect).wrapContentSize(Alignment.Center))
-    }
-}
 
 private fun variablePicker(
     variables: List<String>,
@@ -1061,76 +1021,222 @@ private fun variablePicker(
 ): PickerRequest = PickerRequest("选择变量", variables, selected, onSelected)
 
 @Composable
-private fun CommonPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
-    val tabs = listOf("流程控制", "设置调用参数", "获取调用参数", "设置返回参数", "获取返回参数")
-    var selected by remember { mutableStateOf(0) }
-    var action by remember { mutableStateOf(0) }
-    var waitValue by remember { mutableStateOf("500") }
-    SplitEntryPage("常用功能", tabs, selected, { selected = it }, onDismiss, {
+private fun CommonPage(
+    onDismiss: () -> Unit,
+    onInsert: (String) -> Unit,
+    visualMode: Boolean,
+    availableVariables: List<String>,
+    availableLabels: List<String>,
+    currentFlowId: String,
+    projectFlows: List<ProjectFlow>,
+    projectVariables: List<ProjectVariable>,
+    onManageVariables: (() -> Unit)?,
+    initialKind: String? = null,
+    initialArguments: com.google.gson.JsonObject? = null,
+    confirmLabel: String = "加入",
+) {
+    val tabs = if (visualMode) listOf("流程操作", "调用插件", "设置调用参数", "读取调用参数", "设置返回参数", "读取返回参数")
+        else listOf("流程操作")
+    val targets = projectFlows.filter { it.flowId != currentFlowId }
+    fun text(key: String, fallback: String = "") = initialArguments?.get(key)?.takeIf { it.isJsonPrimitive }?.asString ?: fallback
+    val initialTab = when (initialKind) { "flow.call" -> 1; "flow.argument.set" -> 2; "flow.argument.get" -> 3; "flow.return.set" -> 4; "flow.return.get" -> 5; else -> 0 }
+    val initialAction = when (initialKind) { "control.label" -> 1; "flow.return" -> 2; "control.goto" -> 3; "task.sleep" -> 4; else -> 0 }
+    var selected by remember { mutableStateOf(initialTab) }
+    var action by remember { mutableStateOf(initialAction) }
+    var waitValue by remember { mutableStateOf(text("millisecondsVariable", text("milliseconds", "500"))) }
+    var waitIsVariable by remember { mutableStateOf(initialArguments?.has("millisecondsVariable") == true) }
+    val autoLabel = remember(availableLabels, visualMode) {
+        if (visualMode) JumpPanelCode.nextLabel(availableLabels) else "mark_${System.currentTimeMillis()}"
+    }
+    var labelName by remember(autoLabel) { mutableStateOf(text("name", autoLabel)) }
+    var customLabel by remember { mutableStateOf(initialKind == "control.label") }
+    var jumpError by remember { mutableStateOf<String?>(null) }
+    var parameterIndex by remember { mutableStateOf(text("index", "1")) }
+    var parameterValue by remember { mutableStateOf(initialArguments?.get("value")?.toString() ?: "0") }
+    var parameterVariable by remember { mutableStateOf(text("valueVariable", text("targetVariable"))) }
+    var useParameterVariable by remember { mutableStateOf(initialArguments?.has("valueVariable") == true) }
+    var targetFlowId by remember(currentFlowId, projectFlows) { mutableStateOf(text("targetFlowId").ifBlank { targets.firstOrNull()?.flowId }) }
+    var picker by remember { mutableStateOf<PickerRequest?>(null) }
+    fun variableType(name: String): ProjectVariableType? =
+        (projectVariables.firstOrNull { it.name == name && it.flowId == currentFlowId }
+            ?: projectVariables.firstOrNull { it.name == name && it.scope == ProjectVariableScope.GLOBAL })?.type
+    val scalarVariables = availableVariables.filter { variableType(it) != ProjectVariableType.IMAGE }
+    val numericVariables = availableVariables.filter {
+        variableType(it) in setOf(ProjectVariableType.INTEGER, ProjectVariableType.NUMBER)
+    }
+    fun pickVariable(options: List<String>, update: (String) -> Unit) {
+        if (options.isEmpty()) jumpError = "没有符合类型的变量，请先维护变量"
+        else picker = variablePicker(options, parameterVariable) { update(it); jumpError = null }
+    }
+    SplitEntryPage("跳转 · 插件调用", tabs, selected, { if (initialKind == null || it == initialTab) { selected = it; jumpError = null } else jumpError = "修改时请保留原积木类型" }, onDismiss, {
+        val index = parameterIndex.toIntOrNull()
         val snippet = when (selected) {
-            1 -> "Runtime.setParameter(1, value)\n"
-            2 -> "local value = Runtime.getParameter(1)\n"
-            3 -> "Runtime.setReturnParameter(1, value)\n"
-            4 -> "local value = Runtime.getReturnParameter(1)\n"
-            else -> when (action) { 0 -> "break\n"; 1 -> "::label::\n"; 2 -> "return\n"; 3 -> "goto label\n"; else -> "Task.sleep($waitValue)\n" }
+            0 -> when (action) {
+                0 -> "break\n"
+                1 -> {
+                    val name = if (customLabel) labelName else autoLabel
+                    when {
+                        !JumpPanelCode.validName(name) -> jumpError = "标记名须以英文字母或下划线开头，最多 64 字符"
+                        visualMode && name in availableLabels && name != text("name") -> jumpError = "当前插件已有同名标记"
+                    }
+                    "::$name::\n"
+                }
+                2 -> "return\n"
+                3 -> {
+                    if (!JumpPanelCode.validName(labelName)) jumpError = "请输入有效的标记名"
+                    else if (visualMode && labelName !in availableLabels) jumpError = "请先在当前插件放置该标记"
+                    "goto $labelName\n"
+                }
+                else -> {
+                    if (waitIsVariable) {
+                        if (!JumpPanelCode.validName(waitValue)) jumpError = "请输入有效的毫秒变量名"
+                        else if (variableType(waitValue) !in setOf(ProjectVariableType.INTEGER, ProjectVariableType.NUMBER, null))
+                            jumpError = "等待时间只能使用数值变量"
+                        "${FunctionCatalog.BLOCK_HINT_PREFIX}task.sleep\nvariable:$waitValue"
+                    } else {
+                        if (waitValue.toLongOrNull()?.takeIf { it >= 0 } == null) jumpError = "等待时间须为非负整数毫秒"
+                        "Task.sleep($waitValue)\n"
+                    }
+                }
+            }
+            1 -> JumpPanelCode.callSnippet(targetFlowId?.takeIf { id -> targets.any { it.flowId == id } }.orEmpty()).also {
+                if (it == null) jumpError = "请先创建并选择目标插件"
+            }
+            2, 4 -> {
+                if (index == null || index !in 1..99) jumpError = "参数序号须为 1～99"
+                else if (useParameterVariable && !JumpPanelCode.validName(parameterVariable)) jumpError = "请输入有效的来源变量名"
+                else if (useParameterVariable && variableType(parameterVariable) == ProjectVariableType.IMAGE)
+                    jumpError = "调用和返回参数不能使用图像变量"
+                else if (!useParameterVariable && JumpPanelCode.fixedValue(parameterValue) == null) {
+                    jumpError = "固定值须为非空标量；数字样式的文字请加引号"
+                }
+                if (jumpError == null) JumpPanelCode.setSnippet(
+                    if (selected == 2) "flow.argument.set" else "flow.return.set",
+                    requireNotNull(index), parameterValue, parameterVariable.takeIf { useParameterVariable },
+                ) else null
+            }
+            else -> {
+                if (index == null || index !in 1..99) jumpError = "参数序号须为 1～99"
+                else if (!JumpPanelCode.validName(parameterVariable)) jumpError = "请输入有效的接收变量名"
+                else if (variableType(parameterVariable) == ProjectVariableType.IMAGE)
+                    jumpError = "调用和返回参数不能写入图像变量"
+                if (jumpError == null) JumpPanelCode.getSnippet(
+                    if (selected == 3) "flow.argument.get" else "flow.return.get",
+                    requireNotNull(index), parameterVariable,
+                ) else null
+            }
         }
-        onInsert(snippet); onDismiss()
-    }) {
+        if (jumpError == null && snippet != null) { onInsert(snippet); onDismiss() }
+    }, headerHint = if (visualMode) "当前插件内操作" else null, confirmLabel = confirmLabel) {
         when (selected) {
             0 -> {
-                DenseFlowActions(action) { action = it }
-                if (action == 4) {
-                    SegmentedChoice("固定值", "变量", false) {}
-                    DenseTypedValue("毫秒", waitValue, { waitValue = it }, "500毫秒")
-                } else if (action == 1) {
-                    SegmentedChoice("自动标记", "自定义", false) {}
-                    DenseTypedValue("名", "", {}, "")
-                } else if (action == 3) {
-                    DenseNotice("当前文件没有标记")
-                } else {
-                    DenseNotice(if (action == 0) "只能在循环体内使用。" else "结束当前调用并返回上层。", title = "使用说明")
+                DenseFlowActions(action) {
+                    if (initialKind != null && it != initialAction) { jumpError = "修改时请保留原积木类型"; return@DenseFlowActions }
+                    action = it
+                    jumpError = null
+                    if (it == 3) labelName = availableLabels.firstOrNull().orEmpty()
+                    else if (it == 1 && !customLabel) labelName = autoLabel
+                }
+                when (action) {
+                    0 -> DenseNotice("仅能加入循环体；执行后跳出最近一层循环。", "跳出循环")
+                    1 -> {
+                        SegmentedChoice("自动命名", "自定义", customLabel) {
+                            customLabel = it; jumpError = null
+                            if (!it) labelName = autoLabel
+                        }
+                        if (customLabel) DenseTypedValue("标记", labelName, { labelName = it; jumpError = null }, "")
+                        else DenseNotice("将创建 $autoLabel；只在当前插件内有效。")
+                    }
+                    2 -> DenseNotice("结束当前插件，向调用者返回；此前设置的返回参数会一起传回。", "返回上层")
+                    3 -> {
+                        DenseTypedValue("标记", labelName, { labelName = it; jumpError = null },
+                            if (visualMode) "选择标记" else "") {
+                            if (availableLabels.isEmpty()) jumpError = "当前插件没有标记，请先放置标记"
+                            else picker = PickerRequest("选择当前插件标记", availableLabels, labelName) {
+                                labelName = it; jumpError = null
+                            }
+                        }
+                        DenseNotice("跳到当前插件根层级的标记；不可跨插件或跳入循环体。")
+                    }
+                    else -> {
+                        SegmentedChoice("固定毫秒", "毫秒变量", waitIsVariable) {
+                            waitIsVariable = it; waitValue = if (it) "" else "500"; jumpError = null
+                        }
+                        DenseTypedValue("毫秒", waitValue, { waitValue = it; jumpError = null },
+                            if (waitIsVariable) "选择变量" else "") {
+                            if (numericVariables.isEmpty()) jumpError = "没有数值变量，请先维护变量"
+                            else picker = variablePicker(numericVariables, waitValue) { waitValue = it; jumpError = null }
+                        }
+                        if (waitIsVariable && visualMode && onManageVariables != null) {
+                            Text("维护变量", color = EntryAccent, fontSize = 11.sp,
+                                modifier = Modifier.clickable { onDismiss(); onManageVariables() }.padding(vertical = 6.dp))
+                        }
+                    }
                 }
             }
             1 -> {
-                Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("设置调用参数", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("+ 添加参数", color = EntryAccent, fontSize = 10.sp)
+                DenseNotice("先设置调用参数，再加入调用；调用后可读取返回参数。加入调用积木后仍可编辑参数。", "调用顺序")
+                val selectedTarget = targets.firstOrNull { it.flowId == targetFlowId }
+                DenseLabeledRow("目标插件", selectedTarget?.displayName() ?: "未创建", {
+                    if (targets.isEmpty()) jumpError = "请先创建另一个插件"
+                    else {
+                        val labels = targets.mapIndexed { index, flow -> "${index + 1}. ${flow.displayName()} (${flow.flowId.take(8)})" }
+                        picker = PickerRequest("选择目标插件", labels,
+                            labels.getOrNull(targets.indexOfFirst { it.flowId == targetFlowId })) { choice ->
+                            targetFlowId = targets[labels.indexOf(choice)].flowId; jumpError = null
+                        }
+                    }
+                }, arrow = true)
+                if (targets.isEmpty()) DenseNotice("当前只有一个插件；请先在标题的插件管理中创建目标插件。")
+            }
+            2, 4 -> {
+                Text(if (selected == 2) "设置下一次调用的参数" else "设置当前插件的返回参数",
+                    color = EntryAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                DenseTypedValue("序号", parameterIndex, { parameterIndex = it; jumpError = null }, "")
+                SegmentedChoice("固定值", "变量", useParameterVariable) { useParameterVariable = it; jumpError = null }
+                if (useParameterVariable) DenseTypedValue("来源", parameterVariable, { parameterVariable = it; jumpError = null }, "选择变量") {
+                    pickVariable(scalarVariables) { parameterVariable = it }
+                } else {
+                    DenseTypedValue("数值", parameterValue, { parameterValue = it; jumpError = null }, "")
+                    DenseNotice("数字、true/false 自动识别；普通文字直接输入。数字样式的文字请用双引号包住。")
                 }
-                DenseTypedValue("序", "1", {}, "选择变量")
-                DenseTypedValue("值", "未选择", {}, "选择")
-            }
-            2 -> {
-                Text("获取调用参数", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(24.dp))
-                DenseTypedValue("序", "1", {}, "变量")
-                DenseTypedValue("接", "未选择", {}, "选择")
-            }
-            3 -> {
-                Text("设置返回参数", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(24.dp))
-                DenseTypedValue("序", "1", {}, "选择变量")
-                DenseTypedValue("值", "未选择", {}, "选择")
+                if (useParameterVariable && onManageVariables != null) {
+                    Text("维护变量", color = EntryAccent, fontSize = 11.sp,
+                        modifier = Modifier.clickable { onDismiss(); onManageVariables() }.padding(vertical = 6.dp))
+                }
             }
             else -> {
-                Text("获取返回参数", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(24.dp))
-                DenseTypedValue("序", "1", {}, "变量")
-                DenseTypedValue("接", "未选择", {}, "选择")
+                Text(if (selected == 3) "读取当前插件收到的调用参数" else "读取上一次插件调用的返回参数",
+                    color = EntryAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                DenseTypedValue("序号", parameterIndex, { parameterIndex = it; jumpError = null }, "")
+                DenseTypedValue("接收", parameterVariable, { parameterVariable = it; jumpError = null }, "选择变量") {
+                    pickVariable(scalarVariables) { parameterVariable = it }
+                }
+                if (onManageVariables != null) Text("维护变量", color = EntryAccent, fontSize = 11.sp,
+                    modifier = Modifier.clickable { onDismiss(); onManageVariables() }.padding(vertical = 8.dp))
             }
         }
+        jumpError?.let { Text(it, color = Color(0xFFD84949), fontSize = 11.sp) }
     }
+    picker?.let { request -> PickerDialog(request) { picker = null } }
 }
 
 @Composable
 private fun DenseFlowActions(selected: Int, onSelected: (Int) -> Unit) {
     val actions = listOf("跳出循环", "放置标记", "返回上层", "跳转标记", "等待时间")
-    Column(Modifier.fillMaxWidth().border(1.dp, EntryBorder, RoundedCornerShape(3.dp))) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         actions.chunked(2).forEachIndexed { rowIndex, rowItems ->
-            if (rowIndex > 0) DividerLine()
-            Row(Modifier.fillMaxWidth().height(35.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 rowItems.forEachIndexed { columnIndex, label ->
                     val index = rowIndex * 2 + columnIndex
-                    if (columnIndex > 0) DividerVertical()
-                    Row(Modifier.weight(1f).fillMaxHeight().clickable { onSelected(index) }.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(index == selected, { onSelected(index) }, modifier = Modifier.size(26.dp))
-                        Text(label, fontSize = 10.sp)
+                    Box(Modifier.weight(1f).height(34.dp)
+                        .background(if (index == selected) Color(0xFFEAF1FF) else Color.White, RoundedCornerShape(4.dp))
+                        .border(1.dp, if (index == selected) EntryAccent else EntryBorder, RoundedCornerShape(4.dp))
+                        .clickable { onSelected(index) }, contentAlignment = Alignment.Center) {
+                        Text(label, fontSize = 11.sp,
+                            color = if (index == selected) EntryAccent else Color(0xFF202839),
+                            fontWeight = if (index == selected) FontWeight.Bold else FontWeight.Normal,
+                            style = CenteredDialogButtonTextStyle)
                     }
                 }
                 if (rowItems.size == 1) Spacer(Modifier.weight(1f))
@@ -1140,18 +1246,45 @@ private fun DenseFlowActions(selected: Int, onSelected: (Int) -> Unit) {
 }
 
 @Composable
-private fun DenseTypedValue(type: String, value: String, onValue: (String) -> Unit, action: String) {
+private fun DenseTypedValue(
+    type: String,
+    value: String,
+    onValue: (String) -> Unit,
+    action: String,
+    onAction: () -> Unit = {},
+) {
     Row(
         Modifier.fillMaxWidth().height(36.dp).padding(top = 6.dp)
             .background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp)).border(1.dp, EntryBorder, RoundedCornerShape(3.dp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(type, color = EntryAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.width(34.dp))
+        Box(Modifier.width(34.dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
+            Text(
+                type,
+                color = EntryAccent,
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                style = CenteredDialogButtonTextStyle,
+            )
+        }
         DividerVertical()
         BasicTextField(value, onValue, singleLine = true, textStyle = TextStyle(fontSize = 11.sp, color = Color(0xFF20242C)), modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
         if (action.isNotEmpty()) {
             DividerVertical()
-            Text(action, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.width(76.dp).fillMaxHeight().clickable { }.padding(top = 8.dp))
+            Box(
+                Modifier.width(76.dp).fillMaxHeight().clickable(onClick = onAction),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    action,
+                    fontSize = 9.sp,
+                    lineHeight = 9.sp,
+                    textAlign = TextAlign.Center,
+                    style = CenteredDialogButtonTextStyle,
+                )
+            }
         }
     }
 }
@@ -1178,56 +1311,83 @@ private fun DenseDebugSwitch(label: String, checked: Boolean, enabled: Boolean =
     }
 }
 
-@Composable
-private fun DenseRuntimeMode(label: String, options: List<String>, selected: Int) {
-    Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 11.sp, modifier = Modifier.width(64.dp))
-        Row(Modifier.weight(1f).height(28.dp).background(Color(0xFFF5F7FA), RoundedCornerShape(6.dp))) {
-            options.forEachIndexed { index, option ->
-                Text(
-                    option,
-                    color = if (index == selected) Color.White else EntryMuted,
-                    fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f).fillMaxHeight()
-                        .background(if (index == selected) EntryAccent else Color.Transparent, RoundedCornerShape(6.dp))
-                        .padding(top = 7.dp),
-                )
-            }
-        }
-    }
-}
 
-/** `service_tk_debug_control.xml` 的三栏内容复刻：标题区、左导航、右配置卡和固定底栏。 */
+/** Shared debug panel: insert a typed output block or edit settings that really affect execution. */
 @Composable
 private fun DebugPage(
     onDismiss: () -> Unit,
     onInsert: (String) -> Unit,
+    availableVariables: List<String>,
+    projectVariables: List<ProjectVariable>,
+    visualMode: Boolean,
     initialSettings: ProjectDebugSettings,
     onSaveSettings: (ProjectDebugSettings) -> Unit,
+    initialKind: String? = null,
+    initialArguments: com.google.gson.JsonObject? = null,
+    confirmLabel: String = "加入",
 ) {
-    val tabs = listOf("运行输出", "调试设置", "开发环境")
+    val tabs = if (initialKind != null) listOf("运行输出") else listOf("运行输出", "提示设置", "弹窗样式", "调试设置", "开发环境")
     var selected by remember { mutableStateOf(0) }
-    var outputConsole by remember { mutableStateOf(false) }
-    var outputText by remember { mutableStateOf("") }
+    val initialOutputMode = when (initialKind) { "task.prompt" -> DebugOutputCode.TOAST; "task.log" -> DebugOutputCode.LOG; "task.comment" -> DebugOutputCode.COMMENT; else -> DebugOutputCode.RUN_PROMPT }
+    var outputMode by remember { mutableStateOf(initialOutputMode) }
+    var outputText by remember { mutableStateOf(initialArguments?.get("message")?.asString.orEmpty()) }
+    var outputVariable by remember { mutableStateOf(initialArguments?.get("valueVariable")?.asString) }
+    var outputError by remember { mutableStateOf<String?>(null) }
     var runDelayMs by remember(initialSettings) { mutableStateOf(initialSettings.runDelayMs) }
+    var showRunPrompts by remember(initialSettings) { mutableStateOf(initialSettings.showRunPrompts) }
+    var filters by remember(initialSettings) { mutableStateOf(initialSettings.runPromptFilters) }
+    var popupStyle by remember(initialSettings) { mutableStateOf(initialSettings.popupStyle) }
     var delayPicker by remember { mutableStateOf<PickerRequest?>(null) }
+    var variablePicker by remember { mutableStateOf<PickerRequest?>(null) }
+    var filterPicker by remember { mutableStateOf<PickerRequest?>(null) }
     Column(Modifier.fillMaxSize()) {
         DebugHeader()
         DividerLine()
         Row(Modifier.weight(1f)) {
-            DebugNavigation(tabs, selected) { selected = it }
+            DebugNavigation(tabs, selected) { selected = it; outputError = null }
             DividerVertical()
-            Box(Modifier.weight(1f).fillMaxHeight().padding(12.dp)) {
+            Box(Modifier.weight(1f).fillMaxHeight().padding(8.dp)) {
                 when (selected) {
                     0 -> DebugOutputPanel(
-                        outputConsole = outputConsole,
-                        onOutputConsoleChange = { outputConsole = it },
+                        outputMode = outputMode,
+                        onOutputModeChange = {
+                            if (initialKind == null || it == initialOutputMode) { outputMode = it; outputError = null }
+                            else outputError = "修改时请保留输出类型；其他类型请从调试入口新增"
+                        },
                         outputText = outputText,
-                        onOutputTextChange = { outputText = it },
+                        onOutputTextChange = { outputText = it; outputError = null },
+                        selectedVariable = outputVariable,
+                        error = outputError,
+                        onClearVariable = { outputVariable = null; outputError = null },
+                        onPickVariable = {
+                            if (availableVariables.isNotEmpty()) {
+                                variablePicker = PickerRequest(
+                                    title = "选择变量",
+                                    options = availableVariables,
+                                    selected = outputVariable,
+                                ) { outputVariable = it; outputError = null }
+                            } else {
+                                outputError = "当前没有可用变量，请先创建变量"
+                            }
+                        },
                     )
-                    1 -> DebugSettingsPanel(runDelayMs) {
-                        val choices = listOf(0, 100, 300, 500, 1_000, 3_000, 5_000, 10_000)
+                    1 -> DebugPromptFilterPanel(
+                        enabled = showRunPrompts,
+                        onEnabledChange = { showRunPrompts = it },
+                        filters = filters,
+                        onFiltersChange = { filters = it },
+                        projectVariables = projectVariables,
+                        onPick = { title, options, selectedValue, update ->
+                            filterPicker = PickerRequest(title, options, selectedValue, update)
+                        },
+                    )
+                    2 -> DebugPopupStylePanel(popupStyle, { popupStyle = it })
+                    3 -> DebugSettingsPanel(
+                        runDelayMs = runDelayMs,
+                        showRunPrompts = showRunPrompts,
+                        onShowRunPromptsChange = { showRunPrompts = it },
+                    ) {
+                        val choices = listOf(0, 100, 300, 500, 1_000, 3_000, 5_000, 10_000, 15_000, 30_000, 60_000)
                         delayPicker = PickerRequest(
                             title = "运行延迟",
                             options = choices.map { "${it}毫秒" },
@@ -1244,34 +1404,41 @@ private fun DebugPage(
         FooterButtons(
             listOf(
                 "取消" to onDismiss,
-                (if (selected == 0) "加入" else "保存") to {
+                (if (selected == 0) confirmLabel else "保存") to {
                     if (selected != 0) {
-                        onSaveSettings(ProjectDebugSettings(runDelayMs = runDelayMs))
+                        onSaveSettings(initialSettings.copy(
+                            runDelayMs = runDelayMs,
+                            showRunPrompts = showRunPrompts,
+                            runPromptFilters = filters,
+                            popupStyle = popupStyle,
+                        ))
                     } else {
-                        val level = if (outputConsole) "info" else "warn"
-                        val text = outputText.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
-                        onInsert("Log.$level(\"$text\")\n")
+                        outputError = DebugOutputCode.error(outputMode, outputText, outputVariable)
+                        if (outputError == null) {
+                            DebugOutputCode.snippet(outputMode, outputText, outputVariable, visualMode)?.let(onInsert)
+                        }
                     }
                 },
             ),
         )
     }
     delayPicker?.let { request -> PickerDialog(request) { delayPicker = null } }
+    variablePicker?.let { request -> PickerDialog(request) { variablePicker = null } }
+    filterPicker?.let { request -> PickerDialog(request) { filterPicker = null } }
 }
 
 @Composable
 private fun DebugHeader() {
     Row(
-        Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("调试功能", color = EntryAccent, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(118.dp))
+        Text("调试", color = EntryAccent, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(72.dp))
         Text(
-            "调试/运行延迟，控制台日志开启会降低运行速度，仅开发时生效！",
-            color = EntryAccent,
-            // 720px 宽实机也必须保持参考图的一行说明，不能挤成两行占用标题区。
-            fontSize = 6.sp,
-            textAlign = TextAlign.Center,
+            "运行提示、弹窗和开发日志分别配置",
+            color = EntryMuted,
+            fontSize = 10.sp,
+            textAlign = TextAlign.End,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -1281,10 +1448,10 @@ private fun DebugHeader() {
 
 @Composable
 private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int) -> Unit) {
-    Column(Modifier.width(116.dp).fillMaxHeight().background(Color.White)) {
+    Column(Modifier.width(88.dp).fillMaxHeight().background(Color.White)) {
         tabs.forEachIndexed { index, label ->
             Box(
-                Modifier.fillMaxWidth().height(48.dp).clickable { onSelected(index) },
+                Modifier.fillMaxWidth().height(42.dp).clickable { onSelected(index) },
                 contentAlignment = Alignment.Center,
             ) {
                 Box(
@@ -1294,7 +1461,7 @@ private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int)
                 Text(
                     label,
                     color = if (selected == index) EntryAccent else Color(0xFF282E38),
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = if (selected == index) FontWeight.Bold else FontWeight.Normal,
                     style = CenteredDialogButtonTextStyle,
                     textAlign = TextAlign.Center,
@@ -1306,42 +1473,79 @@ private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int)
 
 @Composable
 private fun DebugOutputPanel(
-    outputConsole: Boolean,
-    onOutputConsoleChange: (Boolean) -> Unit,
+    outputMode: Int,
+    onOutputModeChange: (Int) -> Unit,
     outputText: String,
     onOutputTextChange: (String) -> Unit,
+    selectedVariable: String?,
+    error: String?,
+    onClearVariable: () -> Unit,
+    onPickVariable: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(
-                Modifier.weight(1f).fillMaxHeight().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp),
-            ) {
-                listOf(false to "运行提示", true to "控制台日志").forEach { (value, label) ->
-                    Box(
-                        Modifier.weight(1f).fillMaxHeight()
-                            .background(if (outputConsole == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
-                            .clickable { onOutputConsoleChange(value) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            label,
-                            color = if (outputConsole == value) EntryAccent else EntryMuted,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Clip,
-                            style = CenteredDialogButtonTextStyle,
-                        )
+        val channels = listOf("运行提示", "弹出提示", "开发日志", "注释")
+        Column(Modifier.fillMaxWidth().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp)) {
+            repeat(2) { row ->
+                Row(Modifier.fillMaxWidth().height(34.dp)) {
+                    repeat(2) { column ->
+                        val value = row * 2 + column
+                        val label = channels[value]
+                        Box(
+                            Modifier.weight(1f).fillMaxHeight()
+                                .background(if (outputMode == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
+                                .clickable { onOutputModeChange(value) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                label,
+                                color = if (outputMode == value) EntryAccent else EntryMuted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip,
+                                style = CenteredDialogButtonTextStyle,
+                            )
+                        }
                     }
                 }
             }
-            Spacer(Modifier.width(8.dp))
-            Box(
-                Modifier.width(64.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Text("选择变量", color = EntryAccent, fontSize = 11.sp, style = CenteredDialogButtonTextStyle) }
         }
-        Spacer(Modifier.height(9.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(when (outputMode) {
+            0 -> "运行状态持续显示给脚本使用者；不进入开发日志。"
+            1 -> "按弹窗样式显示，到时自动消失。"
+            2 -> "写入 Runner 开发日志，不弹出给脚本使用者。"
+            else -> "只留在脚本中，不产生运行输出。"
+        }, color = EntryMuted, fontSize = 10.sp)
+        if (outputMode != DebugOutputCode.COMMENT) {
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("内容来源", fontSize = 11.sp, color = EntryMuted, modifier = Modifier.weight(1f))
+                if (selectedVariable != null) {
+                    Text("改用文字", color = EntryAccent, fontSize = 11.sp,
+                        modifier = Modifier.clickable(onClick = onClearVariable).padding(horizontal = 8.dp))
+                }
+                Box(
+                    Modifier.width(96.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp))
+                        .clickable(onClick = onPickVariable),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        selectedVariable ?: "选择变量",
+                        color = EntryAccent,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = CenteredDialogButtonTextStyle,
+                    )
+                }
+            }
+        }
+        if (selectedVariable != null && outputMode != DebugOutputCode.COMMENT) {
+            Text("将输出变量当前值；下方文字仅用作编辑器中的说明。", color = EntryMuted, fontSize = 10.sp)
+        }
+        if (error != null) Text(error, color = Color(0xFFD13232), fontSize = 11.sp)
+        Spacer(Modifier.height(6.dp))
         Box(
             Modifier.fillMaxWidth().weight(1f).border(1.dp, EntryBorder, RoundedCornerShape(4.dp)).padding(10.dp),
         ) {
@@ -1352,7 +1556,16 @@ private fun DebugOutputPanel(
                 modifier = Modifier.fillMaxSize(),
                 decorationBox = { field ->
                     Box(Modifier.fillMaxSize()) {
-                        if (outputText.isEmpty()) Text("请输入运行提示内容", color = Color(0xFFB3BAC7), fontSize = 13.sp)
+                        if (outputText.isEmpty()) Text(
+                            when (outputMode) {
+                                0 -> "输入持续显示的运行提示"
+                                1 -> "输入到时自动消失的弹窗内容"
+                                2 -> "输入供开发调试查看的脚本日志"
+                                else -> "输入注释内容"
+                            },
+                            color = Color(0xFFB3BAC7),
+                            fontSize = 13.sp,
+                        )
                         field()
                     }
                 },
@@ -1362,48 +1575,260 @@ private fun DebugOutputPanel(
 }
 
 @Composable
-private fun DebugSettingsPanel(runDelayMs: Int, onPickDelay: () -> Unit) {
-    val rows = listOf("调试运行", "运行时隐藏编程窗口", "控制台日志", "显示按键准星", "性能信息", "无障碍音量停止", "停止后返回入口")
-    Column(Modifier.fillMaxSize()) {
-        DebugBorderCard(Modifier.weight(1f)) {
-            rows.forEachIndexed { index, label ->
-                DebugPreviewSwitchRow(label, checked = index != 1)
-                if (index != rows.lastIndex) DividerLine()
+private fun DebugPromptFilterPanel(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    filters: RunPromptFilters,
+    onFiltersChange: (RunPromptFilters) -> Unit,
+    projectVariables: List<ProjectVariable>,
+    onPick: (String, List<String>, String?, (String) -> Unit) -> Unit,
+) {
+    val scopes = listOf("所有范围" to "all", "全局变量" to "global") +
+        projectVariables.mapNotNull { variable ->
+            variable.flowId?.let { "插件：$it" to "flow:$it" }
+        }.distinct()
+    val types = listOf(
+        "所有类型" to "all", "整数" to "integer", "浮点" to "number",
+        "字符" to "string", "寻图" to "image",
+    )
+    val names = listOf("所有变量") + projectVariables.filter { variable ->
+        (filters.variableScope == "all" ||
+            filters.variableScope == "global" && variable.scope == ProjectVariableScope.GLOBAL ||
+            filters.variableScope == "flow:${variable.flowId}") &&
+            (filters.variableType == "all" || filters.variableType == variable.type.name.lowercase())
+    }.map(ProjectVariable::name).distinct().sorted()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Text("以下是自动运行提示的分类；手动加入的运行提示和弹窗不受这些分类筛选。",
+            color = EntryMuted, fontSize = 10.sp, modifier = Modifier.padding(bottom = 6.dp))
+        DebugBorderCard {
+            DebugSwitchRow("显示用户提示", enabled, onEnabledChange)
+            DividerLine()
+            listOf(
+                Triple("循环", filters.loops, { value: Boolean -> filters.copy(loops = value) }),
+                Triple("跳转 / 判断", filters.jumps, { value: Boolean -> filters.copy(jumps = value) }),
+                Triple("插件运行", filters.flowStart, { value: Boolean -> filters.copy(flowStart = value) }),
+                Triple("插件返回", filters.flowReturn, { value: Boolean -> filters.copy(flowReturn = value) }),
+                Triple("寻图", filters.imageSearch, { value: Boolean -> filters.copy(imageSearch = value) }),
+                Triple("变量", filters.variables, { value: Boolean -> filters.copy(variables = value) }),
+            ).forEach { (label, checked, update) ->
+                DebugSwitchRow(label, checked) { onFiltersChange(update(it)) }
+                DividerLine()
             }
-        }
-        Spacer(Modifier.height(10.dp))
-        DebugBorderCard(Modifier.height(98.dp)) {
-            Row(Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("运行延迟", fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Text(
-                    "${runDelayMs}毫秒",
-                    color = EntryAccent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable(onClick = onPickDelay),
-                )
+            Text("变量提示筛选", color = EntryAccent, fontSize = 12.sp,
+                modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 2.dp))
+            DebugFilterPickerRow("范围", scopes.firstOrNull { it.second == filters.variableScope }?.first ?: "所有范围") {
+                onPick("变量范围", scopes.map { it.first }, null) { label ->
+                    onFiltersChange(filters.copy(variableScope = scopes.first { it.first == label }.second, variableName = "all"))
+                }
             }
-            Box(Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 16.dp, vertical = 20.dp)) {
-                Box(Modifier.fillMaxWidth().height(2.dp).align(Alignment.Center).background(Color(0xFFE9ECF1)))
-                Box(Modifier.size(12.dp).align(Alignment.CenterStart).background(EntryAccent, RoundedCornerShape(12.dp)))
+            DebugFilterPickerRow("类型", types.firstOrNull { it.second == filters.variableType }?.first ?: "所有类型") {
+                onPick("变量类型", types.map { it.first }, null) { label ->
+                    onFiltersChange(filters.copy(variableType = types.first { it.first == label }.second, variableName = "all"))
+                }
+            }
+            DebugFilterPickerRow("名称", if (filters.variableName == "all") "所有变量" else filters.variableName) {
+                onPick("变量名称", names, null) { label ->
+                    onFiltersChange(filters.copy(variableName = if (label == "所有变量") "all" else label))
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DebugEnvironmentPanel() {
-    Column(Modifier.fillMaxSize()) {
-        DebugBorderCard(Modifier.weight(1f)) {
-            Text("开发环境", fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(43.dp).padding(horizontal = 10.dp, vertical = 12.dp))
-            DebugSegmentRow("截图服务", listOf("系统录屏", "Root"), 1)
-            DividerLine()
-            DebugSegmentRow("按键服务", listOf("无障碍", "Root"), 1)
-            DividerLine()
-            DebugSegmentRow("截屏显示", listOf("自动", "悬浮窗", "应用内"), 0)
-            DividerLine()
-            DebugPreviewSwitchRow("始终只显示一个弹窗", checked = false)
+private fun DebugPopupStylePanel(style: PopupStyle, onChange: (PopupStyle) -> Unit) {
+    val pixelDensity = LocalDensity.current
+    val previewBackground = Color(android.graphics.Color.parseColor(style.backgroundColor))
+    val previewText = Color(android.graphics.Color.parseColor(style.textColor))
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Text("弹出提示 · 到时自动消失", color = EntryAccent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text("尺寸、坐标、字号、圆角均为屏幕像素；X/Y 从左上角计算，-1 自动居中。",
+            color = EntryMuted, fontSize = 10.sp, maxLines = 2)
+        Spacer(Modifier.height(7.dp))
+        // This canvas previews the style; X/Y position applies to the actual screen popup.
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().height(110.dp).background(EntryPanel, RoundedCornerShape(5.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            val popupWidth = with(pixelDensity) { style.widthPx.toDp() }.coerceAtMost(maxWidth)
+            val popupHeight = with(pixelDensity) { style.heightPx.toDp() }.coerceAtMost(maxHeight)
+            Box(
+                Modifier.width(popupWidth).height(popupHeight)
+                    .background(previewBackground, RoundedCornerShape(with(pixelDensity) { style.cornerPx.toDp() }))
+                    .padding(horizontal = with(pixelDensity) { (style.widthPx / 12).coerceAtMost(12).toDp() }),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("弹出提示预览", color = previewText,
+                    fontSize = with(pixelDensity) { style.fontPx.toFloat().toSp() },
+                    style = CenteredDialogButtonTextStyle,
+                    textAlign = when (style.textAlign) {
+                        "left" -> TextAlign.Start
+                        "right" -> TextAlign.End
+                        else -> TextAlign.Center
+                    }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
+            }
         }
+        Spacer(Modifier.height(9.dp))
+        DebugBorderCard {
+            Row(Modifier.fillMaxWidth().padding(8.dp)) {
+                PopupNumberField("宽度 px", style.widthPx, 1..2160, Modifier.weight(1f)) { onChange(style.copy(widthPx = it)) }
+                Spacer(Modifier.width(8.dp))
+                PopupNumberField("高度 px", style.heightPx, 1..1200, Modifier.weight(1f)) { onChange(style.copy(heightPx = it)) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
+                PopupNumberField("X px", style.xPx, -1..10_000, Modifier.weight(1f),
+                    onCenter = { onChange(style.copy(xPx = -1)) }) { onChange(style.copy(xPx = it)) }
+                Spacer(Modifier.width(8.dp))
+                PopupNumberField("Y px", style.yPx, -1..10_000, Modifier.weight(1f),
+                    onCenter = { onChange(style.copy(yPx = -1)) }) { onChange(style.copy(yPx = it)) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
+                PopupNumberField("字号 px", style.fontPx, 10..160, Modifier.weight(1f)) { onChange(style.copy(fontPx = it)) }
+                Spacer(Modifier.width(8.dp))
+                PopupNumberField("圆角 px", style.cornerPx, 0..200, Modifier.weight(1f)) { onChange(style.copy(cornerPx = it)) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
+                PopupNumberField("显示时长 ms", style.durationMs, 500..30_000, Modifier.weight(1f)) { onChange(style.copy(durationMs = it)) }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("文字对齐", fontSize = 11.sp, color = EntryMuted)
+                    Text(when (style.textAlign) { "left" -> "左对齐"; "right" -> "右对齐"; else -> "居中" },
+                        modifier = Modifier.fillMaxWidth().height(32.dp).border(1.dp, EntryBorder, RoundedCornerShape(3.dp))
+                            .clickable { onChange(style.copy(textAlign = when (style.textAlign) {
+                                "left" -> "center"; "center" -> "right"; else -> "left"
+                            })) }.wrapContentSize(Alignment.Center),
+                        fontSize = 12.sp, color = EntryAccent)
+                }
+            }
+            PopupColorField("背景色 · #AARRGGBB", style.backgroundColor) { onChange(style.copy(backgroundColor = it)) }
+            PopupColorField("字体色 · #AARRGGBB", style.textColor) { onChange(style.copy(textColor = it)) }
+            Text("恢复默认样式", modifier = Modifier.fillMaxWidth().clickable { onChange(PopupStyle()) }
+                .padding(9.dp), color = EntryAccent, fontSize = 12.sp, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+@Composable
+private fun PopupNumberField(
+    label: String,
+    value: Int,
+    range: IntRange,
+    modifier: Modifier = Modifier,
+    onCenter: (() -> Unit)? = null,
+    onChange: (Int) -> Unit,
+) {
+    var draft by remember(value) { mutableStateOf(value.toString()) }
+    val valid = draft.toIntOrNull()?.let { it in range } == true
+    Column(modifier) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 11.sp, color = EntryMuted)
+            if (onCenter != null) {
+                Spacer(Modifier.weight(1f))
+                Text("居中", modifier = Modifier.clickable(onClick = onCenter).padding(horizontal = 5.dp),
+                    fontSize = 11.sp, color = EntryAccent)
+            }
+        }
+        BasicTextField(
+            value = draft,
+            onValueChange = { next ->
+                if (next.length <= 6 && (next.all(Char::isDigit) || range.first < 0 &&
+                        next.startsWith("-") && next.drop(1).all(Char::isDigit))) {
+                    draft = next
+                    next.toIntOrNull()?.takeIf { it in range }?.let(onChange)
+                }
+            },
+            singleLine = true,
+            textStyle = TextStyle(fontSize = 12.sp, color = Color(0xFF202839), textAlign = TextAlign.Center),
+            modifier = Modifier.fillMaxWidth().height(32.dp)
+                .border(1.dp, if (valid) EntryBorder else Color(0xFFD13232), RoundedCornerShape(3.dp))
+                .padding(horizontal = 8.dp, vertical = 7.dp),
+        )
+        if (!valid) Text("范围 ${range.first}～${range.last}，当前输入未应用",
+            color = Color(0xFFD13232), fontSize = 9.sp)
+    }
+}
+
+@Composable
+private fun PopupColorField(label: String, value: String, onChange: (String) -> Unit) {
+    var draft by remember(value) { mutableStateOf(value) }
+    val valid = draft.matches(Regex("#[0-9A-Fa-f]{8}"))
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Text(label, fontSize = 11.sp, color = EntryMuted)
+        BasicTextField(value = draft, onValueChange = { next ->
+            if (next.length <= 9) {
+                draft = next
+                if (next.matches(Regex("#[0-9A-Fa-f]{8}"))) onChange(next.uppercase(Locale.ROOT))
+            }
+        }, singleLine = true, textStyle = TextStyle(fontSize = 12.sp, color = Color(0xFF202839)),
+            modifier = Modifier.fillMaxWidth().height(36.dp)
+                .border(1.dp, if (valid) EntryBorder else Color(0xFFD13232), RoundedCornerShape(3.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp))
+        if (!valid) Text("请输入 #AARRGGBB，当前输入未应用",
+            color = Color(0xFFD13232), fontSize = 9.sp)
+    }
+}
+
+@Composable
+private fun DebugFilterPickerRow(label: String, value: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(35.dp).clickable(onClick = onClick)
+        .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = EntryMuted, fontSize = 12.sp, modifier = Modifier.width(42.dp))
+        Text(value, color = EntryAccent, fontSize = 12.sp, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+    }
+}
+
+@Composable
+private fun DebugSettingsPanel(
+    runDelayMs: Int,
+    showRunPrompts: Boolean,
+    onShowRunPromptsChange: (Boolean) -> Unit,
+    onPickDelay: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        DebugBorderCard {
+            DebugSwitchRow("显示用户提示", showRunPrompts, onShowRunPromptsChange)
+            Text("控制脚本的运行提示与短时弹窗；开发日志始终独立记录。",
+                color = EntryMuted, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        DebugBorderCard {
+            Row(Modifier.fillMaxWidth().height(42.dp).clickable(onClick = onPickDelay)
+                .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("运行前延迟", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("${runDelayMs} 毫秒  ›", color = EntryAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("暂停、继续、停止及日志查看请使用编辑器的运行控制。未接入的调试选项不作为开关展示。",
+            color = EntryMuted, fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun DebugEnvironmentPanel() {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        DebugBorderCard {
+            Text("当前执行环境", color = EntryAccent, fontSize = 13.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.padding(10.dp))
+            DividerLine()
+            DebugInfoRow("输入", "Root 后端")
+            DividerLine()
+            DebugInfoRow("截图", "Root 后端")
+            DividerLine()
+            DebugInfoRow("提示", "运行提示 / 短时弹窗")
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("此页只展示当前首发能力。无障碍、系统录屏等后端尚未接入，不能在这里切换。",
+            color = EntryMuted, fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun DebugInfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 12.sp, color = EntryMuted, modifier = Modifier.weight(1f))
+        Text(value, fontSize = 12.sp, color = Color(0xFF202839))
     }
 }
 
@@ -1413,16 +1838,19 @@ private fun DebugBorderCard(modifier: Modifier = Modifier, content: @Composable 
 }
 
 @Composable
-private fun DebugPreviewSwitchRow(label: String, checked: Boolean) {
-    Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun DebugSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 10.dp)
+            .clickable { onCheckedChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
-        DebugStaticSwitch(checked)
+        DebugInteractiveSwitch(checked)
     }
 }
 
-/** 只作参考布局展示；正式接入运行配置前不把开关做成可点击的假功能。 */
 @Composable
-private fun DebugStaticSwitch(checked: Boolean) {
+private fun DebugInteractiveSwitch(checked: Boolean) {
     Box(
         Modifier.size(width = 45.dp, height = 26.dp)
             .background(if (checked) Color(0xFF31C75A) else Color(0xFFD1D5DB), RoundedCornerShape(13.dp))
@@ -1430,33 +1858,6 @@ private fun DebugStaticSwitch(checked: Boolean) {
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Box(Modifier.size(22.dp).background(Color.White, RoundedCornerShape(11.dp)))
-    }
-}
-
-@Composable
-private fun DebugSegmentRow(label: String, options: List<String>, selected: Int) {
-    Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 13.sp, modifier = Modifier.width(76.dp))
-        Row(Modifier.weight(1f).height(30.dp).background(Color(0xFFF4F6FA), RoundedCornerShape(6.dp)).padding(2.dp)) {
-            options.forEachIndexed { index, option ->
-                Box(
-                    Modifier.weight(1f).fillMaxHeight().background(if (selected == index) Color.White else Color.Transparent, RoundedCornerShape(5.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        option,
-                        color = if (selected == index) EntryAccent else EntryMuted,
-                        fontSize = 10.sp,
-                        fontWeight = if (selected == index) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Clip,
-                        textAlign = TextAlign.Center,
-                        style = CenteredDialogButtonTextStyle,
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -1508,43 +1909,38 @@ private fun EditorColumnPage(title: String, onDismiss: () -> Unit, primary: Stri
 }
 
 @Composable
-private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onSelected: (Int) -> Unit, onDismiss: () -> Unit, onAdd: () -> Unit, headerHint: String? = null, showAdd: Boolean = true, content: @Composable () -> Unit) {
+private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onSelected: (Int) -> Unit, onDismiss: () -> Unit, onAdd: () -> Unit, headerHint: String? = null, showAdd: Boolean = true, confirmLabel: String = "加入", content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = EntryBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            headerHint?.let { Text(it, color = EntryMuted, fontSize = 8.sp) }
+            headerHint?.let { Text(it, color = EntryMuted, fontSize = 10.sp) }
         }
         DividerLine()
         Row(Modifier.weight(1f)) {
-            Column(Modifier.width(70.dp).fillMaxHeight().background(EntryPanel)) {
+            Column(Modifier.width(96.dp).fillMaxHeight().background(EntryPanel).verticalScroll(rememberScrollState())) {
                 tabs.forEachIndexed { index, tab ->
-                    Box(Modifier.fillMaxWidth().height(36.dp).clickable { onSelected(index) }) {
+                    Box(Modifier.fillMaxWidth().height(38.dp).clickable { onSelected(index) }) {
                         Box(Modifier.align(Alignment.CenterStart).width(1.5.dp).fillMaxHeight()
                             .background(if (selected == index) EntryAccent else Color.Transparent))
                         Text(
                             tab,
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             fontWeight = if (selected == index) FontWeight.Bold else FontWeight.Normal,
                             color = if (selected == index) EntryAccent else Color(0xFF283140),
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxSize().padding(top = 10.dp),
+                            modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center),
                         )
                     }
                 }
             }
             DividerVertical()
-            Column(Modifier.weight(1f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) { content() }
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
         }
-        FooterButtons(if (showAdd) listOf("取消" to onDismiss, "加入" to onAdd) else listOf("关闭" to onDismiss))
+        FooterButtons(if (showAdd) listOf("取消" to onDismiss, confirmLabel to onAdd) else listOf("关闭" to onDismiss))
     }
 }
 
-@Composable private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth().border(1.dp, EntryBorder, RoundedCornerShape(2.dp)).padding(bottom = 6.dp)) {
-        Text(title, color = EntryAccent, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
-        content()
-    }
-}
 
 @Composable private fun SettingChoice(label: String, value: String, onClick: (() -> Unit)? = null) {
     Row(
@@ -1598,11 +1994,6 @@ private fun PickerDialog(request: PickerRequest, onDismiss: () -> Unit) {
     }
 }
 
-@Composable private fun SettingSwitch(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 12.sp, modifier = Modifier.weight(1f)); Switch(checked, onChecked, modifier = Modifier.size(38.dp, 24.dp))
-    }
-}
 
 @Composable private fun EntryField(label: String, value: String, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(38.dp).border(1.dp, EntryBorder, RoundedCornerShape(2.dp)).clickable(onClick = onClick).padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1610,29 +2001,37 @@ private fun PickerDialog(request: PickerRequest, onDismiss: () -> Unit) {
     }
 }
 
-@Composable private fun EntryEditField(label: String, value: String, onValue: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(38.dp).border(1.dp, EntryBorder, RoundedCornerShape(2.dp)).padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 11.sp, color = EntryMuted, modifier = Modifier.weight(1f))
-        BasicTextField(value, onValue, singleLine = true, textStyle = TextStyle(fontSize = 11.sp, color = EntryAccent, textAlign = TextAlign.End), modifier = Modifier.width(100.dp))
-    }
-}
 
-@Composable private fun CompactChoice(text: String, modifier: Modifier, onClick: () -> Unit) = Text(text, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = modifier.height(34.dp).border(1.dp, EntryBorder, RoundedCornerShape(2.dp)).clickable(onClick = onClick).padding(top = 9.dp))
 
-@Composable private fun SegmentedChoice(left: String, right: String, selectedRight: Boolean, onSelect: (Boolean) -> Unit) {
+@Composable
+private fun SegmentedChoice(
+    left: String,
+    right: String,
+    selectedRight: Boolean,
+    onSelect: (Boolean) -> Unit,
+) {
     Row(Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 12.dp).background(Color(0xFFEEF1F7), RoundedCornerShape(15.dp))) {
         listOf(false to left, true to right).forEach { (rightSide, label) ->
-            Text(label, color = if (selectedRight == rightSide) Color.White else EntryMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f).fillMaxHeight().background(if (selectedRight == rightSide) EntryAccent else Color.Transparent, RoundedCornerShape(15.dp)).clickable { onSelect(rightSide) }.padding(top = 7.dp))
+            Box(
+                Modifier.weight(1f).fillMaxHeight()
+                    .background(if (selectedRight == rightSide) EntryAccent else Color.Transparent, RoundedCornerShape(15.dp))
+                    .clickable { onSelect(rightSide) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    color = if (selectedRight == rightSide) Color.White else EntryMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    style = CenteredDialogButtonTextStyle,
+                )
+            }
         }
     }
 }
 
-@Composable private fun RadioLine(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(34.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected, onClick, modifier = Modifier.size(30.dp)); Text(label, fontSize = 12.sp)
-    }
-}
 
 @Composable private fun MultilineField(value: String, hint: String, minHeight: Int, onValue: (String) -> Unit) {
     BasicTextField(value, onValue, textStyle = TextStyle(fontSize = 10.sp, color = Color(0xFF202839), fontFamily = FontFamily.Monospace), modifier = Modifier.fillMaxWidth().height(minHeight.dp).border(1.dp, EntryBorder, RoundedCornerShape(3.dp)).padding(8.dp), decorationBox = { field -> Box { if (value.isEmpty() && hint.isNotEmpty()) Text(hint, color = EntryMuted, fontSize = 10.sp); field() } })

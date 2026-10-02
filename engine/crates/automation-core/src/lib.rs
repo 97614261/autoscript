@@ -15,7 +15,8 @@ pub use capture_series::{
 };
 pub use frame_pool::{
     CaptureSeriesHandle, CapturedFrameId, FrameError, FrameFormat, FrameHandle, FrameMetadata,
-    FramePool, FramePoolConfig, FrameView, FrameVisionError, Rotation, SeriesPublish,
+    FramePool, FramePoolConfig, FrameView, FrameVisionError, NamedTemplateMatch, Rotation,
+    SeriesPublish,
 };
 pub use input_arbiter::{
     InputArbiter, InputArbiterConfig, InputCommand, InputDecision, InputError, InputTransaction,

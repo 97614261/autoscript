@@ -10,7 +10,8 @@
   "requiredCapabilities": ["core.task"],
   "childBlocks": [],
   "properties": [
-    { "path": "milliseconds", "label": "毫秒", "editor": "integer", "required": true, "defaultValue": "1000" }
+    { "path": "milliseconds", "label": "毫秒", "editor": "integer", "required": true, "defaultValue": "1000" },
+    { "path": "millisecondsVariable", "label": "毫秒变量", "editor": "string", "required": false }
   ],
   "migrations": []
 }

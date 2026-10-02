@@ -9,6 +9,27 @@ import org.junit.Test
 
 class VisualProjectStateTest {
     @Test
+    fun jumpPanelCommandsMapToTypedFlowNodesAndArguments() {
+        assertEquals("跳出循环", legacyDockBlockQuery("break\n"))
+        assertEquals("放置标记", legacyDockBlockQuery("::ready::\n"))
+        assertEquals("跳转标记", legacyDockBlockQuery("goto ready\n"))
+        assertEquals("返回上层", legacyDockBlockQuery("return\n"))
+        val label = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("control.label")), "::ready::\n",
+            JsonObject().apply { addProperty("name", "mark") },
+        )
+        assertEquals("ready", label.get("name").asString)
+        val arguments = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("flow.argument.set")),
+            "${FunctionCatalog.BLOCK_HINT_PREFIX}flow.argument.set\n2|variable:score",
+            JsonObject().apply { addProperty("index", 1); addProperty("value", 0) },
+        )
+        assertEquals(2, arguments.get("index").asInt)
+        assertEquals("score", arguments.get("valueVariable").asString)
+        assertFalse(arguments.has("value"))
+    }
+
+    @Test
     fun legacyDockMigratesTypedCommandArgumentsWithoutDiscardingDefaults() {
         val tapDefaults = JsonObject().apply { addProperty("x", 0); addProperty("y", 0) }
         val tap = legacyDockBlockArguments(
@@ -49,6 +70,22 @@ class VisualProjectStateTest {
         )
         assertEquals("warn", log.get("level").asString)
         assertEquals("network is slow", log.get("message").asString)
+    }
+
+    @Test
+    fun debugVariableOutputBecomesValueBoundLogBlockForVisualProjects() {
+        val snippet = "Log.info(tostring(__vars[\"score\"]))\n"
+        val log = legacyDockBlockArguments(
+            requireNotNull(BlockCatalog.find("task.log")),
+            snippet,
+            JsonObject().apply {
+                addProperty("level", "info")
+                addProperty("message", "识别完成")
+            },
+        )
+        assertEquals("info", log.get("level").asString)
+        assertEquals("score", log.get("message").asString)
+        assertEquals("score", log.get("valueVariable").asString)
     }
 
     @Test
@@ -166,6 +203,34 @@ class VisualProjectStateTest {
     }
 
     @Test
+    fun editorAnnotationIsARealNonExecutingCommentNode() {
+        val source = node("step", "block-root", "a0", "task.noop", depth = 0) + "\n"
+        val editor = VisualEditorState.create(source, "block-root") { "comment-id" }
+        editor.selectedNodeId = "step"
+        val contract = requireNotNull(BlockCatalog.find("task.comment"))
+        val args = requireNotNull(initialBlockArguments(contract, emptyList(), emptyList(), "main"))
+        args.addProperty("message", "检查目标位置")
+
+        val commentId = requireNotNull(editor.insertBlock(contract, args))
+        assertEquals(listOf("step", commentId), editor.rows.map { it.nodeId })
+        assertEquals("task.comment", editor.rows.last().kind)
+        assertEquals("检查目标位置", editor.nodeArguments(commentId)?.get("message")?.asString)
+        assertTrue(editor.canUndo)
+        assertTrue(editor.undo())
+        assertEquals(listOf("step"), editor.rows.map { it.nodeId })
+    }
+
+    @Test
+    fun emptyEditorAnnotationIsRejectedBeforeSaving() {
+        val contract = requireNotNull(BlockCatalog.find("task.comment"))
+        val (arguments, message) = parseBlockArguments(
+            contract, mapOf("message" to "   "), null, emptyMap(), emptyList(),
+        )
+        assertEquals(null, arguments)
+        assertEquals("注释内容不能为空", message)
+    }
+
+    @Test
     fun editorDeletesOwnedSubtreeAndUsesStableUniqueIds() {
         val source = listOf(
             node(
@@ -271,6 +336,48 @@ class VisualProjectStateTest {
     }
 
     @Test
+    fun relatedGestureBlocksInsertAndUndoAsOneTransaction() {
+        var id = 0
+        val editor = VisualEditorState.create("", "block-root") { "gesture-${++id}" }
+        val down = requireNotNull(BlockCatalog.find("input.pointerdown"))
+        val sleep = requireNotNull(BlockCatalog.find("task.sleep"))
+        val up = requireNotNull(BlockCatalog.find("input.pointerup"))
+        val blocks = listOf(
+            down to JsonObject().apply { addProperty("x", 10); addProperty("y", 20) },
+            sleep to JsonObject().apply { addProperty("milliseconds", 800) },
+            up to JsonObject(),
+        )
+
+        assertTrue(editor.insertBlocks(blocks))
+        assertEquals(listOf("input.pointerdown", "task.sleep", "input.pointerup"), editor.rows.map { it.kind })
+        val insertedSource = editor.currentSource
+        assertTrue(editor.undo())
+        assertEquals("", editor.currentSource)
+        assertTrue(editor.redo())
+        assertEquals(insertedSource, editor.currentSource)
+    }
+
+    @Test
+    fun imageRecognitionInsertsCaptureAndFindAsOneUndoableAction() {
+        var id = 0
+        val editor = VisualEditorState.create("", "block-root") { "image-${++id}" }
+        val capture = requireNotNull(BlockCatalog.find("screen.capture"))
+        val find = requireNotNull(BlockCatalog.find("vision.findimage"))
+        val release = requireNotNull(BlockCatalog.find("screen.release"))
+        val captureArgs = JsonObject().apply { addProperty("resultVariable", "frame") }
+        val findArgs = JsonObject().apply {
+            addProperty("frameVariable", "frame")
+            addProperty("imagePath", "assets/images/template.png")
+        }
+
+        val releaseArgs = JsonObject().apply { addProperty("frameVariable", "frame") }
+        assertTrue(editor.insertBlocks(listOf(capture to captureArgs, find to findArgs, release to releaseArgs)))
+        assertEquals(listOf("screen.capture", "vision.findimage", "screen.release"), editor.rows.map { it.kind })
+        assertTrue(editor.undo())
+        assertEquals("", editor.currentSource)
+    }
+
+    @Test
     fun editorOwnsElseIfBranchStructureAsOneTransaction() {
         var id = 0
         val editor = VisualEditorState.create("", "block-root") { "elseif-${++id}" }
@@ -350,6 +457,216 @@ class VisualProjectStateTest {
         assertEquals("child", editor.nodeArguments(copiedRoot)?.get("label")?.asString)
         assertTrue(editor.undo())
         assertEquals(listOf("owner", "child"), editor.rows.map { it.nodeId })
+    }
+
+    @Test
+    fun multipleSelectionDeduplicatesDescendantsAndDeletesAsOneUndo() {
+        val source = listOf(
+            node("owner", "block-root", "a0", "control.repeat", depth = 0, childBlocks = "\"childBlocks\":{\"body\":\"body\"},"),
+            node("child", "body", "a0", "task.noop", parent = "owner", depth = 1),
+            node("tail", "block-root", "a1", "task.noop", depth = 0),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.toggleSelection("owner")
+        editor.toggleSelection("child")
+        editor.toggleSelection("tail")
+        assertEquals(listOf("owner", "tail"), editor.selectedRoots())
+        assertEquals(2, editor.copySelection().size)
+        assertEquals(3, editor.selectedNodeIds.size)
+        assertTrue(editor.deleteSelection())
+        assertTrue(editor.rows.isEmpty())
+        assertTrue(editor.undo())
+        assertEquals(listOf("owner", "child", "tail"), editor.rows.map { it.nodeId })
+        assertFalse(editor.canUndo)
+    }
+
+    @Test
+    fun batchMovementPreservesOrderAndRollsBackWhenAnyRootHitsBoundary() {
+        val source = (0..3).joinToString("\n", postfix = "\n") { node("n$it", "block-root", "a$it", "task.noop", depth = 0) }
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.toggleSelection("n1")
+        editor.toggleSelection("n2")
+        assertTrue(editor.moveSelection(-1))
+        assertEquals(listOf("n1", "n2", "n0", "n3"), editor.rows.map { it.nodeId })
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+        editor.selectedNodeId = "n2"
+        editor.toggleSelection("n3")
+        assertFalse(editor.moveSelection(1))
+        assertEquals(source, editor.currentSource)
+        assertFalse(editor.canUndo)
+        assertEquals(setOf("n2", "n3"), editor.selectedNodeIds)
+    }
+
+    @Test
+    fun forestPasteAndIndentOutdentAreSingleTransactions() {
+        val source = listOf(
+            node("owner", "block-root", "a0", "control.repeat", depth = 0, childBlocks = "\"childBlocks\":{\"body\":\"body\"},"),
+            node("a", "block-root", "a1", "task.noop", depth = 0),
+            node("b", "block-root", "a2", "task.noop", depth = 0),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.toggleSelection("a")
+        editor.toggleSelection("b")
+        assertTrue(editor.indentSelection("body"))
+        assertEquals(listOf(0, 1, 1), editor.rows.map { it.depth })
+        assertTrue(editor.outdentSelection())
+        assertEquals(listOf("owner", "a", "b"), editor.rows.map { it.nodeId })
+        val copies = editor.copySelection()
+        assertTrue(editor.pasteSelection(copies))
+        assertEquals(5, editor.rows.size)
+        assertEquals(2, editor.selectedNodeIds.size)
+        assertEquals(5, editor.rows.map { it.nodeId }.distinct().size)
+        assertTrue(editor.undo())
+        assertEquals(3, editor.rows.size)
+    }
+
+    @Test
+    fun forestPasteRewritesReferencesBetweenCopiedRootsAndPreservesOriginals() {
+        val source = listOf(
+            node("a", "block-root", "a0", "task.noop", depth = 0).replace("\"args\":{}", "\"args\":{\"targetNodeId\":\"b\"}"),
+            node("b", "block-root", "a1", "task.noop", depth = 0),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.toggleSelection("a"); editor.toggleSelection("b")
+        assertTrue(editor.pasteSelection(editor.copySelection()))
+        val copies = editor.rows.filter { it.nodeId !in setOf("a", "b") }
+        assertEquals(2, copies.size)
+        assertEquals(copies[1].nodeId, editor.nodeArguments(copies[0].nodeId)?.get("targetNodeId")?.asString)
+        assertEquals("b", editor.nodeArguments("a")?.get("targetNodeId")?.asString)
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+    }
+
+    @Test
+    fun undoAndRedoPruneRemovedSelectionsWithoutDroppingSurvivors() {
+        val source = node("a", "block-root", "a0", "task.noop", depth = 0)
+        val editor = VisualEditorState.create(source, "block-root")
+        val inserted = requireNotNull(editor.insertNoop())
+        editor.toggleSelection("a")
+        assertEquals("a", editor.selectedNodeId)
+        assertTrue(editor.undo())
+        assertEquals(setOf("a"), editor.selectedNodeIds)
+        assertTrue(editor.redo())
+        editor.selectOnly(inserted)
+        assertTrue(editor.deleteSelection())
+        assertTrue(editor.undo())
+        editor.toggleSelection("a")
+        editor.toggleSelection(inserted)
+        assertTrue(editor.redo())
+        assertEquals(setOf("a"), editor.selectedNodeIds)
+        assertEquals("a", editor.selectedNodeId)
+    }
+
+    @Test
+    fun disabledContainerPreservesSubtreeAndIsUndoable() {
+        val source = listOf(
+            node("owner", "block-root", "a0", "control.repeat", depth = 0, childBlocks = "\"childBlocks\":{\"body\":\"body\"},"),
+            node("child", "body", "a0", "task.noop", "owner", 1),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        editor.selectOnly("owner")
+        assertTrue(editor.toggleDisabledSelection())
+        assertTrue(editor.isNodeDisabled("child"))
+        assertFalse(editor.isNodeDisabled("child", inherited = false))
+        assertEquals(2, editor.rows.size)
+        assertEquals(2, editor.selectionSubtreeSize())
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+        assertFalse(editor.isNodeDisabled("owner"))
+        assertTrue(editor.redo())
+        assertTrue(editor.toggleDisabledSelection())
+        assertFalse(editor.isNodeDisabled("child"))
+    }
+
+    @Test
+    fun reflectionChangesArgumentsWithoutReplacingContainerOrChildrenAndCanReuse() {
+        val source = listOf(
+            node("owner", "block-root", "a0", "control.repeat", depth = 0, childBlocks = "\"childBlocks\":{\"body\":\"body\"},"),
+            node("child", "body", "a0", "task.noop", "owner", 1),
+        ).joinToString("\n", postfix = "\n")
+        var serial = 0
+        val editor = VisualEditorState.create(source, "block-root") { "new-${++serial}" }
+        val contract = requireNotNull(BlockCatalog.find("control.repeat"))
+        val args = JsonObject().apply { addProperty("times", 7) }
+        assertTrue(applyReflectedArguments(editor, "owner", contract, args))
+        assertEquals(listOf("owner", "child"), editor.rows.map { it.nodeId })
+        assertEquals(listOf("body"), editor.childBlockNames("owner"))
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+        assertTrue(applyReflectedArguments(editor, "owner", contract, args, EditorInsertPosition.BELOW))
+        assertEquals(3, editor.rows.size)
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+    }
+
+    @Test
+    fun actionPolicyLocksMutationsDuringExecutionButAllowsPausedStep() {
+        val states = listOf(com.autoscript.core.model.RuntimeEngineState.RUNNING,
+            com.autoscript.core.model.RuntimeEngineState.PAUSED, com.autoscript.core.model.RuntimeEngineState.STOPPING)
+        states.forEach { assertFalse(editorCanMutate(false, false, it)) }
+        assertTrue(editorCanMutate(false, false, com.autoscript.core.model.RuntimeEngineState.IDLE))
+        assertTrue(editorCanStep(false, true, com.autoscript.core.model.RuntimeEngineState.PAUSED, false))
+        assertFalse(editorCanStep(false, true, com.autoscript.core.model.RuntimeEngineState.RUNNING, true))
+        assertFalse(editorCanStep(false, false, com.autoscript.core.model.RuntimeEngineState.IDLE, true))
+    }
+
+    @Test
+    fun reflectionRejectsStaleArgumentsAndDuplicateLabelsWithoutMutation() {
+        val source = node("label", "block-root", "a0", "control.label", depth = 0)
+            .replace("\"args\":{}", "\"args\":{\"name\":\"start\"}") + "\n"
+        val editor = VisualEditorState.create(source, "block-root")
+        val contract = requireNotNull(BlockCatalog.find("control.label"))
+        val original = requireNotNull(editor.nodeArguments("label"))
+        assertFalse(applyReflectedArguments(editor, "label", contract, original, EditorInsertPosition.BELOW))
+        assertEquals(source, editor.currentSource)
+        val updated = JsonObject().apply { addProperty("name", "newName") }
+        assertTrue(editor.updateArguments("label", updated))
+        val changedSource = editor.currentSource
+        assertFalse(applyReflectedArguments(editor, "label", contract, original, expectedArguments = original))
+        assertEquals(changedSource, editor.currentSource)
+    }
+
+    @Test
+    fun reflectionRequiresExplicitValidBranchForInsideInsertion() {
+        val source = node("owner", "block-root", "a0", "control.if", depth = 0,
+            childBlocks = "\"childBlocks\":{\"then\":\"then-block\",\"else\":\"else-block\"},") + "\n"
+        val editor = VisualEditorState.create(source, "block-root")
+        val contract = requireNotNull(BlockCatalog.find("control.if"))
+        val args = JsonObject()
+        assertFalse(applyReflectedArguments(editor, "owner", contract, args, EditorInsertPosition.INSIDE))
+        assertEquals(source, editor.currentSource)
+        assertTrue(applyReflectedArguments(editor, "owner", contract, args, EditorInsertPosition.INSIDE, "else"))
+        assertEquals("else", editor.rows.last().childSlot)
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+    }
+
+    @Test
+    fun loopReflectionRestoresUnitsAndVariableModes() {
+        val args = JsonObject().apply { addProperty("durationVariable", "timeout"); addProperty("durationUnit", "seconds"); addProperty("maxIterations", 80) }
+        val draft = loopDraftFromArguments("control.while", args)
+        assertEquals(LoopMode.TIMED, draft.mode)
+        assertTrue(draft.variableMode)
+        assertEquals("timeout", draft.timeVariable)
+        assertEquals(LoopTimeUnit.SECONDS, draft.unit)
+        assertEquals("80", draft.maxIterations)
+    }
+
+    @Test
+    fun literalTextReplacementDoesNotRewriteNamesOrStructureAndHasOneUndo() {
+        val source = node("hello-id", "block-root", "a0", "task.log", depth = 0)
+            .replace("\"args\":{}", "\"args\":{\"message\":\"hello world\",\"valueVariable\":\"hello\",\"level\":\"info\"}") + "\n"
+        val editor = VisualEditorState.create(source, "block-root")
+        assertEquals(1, editor.replaceDisplayText("hello", "goodbye", false))
+        assertEquals("hello-id", editor.rows.single().nodeId)
+        assertEquals("goodbye world", editor.nodeArguments("hello-id")?.get("message")?.asString)
+        assertEquals("hello", editor.nodeArguments("hello-id")?.get("valueVariable")?.asString)
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+        assertEquals(0, editor.replaceDisplayText("", "anything", false))
+        assertEquals(0, editor.replaceDisplayText("hello", "界".repeat(2048), false))
+        assertEquals(source, editor.currentSource)
     }
 
     private fun node(

@@ -13,7 +13,8 @@
       "required": ["level", "message"],
       "properties": {
         "level": { "enum": ["info", "warn", "error"] },
-        "message": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        "message": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "valueVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "maxLength": 64 }
       }
     }
   }

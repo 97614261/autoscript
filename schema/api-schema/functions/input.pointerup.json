@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4005,
+  "name": "Input.pointerUp",
+  "since": "1.6",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "task_pointer_lease",
+  "summary": "释放当前任务持有的单指触点；其他任务不能代替持有者释放。",
+  "params": [],
+  "returns": { "type": "void", "nullable": false, "summary": "Root输入后端确认弹起时返回。" },
+  "legacyAliases": []
+}

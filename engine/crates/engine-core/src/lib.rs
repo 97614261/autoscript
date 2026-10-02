@@ -191,7 +191,7 @@ impl EngineSession {
         if width == 0 || height == 0 {
             return Err(EngineSessionError::InvalidDisplaySize);
         }
-        let mut control = EngineControl::new(RuntimeApiVersion { major: 1, minor: 5 });
+        let mut control = EngineControl::new(RuntimeApiVersion { major: 1, minor: 7 });
         control.transition(EngineState::Starting)?;
         let clock = ManualClock::new(MonoTime::ZERO);
         let executor = RuntimeExecutor::new_with_frames(
@@ -265,6 +265,44 @@ impl EngineSession {
     #[must_use]
     pub fn drain_script_logs(&mut self) -> Vec<String> {
         self.executor.drain_script_logs()
+    }
+
+    /// Returns user-facing runtime prompts accumulated since the previous call.
+    #[must_use]
+    pub fn drain_script_prompts(&mut self) -> Vec<String> {
+        self.executor.drain_script_prompts()
+    }
+    /// Queues a validated UI event on the Lua owner thread.
+    /// # Errors
+    /// Rejects malformed events or a full event queue.
+    pub fn push_ui_event(
+        &mut self,
+        id: &str,
+        event: &str,
+        value: &str,
+    ) -> Result<(), EngineSessionError> {
+        self.executor
+            .push_ui_event(id, event, value)
+            .map_err(|e| EngineSessionError::Executor(format!("{e:?}")))
+    }
+    /// Updates a control without creating a plugin event.
+    /// # Errors
+    /// Rejects malformed or over-limit control values.
+    pub fn update_ui_value(&mut self, id: &str, value: &str) -> Result<(), EngineSessionError> {
+        self.executor
+            .update_ui_value(id, value)
+            .map_err(|e| EngineSessionError::Executor(format!("{e:?}")))
+    }
+    /// Seeds the renderer's validated initial values before starting Lua.
+    /// # Errors
+    /// Rejects invalid values or configuration after start.
+    pub fn seed_ui_values(
+        &mut self,
+        values: std::collections::BTreeMap<String, String>,
+    ) -> Result<(), EngineSessionError> {
+        self.executor
+            .seed_ui_values(values)
+            .map_err(|e| EngineSessionError::Executor(format!("{e:?}")))
     }
 
     /// Registers one decoded project image before the entry task starts.
@@ -572,6 +610,14 @@ impl EngineSession {
             .drive()
             .map_err(|error| EngineSessionError::Executor(format!("{error:?}")))?;
         self.next = report.next;
+        if self.control.state() == EngineState::Running
+            && matches!(
+                self.next,
+                SchedulerPoll::Paused | SchedulerPoll::PausedUntil(_)
+            )
+        {
+            self.control.transition(EngineState::Paused)?;
+        }
         self.update_terminal_state()?;
         Ok(report)
     }
@@ -610,6 +656,28 @@ impl EngineSession {
             .map_err(|error| EngineSessionError::Executor(format!("{error:?}")))?;
         self.control.transition(EngineState::Running)?;
         Ok(())
+    }
+
+    /// Advances to the next compiler checkpoint.
+    ///
+    /// # Errors
+    /// Returns an error unless paused, or when scheduler resume fails.
+    pub fn step(&mut self, boot_time_nanos: u64) -> Result<(), EngineSessionError> {
+        if self.control.state() != EngineState::Paused {
+            return Err(EngineSessionError::NotRunning);
+        }
+        self.clock.set(MonoTime::from_nanos(boot_time_nanos));
+        self.next = self
+            .executor
+            .step()
+            .map_err(|e| EngineSessionError::Executor(format!("{e:?}")))?;
+        self.control.transition(EngineState::Running)?;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn debug_snapshot(&self) -> Option<lua_runtime::LuaDebugSnapshot> {
+        self.executor.lua().debug_snapshot()
     }
 
     /// Stops input first, then atomically cancels and closes all Lua tasks.
@@ -684,6 +752,39 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_step_executes_one_node_and_resume_disables_stepping() {
+        let mut session = EngineSession::new(720, 1280, EngineSessionConfig::default()).unwrap();
+        session.start(br#"
+            __autoscript_debug_step = true
+            return function()
+                local vars = {count=0}
+                for i=1,3 do
+                    __autoscript_debug_snapshot={flowId='main',nodeId='node-'..i,locals=vars,globals={},localTypes={count='integer'},globalTypes={}}
+                    if __autoscript_debug_step then coroutine.yield('__AUTOSCRIPT_DEBUG_CHECKPOINT_V1') end
+                    vars.count=vars.count+1
+                end
+            end
+        "#, "step", &["core.task".into()]).unwrap();
+        session.pump(1).unwrap();
+        assert_eq!(session.state(), EngineState::Paused);
+        let first = session.debug_snapshot().unwrap();
+        assert_eq!(first.node_id, "node-1");
+        assert_eq!(first.variables[0].2, LuaScalar::Integer(0));
+        session.step(2).unwrap();
+        session.pump(3).unwrap();
+        let second = session.debug_snapshot().unwrap();
+        assert_eq!(second.node_id, "node-2");
+        assert_eq!(second.variables[0].2, LuaScalar::Integer(1));
+        session.resume(4).unwrap();
+        session.pump(5).unwrap();
+        assert_eq!(session.state(), EngineState::Stopped);
+        assert_eq!(
+            session.debug_snapshot().unwrap().variables[0].2,
+            LuaScalar::Integer(3)
+        );
+    }
+
+    #[test]
     fn supports_normal_lifecycle() {
         let mut engine = EngineControl::new(RuntimeApiVersion { major: 1, minor: 0 });
         for state in [
@@ -696,6 +797,28 @@ mod tests {
                 .transition(state)
                 .expect("valid lifecycle transition");
         }
+    }
+
+    #[test]
+    fn debugger_values_are_bounded_and_stop_preempts_a_checkpoint() {
+        let mut session = EngineSession::new(720, 1280, EngineSessionConfig::default()).unwrap();
+        session.start(br#"return function()
+            __autoscript_debug_step = true
+            local vars = {text=string.rep('x',2000)}
+            __autoscript_debug_snapshot={flowId='main',nodeId='node-1',locals=vars,globals={},localTypes={text='string'},globalTypes={}}
+            coroutine.yield('__AUTOSCRIPT_DEBUG_CHECKPOINT_V1')
+            should_not_run=true
+        end"#, "stop-debug", &["core.task".into()]).unwrap();
+        session.pump(1).unwrap();
+        let snapshot = session.debug_snapshot().unwrap();
+        assert!(snapshot.variables[0].3);
+        assert!(matches!(&snapshot.variables[0].2, LuaScalar::Bytes(bytes) if bytes.len() == 1024));
+        session.stop(2).unwrap();
+        assert_eq!(session.state(), EngineState::Stopped);
+        assert_eq!(
+            session.diagnostic_global("should_not_run"),
+            Some(LuaScalar::Nil)
+        );
     }
 
     #[test]

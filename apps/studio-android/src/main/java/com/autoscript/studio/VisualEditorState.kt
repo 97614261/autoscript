@@ -19,7 +19,199 @@ internal class VisualEditorState private constructor(
         private set
     var currentSource: String = migratedSource
         private set
+    private var selectionMutationDepth = 0
     var selectedNodeId: String? = null
+        set(value) {
+            field = value
+            if (selectionMutationDepth == 0) selectedNodeIds = setOfNotNull(value)
+        }
+    var selectedNodeIds: Set<String> = emptySet()
+        private set
+
+    fun toggleSelection(nodeId: String) {
+        if (rows.none { it.nodeId == nodeId }) return
+        if (nodeId !in selectedNodeIds && selectedNodeIds.size >= 256) return
+        val next = if (nodeId in selectedNodeIds) selectedNodeIds - nodeId else selectedNodeIds + nodeId
+        selectedNodeId = next.lastOrNull()
+        selectedNodeIds = next
+    }
+
+    fun selectOnly(nodeId: String?) {
+        selectedNodeId = nodeId
+        selectedNodeIds = setOfNotNull(nodeId)
+    }
+
+    /** Selected ancestors already include their children: never process a subtree twice. */
+    fun selectedRoots(): List<String> {
+        val document = editableDocument() ?: return emptyList()
+        val requested = selectedNodeIds.ifEmpty { setOfNotNull(selectedNodeId) }
+        val byId = document.nodes.associateBy { it.nodeId }
+        return rows.map { it.nodeId }.filter { id ->
+            if (id !in requested) return@filter false
+            var parent = byId[id]?.parentId
+            val seen = mutableSetOf<String>()
+            while (parent != null && seen.add(parent)) {
+                if (parent in requested) return@filter false
+                parent = byId[parent]?.parentId
+            }
+            true
+        }
+    }
+
+    private fun batchMutation(operation: () -> Boolean): Boolean {
+        val source = currentSource
+        val primary = selectedNodeId
+        val selection = selectedNodeIds
+        val undo = undoStack.toList()
+        val redo = redoStack.toList()
+        selectionMutationDepth++
+        val result = try {
+            operation()
+        } catch (failure: Exception) {
+            currentSource = source
+            selectedNodeId = primary
+            selectedNodeIds = selection
+            throw failure
+        } finally {
+            selectionMutationDepth--
+            undoStack.clear()
+            undoStack.addAll(undo)
+            redoStack.clear()
+            redoStack.addAll(redo)
+        }
+        if (!result || source == currentSource) {
+            currentSource = source
+            selectedNodeId = primary
+            selectedNodeIds = selection
+            return false
+        }
+        undoStack += source
+        if (undoStack.size > MAX_HISTORY) undoStack.removeAt(0)
+        redoStack.clear()
+        pruneSelection()
+        return true
+    }
+
+    private fun pruneSelection() {
+        selectedNodeIds = selectedNodeIds.intersect(rows.map { it.nodeId }.toSet())
+        if (selectedNodeId !in selectedNodeIds) {
+            selectionMutationDepth++
+            try { selectedNodeId = selectedNodeIds.lastOrNull() } finally { selectionMutationDepth-- }
+        }
+    }
+
+    fun copySelection(): List<VisualSubtreeClipboard> {
+        val primary = selectedNodeId
+        selectionMutationDepth++
+        return try {
+            selectedRoots().mapNotNull { id ->
+                selectedNodeId = id
+                copySelectedSubtree()
+            }
+        } finally {
+            selectedNodeId = primary
+            selectionMutationDepth--
+        }
+    }
+
+    fun deleteSelection(): Boolean {
+        val roots = selectedRoots()
+        if (roots.isEmpty()) return false
+        return batchMutation { roots.all { id -> selectedNodeId = id; deleteSelected() } }
+    }
+
+    fun isNodeDisabled(nodeId: String, inherited: Boolean = true): Boolean {
+        val document = editableDocument() ?: return false
+        val byId = document.nodes.associateBy { it.nodeId }
+        var node = byId[nodeId]
+        val seen = mutableSetOf<String>()
+        while (node != null && seen.add(node.nodeId)) {
+            if (node.json.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean == true) return true
+            if (!inherited) return false
+            node = byId[node.parentId]
+        }
+        return false
+    }
+
+    fun toggleDisabledSelection(): Boolean {
+        val roots = selectedRoots()
+        if (roots.isEmpty()) return false
+        val document = editableDocument() ?: return false
+        val enable = roots.all { isNodeDisabled(it, inherited = false) }
+        document.nodes.filter { it.nodeId in roots }.forEach { node ->
+            if (enable) node.json.remove("disabled") else node.json.addProperty("disabled", true)
+        }
+        return commit(document)
+    }
+
+    fun selectionSubtreeSize(): Int = copySelection().sumOf { it.nodes.size }
+
+    /** Literal text only: identifiers, expressions, paths and JSON structure are never rewritten. */
+    fun replaceDisplayText(query: String, replacement: String, selectionOnly: Boolean): Int {
+        if (query.isEmpty() || query.length > 80 || replacement.toByteArray(Charsets.UTF_8).size > 2048 || query == replacement) return 0
+        val document = editableDocument() ?: return 0
+        val allowed = if (selectionOnly) copySelection().flatMap { it.nodes }.map { it.get("nodeId").asString }.toSet() else null
+        var changed = 0
+        document.nodes.forEach { node ->
+            if (allowed != null && node.nodeId !in allowed) return@forEach
+            val args = node.json.getAsJsonObject("args") ?: return@forEach
+            var nodeChanged = false
+            listOf("message", "value").forEach { key ->
+                val value = args.get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString ?: return@forEach
+                val next = value.replace(query, replacement)
+                if (next.toByteArray(Charsets.UTF_8).size > 2048) return 0
+                if (next != value) { args.addProperty(key, next); nodeChanged = true }
+            }
+            if (nodeChanged) changed++
+        }
+        return if (changed > 0 && commit(document)) changed else 0
+    }
+
+    fun moveSelection(offset: Int): Boolean {
+        val roots = selectedRoots().let { if (offset > 0) it.reversed() else it }
+        if (roots.isEmpty()) return false
+        return batchMutation { roots.all { id -> selectedNodeId = id; moveSelected(offset) } }
+    }
+
+    fun indentSelection(slot: String? = null): Boolean {
+        val roots = selectedRoots()
+        val selected = rows.filter { it.nodeId in roots }
+        if (roots.isEmpty() || selected.map { it.blockId }.distinct().size != 1) return false
+        val siblings = rows.filter { it.blockId == selected.first().blockId }
+        val indices = siblings.indices.filter { siblings[it].nodeId in roots }
+        if (indices.last() - indices.first() + 1 != roots.size) return false
+        return batchMutation { roots.all { id -> selectedNodeId = id; indentSelected(slot) } }
+    }
+
+    fun outdentSelection(): Boolean {
+        val roots = selectedRoots().reversed()
+        if (roots.isEmpty()) return false
+        return batchMutation { roots.all { id -> selectedNodeId = id; outdentSelected() } }
+    }
+
+    fun pasteSelection(clipboards: List<VisualSubtreeClipboard>, slot: String? = null): Boolean {
+        if (clipboards.isEmpty() || clipboards.size > 256) return false
+        val target = selectedNodeId
+        val inserted = mutableListOf<String>()
+        val remapping = mutableMapOf<String, String>()
+        return batchMutation {
+            val success = clipboards.all { clipboard ->
+                if (slot != null) selectedNodeId = target
+                pasteSubtree(clipboard, intoChildBlockName = slot, remappedIds = remapping)?.let { inserted += it; true } ?: false
+            }
+            if (!success) false else {
+                // References between independently selected roots must point to their copies too.
+                val document = editableDocument() ?: return@batchMutation false
+                val copiedIds = remapping.values.toSet()
+                document.nodes.indices.forEach { index ->
+                    val node = document.nodes[index]
+                    if (node.nodeId in copiedIds) document.nodes[index] = EditableNode(rewriteDeclaredJsonReferences(node.json, remapping).asJsonObject)
+                }
+                selectedNodeIds = inserted.toSet()
+                document.serialize(rootBlockId) == currentSource || commit(document)
+            }
+        }
+    }
     val isReadOnly: Boolean = forceReadOnly || parseDocument(migratedSource, rootBlockId) == null
     private val undoStack = mutableListOf<String>()
     private val redoStack = mutableListOf<String>()
@@ -53,10 +245,59 @@ internal class VisualEditorState private constructor(
         intoChildBlockName = intoChildBlockName,
     )
 
+    /** Insert related leaf blocks atomically and expose the whole batch as one undo step. */
+    fun insertBlocks(
+        blocks: List<Pair<BlockContract, JsonObject>>,
+        position: EditorInsertPosition = EditorInsertPosition.BELOW,
+        anchorNodeId: String? = selectedNodeId,
+        intoChildBlockName: String? = null,
+    ): Boolean {
+        if (blocks.isEmpty()) return true
+        if (blocks.size > 256 || position == EditorInsertPosition.REPLACE) return false
+        if (position != EditorInsertPosition.LIST_BOTTOM && anchorNodeId != null && rows.none { it.nodeId == anchorNodeId }) return false
+        if (position in setOf(EditorInsertPosition.ABOVE, EditorInsertPosition.INSIDE) && anchorNodeId == null) return false
+        if (position == EditorInsertPosition.INSIDE && intoChildBlockName !in childBlockNames(requireNotNull(anchorNodeId))) return false
+        val sourceBefore = currentSource
+        val selectionBefore = selectedNodeId
+        val selectionsBefore = selectedNodeIds
+        val undoBefore = undoStack.toList()
+        val redoBefore = redoStack.toList()
+        fun rollback(): Boolean {
+            currentSource = sourceBefore
+            selectedNodeId = selectionBefore
+            selectedNodeIds = selectionsBefore
+            undoStack.clear()
+            undoStack.addAll(undoBefore)
+            redoStack.clear()
+            redoStack.addAll(redoBefore)
+            return false
+        }
+        var previous = if (position == EditorInsertPosition.LIST_BOTTOM) null else anchorNodeId
+        for ((index, block) in blocks.withIndex()) {
+            val (contract, arguments) = block
+            val inserted = try { insertBlock(contract, arguments, afterNodeId = previous,
+                intoChildBlockName = if (index == 0 && position == EditorInsertPosition.INSIDE) intoChildBlockName else null)
+            } catch (_: Exception) { return rollback() }
+            val positioned = try { inserted != null && (index != 0 || position != EditorInsertPosition.ABOVE || moveSelected(-1))
+            } catch (_: Exception) { return rollback() }
+            if (!positioned) return rollback()
+            previous = inserted
+        }
+        // Each insertBlock commits through the regular path. Collapse those history entries so
+        // one Undo removes the entire gesture instead of leaving an orphaned pointer-down.
+        undoStack.clear()
+        undoStack.addAll(undoBefore)
+        undoStack += sourceBefore
+        if (undoStack.size > MAX_HISTORY) undoStack.removeAt(0)
+        redoStack.clear()
+        return true
+    }
+
     fun replaceSelectedBlock(contract: BlockContract, args: JsonObject): Boolean {
         val selected = selectedNodeId ?: return false
         val document = editableDocument() ?: return false
         val node = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
+        if (contract.kind in positionLoopKinds && nearestAncestorOfKind(node.parentId, setOf("control.repeat", "control.while")) == null) return false
         val removedNodeIds = mutableSetOf<String>()
         fun collectBlock(blockId: String) {
             document.nodes.filter { it.blockId == blockId }.forEach { child ->
@@ -198,6 +439,7 @@ internal class VisualEditorState private constructor(
         clipboard: VisualSubtreeClipboard,
         afterNodeId: String? = selectedNodeId,
         intoChildBlockName: String? = null,
+        remappedIds: MutableMap<String, String>? = null,
     ): String? {
         val document = editableDocument() ?: return null
         val sourceNodes = clipboard.nodes.map(::EditableNode)
@@ -251,6 +493,7 @@ internal class VisualEditorState private constructor(
         }
         document.nodes += copies
         if (!commit(document)) return null
+        remappedIds?.putAll(references)
         return nodeIds.getValue(sourceRoot.nodeId).also { selectedNodeId = it }
     }
 
@@ -364,7 +607,7 @@ internal class VisualEditorState private constructor(
         if (undoStack.isEmpty()) return false
         redoStack += currentSource
         currentSource = undoStack.removeAt(undoStack.lastIndex)
-        if (selectedNodeId !in rows.map(VisualNodeRow::nodeId)) selectedNodeId = null
+        pruneSelection()
         return true
     }
 
@@ -372,7 +615,7 @@ internal class VisualEditorState private constructor(
         if (redoStack.isEmpty()) return false
         undoStack += currentSource
         currentSource = redoStack.removeAt(redoStack.lastIndex)
-        if (selectedNodeId !in rows.map(VisualNodeRow::nodeId)) selectedNodeId = null
+        pruneSelection()
         return true
     }
 
@@ -396,6 +639,7 @@ internal class VisualEditorState private constructor(
         val after = if (childBlockId == null) selected else null
         val blockId = childBlockId ?: after?.blockId ?: rootBlockId
         val parentId = if (childBlockId != null) selected?.nodeId else after?.parentId
+        if (kind in positionLoopKinds && nearestAncestorOfKind(parentId, setOf("control.repeat", "control.while")) == null) return null
         val siblings = document.nodes.filter { it.blockId == blockId }.sortedBy { it.orderKey }
         val insertionIndex = after?.let { selected ->
             siblings.indexOfFirst { it.nodeId == selected.nodeId }.takeIf { it >= 0 }?.plus(1)
@@ -570,6 +814,7 @@ private fun parseDocument(source: String, rootBlockId: String): ParsedDocument? 
     lines.forEachIndexed { index, line ->
         if (line.isBlank()) return null
         val json = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() ?: return null
+        json.get("disabled")?.let { if (!it.isJsonPrimitive || !it.asJsonPrimitive.isBoolean) return null }
         val node = runCatching { EditableNode(json) }.getOrNull() ?: return null
         if (runCatching {
                 node.nodeId.isNotBlank() && node.blockId.isNotBlank() && node.kind.isNotBlank() &&

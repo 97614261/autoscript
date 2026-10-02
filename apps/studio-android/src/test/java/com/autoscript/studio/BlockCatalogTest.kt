@@ -14,16 +14,23 @@ import org.junit.Test
 class BlockCatalogTest {
     @Test
     fun generatedCatalogIsUniqueSearchableAndBoundToNodeSchemas() {
-        assertEquals(26, BlockCatalog.all.size)
+        assertEquals(52, BlockCatalog.all.size)
         assertEquals(BlockCatalog.all.size, BlockCatalog.all.map { it.kind }.distinct().size)
         assertTrue(BlockCatalog.all.all { it.nodeSchemaId.startsWith("https://autoscript.local/schema/node/") })
-        assertEquals("flow.call", BlockCatalog.search("调用 flow", emptySet()).single().contract.kind)
+        assertTrue(BlockCatalog.search("调用 flow", emptySet()).any { it.contract.kind == "flow.call" })
         assertEquals(
             listOf("task.noop"),
             BlockCatalog.search("占位", emptySet(), BlockCategory.TASK).map { it.contract.kind },
         )
         assertEquals(
-            setOf("input.keyevent", "input.swipe", "input.tap"),
+            setOf(
+                "input.keyevent",
+                "input.pointerdown",
+                "input.pointermove",
+                "input.pointerup",
+                "input.swipe",
+                "input.tap",
+            ),
             BlockCatalog.search("", emptySet(), BlockCategory.TASK)
                 .filter { it.missingCapabilities == setOf("input.basic") }
                 .map { it.contract.kind }
@@ -31,14 +38,14 @@ class BlockCatalogTest {
         )
         assertEquals(
             "1000",
-            BlockCatalog.find("task.sleep")?.properties?.single()?.defaultValue,
+            BlockCatalog.find("task.sleep")?.properties?.single { it.path == "milliseconds" }?.defaultValue,
         )
         assertEquals(
             setOf("core.task"),
             BlockCatalog.find("task.log")?.requiredCapabilities,
         )
         assertEquals(
-            setOf("control.if", "control.repeat", "control.while"),
+            setOf("control.if", "control.repeat", "control.while", "control.break", "control.label", "control.goto", "control.loopmetric", "control.loopcheck"),
             BlockCatalog.search("", emptySet(), BlockCategory.CONTROL)
                 .map { it.contract.kind }
                 .toSet(),
@@ -58,6 +65,7 @@ class BlockCatalogTest {
                 "vision.countcolor",
                 "vision.findallcolor",
                 "vision.findimage",
+                "vision.findgray",
                 "legacy.duodianzhaose",
                 "legacy.duodianbise",
                 "legacy.getrectcolornum",
@@ -68,7 +76,7 @@ class BlockCatalogTest {
                 .toSet(),
         )
         assertEquals(
-            setOf("ocr.glyph"),
+            setOf("ocr.glyph", "ocr.alphanumeric"),
             BlockCatalog.search("", emptySet(), BlockCategory.OCR)
                 .map { it.contract.kind }
                 .toSet(),

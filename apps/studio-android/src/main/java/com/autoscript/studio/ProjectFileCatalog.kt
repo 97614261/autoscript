@@ -39,15 +39,24 @@ internal fun projectFileCatalog(snapshot: ProjectSnapshot): List<StudioProjectFi
     }.sortedBy { it.path }.forEach(::add)
 }
 
+/** Canonical containment without java.nio.file, which is unavailable on Android 7. */
+internal fun projectFileWithinRoot(root: File, relativePath: String): File {
+    val canonicalRoot = root.canonicalFile
+    val target = File(canonicalRoot, relativePath).canonicalFile
+    val prefix = canonicalRoot.path.trimEnd(File.separatorChar) + File.separator
+    require(target.path.startsWith(prefix, ignoreCase = File.separatorChar == '\\')) {
+        "项目文件越过项目目录：$relativePath"
+    }
+    return target
+}
+
 private fun projectFile(
     root: File,
     relativePath: String,
     kind: StudioProjectFileKind,
     opensEditor: Boolean,
 ): StudioProjectFile {
-    val canonicalRoot = root.canonicalFile
-    val target = File(canonicalRoot, relativePath).canonicalFile
-    require(target.toPath().startsWith(canonicalRoot.toPath())) { "项目文件越过项目目录：$relativePath" }
+    val target = projectFileWithinRoot(root, relativePath)
     val exists = target.isFile
     return StudioProjectFile(
         path = relativePath,

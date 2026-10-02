@@ -28,11 +28,31 @@
 | yjA / yjB / yjD | `activity_main_my.xml`、`activity_main_deve.xml`、`developers.java` | 我的与工作台基础页 |
 | yjG | `guagua_create_script_view.xml`、`developers.createScript()` | 新建项目弹窗；真实创建落入 `ProjectStore` |
 | yjH / yjI | `guagua_items_developer_script.xml`、`developers.getScriptList()`、`developers.editScript()` | 项目列表与直接编辑入口 |
-| yjJ | `FloatingShow.createCreateScriptWindow()`、`FloatingCreateScript.java`、`FloatingView.java` | `LegacyScriptDock.kt`：编辑后显示边缘工具柄，点击展开面板 |
-| F01–F12 | `guagua_fun_main.xml`、`funType.java`、`funName.java` 与函数子项实现 | `LegacyScriptDock.kt` 函数库；命令插入 Lua 编辑器或转入积木目录 |
+| yjJ | `FloatingShow.createCreateScriptWindow()`、`FloatingCreateScript.java`、`FloatingView.java` | `EditorDock.kt`：编辑直接展开面板，最小化后显示灵动环浮球 |
+| F01–F12 | `guagua_fun_main.xml`、`funType.java`、`funName.java` 与函数子项实现 | `FunctionLibraryDialog.kt` + `FunctionCatalog.kt`；命令插入 Lua 编辑器或转入积木目录 |
 | P01–P12 | `FloatingCreateScript.java`、`myCreateScriptClickEvent.java`、`guagua_create_plugin.xml`、录制/插件/调试布局 | 后续按录制、插件、调试三个功能批次落入运行时与编辑器 |
 
 ## 已确认的编辑器事件链
+
+### 2026-09-29：图像识别入口与紧凑配置重整
+
+- 修正上一版多层分组表单：可视化“图像”直接进入识别配置，统一40dp顶底栏、30dp控件、34dp设置行与70dp模板预览；模板文字和缩略图均打开选择器。
+- 八类已有识别共用配置壳，切换类型保留各自草稿。帧引用放入高级设置；新增为“加入”、修改为“确定”。函数库也先配置，不再直接插入默认图像参数。
+- 范围标签走现有屏幕截图工具，关闭恢复弹窗；几何/颜色回填不覆盖未保存参数，模板保存回填登记路径。四个数值提供X/Y/W/H手动编辑，但尚不支持参考的变量坐标。
+- 原XML可见性不是最终状态：`j0()`在找色/找图显示识别频次；`i0()`始终隐藏测试，仅找色页显示图像对比，并把修改按钮设置为“确定”；`f0()`按返回值切换图像/坐标变量。当前未完成的频次/返回图像/成功动作不伪装为可用。
+- 完整Rust能力核对及缺口见 `docs/image-recognition-gap.md`。下列2026-09-28记录是历史状态，不能当成本次最终UI验收结论。
+
+### 2026-09-28：区域找图参数页
+
+- 对照 `service_tk_image_recognition_control.xml` 与 `service_tk_image_recognition_page_image.xml`：参考为40dp标题/底栏、紧凑设置行、70dp模板预览、X/Y/W/H四个范围值及集中结果变量，不是逐项大号 Material 输入框。
+- `x/mm0.java` 的图片页绑定与 `x/bm0.java` 的case 9/10/11确认模板/预览走图片选择器，范围值进入同一范围编辑流程。Studio 用自有 Compose 页面重建其信息层级与交互，不复制混淆实现。
+- 新增共享 `VisualImageRecognitionDialog`，可视化页面与悬浮编辑器的新建、修改入口统一复用。模板完整路径使用可筛选纵向列表，真实缩略图可点开；结果变量支持直接编辑与列表选择。
+- 范围UI显示X/Y/宽/高，保存仍使用现有半开L/T/R/B原图像素，保持节点kind、schema与执行协议不变。已存图框选保留原始图片尺寸，不把缩略图像素当屏幕像素。图片加载失败明确提示；取消不写入节点。
+- 当前仅接真实普通像素找图；不添加无法执行的灰度/特征匹配、查找方向、成功动作或图像返回选项。项目全屏使用设计尺寸，框选来自已保存图片，并非新增实时截图后端。
+- 本次只做主机测试、静态检查与Debug构建，不宣称设备逐像素验收。
+- 验证结果：Studio 145项单元测试通过（新增4项覆盖参数往返、输入校验、矩形溢出、反向拖框与原图边界）；`lintDebug`无错误，仍有23项现存警告；`assembleDebug`成功，格式/空白检查通过。
+
+### 悬浮编辑入口
 
 旧版的实际行为不是点击“编辑”直接出现完整面板：
 

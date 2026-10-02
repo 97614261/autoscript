@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 24/25: a bounded bitmap avoids using the master PNG's intrinsic pixel size. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <size android:width="48dp" android:height="48dp" />
+            <corners android:radius="12dp" />
+            <solid android:color="@color/zhigou_icon_background" />
+        </shape>
+    </item>
+    <item android:width="40dp" android:height="40dp" android:gravity="center">
+        <bitmap
+            android:src="@drawable/zhigou_brand_mark"
+            android:gravity="fill"
+            android:filter="true" />
+    </item>
+</layer-list>

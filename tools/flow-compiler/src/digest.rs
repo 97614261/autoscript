@@ -13,6 +13,14 @@ pub(crate) fn flow_digest(
     ordered.sort_by(|left, right| left.flow_id.as_bytes().cmp(right.flow_id.as_bytes()));
     let mut hasher = Sha256::new();
     hasher.update(FLOW_DIGEST_DOMAIN);
+    let metadata = serde_json::to_vec(&serde_json::json!({
+        "entryFlowId": manifest.entry_flow_id,
+        "flows": ordered,
+        "variables": manifest.variables,
+        "popupStyle": manifest.debug_settings.popup_style,
+    }))
+    .map_err(|_| VerificationError::FlowDigestMismatch)?;
+    put_bytes(&mut hasher, &metadata);
     put_length(&mut hasher, ordered.len());
     for flow in ordered {
         let source = sources

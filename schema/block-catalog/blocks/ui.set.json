@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "ui.set",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ui.set/1/ui.set.schema.json",
+  "title": "设置控件值",
+  "category": "task",
+  "summary": "更新界面控件值，不触发用户事件。",
+  "searchTerms": [
+    "界面",
+    "ui",
+    "设置控件值"
+  ],
+  "requiredCapabilities": [
+    "ui.control"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "controlId",
+      "label": "控件 ID",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "control1"
+    },
+    {
+      "path": "value",
+      "label": "固定值",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "内容"
+    },
+    {
+      "path": "valueVariable",
+      "label": "来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

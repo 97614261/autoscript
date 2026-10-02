@@ -17,4 +17,6 @@ android {
 dependencies {
     implementation(project(":android:core-model"))
     implementation(project(":android:runtime-api"))
+    implementation(libs.kotlinx.coroutines.android)
+    testImplementation(libs.junit4)
 }

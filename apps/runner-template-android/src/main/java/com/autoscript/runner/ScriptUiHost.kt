@@ -1,19 +1,14 @@
 package com.autoscript.runner
 
 import android.content.Context
-import android.text.InputType
-import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.Spinner
-import android.widget.Switch
-import android.widget.TextView
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.widget.doAfterTextChanged
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import com.autoscript.script.ui.ScriptUiDefinition
+import com.autoscript.script.ui.ScriptUiDialog
+import com.autoscript.script.ui.ScriptUiWindowView
+import com.autoscript.script.ui.UiField
+import com.autoscript.script.ui.luaConfiguration
 
 internal sealed interface RunnerConfigDraftValue {
     data class Text(val value: String) : RunnerConfigDraftValue
@@ -26,79 +21,49 @@ internal fun ScriptUiHost(
     definition: RunnerUiDefinition,
     values: Map<String, RunnerConfigDraftValue>,
     onValueChanged: (String, RunnerConfigDraftValue) -> Unit,
-    modifier: Modifier = Modifier,
+    visible: Boolean = true,
+    release: EmbeddedRelease? = null,
+    onRun: () -> Unit = {},
+    onClose: () -> Unit = {},
+    onMinimize: () -> Unit = {},
 ) {
-    key(releaseId) {
-        AndroidView(
-            modifier = modifier,
-            factory = { context ->
-                LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    definition.description?.let { description ->
-                        addView(label(context, description).apply { textSize = 13f })
-                    }
-                    definition.fields.forEach { field ->
-                        addView(label(context, field.label + if (field.required) " *" else ""))
-                        when (field.kind) {
-                            RunnerUiFieldKind.TEXT, RunnerUiFieldKind.INTEGER -> {
-                                val current = (values[field.id] as? RunnerConfigDraftValue.Text)?.value.orEmpty()
-                                addView(EditText(context).apply {
-                                    setText(current)
-                                    setSingleLine(true)
-                                    textSize = 14f
-                                    inputType = if (field.kind == RunnerUiFieldKind.INTEGER) {
-                                        InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
-                                    } else {
-                                        InputType.TYPE_CLASS_TEXT
-                                    }
-                                    doAfterTextChanged { editable ->
-                                        onValueChanged(
-                                            field.id,
-                                            RunnerConfigDraftValue.Text(editable?.toString().orEmpty()),
-                                        )
-                                    }
-                                }, matchWidth())
-                            }
-                            RunnerUiFieldKind.BOOLEAN -> {
-                                val current = (values[field.id] as? RunnerConfigDraftValue.BooleanValue)
-                                    ?.value ?: false
-                                @Suppress("DEPRECATION")
-                                addView(Switch(context).apply {
-                                    isChecked = current
-                                    text = if (current) "已开启" else "已关闭"
-                                    setOnCheckedChangeListener { button, checked ->
-                                        button.text = if (checked) "已开启" else "已关闭"
-                                        onValueChanged(
-                                            field.id,
-                                            RunnerConfigDraftValue.BooleanValue(checked),
-                                        )
-                                    }
-                                })
-                            }
-                            RunnerUiFieldKind.CHOICE -> {
-                                val current = (values[field.id] as? RunnerConfigDraftValue.Text)?.value
-                                addView(Spinner(context).apply {
-                                    adapter = ArrayAdapter(
-                                        context,
-                                        android.R.layout.simple_spinner_dropdown_item,
-                                        field.options,
-                                    )
-                                    setSelection(field.options.indexOf(current).coerceAtLeast(0), false)
-                                    onItemSelectedListener = SimpleItemSelectedListener { position ->
-                                        onValueChanged(
-                                            field.id,
-                                            RunnerConfigDraftValue.Text(field.options[position]),
-                                        )
-                                    }
-                                }, matchWidth())
-                            }
-                        }
-                    }
-                }
-            },
-        )
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val change by rememberUpdatedState(onValueChanged)
+    val run by rememberUpdatedState(onRun)
+    val close by rememberUpdatedState(onClose)
+    val minimize by rememberUpdatedState(onMinimize)
+    val window = remember(releaseId, definition, context) {
+        val model = definition.shared()
+        lateinit var host: ScriptUiWindowView
+        host = ScriptUiWindowView(context, model, values.strings(), { path -> release?.resources?.find { it.path == path }?.file }) { _, _, _, action ->
+            host.values().forEach { (id, value) ->
+                val field = definition.fields.first { it.id == id }
+                change(id, if (field.kind == RunnerUiFieldKind.BOOLEAN) RunnerConfigDraftValue.BooleanValue(value == "true") else RunnerConfigDraftValue.Text(value))
+            }
+            when (action) {
+                "run" -> runCatching { model.validateValues(host.values()); run() }.onFailure { host.error(it.message ?: "参数无效") }
+                "close" -> close()
+                "minimize" -> minimize()
+            }
+        }
+        ScriptUiDialog(context, host) { close() }
+    }
+    DisposableEffect(window) { onDispose { window.close() } }
+    LaunchedEffect(window, visible, configuration.screenWidthDp, configuration.screenHeightDp, configuration.orientation) {
+        if (visible) window.show() else window.hide()
     }
 }
+
+internal fun RunnerUiDefinition.shared() = script ?: ScriptUiDefinition(description, fields.map { f ->
+    UiField(f.id, f.label, f.kind.name.lowercase(), f.required, when (val v = f.initialValue) {
+        is RunnerUiValue.Text -> v.value; is RunnerUiValue.Integer -> v.value.toString(); is RunnerUiValue.BooleanValue -> v.value.toString()
+    }, f.minimum, f.maximum, f.options)
+})
+internal fun Map<String, RunnerConfigDraftValue>.strings() = mapValues { (_, value) -> when (value) {
+    is RunnerConfigDraftValue.Text -> value.value; is RunnerConfigDraftValue.BooleanValue -> value.value.toString()
+} }
+
 
 internal fun initialRunnerConfig(
     context: Context,
@@ -113,7 +78,7 @@ internal fun initialRunnerConfig(
                 val initial = (field.initialValue as RunnerUiValue.Text).value
                 val stored = preferences.getString(key, initial) ?: initial
                 RunnerConfigDraftValue.Text(
-                    stored.takeIf { it.codePointLength() <= 256 && '\u0000' !in it } ?: initial,
+                    stored.takeIf { it.codePointLength() <= (if (definition.script != null) 2048 else 256) && '\u0000' !in it } ?: initial,
                 )
             }
             RunnerUiFieldKind.INTEGER -> {
@@ -161,6 +126,10 @@ internal fun buildRuntimeLua(
     release: EmbeddedRelease,
     values: Map<String, RunnerConfigDraftValue>,
 ): ByteArray {
+    release.runnerUi?.script?.let { model ->
+        val prefix = model.luaConfiguration(values.strings()).toByteArray(Charsets.UTF_8)
+        return prefix + release.luaSource
+    }
     val fields = release.runnerUi?.fields.orEmpty()
     val prefix = buildString {
         append("RunnerConfig={")
@@ -221,30 +190,6 @@ private fun StringBuilder.appendLuaString(value: String) {
         }
     }
     append('"')
-}
-
-private fun label(context: Context, value: String) = TextView(context).apply {
-    text = value
-    textSize = 14f
-    setPadding(0, 8, 0, 2)
-}
-
-private fun matchWidth() = LinearLayout.LayoutParams(
-    ViewGroup.LayoutParams.MATCH_PARENT,
-    ViewGroup.LayoutParams.WRAP_CONTENT,
-)
-
-private class SimpleItemSelectedListener(
-    private val selected: (Int) -> Unit,
-) : android.widget.AdapterView.OnItemSelectedListener {
-    override fun onItemSelected(
-        parent: android.widget.AdapterView<*>?,
-        view: android.view.View?,
-        position: Int,
-        id: Long,
-    ) = selected(position)
-
-    override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
 }
 
 private const val PREFERENCES_NAME = "runner-script-ui"

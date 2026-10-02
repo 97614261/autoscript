@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ui.set/1/ui.set.schema.json",
+  "title": "设置控件值",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ui.set"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlId",
+        "value"
+      ],
+      "properties": {
+        "controlId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "valueVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

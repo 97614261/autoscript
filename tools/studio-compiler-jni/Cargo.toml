@@ -1,0 +1,31 @@
+[package]
+name = "studio-compiler-jni"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+flow-compiler = { path = "../flow-compiler" }
+flow-ir = { path = "../../engine/crates/flow-ir" }
+jni = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+automation-core = { path = "../../engine/crates/automation-core" }
+engine-core = { path = "../../engine/crates/engine-core" }
+glyph-ocr = { path = "../../engine/crates/glyph-ocr" }
+lua-runtime = { path = "../../engine/crates/lua-runtime" }
+runtime-executor = { path = "../../engine/crates/runtime-executor" }
+runtime-scheduler = { path = "../../engine/crates/runtime-scheduler" }
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

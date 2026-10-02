@@ -1,0 +1,6 @@
+{
+  "schemaVersion":1,"opcode":3002,"name":"Task.cancel","since":"1.7","capability":"core.task","execution":"async_task","cancelMode":"cooperative","sideEffect":"task","timeoutMs":null,"resourceOwnership":"task",
+  "summary":"优先取消自己创建的子任务，不能取消其他任务或父任务。",
+  "params":[{"name":"task","type":"integer","required":true,"summary":"Task.spawn返回的ID。"}],
+  "returns":{"type":"boolean","nullable":false,"summary":"是否找到可取消的子任务。"},"legacyAliases":[]
+}

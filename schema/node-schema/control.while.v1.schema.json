@@ -27,6 +27,7 @@
         "always": { "type": "boolean" },
         "durationMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },
         "durationVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "durationUnit": { "enum": ["milliseconds", "seconds", "minutes"], "default": "milliseconds" },
         "iterationVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
         "elapsedVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
       }

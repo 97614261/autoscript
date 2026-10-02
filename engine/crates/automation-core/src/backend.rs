@@ -11,6 +11,10 @@ pub struct BackendError {
 }
 
 pub trait AutomationBackend {
+    /// Whether physical single-pointer down/move/up commands are available.
+    fn supports_pointer_input(&self) -> bool {
+        false
+    }
     /// Dispatches one contiguous slice of an already-arbitrated input transaction.
     /// The caller retains the transaction lock across calls, which lets it acknowledge
     /// commands individually and release a pointer if stop arrives between commands.

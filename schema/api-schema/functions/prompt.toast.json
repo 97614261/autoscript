@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1102,
+  "name": "Prompt.toast",
+  "since": "1.6",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按项目提示样式显示一条短时弹出提示。",
+  "params": [
+    { "name": "message", "type": "string", "required": true, "summary": "最多2048字节的 UTF-8 提示文本。" },
+    { "name": "styleJson", "type": "string", "required": false, "summary": "可选的受限提示样式 JSON；缺省使用默认样式。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "提示已交给 Runner 显示并会按时长消失。" },
+  "legacyAliases": []
+}

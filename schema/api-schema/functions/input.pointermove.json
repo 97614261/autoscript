@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4004,
+  "name": "Input.pointerMove",
+  "since": "1.6",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "task_pointer_lease",
+  "summary": "移动当前任务持有的单指触点；未按下或非持有任务调用会失败。",
+  "params": [
+    { "name": "x", "type": "integer", "required": true, "summary": "设计坐标X。" },
+    { "name": "y", "type": "integer", "required": true, "summary": "设计坐标Y。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "Root输入后端确认移动时返回。" },
+  "legacyAliases": []
+}

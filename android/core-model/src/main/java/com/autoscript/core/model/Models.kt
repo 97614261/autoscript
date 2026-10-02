@@ -38,4 +38,6 @@ data class RuntimeConnectionState(
     val engineState: RuntimeEngineState = RuntimeEngineState.UNKNOWN,
     val rootState: RuntimeRootState = RuntimeRootState.UNKNOWN,
     val message: String? = null,
+    /** Local event identity: a rapid RUNNING→PAUSED cycle must still invalidate Studio state. */
+    val stateRevision: Long = 0,
 )

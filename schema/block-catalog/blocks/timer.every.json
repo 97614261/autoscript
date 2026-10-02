@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "timer.every",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/timer.every/1/timer.every.schema.json",
+  "title": "启动周期定时器",
+  "category": "task",
+  "summary": "在同一VM独立执行目标插件；所有者结束时自动取消，失败向所有者传播。",
+  "searchTerms": [
+    "线程",
+    "任务",
+    "定时器"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "targetFlowId",
+      "label": "目标插件",
+      "editor": "flow_reference",
+      "required": true
+    },
+    {
+      "path": "arguments",
+      "label": "调用参数",
+      "editor": "flow_arguments",
+      "required": true,
+      "dependsOn": "targetFlowId"
+    },
+    {
+      "path": "periodMs",
+      "label": "周期 毫秒",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1000"
+    },
+    {
+      "path": "resultVariable",
+      "label": "保存ID变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "timerId"
+    }
+  ],
+  "migrations": []
+}

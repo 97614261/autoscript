@@ -1,5 +1,7 @@
 package com.autoscript.studio
 
+import com.autoscript.runtime.api.generated.GeneratedApiContracts
+
 /**
  * Lua 编辑器插入片段的守门：只允许调用 R0 契约里真实存在的脚本 API。
  *
@@ -10,21 +12,11 @@ package com.autoscript.studio
  *
  * 白名单精确到函数名，而不是只判断 `Screen` / `Input` 这类命名空间。
  * 否则 `Screen.notImplemented()` 也会通过，方法库一旦误配就会给用户插入必然运行失败的代码。
- * `Log.info/warn/error` 是运行时提供的 `Log.write` 便捷封装，故与契约函数一并列出。
+ * `Log.info/warn/error` 是运行时提供的 `Log.write` 便捷封装；`Prompt.show` 是用户可见的运行提示，故与契约函数一并列出。
  */
 internal object LuaSnippetGate {
-    private val allowedCalls = setOf(
-        "Math.distance",
-        "Log.write", "Log.info", "Log.warn", "Log.error",
-        "System.getScreenSize", "System.elapsedRealtimeMillis",
-        "Task.sleep",
-        "Input.tap", "Input.swipe", "Input.keyEvent",
-        "Screen.capture", "Screen.cache", "Screen.release", "Screen.loadImage", "Screen.findColor",
-        "Screen.findImage", "Screen.getColor", "Screen.compareColor", "Screen.findMultiColor",
-        "Screen.countColor", "Screen.findAllColor", "Screen.captureSeries",
-        "Ocr.loadDictionary", "Ocr.releaseDictionary", "Ocr.glyph",
-        "Legacy.duoDianZhaoSe", "Legacy.duoDianBiSe", "Legacy.getRectColorNum", "Legacy.getRgbColor",
-    )
+    private val allowedCalls = GeneratedApiContracts.all.map { it.name }.toSet() +
+        setOf("Log.info", "Log.warn", "Log.error")
 
     /** 返回 `null` 表示可以插入；否则是给用户看的拒绝原因。 */
     fun reject(snippet: String): String? {

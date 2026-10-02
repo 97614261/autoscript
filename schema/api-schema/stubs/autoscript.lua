@@ -18,6 +18,39 @@ Log = Log or {}
 ---@param message string 最多2048字节的 UTF-8 文本。
 function Log.write(level, message) end
 
+Prompt = Prompt or {}
+
+---向脚本使用者显示一条运行中的提示信息。
+---@param message string 最多2048字节的 UTF-8 提示文本。
+function Prompt.show(message) end
+
+---按项目提示样式显示一条短时弹出提示。
+---@param message string 最多2048字节的 UTF-8 提示文本。
+---@param styleJson string 可选的受限提示样式 JSON；缺省使用默认样式。
+function Prompt.toast(message, styleJson) end
+
+UI = UI or {}
+
+---等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。
+---@return string value 等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。
+function UI.waitEvent() end
+
+---读取控件字符串值。
+---@param id string id
+---@return string value 读取控件字符串值。
+function UI.getValue(id) end
+
+---设置控件值，不触发用户事件。
+---@param id string id
+---@param value string value
+function UI.setValue(id, value) end
+
+---白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。
+---@param id string id
+---@param operation string operation
+---@param value string value
+function UI.command(id, operation, value) end
+
 System = System or {}
 
 ---读取当前Android显示区域的物理像素尺寸。
@@ -33,6 +66,29 @@ Task = Task or {}
 ---挂起当前Lua协程，期间不阻塞调度线程，并响应任务取消。
 ---@param milliseconds integer 非负等待毫秒数。
 function Task.sleep(milliseconds) end
+
+---在同一Lua VM启动子任务；父任务结束时自动取消，失败向父任务传播。
+---@param callback function 无参数回调，只保存在VM内，宿主边界仅传不透明登记ID。
+---@return integer value 子任务ID，仅创建者可取消。
+function Task.spawn(callback) end
+
+---优先取消自己创建的子任务，不能取消其他任务或父任务。
+---@param task integer Task.spawn返回的ID。
+---@return boolean value 是否找到可取消的子任务。
+function Task.cancel(task) end
+
+Timer = Timer or {}
+
+---创建非重入周期回调；错过tick合并，回调失败终止所有者，父任务结束自动取消。
+---@param milliseconds integer 10–60000毫秒。
+---@param callback function VM内无参数回调，不能通过宿主边界。
+---@return integer value 定时器ID，仅创建者可取消。
+function Timer.every(milliseconds, callback) end
+
+---取消自己的周期定时器及正在运行的回调。
+---@param timer integer Timer.every返回的ID。
+---@return boolean value 是否找到所属定时器。
+function Timer.cancel(timer) end
 
 Input = Input or {}
 
@@ -52,6 +108,29 @@ function Input.swipe(x1, y1, x2, y2, durationMs) end
 ---发送一个白名单校验后的Android键码。
 ---@param keyCode integer 非负Android KeyEvent键码。
 function Input.keyEvent(keyCode) end
+
+---在设计坐标按下单指触点；触点由当前任务持有，任务结束或超时自动释放。
+---@param x integer 设计坐标X。
+---@param y integer 设计坐标Y。
+function Input.pointerDown(x, y) end
+
+---移动当前任务持有的单指触点；未按下或非持有任务调用会失败。
+---@param x integer 设计坐标X。
+---@param y integer 设计坐标Y。
+function Input.pointerMove(x, y) end
+
+---释放当前任务持有的单指触点；其他任务不能代替持有者释放。
+function Input.pointerUp() end
+
+---按原始屏幕像素点击，不再进行设计坐标缩放。
+---@param x integer 原始屏幕X像素。
+---@param y integer 原始屏幕Y像素。
+function Input.tapScreen(x, y) end
+
+---按原始屏幕像素按住单触点，使用既有任务触点租约和弹起清理。
+---@param x integer 原始屏幕X像素。
+---@param y integer 原始屏幕Y像素。
+function Input.pointerDownScreen(x, y) end
 
 Screen = Screen or {}
 
@@ -73,6 +152,15 @@ function Screen.release(frame) end
 ---@return integer value 可传给Screen.findImage并用Screen.release释放的模板帧句柄。
 function Screen.loadImage(path) end
 
+---从已有帧裁剪半开矩形，返回任务拥有的独立不可变图像句柄，需Screen.release释放。
+---@param frame integer 源帧句柄。
+---@param left integer 左边界。
+---@param top integer 上边界。
+---@param right integer 右边界，不包含。
+---@param bottom integer 下边界，不包含。
+---@return integer value 裁剪图像句柄；任务结束时自动清理。
+function Screen.crop(frame, left, top, right, bottom) end
+
 ---在租用帧的半开ROI内按行优先查找颜色。
 ---@param frame integer 任务持有的帧句柄。
 ---@param rgb integer 0xRRGGBB颜色。
@@ -93,8 +181,9 @@ function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom) end
 ---@param top integer ROI上边界，包含。
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
+---@param direction integer API 1.7新增：0左上、1右上、2左下、3右下、4中心向外；省略为0。与旧版多点找色枚举独立。
 ---@return Point value 首个匹配模板的左上角；未找到时为nil。
-function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom) end
+function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom, direction) end
 
 ---读取任务所持不可变帧中的一个像素，返回0xRRGGBB。
 ---@param frame integer 任务持有的帧句柄。
@@ -147,6 +236,30 @@ function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limi
 ---@param limit integer 1至256的返回数量上限。
 ---@return Point[] value 按行优先排序的坐标数组。
 function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit) end
+
+---按给定顺序匹配1–64个已声明图片，共享比较预算，返回第一个匹配的模板标识、坐标与得分。
+---@param frame integer 缓存帧句柄。
+---@param pathsJson string 已声明模板路径的JSON字符串数组，最多64项和16384字节。
+---@param tolerance integer 通道容差0–255。
+---@param similarityPermille integer 相似度0–1000。
+---@param left integer 左边界。
+---@param top integer 上边界。
+---@param right integer 右边界，不包含。
+---@param bottom integer 下边界，不包含。
+---@param direction integer 0左上、1右上、2左下、3右下、4中心向外，默认0。
+---@return TemplateMatch value x/y、path、scorePermille、width/height；没有匹配为nil。
+function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction) end
+
+---OpenCV灰度归一化平方差找图，返回最高分位置；不支持缩放旋转，与像素算法得分不同。
+---@param frame integer 缓存帧。
+---@param template integer Screen.loadImage加载的声明图片帧。
+---@param similarityPermille integer 最低灰度得分0–1000。
+---@param left integer 左边界。
+---@param top integer 上边界。
+---@param right integer 右边界，不含。
+---@param bottom integer 下边界，不含。
+---@return GrayMatchResult value x/y和scorePermille；无匹配nil。
+function Screen.findGray(frame, template, similarityPermille, left, top, right, bottom) end
 
 Legacy = Legacy or {}
 
@@ -218,4 +331,14 @@ function Ocr.releaseDictionary(dictionary) end
 ---@param spaceGapColumns integer 插入空格所需的最小连续空列数，0表示不插入。
 ---@return GlyphOcrResult value 包含text、coveragePermille和averageScorePermille的识别结果。
 function Ocr.glyph(frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns) end
+
+---ONNX英文移动模型识别指定单行ROI，只输出A-Z/a-z/0-9；无检测或中文识别。
+---@param frame integer 缓存帧。
+---@param left integer 左边界。
+---@param top integer 上边界。
+---@param right integer 右边界，不含。
+---@param bottom integer 下边界，不含。
+---@param minimumConfidencePermille integer 最低逐字置信度0–1000，默认500。
+---@return AlphanumericResult value text与averageScorePermille，无可信字符为空文本。
+function Ocr.alphanumeric(frame, left, top, right, bottom, minimumConfidencePermille) end
 

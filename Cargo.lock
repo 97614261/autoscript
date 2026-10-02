@@ -145,11 +145,10 @@ dependencies = [
  "automation-core",
  "coordinate",
  "engine-core",
- "flow-compiler",
- "flow-ir",
  "glyph-ocr",
  "jni",
  "lua-runtime",
+ "pixel-vision",
  "root-client",
  "runtime-executor",
  "runtime-scheduler",
@@ -181,6 +180,7 @@ dependencies = [
  "flow-ir",
  "fs4",
  "lua-runtime",
+ "mlua",
  "pixel-vision",
  "serde",
  "serde_json",
@@ -455,6 +455,7 @@ dependencies = [
  "flow-ir",
  "glyph-ocr",
  "lua-runtime",
+ "mlua",
  "serde",
  "serde_json",
  "sha2",
@@ -501,6 +502,8 @@ dependencies = [
  "lua-runtime",
  "runtime-scheduler",
  "script-api",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -621,6 +624,23 @@ name = "smallvec"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
+
+[[package]]
+name = "studio-compiler-jni"
+version = "0.1.0"
+dependencies = [
+ "automation-core",
+ "engine-core",
+ "flow-compiler",
+ "flow-ir",
+ "glyph-ocr",
+ "jni",
+ "lua-runtime",
+ "runtime-executor",
+ "runtime-scheduler",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "syn"

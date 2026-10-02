@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "flow.return",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/flow.return/1/flow.return.schema.json",
+  "title": "返回上层",
+  "category": "flow",
+  "summary": "结束当前 插件，返回调用者。",
+  "searchTerms": ["return", "返回上层", "跳转"],
+  "requiredCapabilities": [],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

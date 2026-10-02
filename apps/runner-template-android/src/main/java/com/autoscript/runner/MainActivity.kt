@@ -1,4 +1,6 @@
 package com.autoscript.runner
+import com.autoscript.script.ui.luaConfiguration
+import androidx.compose.foundation.layout.height
 
 import android.Manifest
 import android.content.Context
@@ -144,6 +146,8 @@ private fun RunnerApp(permissionEpoch: Int) {
         }
     }
 
+    var showScriptInterface by remember { mutableStateOf(false) }
+    var minimizedInterface by remember { mutableStateOf(false) }
     fun startRelease(release: EmbeddedRelease) {
         if (starting || state.phase != RuntimeConnectionPhase.CONNECTED) return
         if (state.rootState != RuntimeRootState.READY) return
@@ -163,12 +167,15 @@ private fun RunnerApp(permissionEpoch: Int) {
         scope.launch {
             val started = withContext(Dispatchers.IO) {
                 client.startProject(
+                    projectId = release.projectId,
                     generatedLuaModule = runtimeLua,
                     resources = release.resources,
                     capabilities = release.capabilities,
                     designWidth = release.designWidth,
                     designHeight = release.designHeight,
                     scaleMode = release.scaleMode,
+                    scriptUiJson = release.runnerUi?.shared()?.toJson()?.toString(),
+                    scriptUiValuesJson = com.google.gson.Gson().toJson(configValues.strings()),
                 )
             }
             operationMessage = if (started) "内置项目已提交运行" else "内置项目启动失败"
@@ -294,31 +301,31 @@ private fun RunnerApp(permissionEpoch: Int) {
                     )
                 }
             }
-            readyRelease?.runnerUi?.let { definition ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("脚本配置", style = MaterialTheme.typography.titleMedium)
-                        if (definition.fields.all { configValues.containsKey(it.id) }) {
-                            ScriptUiHost(
-                                releaseId = readyRelease.releaseId,
-                                definition = definition,
-                                values = configValues,
-                                onValueChanged = { id, value ->
-                                    configValues = configValues + (id to value)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            Text("正在读取本地配置…", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+            if (minimizedInterface) androidx.compose.ui.window.Popup(alignment = androidx.compose.ui.Alignment.BottomEnd) {
+                Button(onClick = { minimizedInterface = false; showScriptInterface = true }) { Text("恢复脚本界面") }
+            }
+            readyRelease?.runnerUi?.takeIf { showScriptInterface || minimizedInterface }?.let { definition ->
+                if (definition.fields.all { configValues.containsKey(it.id) }) {
+                    ScriptUiHost(
+                        releaseId = readyRelease.releaseId,
+                        definition = definition,
+                        values = configValues,
+                        onValueChanged = { id, value -> configValues = configValues + (id to value) },
+                        visible = showScriptInterface && !minimizedInterface,
+                        release = readyRelease,
+                        onRun = { showScriptInterface = false; minimizedInterface = false; startRelease(readyRelease) },
+                        onClose = { showScriptInterface = false; minimizedInterface = false },
+                        onMinimize = { showScriptInterface = false; minimizedInterface = true },
+                    )
+                } else {
+                    Text("正在读取本地配置…", style = MaterialTheme.typography.bodySmall)
                 }
             }
             errorMessage?.let { ErrorCard(runtimeErrorPresentation(readyRelease, it)) }
             operationMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    onClick = { readyRelease?.let { startRelease(it) } },
+                    onClick = { readyRelease?.let { if (it.runnerUi != null) { minimizedInterface = false; showScriptInterface = true } else startRelease(it) } },
                     enabled = canStart,
                     modifier = Modifier.weight(1f),
                 ) { Text(if (starting) "启动中…" else "运行") }
@@ -462,7 +469,8 @@ internal fun runtimeErrorPresentation(
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
-    val sourceLine = runtimeLine?.minus(RUNTIME_CONFIG_PREFIX_LINES)?.takeIf { it > 0 }
+    val prefixLines = release?.runnerUi?.script?.let { model -> model.luaConfiguration(model.initialValues()).count { it == '\n' } } ?: RUNTIME_CONFIG_PREFIX_LINES
+    val sourceLine = runtimeLine?.minus(prefixLines)?.takeIf { it > 0 }
     val mapped = sourceLine?.let { line ->
         release?.sourceMap?.entries?.firstOrNull { line in it.luaStartLine..it.luaEndLine }
     }

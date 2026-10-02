@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/control.break/1/control.break.schema.json",
+  "type": "object", "required": ["kind", "nodeVersion", "args"],
+  "properties": { "kind": { "const": "control.break" }, "nodeVersion": { "const": 1 },
+    "args": { "type": "object", "additionalProperties": false, "maxProperties": 0 } }
+}

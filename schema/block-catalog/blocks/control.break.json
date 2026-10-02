@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "control.break",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.break/1/control.break.schema.json",
+  "title": "跳出循环",
+  "category": "control",
+  "summary": "结束当前循环，继续执行循环后的积木。",
+  "searchTerms": ["break", "跳出循环", "跳转"],
+  "requiredCapabilities": [],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

@@ -12,10 +12,9 @@ crate-type = ["cdylib", "rlib"]
 automation-core = { path = "../automation-core" }
 coordinate = { path = "../coordinate" }
 engine-core = { path = "../engine-core" }
-flow-compiler = { path = "../../../tools/flow-compiler" }
-flow-ir = { path = "../flow-ir" }
 jni = { workspace = true }
 lua-runtime = { path = "../lua-runtime" }
+pixel-vision = { path = "../pixel-vision" }
 root-client = { path = "../root-client" }
 runtime-executor = { path = "../runtime-executor" }
 runtime-scheduler = { path = "../runtime-scheduler" }

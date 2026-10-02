@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -54,6 +55,7 @@ internal fun ImageToolWindow(
     designWidth: Int,
     designHeight: Int,
     scaleMode: String,
+    initialMode: ImageToolMode = ImageToolMode.TAP,
     capturing: Boolean,
     message: String?,
     onCapture: () -> Unit,
@@ -61,6 +63,7 @@ internal fun ImageToolWindow(
     onCropToTemplate: (ImageToolCodeGen.Roi) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    pointerInputSupported: Boolean = false,
 ) {
     BackHandler(onBack = onClose)
     // 参考 html{background:#000} 的全屏黑底只在有图时铺——它是给图片当衬底的，不是遮罩。
@@ -72,13 +75,14 @@ internal fun ImageToolWindow(
         val viewWidth = constraints.maxWidth.toFloat()
         val viewHeight = constraints.maxHeight.toFloat()
 
-        var mode by rememberSaveable { mutableStateOf(ImageToolMode.TAP) }
+        var mode by rememberSaveable(initialMode) { mutableStateOf(initialMode) }
         var menuOpen by rememberSaveable { mutableStateOf(false) }
         var zoomMode by rememberSaveable { mutableStateOf(false) }
         var selection by remember { mutableStateOf(ImageToolSelection()) }
         var blocked by remember { mutableStateOf<String?>(null) }
         var hint by remember { mutableStateOf<String?>(null) }
         var swipeDuration by rememberSaveable { mutableFloatStateOf(300f) }
+        var gestureDuration by rememberSaveable { mutableFloatStateOf(800f) }
         var tolerance by rememberSaveable { mutableFloatStateOf(8f) }
 
         var toolbarX by rememberSaveable { mutableFloatStateOf(Float.NaN) }
@@ -115,6 +119,10 @@ internal fun ImageToolWindow(
 
         /** 切模式：参考 switchActionButtons() —— 强制退出缩放、清掉别的模式的叠加层、弹提示横幅。 */
         fun switchMode(next: ImageToolMode) {
+            if (next.needsPointerInput && !pointerInputSupported) {
+                blocked = "当前后端不支持持续触点（按下/移动/弹起）"
+                return
+            }
             if (!next.enabled) {
                 blocked = next.blockedReason
                 return
@@ -190,6 +198,7 @@ internal fun ImageToolWindow(
             ready = isReady(mode, selection, slideStart, slideEnd, mapping),
             selection = selection,
             swipeDuration = swipeDuration.roundToInt(),
+            gestureDuration = gestureDuration.roundToInt(),
             tolerance = tolerance.roundToInt(),
             offsetX = resolvedToolbar.first,
             offsetY = resolvedToolbar.second,
@@ -215,10 +224,13 @@ internal fun ImageToolWindow(
                 blocked = null
             },
             onSwipeDuration = { swipeDuration = it },
+            onGestureDuration = { gestureDuration = it },
             onTolerance = { tolerance = it },
             onConfirm = {
                 val map = mapping
-                if (map == null) {
+                if (mode.needsPointerInput && !pointerInputSupported) {
+                    blocked = "当前后端不支持持续触点（按下/移动/弹起）"
+                } else if (map == null) {
                     blocked = "请先截图"
                 } else {
                     val snippet = buildSnippet(
@@ -230,12 +242,24 @@ internal fun ImageToolWindow(
                         slideStart = slideStart,
                         slideEnd = slideEnd,
                         swipeDuration = swipeDuration.roundToInt(),
+                        gestureDuration = gestureDuration.roundToInt(),
                         tolerance = tolerance.roundToInt(),
                         mapping = map,
                         onError = { blocked = it },
                     )
                     if (snippet != null) {
-                        if (snippet.rejection != null) blocked = snippet.rejection else onEmit(snippet)
+                        if (snippet.rejection != null) blocked = snippet.rejection else onEmit(
+                            if (mode in setOf(ImageToolMode.REGION, ImageToolMode.COLOR, ImageToolMode.MULTI_COLOR)) {
+                                snippet.copy(imageSelection = ImageToolCodeGen.VisualSelection(
+                                    mode = mode,
+                                    roi = selection.box,
+                                    points = selection.points.toList(),
+                                    tolerance = tolerance.roundToInt(),
+                                    frameWidth = bitmap?.width ?: 0,
+                                    frameHeight = bitmap?.height ?: 0,
+                                ))
+                            } else snippet,
+                        )
                     }
                 }
             },
@@ -248,7 +272,7 @@ internal fun ImageToolWindow(
 
         if (menuOpen) {
             val menuWidth = with(density) { MENU_WIDTH.toPx() }
-            val menuHeight = with(density) { MENU_HEIGHT.toPx() }
+            val menuHeight = minOf(with(density) { MENU_HEIGHT.toPx() }, (viewHeight - with(density) { 12.dp.toPx() }).coerceAtLeast(1f))
             val placement = menuPlacement(
                 toolbarLeft = resolvedToolbar.first,
                 toolbarTop = resolvedToolbar.second,
@@ -261,7 +285,7 @@ internal fun ImageToolWindow(
             ImageToolMenu(
                 current = mode,
                 onPick = ::switchMode,
-                modifier = Modifier.offset {
+                modifier = Modifier.heightIn(max = with(density) { menuHeight.toDp() }).offset {
                     IntOffset(placement.first.roundToInt(), placement.second.roundToInt())
                 },
             )
@@ -294,9 +318,10 @@ private fun isReady(
 ): Boolean = mapping != null && when (mode) {
     ImageToolMode.CROP, ImageToolMode.REGION -> selection.box != null
     // 单击随时可确定（取的是准星中心）；取色/多点要先按住抬手取到点。
-    ImageToolMode.TAP -> true
-    ImageToolMode.COLOR, ImageToolMode.MULTI_COLOR -> selection.points.isNotEmpty()
-    ImageToolMode.SWIPE -> slideStart != null && slideEnd != null
+    ImageToolMode.TAP, ImageToolMode.LONG_PRESS, ImageToolMode.POINTER_DOWN, ImageToolMode.POINTER_MOVE, ImageToolMode.POINTER_UP -> true
+    ImageToolMode.COLOR -> selection.points.isNotEmpty()
+    ImageToolMode.MULTI_COLOR -> selection.points.size >= 2
+    ImageToolMode.SWIPE, ImageToolMode.DRAG -> slideStart != null && slideEnd != null
     else -> false
 }
 
@@ -320,6 +345,7 @@ private fun buildSnippet(
     slideStart: Pair<Int, Int>?,
     slideEnd: Pair<Int, Int>?,
     swipeDuration: Int,
+    gestureDuration: Int,
     tolerance: Int,
     mapping: ImageToolCodeGen.DesignMapping,
     onError: (String) -> Unit,
@@ -330,6 +356,14 @@ private fun buildSnippet(
             crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"),
             mapping,
         )
+        ImageToolMode.LONG_PRESS -> ImageToolCodeGen.longPress(
+            crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"),
+            gestureDuration,
+            mapping,
+        )
+        ImageToolMode.POINTER_DOWN -> ImageToolCodeGen.pointerDown(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), mapping)
+        ImageToolMode.POINTER_MOVE -> ImageToolCodeGen.pointerMove(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), mapping)
+        ImageToolMode.POINTER_UP -> ImageToolCodeGen.pointerUp()
         // 取色用的是抬手时取到的点，不是准星——参考 colorpicker 没有常驻准星。
         ImageToolMode.COLOR -> ImageToolCodeGen.getColor(selection.points.first(), mapping)
         ImageToolMode.MULTI_COLOR -> ImageToolCodeGen.findMultiColor(
@@ -347,6 +381,14 @@ private fun buildSnippet(
             }
             ImageToolCodeGen.swipe(pixel(start), pixel(end), swipeDuration, mapping)
         }
+        ImageToolMode.DRAG -> {
+            val start = slideStart ?: error("请先设置拖动起点")
+            val end = slideEnd ?: error("请先设置拖动终点")
+            val pixel = { p: Pair<Int, Int> ->
+                ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0)
+            }
+            ImageToolCodeGen.drag(pixel(start), pixel(end), gestureDuration, mapping)
+        }
         else -> null
     }
 }.getOrElse { error ->
@@ -357,7 +399,8 @@ private fun buildSnippet(
 private val TOOLBAR_FALLBACK_WIDTH = 304.dp
 private val TOOLBAR_HEIGHT = 44.dp
 private val MENU_WIDTH = 124.dp
-private val MENU_HEIGHT = 292.dp
+// Follow the actual two-column menu instead of hiding the last tools on short displays.
+private val MENU_HEIGHT = (((ImageToolMode.menuOrder.size + 1) / 2) * 60 + 8).dp
 private val MENU_ITEM = 56.dp
 
 internal val ToolChrome = Color(0xE61E2531)

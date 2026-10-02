@@ -18,6 +18,7 @@ members = [
     "engine/crates/script-api",
     "tools/api-codegen",
     "tools/flow-compiler",
+    "tools/studio-compiler-jni",
     "tools/glyph-maker",
     "tools/schema-check",
     "tools/package-probe",

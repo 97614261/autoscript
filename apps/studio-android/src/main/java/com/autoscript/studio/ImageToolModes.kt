@@ -44,11 +44,24 @@ internal enum class ImageToolMode(
         icon = R.drawable.tool_tap_24,
         hint = "点击图片选一个点击坐标",
     ),
+    LONG_PRESS(
+        label = "长按",
+        icon = R.drawable.tool_tap_24,
+        hint = "定位按下点，按住指定时长后自动弹起",
+    ),
     SWIPE(
         label = "滑动",
         icon = R.drawable.tool_swipe_24,
         hint = "拖动蓝色起点和橙色终点设置滑动轨迹",
     ),
+    DRAG(
+        label = "拖动",
+        icon = R.drawable.tool_swipe_24,
+        hint = "选择起点和终点，生成按下、移动、弹起动作",
+    ),
+    POINTER_DOWN("按下", R.drawable.tool_tap_24, "选择按下点；后续移动/弹起需在同一任务中执行"),
+    POINTER_MOVE("移动", R.drawable.tool_swipe_24, "选择目标点；仅移动本任务已按下的单指"),
+    POINTER_UP("弹起", R.drawable.tool_tap_24, "释放本任务持有的单指，不需要坐标"),
     OCR(
         label = "取字",
         icon = R.drawable.tool_region_24,
@@ -79,13 +92,15 @@ internal enum class ImageToolMode(
     val usesDragBox: Boolean get() = this == CROP || this == REGION || this == OCR
 
     /**
-     * 用常驻十字准星定位的模式——只有单击。
+     * 用常驻十字准星定位的模式——单击与长按共用点位选择。
      *
      * 参考 `图片工具.html` 的 singleClick：提示语「拖动图片定位，点击确定」，
      * `updateCrosshairPreview()` 在切入该模式时立即把准星和放大镜都 `display = "block"`，
-     * 之后一直挂着。手指会挡住目标像素，所以靠可独立拖动的准星取点，「确定」取准星中心。
+     * 之后一直挂着。手指会挡住目标像素，所以靠可独立拖动的准星取点，「确定」取准星中心；
+     * 长按模式同样复用此定位，只是在确认时追加有界等待与弹起动作。
      */
-    val usesCrosshair: Boolean get() = this == TAP
+    val usesCrosshair: Boolean get() = this in setOf(TAP, LONG_PRESS, POINTER_DOWN, POINTER_MOVE)
+    val needsPointerInput: Boolean get() = this in setOf(LONG_PRESS, DRAG, POINTER_DOWN, POINTER_MOVE, POINTER_UP)
 
     /**
      * 「按住拖动、抬手取点」的模式——取色与多点。
@@ -97,7 +112,7 @@ internal enum class ImageToolMode(
     val usesPressPick: Boolean get() = this == COLOR || this == MULTI_COLOR
 
     /** 滑动用起/终两个可拖动标记 + 连线，对应参考的 `slide-point-start/end` 与 `slide-line`。 */
-    val usesSlideMarkers: Boolean get() = this == SWIPE
+    val usesSlideMarkers: Boolean get() = this == SWIPE || this == DRAG
 
     companion object {
         /** 菜单展示顺序：能用的在前，禁用的垫底，避免用户先点到点不动的。 */
@@ -115,8 +130,8 @@ internal data class ImageToolSelection(
 
     /** 单击/取色只留最后一个点；滑动留两个；多点不限（上限在生成时校验）。 */
     fun withPoint(mode: ImageToolMode, point: ImageToolCodeGen.PickedPoint): ImageToolSelection = when (mode) {
-        ImageToolMode.COLOR, ImageToolMode.TAP -> copy(points = listOf(point))
-        ImageToolMode.SWIPE -> copy(points = (points + point).takeLast(2))
+        ImageToolMode.COLOR, ImageToolMode.TAP, ImageToolMode.LONG_PRESS, ImageToolMode.POINTER_DOWN, ImageToolMode.POINTER_MOVE -> copy(points = listOf(point))
+        ImageToolMode.SWIPE, ImageToolMode.DRAG -> copy(points = (points + point).takeLast(2))
         ImageToolMode.MULTI_COLOR ->
             if (points.size >= ImageToolCodeGen.MAX_MULTI_COLOR_SAMPLES + 1) this
             else copy(points = points + point)

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.findgray/1/schema.json",
+  "title": "vision.findgray node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "vision.findgray"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "imagePath",
+        "similarityPermille",
+        "region",
+        "foundVariable",
+        "xVariable",
+        "yVariable",
+        "scoreVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "imagePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "similarityPermille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "autoCapture": {
+          "type": "boolean"
+        },
+        "region": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "left",
+            "top",
+            "right",
+            "bottom"
+          ],
+          "properties": {
+            "left": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "top": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "right": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "bottom": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "foundVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "xVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "yVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "scoreVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

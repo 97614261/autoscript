@@ -1,14 +1,14 @@
 //! Narrow JNI boundary backed by generation-checked opaque handles.
 
 mod input_runtime;
-mod visual_compile;
+mod template_preview;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use automation_core::{
     AutomationBackend, BackendError, FrameFormat, FrameMetadata, FramePool, InputArbiterConfig,
@@ -20,18 +20,158 @@ use coordinate::{CoordinateSnapshot, DesignPoint, ScaleMode, Size};
 use engine_core::{EngineSession, EngineSessionConfig, EngineState};
 use input_runtime::{InputControl, InputRuntime, InputRuntimeError};
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JObjectArray, JString};
-use jni::sys::{jbyteArray, jint, jlong, jobjectArray, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobjectArray, jstring};
 use jni::{JNIEnv, JavaVM};
 use lua_runtime::LuaScalar;
 use runtime_executor::{ExternalHostEvent, ExternalHostQueue, HostRequest};
+mod native_vision;
 use runtime_scheduler::{
-    HostCompletion, HostResult, MonoTime, RequestId, SchedulerHandle, SchedulerPoll, TaskToken,
+    HostCompletion, HostResult, MonoTime, RequestId, SchedulerEvent, SchedulerHandle,
+    SchedulerPoll, TaskToken,
 };
 #[cfg(target_os = "android")]
 use runtime_scheduler::{ResourceId, ResourceKind};
 
 const STATE_IDLE: i32 = 1;
+/// Explicit, low-frequency file preview. Validate arrays before allocating native copies.
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeTestTemplate(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    width: jint,
+    height: jint,
+    screen: JByteArray<'_>,
+    template_width: jint,
+    template_height: jint,
+    template: JByteArray<'_>,
+    tolerance: jint,
+    similarity: jint,
+) -> jni::sys::jintArray {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let read =
+            |w: i32, h: i32, bytes: &JByteArray<'_>| -> Result<(u32, u32, Vec<u8>), String> {
+                if !(1..=4096).contains(&w)
+                    || !(1..=4096).contains(&h)
+                    || i64::from(w) * i64::from(h) > 4_194_304
+                {
+                    return Err("invalid preview dimensions".into());
+                }
+                let expected = w * h * 4;
+                if env.get_array_length(bytes).map_err(|e| e.to_string())? != expected {
+                    return Err("invalid preview buffer".into());
+                }
+                Ok((
+                    u32::try_from(w).map_err(|e| e.to_string())?,
+                    u32::try_from(h).map_err(|e| e.to_string())?,
+                    env.convert_byte_array(bytes).map_err(|e| e.to_string())?,
+                ))
+            };
+        let (w, h, frame) = read(width, height, &screen)?;
+        let (tw, th, template) = read(template_width, template_height, &template)?;
+        let reply = template_preview::match_template(
+            template_preview::image(w, h, &frame),
+            template_preview::image(tw, th, &template),
+            tolerance,
+            similarity,
+        );
+        let array = env.new_int_array(4).map_err(|e| e.to_string())?;
+        env.set_int_array_region(&array, 0, &reply)
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(array.into_raw())
+    }));
+    result
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(std::ptr::null_mut())
+}
+
 const STATE_RUNNING: i32 = 2;
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeConfigureUiValues(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    json: JString<'_>,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let json: String = env.get_string(&json).map_err(|e| e.to_string())?.into();
+        if json.len() > 262144 {
+            return Err("UI configuration exceeds limit".into());
+        }
+        let values: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        get_session(u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?)?
+            .seed_ui_values(values)
+    }));
+    finish_jni(&result)
+}
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativePushUiEvent(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: JString<'_>,
+    event: JString<'_>,
+    value: JString<'_>,
+    dispatch: jboolean,
+) -> jint {
+    let result =
+        catch_unwind(AssertUnwindSafe(|| {
+            let id: String = env.get_string(&id).map_err(|e| e.to_string())?.into();
+            let event: String = env.get_string(&event).map_err(|e| e.to_string())?.into();
+            let value: String = env.get_string(&value).map_err(|e| e.to_string())?.into();
+            if id.len() > 64 || event.len() > 16 || value.len() > 8192 {
+                return Err("UI event exceeds limit".into());
+            }
+            get_session(u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?)?
+                .push_ui_event(id, event, value, dispatch != 0)
+        }));
+    finish_jni(&result)
+}
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeInputFeatures(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jint {
+    catch_unwind(AssertUnwindSafe(|| {
+        u64::try_from(handle)
+            .ok()
+            .and_then(|h| get_session(h).ok())
+            .map_or(0, |s| i32::try_from(s.input_features()).unwrap_or(0))
+    }))
+    .unwrap_or(0)
+}
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeStep(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    boot_nanos: jlong,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        let boot_nanos = u64::try_from(boot_nanos).map_err(|_| "invalid boot clock".to_owned())?;
+        get_session(handle)?.request_step(boot_nanos)
+    }));
+    finish_jni(&result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeDebugSnapshot(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jstring {
+    catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).ok()?;
+        let snapshot = get_session(handle).ok()?.debug_snapshot().ok()??;
+        env.new_string(snapshot).ok().map(JString::into_raw)
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
 const STATE_STOPPED: i32 = 3;
 const STATE_FAILED: i32 = 4;
 const STATE_STOPPING: i32 = 5;
@@ -74,12 +214,21 @@ const OP_SYSTEM_ELAPSED_REALTIME_MILLIS: u32 = 2_001;
 const OP_INPUT_TAP: u32 = 4_000;
 const OP_INPUT_SWIPE: u32 = 4_001;
 const OP_INPUT_KEY_EVENT: u32 = 4_002;
+const OP_INPUT_POINTER_DOWN: u32 = 4_003;
+const OP_INPUT_POINTER_MOVE: u32 = 4_004;
+const OP_INPUT_POINTER_UP: u32 = 4_005;
+const OP_INPUT_TAP_SCREEN: u32 = 4_006;
+const OP_INPUT_POINTER_DOWN_SCREEN: u32 = 4_007;
 #[cfg(target_os = "android")]
 const OP_SCREEN_CAPTURE: u32 = 5_000;
 #[cfg(target_os = "android")]
 const OP_SCREEN_CAPTURE_SERIES_FRAME: u32 = 5_004;
 
 enum SessionCommand {
+    UiSeed {
+        values: std::collections::BTreeMap<String, String>,
+        response: SyncSender<Result<(), String>>,
+    },
     Reset {
         width: u32,
         height: u32,
@@ -122,6 +271,19 @@ enum SessionCommand {
     DrainScriptLogs {
         response: SyncSender<Vec<String>>,
     },
+    DrainScriptPrompts {
+        response: SyncSender<Vec<String>>,
+    },
+    DebugSnapshot {
+        response: SyncSender<Option<String>>,
+    },
+    UiEvent {
+        id: String,
+        event: String,
+        value: String,
+        dispatch: bool,
+        response: SyncSender<Result<(), String>>,
+    },
     ControlWake,
 }
 
@@ -141,6 +303,9 @@ enum RootControl {
     CapturePreview {
         response: SyncSender<Result<PreviewCapture, String>>,
     },
+    InputFeatures {
+        response: SyncSender<u32>,
+    },
     Shutdown,
 }
 
@@ -158,6 +323,9 @@ mod platform_root {
     };
 
     pub type Client = root_client::AndroidRootClient;
+    pub fn input_features(client: &Client) -> u32 {
+        client.input_features()
+    }
 
     pub struct InputBackend<'a> {
         client: &'a mut Client,
@@ -188,6 +356,9 @@ mod platform_root {
     }
 
     impl AutomationBackend for InputBackend<'_> {
+        fn supports_pointer_input(&self) -> bool {
+            self.client.input_features() & 2 != 0
+        }
         fn dispatch_input(
             &mut self,
             _request: RequestId,
@@ -225,12 +396,25 @@ mod platform_root {
         }
 
         fn cancel_input(&mut self, request: RequestId) {
+            if let Some(stop) = self.client.priority_stop() {
+                stop.request_stop();
+                return;
+            }
             if let Err(error) = self.client.cancel(request.get()) {
                 self.connection_lost |= error.is_connection_lost();
             }
         }
 
         fn release_pointers(&mut self, pointer_ids: &[u8]) -> Result<(), BackendError> {
+            if let Some(stop) = self.client.priority_stop() {
+                stop.wait_clean(Duration::from_secs(8))
+                    .map_err(|code| BackendError {
+                        code,
+                        message: "Root pointer cleanup was not confirmed".into(),
+                        retryable: false,
+                        connection_lost: true,
+                    })?;
+            }
             for pointer_id in pointer_ids {
                 self.client
                     .pointer_up(*pointer_id)
@@ -243,6 +427,19 @@ mod platform_root {
     pub fn connect(path: &str, key: [u8; 32], timeout: Duration) -> Result<Client, String> {
         root_client::connect_android(Path::new(path), key, timeout)
             .map_err(|error| format!("{error:?}"))
+    }
+    pub fn clean_and_resume(client: &Client) -> Result<(), String> {
+        if let Some(stop) = client.priority_stop() {
+            stop.wait_clean(Duration::from_secs(8))
+                .and_then(|()| stop.resume())
+                .map_err(str::to_owned)?;
+        }
+        Ok(())
+    }
+    pub fn wait_clean(client: &Client) -> bool {
+        client
+            .priority_stop()
+            .is_none_or(|stop| stop.wait_clean(Duration::from_secs(8)).is_ok())
     }
 
     pub fn capture_preview(client: &mut Client) -> Result<PreviewCapture, PreviewCaptureError> {
@@ -475,6 +672,9 @@ mod platform_root {
     };
 
     pub struct Client;
+    pub fn input_features(_client: &Client) -> u32 {
+        0
+    }
 
     pub struct InputBackend<'a> {
         _client: &'a mut Client,
@@ -519,6 +719,12 @@ mod platform_root {
     pub fn connect(_path: &str, _key: [u8; 32], _timeout: Duration) -> Result<Client, String> {
         Err("RootDaemon is only available on Android".to_owned())
     }
+    pub fn clean_and_resume(_client: &Client) -> Result<(), String> {
+        Ok(())
+    }
+    pub fn wait_clean(_client: &Client) -> bool {
+        true
+    }
 
     pub fn capture_preview(_client: &mut Client) -> Result<PreviewCapture, PreviewCaptureError> {
         Err(PreviewCaptureError {
@@ -556,6 +762,32 @@ fn prepare_input_commands(
     coordinates: CoordinateSnapshot,
 ) -> Option<Result<Vec<InputCommand>, RootDispatch>> {
     let result = match request.opcode {
+        OP_INPUT_TAP_SCREEN | OP_INPUT_POINTER_DOWN_SCREEN => {
+            let [LuaScalar::Integer(x), LuaScalar::Integer(y)] = request.args.as_slice() else {
+                return Some(Err(input_failure("invalid raw screen coordinates")));
+            };
+            let point = i32::try_from(*x)
+                .ok()
+                .zip(i32::try_from(*y).ok())
+                .filter(|(x, y)| {
+                    *x >= 0
+                        && *y >= 0
+                        && f64::from(*x) < f64::from(coordinates.display_size.width)
+                        && f64::from(*y) < f64::from(coordinates.display_size.height)
+                })
+                .ok_or(());
+            point.map(|(x, y)| {
+                vec![if request.opcode == OP_INPUT_TAP_SCREEN {
+                    InputCommand::Tap { x, y }
+                } else {
+                    InputCommand::PointerDown {
+                        pointer_id: 0,
+                        x,
+                        y,
+                    }
+                }]
+            })
+        }
         OP_INPUT_TAP => {
             let [LuaScalar::Integer(x), LuaScalar::Integer(y)] = request.args.as_slice() else {
                 return Some(Err(input_failure("invalid tap arguments")));
@@ -593,6 +825,33 @@ fn prepare_input_commands(
             u32::try_from(*key_code)
                 .map(|key_code| vec![InputCommand::KeyEvent { key_code }])
                 .map_err(|_| ())
+        }
+        OP_INPUT_POINTER_DOWN | OP_INPUT_POINTER_MOVE => {
+            let [LuaScalar::Integer(x), LuaScalar::Integer(y)] = request.args.as_slice() else {
+                return Some(Err(input_failure("invalid pointer coordinates")));
+            };
+            map_design_point(coordinates, *x, *y).map(|(x, y)| {
+                let command = if request.opcode == OP_INPUT_POINTER_DOWN {
+                    InputCommand::PointerDown {
+                        pointer_id: 0,
+                        x,
+                        y,
+                    }
+                } else {
+                    InputCommand::PointerMove {
+                        pointer_id: 0,
+                        x,
+                        y,
+                    }
+                };
+                vec![command]
+            })
+        }
+        OP_INPUT_POINTER_UP => {
+            if !request.args.is_empty() {
+                return Some(Err(input_failure("invalid pointer up arguments")));
+            }
+            Ok(vec![InputCommand::PointerUp { pointer_id: 0 }])
         }
         _ => return None,
     };
@@ -678,6 +937,7 @@ fn input_runtime_result(result: Result<(), InputRuntimeError>) -> RootDispatch {
 
 #[derive(Debug)]
 struct NativeSession {
+    vision: Arc<native_vision::VisionHub>,
     commands: SyncSender<SessionCommand>,
     state: Arc<AtomicI32>,
     next_wake: Arc<AtomicI64>,
@@ -700,6 +960,7 @@ struct NativeSession {
 enum PauseControl {
     Pause(u64),
     Resume(u64),
+    Step(u64),
 }
 
 struct WakeCallback {
@@ -738,6 +999,7 @@ impl WakeCallback {
 
 #[derive(Clone)]
 struct RootWorkerContext {
+    vision: Arc<native_vision::VisionHub>,
     host_queue: ExternalHostQueue,
     display_width: Arc<AtomicU32>,
     display_height: Arc<AtomicU32>,
@@ -766,6 +1028,8 @@ impl NativeSession {
     fn spawn(width: u32, height: u32) -> Result<Arc<Self>, String> {
         let (commands, receiver) = mpsc::sync_channel(32);
         let host_queue = ExternalHostQueue::new(HOST_QUEUE_CAPACITY, HOST_CANCELLATION_CAPACITY)?;
+        let vision = Arc::new(native_vision::VisionHub::default());
+        host_queue.set_cancel_listener(vision.clone());
         let engine_config = EngineSessionConfig::default();
         let frames = Arc::new(Mutex::new(FramePool::new(engine_config.frames)));
         let session_host_queue = host_queue.clone();
@@ -786,6 +1050,7 @@ impl NativeSession {
         let root_worker = spawn_root_worker(
             root_receiver,
             RootWorkerContext {
+                vision: vision.clone(),
                 host_queue: host_queue.clone(),
                 display_width: Arc::clone(&display_width),
                 display_height: Arc::clone(&display_height),
@@ -868,6 +1133,7 @@ impl NativeSession {
             }
         };
         Ok(Arc::new(Self {
+            vision,
             commands,
             state,
             next_wake,
@@ -907,6 +1173,7 @@ impl NativeSession {
         self.stop_boot_nanos.store(boot_nanos, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
         self.input_stop_requested.store(true, Ordering::Release);
+        self.vision.stop();
         self.stop_handle
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -955,10 +1222,73 @@ impl NativeSession {
     }
 
     fn last_diagnostic(&self) -> Option<String> {
+        if self.vision.cleanup_status().1 {
+            return Some("ROOT_STOP_CLEANUP_FAILED: 未确认触点清理成功，已禁止继续输入；请重新连接 RootDaemon".into());
+        }
         self.last_diagnostic
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    fn request_step(&self, boot_nanos: u64) -> Result<(), String> {
+        if self.state.load(Ordering::Acquire) != STATE_PAUSED {
+            return Err("SESSION_NOT_PAUSED".into());
+        }
+        let mut request = self
+            .pause_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if request.is_some() {
+            return Err("SESSION_CONTROL_PENDING".into());
+        }
+        *request = Some(PauseControl::Step(boot_nanos));
+        drop(request);
+        let _ = self.commands.try_send(SessionCommand::ControlWake);
+        Ok(())
+    }
+
+    fn debug_snapshot(&self) -> Result<Option<String>, String> {
+        let (response, receiver) = mpsc::sync_channel(1);
+        self.commands
+            .try_send(SessionCommand::DebugSnapshot { response })
+            .map_err(|e| e.to_string())?;
+        receiver
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|e| e.to_string())
+    }
+    fn push_ui_event(
+        &self,
+        id: String,
+        event: String,
+        value: String,
+        dispatch: bool,
+    ) -> Result<(), String> {
+        let (response, receiver) = mpsc::sync_channel(1);
+        self.commands
+            .try_send(SessionCommand::UiEvent {
+                id,
+                event,
+                value,
+                dispatch,
+                response,
+            })
+            .map_err(|e| e.to_string())?;
+        receiver
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|e| e.to_string())?
+    }
+    fn seed_ui_values(
+        &self,
+        values: std::collections::BTreeMap<String, String>,
+    ) -> Result<(), String> {
+        let (response, receiver) = mpsc::sync_channel(1);
+        self.commands
+            .try_send(SessionCommand::UiSeed { values, response })
+            .map_err(|e| e.to_string())?;
+        receiver
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|e| e.to_string())?
     }
 
     fn reset(&self, width: u32, height: u32) -> Result<(), String> {
@@ -990,6 +1320,12 @@ impl NativeSession {
         input_wait
             .recv_timeout(COMMAND_TIMEOUT)
             .map_err(|error| format!("Root input reset timed out: {error}"))?;
+        if self.vision.cleanup_status().1 {
+            return Err(
+                "ROOT_INPUT_NOT_CLEAN: touch cleanup was not confirmed; reconnect RootDaemon"
+                    .into(),
+            );
+        }
         Ok(())
     }
 
@@ -1046,6 +1382,36 @@ impl NativeSession {
         response_rx
             .recv_timeout(COMMAND_TIMEOUT)
             .map_err(|error| format!("engine log drain timed out: {error}"))
+    }
+
+    fn drain_script_prompts(&self) -> Result<Vec<String>, String> {
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err("SESSION_CLOSED".to_owned());
+        }
+        let (response_tx, response_rx) = mpsc::sync_channel(1);
+        self.commands
+            .try_send(SessionCommand::DrainScriptPrompts {
+                response: response_tx,
+            })
+            .map_err(|error| format!("engine command queue rejected prompt drain: {error}"))?;
+        response_rx
+            .recv_timeout(COMMAND_TIMEOUT)
+            .map_err(|error| format!("engine prompt drain timed out: {error}"))
+    }
+
+    fn input_features(&self) -> u32 {
+        if !self.root_attached.load(Ordering::Acquire) {
+            return 0;
+        }
+        let (response, receiver) = mpsc::sync_channel(1);
+        if self
+            .root_control
+            .try_send(RootControl::InputFeatures { response })
+            .is_err()
+        {
+            return 0;
+        }
+        receiver.recv_timeout(COMMAND_TIMEOUT).unwrap_or(0)
     }
 
     fn capture_preview(&self) -> Result<Vec<u8>, String> {
@@ -1162,6 +1528,8 @@ impl NativeSession {
     }
 
     fn shutdown(&self) {
+        self.input_stop_requested.store(true, Ordering::Release);
+        self.vision.stop();
         self.stop_boot_nanos.store(0, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
         *self
@@ -1271,6 +1639,10 @@ fn worker_loop(
                 let result = engine.resume(boot_nanos);
                 publish_control_result(engine, result, "ENGINE_RESUME_FAILED", signals);
             }
+            Some(PauseControl::Step(boot_nanos)) => {
+                let result = engine.step(boot_nanos);
+                publish_control_result(engine, result, "ENGINE_STEP_FAILED", signals);
+            }
             None => {}
         }
         if shutdown_requested.load(Ordering::Acquire) {
@@ -1335,7 +1707,14 @@ fn handle_session_command(
         } => {
             current_boot_nanos.store(boot_nanos, Ordering::Release);
             let result = match engine.pump(boot_nanos) {
-                Ok(_) => Ok(()),
+                Ok(report) => {
+                    for event in report.events {
+                        if let SchedulerEvent::TaskFinished { task, .. } = event {
+                            signals.host_queue.task_finished(task);
+                        }
+                    }
+                    Ok(())
+                }
                 // Android wake callbacks are asynchronous. A queued wake may arrive after the
                 // preceding pump has already completed or failed the root task. That late pump is
                 // an idempotent no-op and must not replace the real terminal state/diagnostic.
@@ -1407,6 +1786,44 @@ fn handle_session_command(
         }
         SessionCommand::DrainScriptLogs { response } => {
             let _ = response.send(engine.drain_script_logs());
+        }
+        SessionCommand::DrainScriptPrompts { response } => {
+            let _ = response.send(engine.drain_script_prompts());
+        }
+        SessionCommand::UiEvent {
+            id,
+            event,
+            value,
+            dispatch,
+            response,
+        } => {
+            let result = (if dispatch {
+                engine.push_ui_event(&id, &event, &value)
+            } else {
+                engine.update_ui_value(&id, &value)
+            })
+            .map_err(|e| format!("{e:?}"));
+            publish_engine_state(engine, signals);
+            let _ = response.send(result);
+        }
+        SessionCommand::UiSeed { values, response } => {
+            let _ = response.send(engine.seed_ui_values(values).map_err(|e| format!("{e:?}")));
+        }
+        SessionCommand::DebugSnapshot { response } => {
+            let snapshot = engine.debug_snapshot().map(|snapshot| {
+                let variables = snapshot.variables.into_iter().map(|(scope, name, scalar, truncated)| {
+                    let (kind, value) = match scalar {
+                        LuaScalar::Nil => ("nil", String::new()),
+                        LuaScalar::Boolean(value) => ("boolean", value.to_string()),
+                        LuaScalar::Integer(value) => ("integer", value.to_string()),
+                        LuaScalar::Number(value) => ("number", value.to_string()),
+                        LuaScalar::Bytes(value) => ("string", String::from_utf8_lossy(&value).into_owned()),
+                    };
+                    serde_json::json!({"scope":scope,"name":name,"type":kind,"value":value,"truncated":truncated})
+                }).collect::<Vec<_>>();
+                serde_json::json!({"flowId":snapshot.flow_id,"nodeId":snapshot.node_id,"variables":variables}).to_string()
+            });
+            let _ = response.send(snapshot);
         }
         SessionCommand::ControlWake => {}
     }
@@ -1560,8 +1977,12 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
     loop {
         if context.input_stop_requested.swap(false, Ordering::AcqRel) {
             if let Some(connected) = client.as_mut() {
+                let priority_clean = platform_root::wait_clean(connected);
                 let mut backend = platform_root::InputBackend::new(connected);
                 let result = input.stop(&mut backend);
+                context
+                    .vision
+                    .cleanup_finished(priority_clean && result.is_ok());
                 if backend.connection_lost()
                     || matches!(
                         result,
@@ -1576,14 +1997,21 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 }
             } else {
                 input.abandon();
+                context.vision.cleanup_finished(true);
             }
+            notify_root_wake(context);
         }
 
         if client.is_none() {
+            // The previous RootDaemon connection has gone away; its daemon-side disconnect
+            // cleanup releases any active touch. Discard the matching local leases before a
+            // fresh client is attached so a stale move/up cannot leak into the next session.
+            input.abandon();
             client = wait_for_root_client(receiver, context, &mut input);
             if client.is_none() {
                 return;
             }
+            input.reset();
             continue;
         }
 
@@ -1594,13 +2022,36 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
             }
             Ok(RootControl::Disconnect { response }) => {
                 if let Some(mut connected) = client.take() {
+                    let mut backend = platform_root::InputBackend::new(&mut connected);
+                    let clean = input.stop(&mut backend).is_ok();
                     let _ = platform_root::shutdown(&mut connected);
+                    context.vision.detach_root(clean);
+                    input.abandon();
+                    input.reset();
                 }
                 context.attached.store(false, Ordering::Release);
                 let _ = response.send(());
                 continue;
             }
             Ok(RootControl::ResetInput { response }) => {
+                if let Some(connected) = client.as_mut() {
+                    if !platform_root::wait_clean(connected) {
+                        context.vision.cleanup_finished(false);
+                        let _ = response.send(());
+                        continue;
+                    }
+                    let mut backend = platform_root::InputBackend::new(connected);
+                    if input.stop(&mut backend).is_err() {
+                        context.vision.cleanup_finished(false);
+                        let _ = response.send(());
+                        continue;
+                    }
+                    if platform_root::clean_and_resume(connected).is_err() {
+                        context.vision.cleanup_finished(false);
+                        let _ = response.send(());
+                        continue;
+                    }
+                }
                 input.reset();
                 context.input_stop_requested.store(false, Ordering::Release);
                 let _ = response.send(());
@@ -1623,6 +2074,10 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 }
                 continue;
             }
+            Ok(RootControl::InputFeatures { response }) => {
+                let _ = response.send(client.as_ref().map_or(0, platform_root::input_features));
+                continue;
+            }
             Ok(RootControl::Shutdown) => {
                 if let Some(mut connected) = client.take() {
                     let _ = platform_root::shutdown(&mut connected);
@@ -1634,7 +2089,32 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
             Err(mpsc::TryRecvError::Empty) => {}
         }
 
-        match context.host_queue.wait_next() {
+        let host_event = match input.next_lease_timeout() {
+            Some(timeout) => match context.host_queue.wait_next_timeout(timeout) {
+                Some(event) => event,
+                None => {
+                    if let Some(connected) = client.as_mut() {
+                        let mut backend = platform_root::InputBackend::new(connected);
+                        let result = input.expire_leases(Instant::now(), &mut backend);
+                        if backend.connection_lost()
+                            || matches!(
+                                result,
+                                Err(InputRuntimeError::Backend(BackendError {
+                                    connection_lost: true,
+                                    ..
+                                }))
+                            )
+                        {
+                            client = None;
+                            notify_root_disconnected(context);
+                        }
+                    }
+                    continue;
+                }
+            },
+            None => context.host_queue.wait_next(),
+        };
+        match host_event {
             ExternalHostEvent::Dispatch {
                 request,
                 completion,
@@ -1643,56 +2123,99 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                     .coordinates
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let dispatch = match prepare_input_commands(&request, coordinates) {
-                    Some(Ok(commands)) => {
-                        let now = MonoTime::from_nanos(context.boot_nanos.load(Ordering::Acquire));
-                        if let Some(expires_at) = now.checked_add(request.timeout) {
-                            let mut backend = platform_root::InputBackend::new(
-                                client.as_mut().expect("attached client"),
-                            );
-                            let result = input.dispatch(
-                                request.request_id,
-                                request.task,
-                                now,
-                                expires_at,
-                                commands,
-                                &mut backend,
-                                || {
-                                    if context.input_stop_requested.load(Ordering::Acquire) {
-                                        InputControl::Stop
-                                    } else if context
-                                        .host_queue
-                                        .take_cancellation(request.request_id, request.task)
-                                        .is_some()
-                                    {
-                                        InputControl::Cancel
-                                    } else {
-                                        InputControl::Continue
-                                    }
-                                },
-                            );
-                            let backend_lost = backend.connection_lost();
-                            let mut dispatch = input_runtime_result(result);
-                            dispatch.connection_lost |= backend_lost;
-                            dispatch
-                        } else {
-                            input_failure("input timeout overflow")
-                        }
+                let dispatch = if request.native_vision.is_some() {
+                    RootDispatch {
+                        result: context.vision.dispatch(&request, context),
+                        connection_lost: false,
                     }
-                    Some(Err(dispatch)) => dispatch,
-                    None => platform_root::dispatch(
-                        client.as_mut().expect("attached client"),
-                        &request,
-                        (
-                            context.display_width.load(Ordering::Acquire),
-                            context.display_height.load(Ordering::Acquire),
+                } else {
+                    match prepare_input_commands(&request, coordinates) {
+                        Some(Ok(commands)) => {
+                            context.vision.begin_input(&request);
+                            let now =
+                                MonoTime::from_nanos(context.boot_nanos.load(Ordering::Acquire));
+                            if let Some(expires_at) = now.checked_add(request.timeout) {
+                                let mut backend = platform_root::InputBackend::new(
+                                    client.as_mut().expect("attached client"),
+                                );
+                                let result = input.dispatch_with_wait(
+                                    request.request_id,
+                                    request.task,
+                                    now,
+                                    expires_at,
+                                    commands,
+                                    &mut backend,
+                                    || {
+                                        if context.input_stop_requested.load(Ordering::Acquire) {
+                                            InputControl::Stop
+                                        } else if context
+                                            .host_queue
+                                            .take_cancellation(request.request_id, request.task)
+                                            .is_some()
+                                        {
+                                            InputControl::Cancel
+                                        } else {
+                                            InputControl::Continue
+                                        }
+                                    },
+                                    |duration, control| {
+                                        let Some(deadline) = Instant::now().checked_add(duration)
+                                        else {
+                                            return InputControl::Stop;
+                                        };
+                                        loop {
+                                            let requested = control();
+                                            if requested != InputControl::Continue {
+                                                return requested;
+                                            }
+                                            let Some(remaining) =
+                                                deadline.checked_duration_since(Instant::now())
+                                            else {
+                                                return control();
+                                            };
+                                            context.host_queue.wait_input_control(
+                                                request.request_id,
+                                                request.task,
+                                                remaining,
+                                            );
+                                        }
+                                    },
+                                );
+                                let backend_lost = backend.connection_lost();
+                                let mut rearm_failed = false;
+                                if !context.input_stop_requested.load(Ordering::Acquire) {
+                                    // Only a completed priority cleanup can re-arm a cancelled task.
+                                    rearm_failed = !context.vision.rearm_input(
+                                        client.as_ref().expect("attached client"),
+                                        &context.input_stop_requested,
+                                    );
+                                    if rearm_failed {
+                                        context.vision.cleanup_finished(false);
+                                    }
+                                }
+                                let mut dispatch = input_runtime_result(result);
+                                dispatch.connection_lost |= backend_lost || rearm_failed;
+                                dispatch
+                            } else {
+                                input_failure("input timeout overflow")
+                            }
+                        }
+                        Some(Err(dispatch)) => dispatch,
+                        None => platform_root::dispatch(
+                            client.as_mut().expect("attached client"),
+                            &request,
+                            (
+                                context.display_width.load(Ordering::Acquire),
+                                context.display_height.load(Ordering::Acquire),
+                            ),
+                            coordinates,
+                            &context.frames,
+                            context.boot_nanos.load(Ordering::Acquire),
+                            context.snapshot_id.load(Ordering::Acquire),
                         ),
-                        coordinates,
-                        &context.frames,
-                        context.boot_nanos.load(Ordering::Acquire),
-                        context.snapshot_id.load(Ordering::Acquire),
-                    ),
+                    }
                 };
+                context.vision.end_input();
                 let submitted = completion.submit_host_completion(HostCompletion {
                     request_id: request.request_id,
                     task: request.task,
@@ -1716,6 +2239,23 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 let mut backend =
                     platform_root::InputBackend::new(client.as_mut().expect("attached client"));
                 let result = input.cancel(request_id, &mut backend);
+                if backend.connection_lost()
+                    || matches!(
+                        result,
+                        Err(InputRuntimeError::Backend(BackendError {
+                            connection_lost: true,
+                            ..
+                        }))
+                    )
+                {
+                    client = None;
+                    notify_root_disconnected(context);
+                }
+            }
+            ExternalHostEvent::TaskFinished(task) => {
+                let mut backend =
+                    platform_root::InputBackend::new(client.as_mut().expect("attached client"));
+                let result = input.release_task(task, &mut backend);
                 if backend.connection_lost()
                     || matches!(
                         result,
@@ -1762,6 +2302,22 @@ fn wait_for_root_client(
                 response,
             } => match platform_root::connect(&socket_path, key, timeout) {
                 Ok(client) => {
+                    #[cfg(target_os = "android")]
+                    {
+                        context.vision.attach_root(&client);
+                        if let Some(stop) = client.priority_stop() {
+                            let wake = context.wake_callback.clone();
+                            stop.set_listener(Arc::new(move || {
+                                if let Some(callback) = wake
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .as_ref()
+                                {
+                                    callback.notify();
+                                }
+                            }));
+                        }
+                    }
                     context.attached.store(true, Ordering::Release);
                     let _ = response.send(Ok(()));
                     return Some(client);
@@ -1783,12 +2339,16 @@ fn wait_for_root_client(
             RootControl::CapturePreview { response } => {
                 let _ = response.send(Err("ROOT_BACKEND_NOT_READY".to_owned()));
             }
+            RootControl::InputFeatures { response } => {
+                let _ = response.send(0);
+            }
             RootControl::Shutdown => return None,
         }
     }
 }
 
 fn notify_root_disconnected(context: &RootWorkerContext) {
+    context.vision.detach_root(false);
     context.attached.store(false, Ordering::Release);
     let callback = context
         .wake_callback
@@ -1796,6 +2356,17 @@ fn notify_root_disconnected(context: &RootWorkerContext) {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(callback) = callback.as_ref() {
         callback.notify_root_disconnected();
+    }
+}
+
+fn notify_root_wake(context: &RootWorkerContext) {
+    if let Some(callback) = context
+        .wake_callback
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+    {
+        callback.notify();
     }
 }
 
@@ -1979,6 +2550,20 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeS
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeSetVisionListener(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    listener: JObject<'_>,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        get_session(handle)?.vision.set(&env, listener)
+    }));
+    finish_jni(&result)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeRegisterTemplate(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -2072,65 +2657,6 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeV
         Err(_) => "Lua validator internal failure".to_owned(),
     };
     env.new_string(diagnostic)
-        .map_or(std::ptr::null_mut(), JString::into_raw)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeCompileVisualProject(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    project_directory: JString<'_>,
-) -> jstring {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let directory: String = env
-            .get_string(&project_directory)
-            .map_err(|error| error.to_string())?
-            .into();
-        Ok::<_, String>(visual_compile::compile_project_directory(
-            std::path::Path::new(&directory),
-        ))
-    }));
-    let reply = match result {
-        Ok(Ok(reply)) => reply,
-        Ok(Err(error)) => visual_compile::internal_error_reply(&error),
-        Err(_) => visual_compile::internal_error_reply("visual compiler panicked"),
-    };
-    env.new_string(reply)
-        .map_or(std::ptr::null_mut(), JString::into_raw)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeValidateVisualDraft(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    project_directory: JString<'_>,
-    flow_id: JString<'_>,
-    draft: JByteArray<'_>,
-) -> jstring {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let directory: String = env
-            .get_string(&project_directory)
-            .map_err(|error| error.to_string())?
-            .into();
-        let flow_id: String = env
-            .get_string(&flow_id)
-            .map_err(|error| error.to_string())?
-            .into();
-        let draft = env
-            .convert_byte_array(draft)
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>(visual_compile::validate_project_draft(
-            std::path::Path::new(&directory),
-            &flow_id,
-            &draft,
-        ))
-    }));
-    let reply = match result {
-        Ok(Ok(reply)) => reply,
-        Ok(Err(error)) => visual_compile::internal_error_reply(&error),
-        Err(_) => visual_compile::internal_error_reply("visual draft validator panicked"),
-    };
-    env.new_string(reply)
         .map_or(std::ptr::null_mut(), JString::into_raw)
 }
 
@@ -2374,7 +2900,16 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeS
 ) -> jint {
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
-        Ok::<_, String>(get_session(handle)?.state.load(Ordering::Acquire))
+        let session = get_session(handle)?;
+        let state = session.state.load(Ordering::Acquire);
+        let (pending, failed) = session.vision.cleanup_status();
+        Ok::<_, String>(if failed {
+            STATE_FAILED
+        } else if pending && state == STATE_STOPPED {
+            STATE_STOPPING
+        } else {
+            state
+        })
     }));
     match result {
         Ok(Ok(state)) => state,
@@ -2439,6 +2974,39 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeD
     };
     for (index, line) in lines.iter().enumerate() {
         let Ok(value) = env.new_string(line) else {
+            return std::ptr::null_mut();
+        };
+        if env
+            .set_object_array_element(&array, index as i32, value)
+            .is_err()
+        {
+            return std::ptr::null_mut();
+        }
+    }
+    array.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeDrainScriptPrompts(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jobjectArray {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        get_session(handle)?.drain_script_prompts()
+    }));
+    let messages = result
+        .unwrap_or_else(|_| Ok(Vec::new()))
+        .unwrap_or_else(|_| Vec::new());
+    let Ok(length) = i32::try_from(messages.len()) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(array) = env.new_object_array(length, "java/lang/String", JObject::null()) else {
+        return std::ptr::null_mut();
+    };
+    for (index, message) in messages.iter().enumerate() {
+        let Ok(value) = env.new_string(message) else {
             return std::ptr::null_mut();
         };
         if env

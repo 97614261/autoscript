@@ -12,12 +12,41 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 pub(crate) struct FlowCallArgs {
     pub target_flow_id: String,
     pub arguments: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub period_ms: Option<u32>,
+    #[serde(default)]
+    pub result_variable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct JobCancelArgs {
+    pub id_variable: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FlowChannelSetArgs {
+    pub index: u8,
+    #[serde(default)]
+    pub value: Option<Value>,
+    #[serde(default)]
+    pub value_variable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FlowChannelGetArgs {
+    pub index: u8,
+    pub target_variable: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SleepArgs {
     pub milliseconds: i64,
+    #[serde(default)]
+    pub milliseconds_variable: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -25,6 +54,16 @@ pub(crate) struct SleepArgs {
 pub(crate) struct LogArgs {
     pub level: LogLevel,
     pub message: String,
+    #[serde(default)]
+    pub value_variable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PromptArgs {
+    pub message: String,
+    #[serde(default)]
+    pub value_variable: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -38,6 +77,13 @@ pub(crate) enum LogLevel {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TapArgs {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PointerArgs {
     pub x: i32,
     pub y: i32,
 }
@@ -119,9 +165,53 @@ pub(crate) struct WhileArgs {
     #[serde(default)]
     pub duration_variable: Option<String>,
     #[serde(default)]
+    pub duration_unit: LoopTimeUnit,
+    #[serde(default)]
     pub iteration_variable: Option<String>,
     #[serde(default)]
     pub elapsed_variable: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum LoopTimeUnit {
+    #[default]
+    Milliseconds,
+    Seconds,
+    Minutes,
+}
+impl LoopTimeUnit {
+    pub(crate) fn factor(self) -> u32 {
+        match self {
+            Self::Milliseconds => 1,
+            Self::Seconds => 1000,
+            Self::Minutes => 60000,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum LoopMetric {
+    Count,
+    Elapsed,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LoopMetricArgs {
+    pub metric: LoopMetric,
+    pub name: String,
+    #[serde(default)]
+    pub unit: LoopTimeUnit,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LoopCheckArgs {
+    pub metric: LoopMetric,
+    pub limit: f64,
+    #[serde(default)]
+    pub limit_variable: Option<String>,
+    #[serde(default)]
+    pub unit: LoopTimeUnit,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,6 +219,13 @@ pub(crate) struct WhileArgs {
 pub(crate) struct VariableSetArgs {
     pub name: String,
     pub value: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VariableCalculateArgs {
+    pub name: String,
+    pub expression: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +348,72 @@ pub(crate) struct FindImageArgs {
     pub found_variable: String,
     pub x_variable: String,
     pub y_variable: String,
+    #[serde(default)]
+    pub direction: u8,
+    pub left_variable: Option<String>,
+    pub top_variable: Option<String>,
+    pub right_variable: Option<String>,
+    pub bottom_variable: Option<String>,
+    pub image_directory: Option<String>,
+    pub template_variable: Option<String>,
+    pub score_variable: Option<String>,
+    #[serde(default)]
+    pub image_paths: Vec<String>,
+    pub image_variable: Option<String>,
+    #[serde(default = "default_recognition_frequency")]
+    pub frequency: u8,
+    #[serde(default)]
+    pub auto_capture: bool,
+    #[serde(default)]
+    pub success_action: RecognitionAction,
+    #[serde(default)]
+    pub offset_x: i32,
+    #[serde(default)]
+    pub offset_y: i32,
+    #[serde(default = "default_action_duration")]
+    pub action_duration_ms: u32,
+}
+
+fn default_recognition_frequency() -> u8 {
+    1
+}
+fn default_action_duration() -> u32 {
+    100
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RecognitionAction {
+    #[default]
+    None,
+    Tap,
+    Hold,
+    TapWait,
+    PressRelease,
+}
+
+impl FindImageArgs {
+    pub fn has_extended_options(&self) -> bool {
+        self.direction != 0
+            || self.region_variables().iter().any(|value| value.is_some())
+            || self.image_directory.is_some()
+            || !self.image_paths.is_empty()
+            || self.template_variable.is_some()
+            || self.score_variable.is_some()
+            || self.image_variable.is_some()
+            || self.frequency != 1
+            || self.auto_capture
+            || self.success_action != RecognitionAction::None
+    }
+
+    pub fn region_variables(&self) -> [Option<&str>; 4] {
+        [
+            self.left_variable.as_deref(),
+            self.top_variable.as_deref(),
+            self.right_variable.as_deref(),
+            self.bottom_variable.as_deref(),
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -268,17 +431,58 @@ pub(crate) struct GlyphOcrArgs {
     pub score_variable: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GrayArgs {
+    pub frame_variable: String,
+    pub image_path: String,
+    pub similarity_permille: u16,
+    pub region: RectArgs,
+    pub found_variable: String,
+    pub x_variable: String,
+    pub y_variable: String,
+    pub score_variable: String,
+    #[serde(default = "default_auto_capture")]
+    pub auto_capture: bool,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AlphanumericArgs {
+    pub frame_variable: String,
+    pub region: RectArgs,
+    pub minimum_confidence_permille: u16,
+    pub text_variable: String,
+    pub score_variable: String,
+    #[serde(default = "default_auto_capture")]
+    pub auto_capture: bool,
+}
+fn default_auto_capture() -> bool {
+    true
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum BuiltinNodeArgs {
+    Ui(UiArgs, String),
+    Gray(GrayArgs),
+    Alphanumeric(AlphanumericArgs),
     Sleep(SleepArgs),
+    JobCancel(JobCancelArgs, bool),
     Log(LogArgs),
+    Prompt(PromptArgs),
+    RunPrompt(PromptArgs),
     Tap(TapArgs),
+    PointerDown(PointerArgs),
+    PointerMove(PointerArgs),
+    PointerUp,
     Swipe(SwipeArgs),
     KeyEvent(KeyEventArgs),
     If(ComparisonArgs),
     Repeat(RepeatArgs),
     While(WhileArgs),
+    LoopMetric(LoopMetricArgs),
+    LoopCheck(LoopCheckArgs),
     VariableSet(VariableSetArgs),
+    VariableCalculate(VariableCalculateArgs),
     VariableCopy(VariableCopyArgs),
     ScreenCapture(ScreenCaptureArgs),
     ScreenRelease(ScreenReleaseArgs),
@@ -294,6 +498,20 @@ pub(crate) enum BuiltinNodeArgs {
     LegacyDuoDianBiSe(LegacyDuoDianBiSeArgs),
     LegacyGetRectColorNum(LegacyGetRectColorNumArgs),
     LegacyGetRgbColor(LegacyGetRgbColorArgs),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UiArgs {
+    pub control_id: String,
+    #[serde(default)]
+    pub result_variable: Option<String>,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub value_variable: Option<String>,
+    #[serde(default)]
+    pub operation: String,
 }
 
 /// Legacy region keeps the original origin-plus-extent form instead of a half-open rectangle.
@@ -385,6 +603,7 @@ pub(crate) struct PreparedFlow<'a> {
 }
 
 pub(crate) struct PreparedProject<'a> {
+    pub manifest: &'a ProjectManifest,
     pub flows: Vec<PreparedFlow<'a>>,
     pub calls: HashMap<String, FlowCallArgs>,
     pub builtins: HashMap<String, BuiltinNodeArgs>,
@@ -433,6 +652,7 @@ pub(crate) fn prepare<'a>(
     let (calls, builtins) = validate_nodes(manifest, &flows, &mut errors);
     if errors.is_empty() {
         Ok(PreparedProject {
+            manifest,
             flows,
             calls,
             builtins,
@@ -503,8 +723,164 @@ fn validate_nodes(
         let Some(nodes) = flow.document.canonical_nodes() else {
             continue;
         };
+        let node_by_id = flow
+            .document
+            .nodes
+            .iter()
+            .map(|node| (node.envelope.node_id.as_str(), node))
+            .collect::<HashMap<_, _>>();
+        let disabled = flow.document.disabled_node_ids();
+        let labels = flow
+            .document
+            .nodes
+            .iter()
+            .filter(|node| !disabled.contains(node.envelope.node_id.as_str()))
+            .filter(|node| node.envelope.kind == "control.label")
+            .filter_map(|node| node.envelope.args.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
         for node in nodes {
+            if disabled.contains(node.envelope.node_id.as_str()) {
+                continue;
+            }
+            if matches!(
+                node.envelope.kind.as_str(),
+                "control.loopmetric" | "control.loopcheck"
+            ) {
+                let mut parent = node.envelope.parent_id.as_deref();
+                let mut in_loop = false;
+                while let Some(id) = parent {
+                    let Some(owner) = node_by_id.get(id) else {
+                        break;
+                    };
+                    if matches!(
+                        owner.envelope.kind.as_str(),
+                        "control.repeat" | "control.while"
+                    ) {
+                        in_loop = true;
+                        break;
+                    }
+                    parent = owner.envelope.parent_id.as_deref();
+                }
+                if !in_loop {
+                    invalid_arguments(node, "循环指标/检查只能位于当前插件的循环体", errors);
+                }
+            }
             match node.envelope.kind.as_str() {
+                "flow.argument.set" | "flow.return.set" => {
+                    let kind = node.envelope.kind.as_str();
+                    let valid =
+                        serde_json::from_value::<FlowChannelSetArgs>(node.envelope.args.clone())
+                            .ok()
+                            .is_some_and(|args| {
+                                node.envelope.child_blocks.is_empty()
+                                    && (1..=99).contains(&args.index)
+                                    && (kind != "flow.return.set"
+                                        || args.index != 1
+                                        || args.value.as_ref().is_none_or(|value| {
+                                            flow.declaration.returns.as_ref().is_none_or(
+                                                |declaration| {
+                                                    matches_type(value, declaration.value_type)
+                                                },
+                                            )
+                                        }))
+                                    && (args.value.as_ref().is_some_and(is_scalar)
+                                        ^ args
+                                            .value_variable
+                                            .as_deref()
+                                            .is_some_and(valid_variable_name))
+                            });
+                    if !valid {
+                        errors.push(CompileError::InvalidNodeArguments {
+                            node_id: node.envelope.node_id.clone(),
+                            reason: format!("{kind} requires a valid index and exactly one scalar or variable source"),
+                        });
+                    }
+                }
+                "flow.argument.get" | "flow.return.get" => {
+                    let valid =
+                        serde_json::from_value::<FlowChannelGetArgs>(node.envelope.args.clone())
+                            .ok()
+                            .is_some_and(|args| {
+                                node.envelope.child_blocks.is_empty()
+                                    && valid_variable_name(&args.target_variable)
+                                    && (1..=99).contains(&args.index)
+                            });
+                    if !valid {
+                        errors.push(CompileError::InvalidNodeArguments {
+                            node_id: node.envelope.node_id.clone(),
+                            reason: "parameter get requires an index and target variable".into(),
+                        });
+                    }
+                }
+                "control.break" | "control.label" | "control.goto" | "flow.return" => {
+                    let kind = node.envelope.kind.as_str();
+                    let empty_args = node
+                        .envelope
+                        .args
+                        .as_object()
+                        .is_some_and(|args| args.is_empty());
+                    let name = node.envelope.args.as_object().and_then(|args| {
+                        (args.len() == 1)
+                            .then(|| args.get("name"))
+                            .flatten()
+                            .and_then(Value::as_str)
+                    });
+                    let valid_name = name.is_some_and(|value| {
+                        value.len() <= 64
+                            && value
+                                .chars()
+                                .next()
+                                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                            && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    });
+                    let inside_loop = {
+                        let mut parent_id = node.envelope.parent_id.as_deref();
+                        let mut found = false;
+                        while let Some(id) = parent_id {
+                            let Some(parent) = node_by_id.get(id) else {
+                                break;
+                            };
+                            if matches!(
+                                parent.envelope.kind.as_str(),
+                                "control.repeat" | "control.while"
+                            ) {
+                                found = true;
+                                break;
+                            }
+                            parent_id = parent.envelope.parent_id.as_deref();
+                        }
+                        found
+                    };
+                    let valid = node.envelope.child_blocks.is_empty()
+                        && match kind {
+                            "control.break" => empty_args && inside_loop,
+                            "flow.return" => empty_args,
+                            "control.label" => {
+                                valid_name
+                                    && node.envelope.parent_id.is_none()
+                                    && labels
+                                        .iter()
+                                        .copied()
+                                        .filter(|candidate| *candidate == name.unwrap_or(""))
+                                        .count()
+                                        == 1
+                            }
+                            "control.goto" => {
+                                valid_name
+                                    && node.envelope.parent_id.is_none()
+                                    && labels.contains(&name.unwrap_or(""))
+                            }
+                            _ => false,
+                        };
+                    if !valid {
+                        errors.push(CompileError::InvalidNodeArguments {
+                            node_id: node.envelope.node_id.clone(),
+                            reason: format!(
+                                "{kind} requires valid arguments and structural position"
+                            ),
+                        });
+                    }
+                }
                 "task.noop" => {
                     if !node.envelope.child_blocks.is_empty()
                         || node
@@ -519,7 +895,24 @@ fn validate_nodes(
                         });
                     }
                 }
-                "flow.call" => {
+                "task.comment" => {
+                    let valid = node.envelope.child_blocks.is_empty()
+                        && node.envelope.args.as_object().is_some_and(|args| {
+                            args.len() == 1
+                                && args.get("message").and_then(Value::as_str).is_some_and(
+                                    |message| !message.is_empty() && message.len() <= 2_048,
+                                )
+                        });
+                    if !valid {
+                        errors.push(CompileError::InvalidNodeArguments {
+                            node_id: node.envelope.node_id.clone(),
+                            reason:
+                                "task.comment requires one nonempty message and no child blocks"
+                                    .into(),
+                        });
+                    }
+                }
+                "flow.call" | "task.spawn" | "timer.every" => {
                     if !node.envelope.child_blocks.is_empty() {
                         errors.push(CompileError::InvalidNodeArguments {
                             node_id: node.envelope.node_id.clone(),
@@ -539,8 +932,43 @@ fn validate_nodes(
                         &node.envelope.node_id,
                         &arguments,
                         &declarations,
+                        flow.document,
                         errors,
                     );
+                    let kind = node.envelope.kind.as_str();
+                    if kind != "flow.call" {
+                        require_capability(node, "core.task", &capabilities, errors);
+                        if !runtime_api_at_least(&manifest.runtime_api, 1, 7)
+                            || !arguments
+                                .result_variable
+                                .as_deref()
+                                .is_some_and(valid_variable_name)
+                            || (kind == "timer.every"
+                                && !arguments
+                                    .period_ms
+                                    .is_some_and(|period| (10..=60_000).contains(&period)))
+                            || (kind == "task.spawn" && arguments.period_ms.is_some())
+                        {
+                            errors.push(CompileError::InvalidNodeArguments { node_id:node.envelope.node_id.clone(), reason:"async plugin jobs require runtimeApi 1.7, a result variable and a valid timer period".into() });
+                        }
+                        if let Err(reason) = require_declared_variable_type(
+                            manifest,
+                            &flow.declaration.flow_id,
+                            arguments.result_variable.as_deref(),
+                            &[flow_ir::ProjectVariableType::Integer],
+                            "job ID must be an integer variable",
+                        ) {
+                            errors.push(CompileError::InvalidNodeArguments {
+                                node_id: node.envelope.node_id.clone(),
+                                reason: reason.into(),
+                            });
+                        }
+                    } else if arguments.period_ms.is_some() || arguments.result_variable.is_some() {
+                        errors.push(CompileError::InvalidNodeArguments {
+                            node_id: node.envelope.node_id.clone(),
+                            reason: "flow.call does not accept job options".into(),
+                        });
+                    }
                     if let Some((&target_flow_id, _)) =
                         declarations.get_key_value(arguments.target_flow_id.as_str())
                     {
@@ -578,15 +1006,28 @@ fn validate_nodes(
 fn is_builtin_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "task.sleep"
+        "ui.get"
+            | "ui.set"
+            | "ui.command"
+            | "task.sleep"
+            | "task.cancel"
+            | "timer.cancel"
             | "task.log"
+            | "task.prompt"
+            | "task.runprompt"
             | "input.tap"
+            | "input.pointerdown"
+            | "input.pointermove"
+            | "input.pointerup"
             | "input.swipe"
             | "input.keyevent"
             | "control.if"
             | "control.repeat"
             | "control.while"
+            | "control.loopmetric"
+            | "control.loopcheck"
             | "variable.set"
+            | "variable.calculate"
             | "variable.copy"
             | "screen.capture"
             | "screen.release"
@@ -597,6 +1038,8 @@ fn is_builtin_kind(kind: &str) -> bool {
             | "vision.countcolor"
             | "vision.findallcolor"
             | "vision.findimage"
+            | "vision.findgray"
+            | "ocr.alphanumeric"
             | "ocr.glyph"
             | "legacy.duodianzhaose"
             | "legacy.duodianbise"
@@ -614,21 +1057,112 @@ fn validate_builtin_node(
     builtins: &mut HashMap<String, BuiltinNodeArgs>,
     errors: &mut Vec<CompileError>,
 ) {
-    validate_builtin_requirements(kind, node, capabilities, errors);
+    validate_builtin_requirements(kind, node, manifest, capabilities, errors);
     let parsed = match kind {
+        "ui.get" | "ui.set" | "ui.command" => {
+            serde_json::from_value::<UiArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|v| {
+                    valid_variable_name(&v.control_id)
+                        && v.value.len() <= 8192
+                        && v.value_variable.as_deref().is_none_or(valid_variable_name)
+                        && if kind == "ui.get" {
+                            v.result_variable
+                                .as_deref()
+                                .is_some_and(valid_variable_name)
+                        } else {
+                            v.result_variable.is_none()
+                                && (kind != "ui.command"
+                                    || matches!(
+                                        v.operation.as_str(),
+                                        "text"
+                                            | "visible"
+                                            | "enabled"
+                                            | "items"
+                                            | "progress"
+                                            | "page"
+                                            | "show"
+                                            | "hide"
+                                            | "minimize"
+                                    ))
+                        }
+                })
+                .map(|v| BuiltinNodeArgs::Ui(v, kind.to_owned()))
+                .ok_or("invalid UI control or operation")
+        }
+        "task.cancel" | "timer.cancel" => {
+            serde_json::from_value::<JobCancelArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|value| valid_variable_name(&value.id_variable))
+                .map(|value| BuiltinNodeArgs::JobCancel(value, kind == "timer.cancel"))
+                .ok_or("job cancellation requires a valid idVariable")
+        }
         "task.sleep" => serde_json::from_value::<SleepArgs>(node.envelope.args.clone())
             .ok()
-            .filter(|value| value.milliseconds >= 0)
+            .filter(|value| {
+                value.milliseconds >= 0
+                    && value
+                        .milliseconds_variable
+                        .as_deref()
+                        .is_none_or(valid_variable_name)
+            })
             .map(BuiltinNodeArgs::Sleep)
             .ok_or("task.sleep requires non-negative integer milliseconds"),
         "task.log" => serde_json::from_value::<LogArgs>(node.envelope.args.clone())
             .ok()
-            .filter(|value| !value.message.is_empty() && value.message.len() <= 2_048)
+            .filter(|value| {
+                !value.message.is_empty()
+                    && value.message.len() <= 2_048
+                    && value
+                        .value_variable
+                        .as_deref()
+                        .map(valid_variable_name)
+                        .unwrap_or(true)
+            })
             .map(BuiltinNodeArgs::Log)
-            .ok_or("task.log requires level info/warn/error and a non-empty UTF-8 message up to 2048 bytes"),
+            .ok_or("task.log requires a valid level, message, and optional variable name"),
+        "task.prompt" => serde_json::from_value::<PromptArgs>(node.envelope.args.clone())
+            .ok()
+            .filter(|value| {
+                !value.message.is_empty()
+                    && value.message.len() <= 2_048
+                    && value
+                        .value_variable
+                        .as_deref()
+                        .map(valid_variable_name)
+                        .unwrap_or(true)
+            })
+            .map(BuiltinNodeArgs::Prompt)
+            .ok_or("task.prompt requires a valid message and optional variable name"),
+        "task.runprompt" => serde_json::from_value::<PromptArgs>(node.envelope.args.clone())
+            .ok()
+            .filter(|value| {
+                !value.message.is_empty()
+                    && value.message.len() <= 2_048
+                    && value
+                        .value_variable
+                        .as_deref()
+                        .map(valid_variable_name)
+                        .unwrap_or(true)
+            })
+            .map(BuiltinNodeArgs::RunPrompt)
+            .ok_or("task.runprompt requires a valid message and optional variable name"),
         "input.tap" => serde_json::from_value::<TapArgs>(node.envelope.args.clone())
             .map(BuiltinNodeArgs::Tap)
             .map_err(|_| "input.tap requires 32-bit integer x and y"),
+        "input.pointerdown" => serde_json::from_value::<PointerArgs>(node.envelope.args.clone())
+            .map(BuiltinNodeArgs::PointerDown)
+            .map_err(|_| "input.pointerdown requires 32-bit integer x and y"),
+        "input.pointermove" => serde_json::from_value::<PointerArgs>(node.envelope.args.clone())
+            .map(BuiltinNodeArgs::PointerMove)
+            .map_err(|_| "input.pointermove requires 32-bit integer x and y"),
+        "input.pointerup" => {
+            serde_json::from_value::<serde_json::Map<String, Value>>(node.envelope.args.clone())
+                .ok()
+                .filter(|args| args.is_empty())
+                .map(|_| BuiltinNodeArgs::PointerUp)
+                .ok_or("input.pointerup requires empty args")
+        }
         "input.swipe" => serde_json::from_value::<SwipeArgs>(node.envelope.args.clone())
             .ok()
             .filter(|value| (1..=5000).contains(&value.duration_ms))
@@ -639,16 +1173,14 @@ fn validate_builtin_node(
             .filter(|value| value.key_code <= 65_535)
             .map(BuiltinNodeArgs::KeyEvent)
             .ok_or("input.keyevent requires keyCode from 0 to 65535"),
-        "control.if" => {
-            serde_json::from_value::<ComparisonArgs>(node.envelope.args.clone())
-                .ok()
-                .filter(valid_comparison)
-                .map(|value| {
-                    validate_conditional_child_blocks(node, value.else_if.len(), errors);
-                    BuiltinNodeArgs::If(value)
-                })
-                .ok_or("control.if requires a valid variable comparison")
-        }
+        "control.if" => serde_json::from_value::<ComparisonArgs>(node.envelope.args.clone())
+            .ok()
+            .filter(valid_comparison)
+            .map(|value| {
+                validate_conditional_child_blocks(node, value.else_if.len(), errors);
+                BuiltinNodeArgs::If(value)
+            })
+            .ok_or("control.if requires a valid variable comparison"),
         "control.repeat" => {
             validate_child_blocks(node, &["body"], errors);
             serde_json::from_value::<RepeatArgs>(node.envelope.args.clone())
@@ -668,22 +1200,80 @@ fn validate_builtin_node(
                 .ok()
                 .filter(|value| {
                     (1..=1_000_000).contains(&value.max_iterations)
+                        && !(value.duration_ms.is_some() && value.duration_variable.is_some())
+                        && (value.duration_variable.is_some()
+                            || value.duration_unit == LoopTimeUnit::Milliseconds)
                         && valid_comparison_parts(&value.variable, value.operator, &value.value)
-                        && value.duration_ms.is_none_or(|duration| duration > 0 && duration <= 86_400_000)
-                        && value.duration_variable.as_deref().is_none_or(valid_variable_name)
-                        && value.iteration_variable.as_deref().is_none_or(valid_variable_name)
-                        && value.elapsed_variable.as_deref().is_none_or(valid_variable_name)
+                        && value
+                            .duration_ms
+                            .is_none_or(|duration| duration > 0 && duration <= 86_400_000)
+                        && value
+                            .duration_variable
+                            .as_deref()
+                            .is_none_or(valid_variable_name)
+                        && value
+                            .iteration_variable
+                            .as_deref()
+                            .is_none_or(valid_variable_name)
+                        && value
+                            .elapsed_variable
+                            .as_deref()
+                            .is_none_or(valid_variable_name)
                 })
                 .map(BuiltinNodeArgs::While)
                 .ok_or(
                     "control.while requires a valid comparison and maxIterations from 1 to 1000000",
                 )
         }
+        "control.loopmetric" => {
+            serde_json::from_value::<LoopMetricArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|v| {
+                    valid_variable_name(&v.name)
+                        && (v.metric == LoopMetric::Elapsed || v.unit == LoopTimeUnit::Milliseconds)
+                })
+                .map(BuiltinNodeArgs::LoopMetric)
+                .ok_or("循环指标需要正确的变量、指标及单位")
+        }
+        "control.loopcheck" => serde_json::from_value::<LoopCheckArgs>(node.envelope.args.clone())
+            .ok()
+            .filter(|v| {
+                v.limit.is_finite()
+                    && v.limit_variable.as_deref().is_none_or(valid_variable_name)
+                    && (v.metric == LoopMetric::Elapsed || v.unit == LoopTimeUnit::Milliseconds)
+                    && if v.limit_variable.is_some() {
+                        v.limit >= 0.0 && v.limit <= 86_400_000.0
+                    } else {
+                        match v.metric {
+                            LoopMetric::Count => {
+                                v.limit.fract() == 0.0 && (1.0..=1_000_000.0).contains(&v.limit)
+                            }
+                            LoopMetric::Elapsed => {
+                                (1.0..=86_400_000.0)
+                                    .contains(&(v.limit * f64::from(v.unit.factor())))
+                                    && (v.limit * f64::from(v.unit.factor())).fract() == 0.0
+                            }
+                        }
+                    }
+            })
+            .map(BuiltinNodeArgs::LoopCheck)
+            .ok_or("循环检查阈值或单位无效"),
         "variable.set" => serde_json::from_value::<VariableSetArgs>(node.envelope.args.clone())
             .ok()
             .filter(|value| valid_variable_name(&value.name) && is_scalar(&value.value))
             .map(BuiltinNodeArgs::VariableSet)
             .ok_or("variable.set requires a valid name and scalar value"),
+        "variable.calculate" => {
+            serde_json::from_value::<VariableCalculateArgs>(node.envelope.args.clone())
+                .map_err(|_| "计算需要name和expression参数")
+                .and_then(|value| {
+                    if !valid_variable_name(&value.name) {
+                        return Err("计算目标变量名无效");
+                    }
+                    crate::variable_expression::render(&value.expression)?;
+                    Ok(BuiltinNodeArgs::VariableCalculate(value))
+                })
+        }
         "variable.copy" => serde_json::from_value::<VariableCopyArgs>(node.envelope.args.clone())
             .ok()
             .filter(|value| {
@@ -700,7 +1290,9 @@ fn validate_builtin_node(
         | "vision.countcolor"
         | "vision.findallcolor"
         | "vision.findimage"
-        | "ocr.glyph" => parse_visual_node(kind, node, manifest),
+        | "ocr.glyph"
+        | "vision.findgray"
+        | "ocr.alphanumeric" => parse_visual_node(kind, node, manifest),
         "legacy.duodianzhaose"
         | "legacy.duodianbise"
         | "legacy.getrectcolornum"
@@ -719,7 +1311,7 @@ fn validate_builtin_node(
     }
 }
 
-fn declared_variable_type<'a>(
+pub(crate) fn declared_variable_type<'a>(
     manifest: &'a ProjectManifest,
     flow_id: &str,
     name: &str,
@@ -758,12 +1350,170 @@ fn validate_declared_variable_types(
     arguments: &BuiltinNodeArgs,
 ) -> Result<(), &'static str> {
     match arguments {
+        BuiltinNodeArgs::Ui(value, kind) if kind == "ui.get" => require_declared_variable_type(
+            manifest,
+            flow_id,
+            value.result_variable.as_deref(),
+            &[flow_ir::ProjectVariableType::String],
+            "控件值输出变量必须是字符串型",
+        ),
+        BuiltinNodeArgs::Gray(value) => {
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                Some(&value.frame_variable),
+                &[flow_ir::ProjectVariableType::Image],
+                "帧变量必须是图像型",
+            )?;
+            for name in [
+                &value.found_variable,
+                &value.x_variable,
+                &value.y_variable,
+                &value.score_variable,
+            ] {
+                require_declared_variable_type(
+                    manifest,
+                    flow_id,
+                    Some(name),
+                    &[flow_ir::ProjectVariableType::Integer],
+                    "灰度结果变量必须是整型（找到为1/0）",
+                )?;
+            }
+            Ok(())
+        }
+        BuiltinNodeArgs::Alphanumeric(value) => {
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                Some(&value.frame_variable),
+                &[flow_ir::ProjectVariableType::Image],
+                "帧变量必须是图像型",
+            )?;
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                Some(&value.text_variable),
+                &[flow_ir::ProjectVariableType::String],
+                "OCR文本变量必须是字符串型",
+            )?;
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                Some(&value.score_variable),
+                &[flow_ir::ProjectVariableType::Integer],
+                "OCR得分变量必须是整型",
+            )
+        }
+        BuiltinNodeArgs::JobCancel(value, _) => require_declared_variable_type(
+            manifest,
+            flow_id,
+            Some(&value.id_variable),
+            &[flow_ir::ProjectVariableType::Integer],
+            "job ID must be an integer variable",
+        ),
+        BuiltinNodeArgs::FindImage(value) => {
+            if let Some(parameter) = manifest
+                .flows
+                .iter()
+                .find(|flow| flow.flow_id == flow_id)
+                .and_then(|flow| {
+                    flow.params
+                        .iter()
+                        .find(|parameter| parameter.name == value.found_variable)
+                })
+            {
+                if !matches!(
+                    parameter.value_type,
+                    ValueType::Boolean | ValueType::Integer | ValueType::Number
+                ) {
+                    return Err("找到结果参数必须是布尔或数值型");
+                }
+            } else {
+                require_declared_variable_type(
+                    manifest,
+                    flow_id,
+                    Some(&value.found_variable),
+                    &[
+                        flow_ir::ProjectVariableType::Integer,
+                        flow_ir::ProjectVariableType::Number,
+                    ],
+                    "找到结果的声明必须是整型或数值型",
+                )?;
+            }
+            for (name, kinds) in [
+                (
+                    Some(value.frame_variable.as_str()),
+                    &[flow_ir::ProjectVariableType::Image][..],
+                ),
+                (
+                    Some(value.x_variable.as_str()),
+                    &[flow_ir::ProjectVariableType::Integer][..],
+                ),
+                (
+                    Some(value.y_variable.as_str()),
+                    &[flow_ir::ProjectVariableType::Integer][..],
+                ),
+                (
+                    value.template_variable.as_deref(),
+                    &[flow_ir::ProjectVariableType::String][..],
+                ),
+                (
+                    value.score_variable.as_deref(),
+                    &[flow_ir::ProjectVariableType::Integer][..],
+                ),
+            ] {
+                require_declared_variable_type(
+                    manifest,
+                    flow_id,
+                    name,
+                    kinds,
+                    "识别输出/帧变量的声明类型不匹配",
+                )?;
+            }
+            for name in value.region_variables() {
+                require_declared_variable_type(
+                    manifest,
+                    flow_id,
+                    name,
+                    &[flow_ir::ProjectVariableType::Integer],
+                    "识别区域变量必须是整型",
+                )?;
+            }
+            require_declared_variable_type(
+                manifest,
+                flow_id,
+                value.image_variable.as_deref(),
+                &[flow_ir::ProjectVariableType::Image],
+                "识别图像输出必须是图像型",
+            )?;
+            Ok(())
+        }
         BuiltinNodeArgs::VariableSet(value) => {
             declared_variable_type(manifest, flow_id, &value.name).map_or(Ok(()), |expected| {
                 scalar_matches(&value.value, expected)
                     .then_some(())
                     .ok_or("变量赋值与声明类型不匹配")
             })
+        }
+        BuiltinNodeArgs::VariableCalculate(value) => {
+            let lookup = |name: &str| {
+                if let Some(param) = manifest
+                    .flows
+                    .iter()
+                    .find(|flow| flow.flow_id == flow_id)
+                    .and_then(|flow| flow.params.iter().find(|param| param.name == name))
+                {
+                    match param.value_type {
+                        ValueType::Integer => Some(flow_ir::ProjectVariableType::Integer),
+                        ValueType::Number => Some(flow_ir::ProjectVariableType::Number),
+                        ValueType::String => Some(flow_ir::ProjectVariableType::String),
+                        ValueType::Boolean => None,
+                    }
+                } else {
+                    declared_variable_type(manifest, flow_id, name)
+                }
+            };
+            crate::variable_expression::validate(&value.expression, lookup(&value.name), lookup)
         }
         BuiltinNodeArgs::VariableCopy(value) => match (
             declared_variable_type(manifest, flow_id, &value.name),
@@ -793,7 +1543,7 @@ fn validate_declared_variable_types(
             Ok(())
         }
         BuiltinNodeArgs::Repeat(value) => {
-            require_declared_variable_type(
+            require_loop_variable_type(
                 manifest,
                 flow_id,
                 value.times_variable.as_deref(),
@@ -819,7 +1569,7 @@ fn validate_declared_variable_types(
             )
         }
         BuiltinNodeArgs::While(value) => {
-            require_declared_variable_type(
+            require_loop_variable_type(
                 manifest,
                 flow_id,
                 value.duration_variable.as_deref(),
@@ -847,6 +1597,49 @@ fn validate_declared_variable_types(
                 "循环时间变量必须是数值型",
             )
         }
+        BuiltinNodeArgs::LoopMetric(value) => {
+            require_loop_variable_type(
+                manifest,
+                flow_id,
+                Some(&value.name),
+                if value.metric == LoopMetric::Count {
+                    &[flow_ir::ProjectVariableType::Integer]
+                } else if value.unit == LoopTimeUnit::Milliseconds {
+                    &[
+                        flow_ir::ProjectVariableType::Integer,
+                        flow_ir::ProjectVariableType::Number,
+                    ]
+                } else {
+                    &[flow_ir::ProjectVariableType::Number]
+                },
+                "循环指标输出变量类型不匹配",
+            )?;
+            if loop_declared_type(manifest, flow_id, &value.name).is_none() {
+                return Err("循环指标输出变量必须声明");
+            }
+            Ok(())
+        }
+        BuiltinNodeArgs::LoopCheck(value) => {
+            if let Some(name) = &value.limit_variable {
+                if loop_declared_type(manifest, flow_id, name).is_none() {
+                    return Err("循环检查阈值变量必须声明");
+                }
+            }
+            require_loop_variable_type(
+                manifest,
+                flow_id,
+                value.limit_variable.as_deref(),
+                if value.metric == LoopMetric::Count {
+                    &[flow_ir::ProjectVariableType::Integer]
+                } else {
+                    &[
+                        flow_ir::ProjectVariableType::Integer,
+                        flow_ir::ProjectVariableType::Number,
+                    ]
+                },
+                "循环检查阈值变量类型不匹配",
+            )
+        }
         _ => Ok(()),
     }
 }
@@ -864,15 +1657,130 @@ fn require_declared_variable_type(
     })
 }
 
+fn loop_declared_type(
+    manifest: &ProjectManifest,
+    flow_id: &str,
+    name: &str,
+) -> Option<flow_ir::ProjectVariableType> {
+    if let Some(param) = manifest
+        .flows
+        .iter()
+        .find(|flow| flow.flow_id == flow_id)?
+        .params
+        .iter()
+        .find(|p| p.name == name)
+    {
+        return match param.value_type {
+            ValueType::Integer => Some(flow_ir::ProjectVariableType::Integer),
+            ValueType::Number => Some(flow_ir::ProjectVariableType::Number),
+            ValueType::String => Some(flow_ir::ProjectVariableType::String),
+            ValueType::Boolean => None,
+        };
+    }
+    declared_variable_type(manifest, flow_id, name)
+}
+fn require_loop_variable_type(
+    manifest: &ProjectManifest,
+    flow_id: &str,
+    name: Option<&str>,
+    allowed: &[flow_ir::ProjectVariableType],
+    message: &'static str,
+) -> Result<(), &'static str> {
+    let Some(name) = name else { return Ok(()) };
+    let parameter = manifest
+        .flows
+        .iter()
+        .find(|flow| flow.flow_id == flow_id)
+        .and_then(|flow| flow.params.iter().find(|p| p.name == name));
+    let actual = loop_declared_type(manifest, flow_id, name);
+    if parameter.is_some() || actual.is_some() {
+        actual
+            .filter(|ty| allowed.contains(ty))
+            .map(|_| ())
+            .ok_or(message)
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_builtin_requirements(
     kind: &str,
     node: &flow_ir::FlowNode,
+    manifest: &ProjectManifest,
     capabilities: &HashSet<&str>,
     errors: &mut Vec<CompileError>,
 ) {
+    if matches!(kind, "task.cancel" | "timer.cancel") {
+        require_capability(node, "core.task", capabilities, errors);
+        if !runtime_api_at_least(&manifest.runtime_api, 1, 7) {
+            errors.push(CompileError::InvalidNodeArguments {
+                node_id: node.envelope.node_id.clone(),
+                reason: "job cancellation requires runtimeApi 1.7".into(),
+            });
+        }
+        if !node.envelope.child_blocks.is_empty() {
+            errors.push(CompileError::InvalidNodeArguments {
+                node_id: node.envelope.node_id.clone(),
+                reason: "job cancellation cannot own child blocks".into(),
+            });
+        }
+    }
+    if kind.starts_with("ui.") {
+        require_capability(node, "ui.control", capabilities, errors);
+        let id = node.envelope.args.get("controlId").and_then(Value::as_str);
+        let window_operation = node
+            .envelope
+            .args
+            .get("operation")
+            .and_then(Value::as_str)
+            .is_some_and(|op| matches!(op, "show" | "hide" | "minimize" | "page"));
+        let exists = manifest.runner_ui.as_ref().is_some_and(|ui| {
+            window_operation || ui.fields.iter().any(|f| Some(f.id.as_str()) == id)
+        });
+        if !exists || !runtime_api_at_least(&manifest.runtime_api, 1, 7) {
+            errors.push(CompileError::InvalidNodeArguments {
+                node_id: node.envelope.node_id.clone(),
+                reason: "界面积木需要已设计界面、有效控件及 runtimeApi 1.7".into(),
+            });
+        }
+    }
+    if kind == "vision.findimage" {
+        if let Ok(value) = serde_json::from_value::<FindImageArgs>(node.envelope.args.clone()) {
+            if value.success_action != RecognitionAction::None {
+                require_capability(node, "input.basic", capabilities, errors);
+                require_capability(node, "core.task", capabilities, errors);
+            }
+            if value.has_extended_options()
+                && (node.envelope.node_version < 2
+                    || !runtime_api_at_least(&manifest.runtime_api, 1, 7))
+            {
+                errors.push(CompileError::InvalidNodeArguments {
+                    node_id: node.envelope.node_id.clone(),
+                    reason: "extended vision.findimage requires nodeVersion 2 and runtimeApi 1.7"
+                        .to_owned(),
+                });
+            }
+        }
+    }
+    if matches!(
+        kind,
+        "input.pointerdown" | "input.pointermove" | "input.pointerup"
+    ) && !runtime_api_at_least(&manifest.runtime_api, 1, 6)
+    {
+        errors.push(CompileError::InvalidNodeArguments {
+            node_id: node.envelope.node_id.clone(),
+            reason: format!(
+                "{kind} requires project runtimeApi 1.6 or newer (current {})",
+                manifest.runtime_api
+            ),
+        });
+    }
     match kind {
-        "task.sleep" | "task.log" => require_capability(node, "core.task", capabilities, errors),
-        "input.tap" | "input.swipe" | "input.keyevent" => {
+        "task.sleep" | "task.log" | "task.prompt" | "task.runprompt" => {
+            require_capability(node, "core.task", capabilities, errors)
+        }
+        "input.tap" | "input.pointerdown" | "input.pointermove" | "input.pointerup"
+        | "input.swipe" | "input.keyevent" => {
             require_capability(node, "input.basic", capabilities, errors);
         }
         "screen.capture" | "screen.release" => {
@@ -891,6 +1799,28 @@ fn validate_builtin_requirements(
             require_capability(node, "screen.capture", capabilities, errors);
         }
         "ocr.glyph" => require_capability(node, "ocr.glyph", capabilities, errors),
+        "vision.findgray" | "ocr.alphanumeric" => {
+            if kind == "vision.findgray" {
+                require_capability(node, "vision.template", capabilities, errors);
+            }
+            require_capability(
+                node,
+                if kind == "vision.findgray" {
+                    "vision.opencv"
+                } else {
+                    "ocr.onnx"
+                },
+                capabilities,
+                errors,
+            );
+            require_capability(node, "screen.capture", capabilities, errors);
+            if !runtime_api_at_least(&manifest.runtime_api, 1, 7) {
+                errors.push(CompileError::InvalidNodeArguments {
+                    node_id: node.envelope.node_id.clone(),
+                    reason: "native vision requires runtimeApi 1.7".into(),
+                });
+            }
+        }
         "legacy.duodianzhaose"
         | "legacy.duodianbise"
         | "legacy.getrectcolornum"
@@ -903,11 +1833,19 @@ fn validate_builtin_requirements(
         kind,
         "task.sleep"
             | "task.log"
+            | "task.prompt"
+            | "task.runprompt"
             | "input.tap"
+            | "input.pointerdown"
+            | "input.pointermove"
+            | "input.pointerup"
             | "input.swipe"
             | "input.keyevent"
             | "variable.set"
+            | "variable.calculate"
             | "variable.copy"
+            | "control.loopmetric"
+            | "control.loopcheck"
             | "screen.capture"
             | "screen.release"
             | "vision.getcolor"
@@ -917,6 +1855,8 @@ fn validate_builtin_requirements(
             | "vision.countcolor"
             | "vision.findallcolor"
             | "vision.findimage"
+            | "vision.findgray"
+            | "ocr.alphanumeric"
             | "ocr.glyph"
             | "legacy.duodianzhaose"
             | "legacy.duodianbise"
@@ -925,6 +1865,16 @@ fn validate_builtin_requirements(
     ) {
         validate_leaf(node, errors);
     }
+}
+
+fn runtime_api_at_least(value: &str, required_major: u32, required_minor: u32) -> bool {
+    let Some((major, minor)) = value.split_once('.') else {
+        return false;
+    };
+    let (Ok(major), Ok(minor)) = (major.parse::<u32>(), minor.parse::<u32>()) else {
+        return false;
+    };
+    major > required_major || (major == required_major && minor >= required_minor)
 }
 
 fn parse_legacy_node(
@@ -1049,8 +1999,85 @@ fn parse_visual_node(
         | "vision.findallcolor" => parse_extended_pixel_node(kind, node),
         "vision.findimage" => serde_json::from_value::<FindImageArgs>(node.envelope.args.clone())
             .ok()
+            .and_then(|mut value| {
+                if let Some(directory) = &value.image_directory {
+                    if !directory.starts_with("assets/images/")
+                        || !directory.ends_with('/')
+                        || directory.contains("..")
+                        || directory.contains('\\')
+                    {
+                        return None;
+                    }
+                    if !value.image_paths.is_empty() {
+                        return None;
+                    }
+                    value.image_paths = manifest
+                        .resources
+                        .iter()
+                        .filter(|resource| {
+                            resource.kind == ProjectResourceKind::Image
+                                && resource.path.starts_with(directory)
+                        })
+                        .map(|resource| resource.path.clone())
+                        .collect();
+                    value.image_paths.sort();
+                    if value.image_paths.is_empty() {
+                        return None;
+                    }
+                }
+                Some(value)
+            })
             .filter(|value| {
+                let mut names = vec![
+                    value.frame_variable.as_str(),
+                    value.found_variable.as_str(),
+                    value.x_variable.as_str(),
+                    value.y_variable.as_str(),
+                ];
+                names.extend(
+                    [
+                        value.template_variable.as_deref(),
+                        value.score_variable.as_deref(),
+                        value.image_variable.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten(),
+                );
                 value.similarity_permille <= 1000
+                    && names.iter().collect::<HashSet<_>>().len() == names.len()
+                    && value
+                        .region_variables()
+                        .iter()
+                        .flatten()
+                        .all(|name| !names.contains(name))
+                    && value.direction <= 4
+                    && (1..=30).contains(&value.frequency)
+                    && (1..=60_000).contains(&value.action_duration_ms)
+                    && value
+                        .image_variable
+                        .as_deref()
+                        .is_none_or(valid_variable_name)
+                    && value.image_paths.len() <= 64
+                    && serde_json::to_string(&value.image_paths)
+                        .is_ok_and(|paths| paths.len() <= 16_384)
+                    && value
+                        .image_paths
+                        .iter()
+                        .all(|path| has_resource(manifest, ProjectResourceKind::Image, path))
+                    && value.image_paths.iter().collect::<HashSet<_>>().len()
+                        == value.image_paths.len()
+                    && [
+                        value.template_variable.as_deref(),
+                        value.score_variable.as_deref(),
+                    ]
+                    .iter()
+                    .flatten()
+                    .all(|name| valid_variable_name(name))
+                    && value
+                        .region_variables()
+                        .iter()
+                        .flatten()
+                        .all(|name| valid_variable_name(name))
                     && valid_rect(&value.region)
                     && has_resource(manifest, ProjectResourceKind::Image, &value.image_path)
                     && valid_variable_names([
@@ -1082,6 +2109,37 @@ fn parse_visual_node(
             })
             .map(BuiltinNodeArgs::GlyphOcr)
             .ok_or("ocr.glyph has invalid resource, region, color, similarity, or variable names"),
+        "vision.findgray" => serde_json::from_value::<GrayArgs>(node.envelope.args.clone())
+            .ok()
+            .filter(|v| {
+                v.similarity_permille <= 1000
+                    && valid_rect(&v.region)
+                    && has_resource(manifest, ProjectResourceKind::Image, &v.image_path)
+                    && distinct_native_variables([
+                        &v.frame_variable,
+                        &v.found_variable,
+                        &v.x_variable,
+                        &v.y_variable,
+                        &v.score_variable,
+                    ])
+            })
+            .map(BuiltinNodeArgs::Gray)
+            .ok_or("invalid gray matching arguments"),
+        "ocr.alphanumeric" => {
+            serde_json::from_value::<AlphanumericArgs>(node.envelope.args.clone())
+                .ok()
+                .filter(|v| {
+                    v.minimum_confidence_permille <= 1000
+                        && valid_rect(&v.region)
+                        && distinct_native_variables([
+                            &v.frame_variable,
+                            &v.text_variable,
+                            &v.score_variable,
+                        ])
+                })
+                .map(BuiltinNodeArgs::Alphanumeric)
+                .ok_or("invalid alphanumeric arguments")
+        }
         _ => unreachable!("caller filters visual node kinds"),
     }
 }
@@ -1153,6 +2211,10 @@ fn valid_rect(value: &RectArgs) -> bool {
 
 fn valid_variable_names<const N: usize>(values: [&str; N]) -> bool {
     values.into_iter().all(valid_variable_name)
+}
+
+fn distinct_native_variables<const N: usize>(names: [&str; N]) -> bool {
+    valid_variable_names(names) && names.iter().collect::<HashSet<_>>().len() == N
 }
 
 fn has_resource(manifest: &ProjectManifest, kind: ProjectResourceKind, path: &str) -> bool {
@@ -1285,6 +2347,7 @@ fn validate_call_arguments(
     node_id: &str,
     call: &FlowCallArgs,
     declarations: &HashMap<&str, &ProjectFlow>,
+    caller: &FlowDocument,
     errors: &mut Vec<CompileError>,
 ) {
     let Some(target) = declarations.get(call.target_flow_id.as_str()) else {
@@ -1299,8 +2362,15 @@ fn validate_call_arguments(
         .iter()
         .map(|parameter| (parameter.name.as_str(), parameter))
         .collect::<HashMap<_, _>>();
-    for parameter in &target.params {
-        if parameter.required && !call.arguments.contains_key(&parameter.name) {
+    for (index, parameter) in target.params.iter().enumerate() {
+        // Indexed channels are path-dependent. The callee checks the actual merged payload;
+        // a branch that did not set a required channel fails at runtime, never defaults it.
+        let indexed = caller.canonical_nodes().into_iter().flatten().any(|node| {
+            node.envelope.kind == "flow.argument.set"
+                && node.envelope.args.get("index").and_then(Value::as_u64)
+                    == u64::try_from(index + 1).ok()
+        });
+        if parameter.required && !call.arguments.contains_key(&parameter.name) && !indexed {
             errors.push(CompileError::MissingArgument {
                 node_id: node_id.to_owned(),
                 argument: parameter.name.clone(),

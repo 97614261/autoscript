@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1200,
+  "name": "UI.waitEvent",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": 1800000,
+  "resourceOwnership": "task",
+  "summary": "等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。",
+  "params": [],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。"
+  },
+  "legacyAliases": []
+}

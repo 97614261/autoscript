@@ -1,7 +1,7 @@
 package com.autoscript.runtime.api
 
 object RuntimeProtocol {
-    const val VERSION: Int = 17
+    const val VERSION: Int = 20
     const val SERVICE_CLASS: String = "com.autoscript.runtime.service.AutomationRuntimeService"
 
     /** Private same-package handoff from the Runner screenshot overlay to Studio. */
@@ -23,6 +23,8 @@ object RuntimeProtocol {
     const val ROOT_STARTING: Int = 2
     const val ROOT_READY: Int = 3
     const val ROOT_FAILED: Int = 4
+    const val INPUT_FEATURE_BASIC: Int = 1
+    const val INPUT_FEATURE_SINGLE_POINTER: Int = 2
 
     const val STOP_ACCEPTED: Int = 0
     const val STOP_SESSION_MISMATCH: Int = 1

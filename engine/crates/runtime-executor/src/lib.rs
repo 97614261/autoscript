@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use automation_core::{
     duo_dian_bi_se, duo_dian_zhao_se, get_rect_color_num, get_rgb_color, CaptureSeriesConfig,
     CaptureSeriesHandle, CapturedFrameId, Color, ColorTolerance, FrameHandle, FramePool,
-    FramePoolConfig, LegacySearchLimits, PatternSample, PixelPoint, PixelRect, SearchOptions,
-    TemplateOptions,
+    FramePoolConfig, FrameView, LegacySearchLimits, PatternSample, PixelPoint, PixelRect,
+    SearchOptions, TemplateOptions,
 };
 use glyph_ocr::{
     recognize as recognize_glyphs, DictionaryHandle, DictionaryStore, DictionaryStoreConfig,
@@ -20,23 +20,31 @@ use lua_runtime::{
 use runtime_scheduler::{
     Clock, HostCompletion, HostResult, RequestId, ResourceId, ResourceKind, ResourceOwner,
     ScheduleError, Scheduler, SchedulerConfig, SchedulerEvent, SchedulerHandle, SchedulerPoll,
-    SubmitError, TaskFailure, TaskResourceRegistry, TaskState, TaskToken,
+    SubmitError, TaskFailure, TaskResourceRegistry, TaskState, TaskToken, TimerId,
 };
 use script_api::{ApiContract, CancelMode, API_CONTRACTS};
 
 const HOST_MARKER: &[u8] = b"__AUTOSCRIPT_HOST_V1";
 const OP_LOG_WRITE: u32 = 1_100;
+const OP_PROMPT_SHOW: u32 = 1_101;
+const OP_PROMPT_TOAST: u32 = 1_102;
 const OP_SYSTEM_GET_SCREEN_SIZE: u32 = 2_000;
 const OP_SYSTEM_ELAPSED_REALTIME_MILLIS: u32 = 2_001;
 const OP_TASK_SLEEP: u32 = 3_000;
 const OP_INPUT_TAP: u32 = 4_000;
 const OP_INPUT_SWIPE: u32 = 4_001;
 const OP_INPUT_KEY_EVENT: u32 = 4_002;
+const OP_INPUT_POINTER_DOWN: u32 = 4_003;
+const OP_INPUT_POINTER_MOVE: u32 = 4_004;
+const OP_INPUT_POINTER_UP: u32 = 4_005;
+const OP_INPUT_TAP_SCREEN: u32 = 4_006;
+const OP_INPUT_POINTER_DOWN_SCREEN: u32 = 4_007;
 const OP_SCREEN_CAPTURE: u32 = 5_000;
 const OP_SCREEN_CACHE: u32 = 5_001;
 const OP_SCREEN_RELEASE: u32 = 5_002;
 const OP_SCREEN_LOAD_IMAGE: u32 = 5_003;
 const OP_SCREEN_CAPTURE_SERIES_FRAME: u32 = 5_004;
+const OP_SCREEN_CROP: u32 = 5_005;
 const OP_SCREEN_FIND_COLOR: u32 = 5_100;
 const OP_SCREEN_FIND_IMAGE: u32 = 5_101;
 const OP_SCREEN_GET_COLOR: u32 = 5_102;
@@ -44,6 +52,7 @@ const OP_SCREEN_COMPARE_COLOR: u32 = 5_103;
 const OP_SCREEN_FIND_MULTI_COLOR: u32 = 5_104;
 const OP_SCREEN_COUNT_COLOR: u32 = 5_105;
 const OP_SCREEN_FIND_ALL_COLOR: u32 = 5_106;
+const OP_SCREEN_FIND_IMAGES: u32 = 5_107;
 const OP_LEGACY_DUO_DIAN_ZHAO_SE: u32 = 5_110;
 const OP_LEGACY_DUO_DIAN_BI_SE: u32 = 5_111;
 const OP_LEGACY_GET_RECT_COLOR_NUM: u32 = 5_112;
@@ -59,6 +68,67 @@ const OP_OCR_GLYPH: u32 = 6_100;
 const MAX_PROJECT_CAPABILITIES: usize = 64;
 const MAX_SCRIPT_LOG_ENTRIES: usize = 200;
 const MAX_SCRIPT_LOG_BYTES: usize = 2_048;
+const MAX_SCRIPT_PROMPT_ENTRIES: usize = 64;
+const MAX_SCRIPT_PROMPT_BYTES: usize = 2_048;
+const MAX_POPUP_STYLE_BYTES: usize = 1_024;
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+struct PopupStyle {
+    #[serde(alias = "widthDp")]
+    width_px: u16,
+    #[serde(alias = "heightDp")]
+    height_px: u16,
+    #[serde(alias = "xPercent")]
+    x_px: i32,
+    #[serde(alias = "yPercent")]
+    y_px: i32,
+    background_color: String,
+    text_color: String,
+    #[serde(alias = "fontSp")]
+    font_px: u8,
+    #[serde(alias = "cornerDp")]
+    corner_px: u16,
+    duration_ms: u16,
+    text_align: String,
+}
+
+impl Default for PopupStyle {
+    fn default() -> Self {
+        Self {
+            width_px: 520,
+            height_px: 144,
+            x_px: -1,
+            y_px: -1,
+            background_color: "#B3000000".into(),
+            text_color: "#FFFFFFFF".into(),
+            font_px: 32,
+            corner_px: 16,
+            duration_ms: 3_000,
+            text_align: "center".into(),
+        }
+    }
+}
+
+impl PopupStyle {
+    fn valid(&self) -> bool {
+        let color = |value: &str| {
+            value.len() == 9
+                && value.starts_with('#')
+                && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        };
+        (1..=2160).contains(&self.width_px)
+            && (1..=1200).contains(&self.height_px)
+            && (-1..=10_000).contains(&self.x_px)
+            && (-1..=10_000).contains(&self.y_px)
+            && (10..=160).contains(&self.font_px)
+            && self.corner_px <= 200
+            && (500..=30_000).contains(&self.duration_ms)
+            && matches!(self.text_align.as_str(), "left" | "center" | "right")
+            && color(&self.background_color)
+            && color(&self.text_color)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostRequest {
@@ -68,6 +138,20 @@ pub struct HostRequest {
     pub cancel_mode: CancelMode,
     pub timeout: Duration,
     pub args: Vec<LuaScalar>,
+    pub native_vision: Option<NativeVisionRequest>,
+}
+
+/// Immutable owner-validated leases; no native pointers or arbitrary model paths.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeVisionRequest {
+    pub frame: FrameView,
+    pub template: Option<FrameView>,
+    pub region: PixelRect,
+    pub minimum_score: u16,
+}
+
+pub trait HostCancelListener: Send + Sync + std::fmt::Debug {
+    fn cancel(&self, request: RequestId, task: TaskToken);
 }
 
 pub trait HostBackend {
@@ -100,6 +184,8 @@ pub enum ExternalHostEvent {
     /// Wakes an attached backend worker for out-of-band lifecycle control without stopping the
     /// queue or consuming ordinary business capacity.
     Interrupted,
+    /// Notifies the device backend that a task no longer owns its transient host resources.
+    TaskFinished(TaskToken),
     Stop,
 }
 
@@ -107,6 +193,7 @@ pub enum ExternalHostEvent {
 struct ExternalQueueState {
     requests: VecDeque<(HostRequest, SchedulerHandle)>,
     cancellations: BTreeMap<RequestId, (TaskToken, CancelMode)>,
+    finished_tasks: BTreeSet<TaskToken>,
     interrupted: bool,
     stopped: bool,
 }
@@ -117,12 +204,20 @@ struct ExternalQueueInner {
     changed: Condvar,
     max_pending: usize,
     max_cancellations: usize,
+    cancel_listener: Mutex<Option<Arc<dyn HostCancelListener>>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ExternalHostQueue(Arc<ExternalQueueInner>);
 
 impl ExternalHostQueue {
+    pub fn set_cancel_listener(&self, listener: Arc<dyn HostCancelListener>) {
+        *self
+            .0
+            .cancel_listener
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(listener);
+    }
     /// Creates one bounded, event-driven host queue.
     ///
     /// # Errors
@@ -136,9 +231,11 @@ impl ExternalHostQueue {
             state: Mutex::new(ExternalQueueState {
                 requests: VecDeque::with_capacity(max_pending),
                 cancellations: BTreeMap::new(),
+                finished_tasks: BTreeSet::new(),
                 interrupted: false,
                 stopped: false,
             }),
+            cancel_listener: Mutex::new(None),
             changed: Condvar::new(),
             max_pending,
             max_cancellations,
@@ -167,6 +264,9 @@ impl ExternalHostQueue {
                     task,
                     cancel_mode,
                 };
+            }
+            if let Some(task) = state.finished_tasks.pop_first() {
+                return ExternalHostEvent::TaskFinished(task);
             }
             if let Some((request, completion)) = state.requests.pop_front() {
                 return ExternalHostEvent::Dispatch {
@@ -209,6 +309,9 @@ impl ExternalHostQueue {
                     cancel_mode,
                 });
             }
+            if let Some(task) = state.finished_tasks.pop_first() {
+                return Some(ExternalHostEvent::TaskFinished(task));
+            }
             if let Some((request, completion)) = state.requests.pop_front() {
                 return Some(ExternalHostEvent::Dispatch {
                     request,
@@ -236,6 +339,7 @@ impl ExternalHostQueue {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.stopped = true;
         state.requests.clear();
+        state.finished_tasks.clear();
         self.0.changed.notify_all();
     }
 
@@ -249,6 +353,23 @@ impl ExternalHostQueue {
         if !state.stopped {
             state.interrupted = true;
             self.0.changed.notify_all();
+        }
+    }
+
+    /// Publishes task termination so an external host can release task-scoped resources.
+    pub fn task_finished(&self, task: TaskToken) {
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.stopped {
+            if state.finished_tasks.len() < self.0.max_pending
+                || state.finished_tasks.contains(&task)
+            {
+                state.finished_tasks.insert(task);
+            }
+            self.0.changed.notify_one();
         }
     }
 
@@ -292,8 +413,31 @@ impl ExternalHostQueue {
         }
         state.requests.clear();
         state.cancellations.clear();
+        state.finished_tasks.clear();
         state.interrupted = false;
         Ok(())
+    }
+
+    /// Waits until an input delay expires or priority control changes; never consumes business work.
+    pub fn wait_input_control(&self, request: RequestId, task: TaskToken, timeout: Duration) {
+        let state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut state, _elapsed) = self
+            .0
+            .changed
+            .wait_timeout_while(state, timeout, |state| {
+                !state.stopped
+                    && !state.interrupted
+                    && !state
+                        .cancellations
+                        .get(&request)
+                        .is_some_and(|(owner, _)| *owner == task)
+            })
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.interrupted = false;
     }
 
     fn dispatch(&self, request: HostRequest, completion: SchedulerHandle) -> Result<(), String> {
@@ -331,6 +475,16 @@ impl ExternalHostQueue {
             state.cancellations.insert(request_id, (task, cancel_mode));
         }
         self.0.changed.notify_all();
+        drop(state);
+        let listener = self
+            .0
+            .cancel_listener
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(listener) = listener {
+            listener.cancel(request_id, task);
+        }
     }
 }
 
@@ -436,6 +590,13 @@ struct PendingHost {
     cancel_mode: CancelMode,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CallbackTimer {
+    owner: TaskToken,
+    callback: u64,
+    active: Option<TaskToken>,
+}
+
 #[derive(Debug)]
 pub struct RuntimeExecutor<C, H> {
     scheduler: Scheduler<C, LuaTaskRegistry>,
@@ -447,8 +608,15 @@ pub struct RuntimeExecutor<C, H> {
     frames: Arc<Mutex<FramePool>>,
     dictionaries: Arc<Mutex<DictionaryStore>>,
     script_logs: VecDeque<String>,
+    script_prompts: VecDeque<String>,
+    ui_values: BTreeMap<String, String>,
+    ui_events: VecDeque<(String, String, String)>,
+    ui_waiting: Option<RequestId>,
+    ui_current_event: Option<(String, String)>,
     allowed_capabilities: Option<BTreeSet<String>>,
     capabilities_locked: bool,
+    callback_timers: BTreeMap<TimerId, CallbackTimer>,
+    callback_tasks: BTreeMap<TaskToken, (TaskToken, Option<TimerId>)>,
 }
 
 impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
@@ -526,8 +694,15 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             frames,
             dictionaries,
             script_logs: VecDeque::with_capacity(MAX_SCRIPT_LOG_ENTRIES),
+            script_prompts: VecDeque::with_capacity(MAX_SCRIPT_PROMPT_ENTRIES),
+            ui_values: BTreeMap::new(),
+            ui_events: VecDeque::new(),
+            ui_waiting: None,
+            ui_current_event: None,
             allowed_capabilities: None,
             capabilities_locked: false,
+            callback_timers: BTreeMap::new(),
+            callback_tasks: BTreeMap::new(),
         })
     }
 
@@ -619,6 +794,12 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         self.script_logs.drain(..).collect()
     }
 
+    /// Drains user-facing runtime prompt messages without exposing the Lua VM across threads.
+    #[must_use]
+    pub fn drain_script_prompts(&mut self) -> Vec<String> {
+        self.script_prompts.drain(..).collect()
+    }
+
     /// Registers a generated Lua module whose return value is the entry function.
     ///
     /// # Errors
@@ -664,6 +845,17 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     ///
     /// Returns an error if the scheduler rejects the lifecycle transition.
     pub fn resume(&mut self) -> Result<SchedulerPoll, ExecutorError> {
+        self.lua().set_debug_step(false)?;
+        self.scheduler.resume()?;
+        Ok(self.scheduler.poll_state())
+    }
+
+    /// Resume until the next compiler checkpoint, keeping stop on its priority channel.
+    ///
+    /// # Errors
+    /// Returns an error when VM assignment or scheduler resume fails.
+    pub fn step(&mut self) -> Result<SchedulerPoll, ExecutorError> {
+        self.lua().set_debug_step(true)?;
         self.scheduler.resume()?;
         Ok(self.scheduler.poll_state())
     }
@@ -729,6 +921,11 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 "missing host marker".to_owned(),
             ));
         };
+        if marker == b"__AUTOSCRIPT_DEBUG_CHECKPOINT_V1" && values.len() == 1 {
+            self.scheduler.yield_budget(task)?;
+            self.scheduler.pause()?;
+            return Ok(());
+        }
         if marker != HOST_MARKER {
             return Err(ExecutorError::InvalidYield(
                 "unknown host marker".to_owned(),
@@ -740,16 +937,38 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let opcode = u32::try_from(*opcode)
             .map_err(|_| ExecutorError::InvalidYield("opcode out of range".to_owned()))?;
         if !self.authorize_opcode(task, opcode)? {
+            let callback_index = match opcode {
+                3001 => Some(2),
+                3003 => Some(3),
+                _ => None,
+            };
+            if let Some(LuaScalar::Integer(callback)) =
+                callback_index.and_then(|index| values.get(index))
+            {
+                if let Ok(callback) = u64::try_from(*callback) {
+                    self.lua().remove_callback(task, callback);
+                }
+            }
             return Ok(());
         }
         match opcode {
+            1200..=1203 => self.apply_ui(task, opcode, &values[2..]),
+            5108 | 6101 => self.dispatch_host(task, opcode, values[2..].to_vec()),
             OP_LOG_WRITE => self.apply_log(task, &values[2..]),
+            OP_PROMPT_SHOW => self.apply_prompt(task, &values[2..]),
+            OP_PROMPT_TOAST => self.apply_toast(task, &values[2..]),
             OP_TASK_SLEEP => self.apply_sleep(task, &values[2..]),
+            3001..=3004 => self.apply_callback_operation(task, opcode, &values[2..]),
             OP_SYSTEM_GET_SCREEN_SIZE
             | OP_SYSTEM_ELAPSED_REALTIME_MILLIS
             | OP_INPUT_TAP
             | OP_INPUT_SWIPE
             | OP_INPUT_KEY_EVENT
+            | OP_INPUT_POINTER_DOWN
+            | OP_INPUT_POINTER_MOVE
+            | OP_INPUT_POINTER_UP
+            | OP_INPUT_TAP_SCREEN
+            | OP_INPUT_POINTER_DOWN_SCREEN
             | OP_SCREEN_CAPTURE
             | OP_SCREEN_CAPTURE_SERIES_FRAME => {
                 self.dispatch_host(task, opcode, values[2..].to_vec())
@@ -759,6 +978,8 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             | OP_SCREEN_LOAD_IMAGE
             | OP_SCREEN_FIND_COLOR
             | OP_SCREEN_FIND_IMAGE
+            | OP_SCREEN_FIND_IMAGES
+            | OP_SCREEN_CROP
             | OP_SCREEN_GET_COLOR
             | OP_SCREEN_COMPARE_COLOR
             | OP_SCREEN_FIND_MULTI_COLOR
@@ -937,6 +1158,8 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             OP_SCREEN_LOAD_IMAGE => self.load_image(task, args),
             OP_SCREEN_FIND_COLOR => self.find_color(task, args),
             OP_SCREEN_FIND_IMAGE => self.find_image(task, args),
+            OP_SCREEN_FIND_IMAGES => self.find_images(task, args),
+            OP_SCREEN_CROP => self.crop_frame(task, args),
             OP_SCREEN_GET_COLOR => self.get_color(task, args),
             OP_SCREEN_COMPARE_COLOR => self.compare_color(task, args),
             OP_SCREEN_FIND_MULTI_COLOR => self.find_multi_color(task, args),
@@ -1046,6 +1269,15 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn find_image(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let (args, direction) = match args {
+            [head @ .., LuaScalar::Integer(direction)] if args.len() == 9 => (head, *direction),
+            _ if args.len() == 8 => (args, 0),
+            _ => {
+                return Err(
+                    "Screen.findImage requires 8 integers and optional direction".to_owned(),
+                )
+            }
+        };
         let [frame, template, tolerance, similarity, left, top, right, bottom] =
             integer_args::<8>(args)?;
         let screen = decode_frame_handle(frame)?;
@@ -1053,20 +1285,29 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let tolerance = decode_tolerance(tolerance)?;
         let similarity =
             u16::try_from(similarity).map_err(|_| "similarity is invalid".to_owned())?;
+        let started = Instant::now();
+        let control = self.scheduler.handle();
         let match_result = self
             .frames
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .find_template(
+            .find_template_controlled(
                 task,
                 screen,
                 template,
                 self.scheduler.resources(),
                 TemplateOptions {
-                    search: search_options(left, top, right, bottom)?,
+                    search: SearchOptions {
+                        order: decode_search_direction(direction)?,
+                        ..search_options(left, top, right, bottom)?
+                    },
                     tolerance,
                     minimum_match_permille: similarity,
                     ignore_transparent_template_pixels: true,
+                },
+                &mut || {
+                    control.cancellation_requested(task)
+                        || started.elapsed() >= Duration::from_secs(5)
                 },
             )
             .map_err(|error| format!("{error:?}"))?;
@@ -1091,6 +1332,81 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         Ok(LuaInput::Values(vec![
             LuaScalar::Boolean(true),
             LuaScalar::Integer(i64::from(encode_rgb(color))),
+        ]))
+    }
+
+    fn find_images(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let [LuaScalar::Integer(frame), LuaScalar::Bytes(paths_json), tail @ ..] = args else {
+            return Err("Screen.findImages expects frame and JSON template paths".to_owned());
+        };
+        if paths_json.len() > 16_384 {
+            return Err("template paths exceed byte limit".to_owned());
+        }
+        let paths: Vec<String> = serde_json::from_slice(paths_json)
+            .map_err(|_| "invalid template paths JSON".to_owned())?;
+        let [tolerance, similarity, left, top, right, bottom, direction] = integer_args::<7>(tail)?;
+        let started = Instant::now();
+        let control = self.scheduler.handle();
+        let result = self
+            .frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .find_named_templates(
+                task,
+                decode_frame_handle(*frame)?,
+                self.scheduler.resources(),
+                &paths,
+                TemplateOptions {
+                    search: SearchOptions {
+                        order: decode_search_direction(direction)?,
+                        ..search_options(left, top, right, bottom)?
+                    },
+                    tolerance: decode_tolerance(tolerance)?,
+                    minimum_match_permille: u16::try_from(similarity)
+                        .map_err(|_| "invalid similarity")?,
+                    ignore_transparent_template_pixels: true,
+                },
+                &mut || {
+                    control.cancellation_requested(task)
+                        || started.elapsed() >= Duration::from_secs(5)
+                },
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        Ok(result.map_or_else(
+            || LuaInput::Values(vec![LuaScalar::Boolean(true), LuaScalar::Nil]),
+            |result| {
+                LuaInput::Values(vec![
+                    LuaScalar::Boolean(true),
+                    LuaScalar::Integer(i64::from(result.matched.origin.x)),
+                    LuaScalar::Integer(i64::from(result.matched.origin.y)),
+                    LuaScalar::Bytes(result.path.into_bytes()),
+                    LuaScalar::Integer(i64::from(result.matched.matched_permille)),
+                    LuaScalar::Integer(i64::from(result.width)),
+                    LuaScalar::Integer(i64::from(result.height)),
+                ])
+            },
+        ))
+    }
+
+    fn crop_frame(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let [frame, left, top, right, bottom] = integer_args::<5>(args)?;
+        let roi = search_options(left, top, right, bottom)?.roi;
+        let handle = self
+            .frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .crop(
+                task,
+                decode_frame_handle(frame)?,
+                self.scheduler.resources_mut(),
+                roi,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        Ok(LuaInput::Values(vec![
+            LuaScalar::Boolean(true),
+            LuaScalar::Integer(
+                i64::try_from(handle.resource_id.get()).map_err(|_| "frame handle overflow")?,
+            ),
         ]))
     }
 
@@ -1451,6 +1767,269 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         Ok(())
     }
 
+    /// Called only on the Lua owner thread. The Android host validates control/session identity.
+    /// # Errors
+    /// Rejects malformed values or configuration after the entry task starts.
+    pub fn seed_ui_values(
+        &mut self,
+        values: BTreeMap<String, String>,
+    ) -> Result<(), ExecutorError> {
+        if self.capabilities_locked
+            || values.len() > 128
+            || values.iter().any(|(id, value)| {
+                id.is_empty()
+                    || id.len() > 64
+                    || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                    || value.len() > 8192
+                    || value.contains('\0')
+            })
+        {
+            return Err(ExecutorError::InvalidYield(
+                "invalid initial UI values/state".into(),
+            ));
+        }
+        self.ui_values = values;
+        self.ui_events.clear();
+        self.ui_current_event = None;
+        self.ui_waiting = None;
+        Ok(())
+    }
+
+    /// Called only on the Lua owner thread. The Android host validates control/session identity.
+    /// # Errors
+    /// Rejects malformed events or a full event queue.
+    pub fn push_ui_event(
+        &mut self,
+        id: &str,
+        event: &str,
+        value: &str,
+    ) -> Result<(), ExecutorError> {
+        if id.is_empty()
+            || id.len() > 64
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || !matches!(event, "click" | "longClick" | "change" | "selection")
+            || value.len() > 8192
+            || value.contains('\0')
+        {
+            return Err(ExecutorError::InvalidYield("invalid UI event".into()));
+        }
+        if self.ui_values.len() >= 128 && !self.ui_values.contains_key(id) {
+            return Err(ExecutorError::InvalidYield("UI value limit".into()));
+        }
+        let key = format!("{id}:{event}");
+        if let Some(request) = self
+            .ui_waiting
+            .take()
+            .filter(|request| self.pending_host.contains_key(request))
+        {
+            let pending = &self.pending_host[&request];
+            let completion = HostCompletion {
+                request_id: request,
+                task: pending.task,
+                result: HostResult::Success(key.into_bytes()),
+            };
+            self.scheduler
+                .handle()
+                .submit_host_completion(completion)
+                .map_err(submit_error)?;
+            self.ui_current_event = Some((id.to_owned(), value.to_owned()));
+        } else {
+            if self.ui_events.len() >= 64 {
+                return Err(ExecutorError::InvalidYield("UI event queue full".into()));
+            }
+            self.ui_events
+                .push_back((key, id.to_owned(), value.to_owned()));
+        }
+        self.ui_values.insert(id.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    /// Synchronizes ordinary control edits without filling the plugin-event queue.
+    /// # Errors
+    /// Rejects malformed control identifiers, values or the 128-control limit.
+    pub fn update_ui_value(&mut self, id: &str, value: &str) -> Result<(), ExecutorError> {
+        if id.is_empty()
+            || id.len() > 64
+            || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+            || value.len() > 8192
+            || value.contains('\0')
+            || (self.ui_values.len() >= 128 && !self.ui_values.contains_key(id))
+        {
+            return Err(ExecutorError::InvalidYield(
+                "invalid UI control value".into(),
+            ));
+        }
+        self.ui_values.insert(id.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    fn apply_ui(
+        &mut self,
+        task: TaskToken,
+        opcode: u32,
+        args: &[LuaScalar],
+    ) -> Result<(), ExecutorError> {
+        let fail = |message: &str| ExecutorError::InvalidYield(message.into());
+        let string = |index: usize| -> Result<String, ExecutorError> {
+            match args.get(index) {
+                Some(LuaScalar::Bytes(bytes)) if bytes.len() <= 8192 && !bytes.contains(&0) => {
+                    String::from_utf8(bytes.clone()).map_err(|_| fail("UI requires UTF-8"))
+                }
+                _ => Err(fail("invalid UI argument")),
+            }
+        };
+        if opcode == 1200 {
+            if !args.is_empty() || self.pending_host.values().any(|p| p.opcode == 1200) {
+                return Err(fail("only one UI event consumer is allowed"));
+            }
+            self.ui_current_event = None;
+            if let Some((event, id, value)) = self.ui_events.pop_front() {
+                self.ui_current_event = Some((id, value));
+                self.resume_inputs.insert(
+                    task,
+                    LuaInput::Values(vec![
+                        LuaScalar::Boolean(true),
+                        LuaScalar::Bytes(event.into_bytes()),
+                    ]),
+                );
+                self.scheduler.yield_budget(task)?;
+            } else {
+                let request = self.allocate_request_id()?;
+                self.scheduler
+                    .wait_for_host(task, request, Duration::from_secs(1800))?;
+                self.pending_host.insert(
+                    request,
+                    PendingHost {
+                        task,
+                        opcode,
+                        cancel_mode: CancelMode::Cooperative,
+                    },
+                );
+                self.ui_waiting = Some(request);
+            }
+            return Ok(());
+        }
+        let id = string(0)?;
+        if id.is_empty()
+            || id.len() > 64
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || args.len()
+                != match opcode {
+                    1201 => 1,
+                    1202 => 2,
+                    _ => 3,
+                }
+        {
+            return Err(fail("invalid UI control ID"));
+        }
+        match opcode {
+            1201 => {
+                let value = self
+                    .ui_current_event
+                    .as_ref()
+                    .filter(|(control, _)| control == &id)
+                    .map(|(_, value)| value.clone())
+                    .or_else(|| self.ui_values.get(&id).cloned())
+                    .unwrap_or_default();
+                self.resume_inputs.insert(
+                    task,
+                    LuaInput::Values(vec![
+                        LuaScalar::Boolean(true),
+                        LuaScalar::Bytes(value.into_bytes()),
+                    ]),
+                );
+            }
+            1202 | 1203 => {
+                let operation = if opcode == 1202 {
+                    "value".to_owned()
+                } else {
+                    string(1)?
+                };
+                let value = string(if opcode == 1202 { 1 } else { 2 })?;
+                if !matches!(
+                    operation.as_str(),
+                    "value"
+                        | "text"
+                        | "visible"
+                        | "enabled"
+                        | "items"
+                        | "progress"
+                        | "page"
+                        | "show"
+                        | "hide"
+                        | "minimize"
+                ) {
+                    return Err(fail("unknown UI operation"));
+                }
+                if matches!(operation.as_str(), "visible" | "enabled")
+                    && !matches!(value.as_str(), "true" | "false")
+                {
+                    return Err(fail("UI state requires true/false"));
+                }
+                if operation == "progress" && !value.parse::<u32>().is_ok_and(|v| v <= 1_000_000) {
+                    return Err(fail("invalid UI progress"));
+                }
+                let new_items = if operation == "items" {
+                    let items = value.split('\n').collect::<Vec<_>>();
+                    let unique = items.iter().copied().collect::<BTreeSet<_>>();
+                    if items.len() > 64
+                        || unique.len() != items.len()
+                        || items.iter().any(|item| {
+                            item.is_empty()
+                                || item.chars().count() > 128
+                                || item.chars().any(char::is_control)
+                        })
+                    {
+                        return Err(fail("invalid UI items"));
+                    }
+                    Some(items)
+                } else {
+                    None
+                };
+                if self.script_prompts.len() >= MAX_SCRIPT_PROMPT_ENTRIES {
+                    return Err(fail("UI command queue full"));
+                }
+                if matches!(operation.as_str(), "value" | "text" | "progress") {
+                    if self.ui_values.len() >= 128 && !self.ui_values.contains_key(&id) {
+                        return Err(fail("UI control limit"));
+                    }
+                    self.ui_values.insert(id.clone(), value.clone());
+                }
+                if let Some(items) = new_items {
+                    if self.ui_values.len() >= 128 && !self.ui_values.contains_key(&id) {
+                        return Err(fail("UI control limit"));
+                    }
+                    if !self
+                        .ui_values
+                        .get(&id)
+                        .is_some_and(|v| items.contains(&v.as_str()))
+                    {
+                        self.ui_values.insert(id.clone(), items[0].to_owned());
+                    }
+                }
+                if matches!(operation.as_str(), "value" | "text" | "progress" | "items")
+                    && self
+                        .ui_current_event
+                        .as_ref()
+                        .is_some_and(|(control, _)| control == &id)
+                {
+                    self.ui_current_event = Some((
+                        id.clone(),
+                        self.ui_values.get(&id).cloned().unwrap_or_default(),
+                    ));
+                }
+                self.script_prompts.push_back(
+                    serde_json::json!({"kind":"ui","id":id,"operation":operation,"value":value})
+                        .to_string(),
+                );
+                self.resume_inputs.insert(task, LuaInput::Boolean(true));
+            }
+            _ => unreachable!(),
+        }
+        self.scheduler.yield_budget(task)?;
+        Ok(())
+    }
+
     fn apply_log(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<(), ExecutorError> {
         let [LuaScalar::Integer(level), LuaScalar::Bytes(message)] = args else {
             return Err(ExecutorError::InvalidYield(
@@ -1485,12 +2064,81 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         Ok(())
     }
 
+    fn apply_prompt(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<(), ExecutorError> {
+        let [LuaScalar::Bytes(message)] = args else {
+            return Err(ExecutorError::InvalidYield(
+                "Prompt.show requires one UTF-8 message".to_owned(),
+            ));
+        };
+        if message.len() > MAX_SCRIPT_PROMPT_BYTES {
+            return Err(ExecutorError::InvalidYield(
+                "Prompt.show message exceeds 2048 UTF-8 bytes".to_owned(),
+            ));
+        }
+        let message = std::str::from_utf8(message)
+            .map_err(|_| {
+                ExecutorError::InvalidYield("Prompt.show message must be UTF-8".to_owned())
+            })?
+            .replace('\r', "");
+        if self.script_prompts.len() >= MAX_SCRIPT_PROMPT_ENTRIES {
+            self.script_prompts.pop_front();
+        }
+        self.script_prompts
+            .push_back(serde_json::json!({"kind":"window","message":message}).to_string());
+        self.resume_inputs.insert(task, LuaInput::Boolean(true));
+        self.scheduler.yield_budget(task)?;
+        Ok(())
+    }
+
+    fn apply_toast(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<(), ExecutorError> {
+        let [LuaScalar::Bytes(message), LuaScalar::Bytes(style_json)] = args else {
+            return Err(ExecutorError::InvalidYield(
+                "Prompt.toast requires message and style JSON".to_owned(),
+            ));
+        };
+        if message.len() > MAX_SCRIPT_PROMPT_BYTES || style_json.len() > MAX_POPUP_STYLE_BYTES {
+            return Err(ExecutorError::InvalidYield(
+                "Prompt.toast payload exceeds limit".to_owned(),
+            ));
+        }
+        let message = std::str::from_utf8(message)
+            .map_err(|_| {
+                ExecutorError::InvalidYield("Prompt.toast message must be UTF-8".to_owned())
+            })?
+            .replace('\r', "");
+        let style: PopupStyle = serde_json::from_slice(style_json).map_err(|_| {
+            ExecutorError::InvalidYield("Prompt.toast style JSON is invalid".to_owned())
+        })?;
+        if !style.valid() {
+            return Err(ExecutorError::InvalidYield(
+                "Prompt.toast style is out of range".to_owned(),
+            ));
+        }
+        if self.script_prompts.len() >= MAX_SCRIPT_PROMPT_ENTRIES {
+            self.script_prompts.pop_front();
+        }
+        self.script_prompts.push_back(
+            serde_json::json!({"kind":"toast","message":message,"style":style}).to_string(),
+        );
+        self.resume_inputs.insert(task, LuaInput::Boolean(true));
+        self.scheduler.yield_budget(task)?;
+        Ok(())
+    }
+
     fn dispatch_host(
         &mut self,
         task: TaskToken,
         opcode: u32,
         args: Vec<LuaScalar>,
     ) -> Result<(), ExecutorError> {
+        let native_vision = if matches!(opcode, 5108 | 6101) {
+            Some(
+                self.prepare_native_vision(task, opcode, &args)
+                    .map_err(ExecutorError::InvalidYield)?,
+            )
+        } else {
+            None
+        };
         let (timeout, cancel_mode) = if opcode == OP_SCREEN_CAPTURE_SERIES_FRAME {
             (Duration::from_secs(3), CancelMode::Cooperative)
         } else {
@@ -1513,6 +2161,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             cancel_mode,
             timeout,
             args,
+            native_vision,
         };
         self.pending_host.insert(
             request_id,
@@ -1536,6 +2185,228 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 .map_err(submit_error)?;
         }
         Ok(())
+    }
+
+    fn prepare_native_vision(
+        &self,
+        task: TaskToken,
+        opcode: u32,
+        args: &[LuaScalar],
+    ) -> Result<NativeVisionRequest, String> {
+        let (handle, template, score, left, top, right, bottom) = if opcode == 5108 {
+            let [handle, template, score, left, top, right, bottom] = integer_args::<7>(args)?;
+            (handle, Some(template), score, left, top, right, bottom)
+        } else {
+            let [handle, left, top, right, bottom, score] = integer_args::<6>(args)?;
+            (handle, None, score, left, top, right, bottom)
+        };
+        let minimum_score = u16::try_from(score)
+            .ok()
+            .filter(|score| *score <= 1000)
+            .ok_or("score must be 0..1000")?;
+        let pool = self
+            .frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let frame = pool
+            .view(
+                task,
+                decode_frame_handle(handle)?,
+                self.scheduler.resources(),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let template = template
+            .map(|handle| {
+                pool.view(
+                    task,
+                    decode_frame_handle(handle)?,
+                    self.scheduler.resources(),
+                )
+                .map_err(|error| format!("{error:?}"))
+            })
+            .transpose()?;
+        let region = search_options(left, top, right, bottom)?.roi;
+        if region.right > frame.metadata.width
+            || region.bottom > frame.metadata.height
+            || u64::from(region.right - region.left) * u64::from(region.bottom - region.top)
+                > 4_194_304
+        {
+            return Err("native vision ROI exceeds frame or 4M pixel budget".into());
+        }
+        if let Some(template) = &template {
+            if template.metadata.width > region.right - region.left
+                || template.metadata.height > region.bottom - region.top
+                || u64::from(template.metadata.width) * u64::from(template.metadata.height)
+                    > 262_144
+            {
+                return Err("gray template exceeds ROI or 256K pixel budget".into());
+            }
+        } else if (region.right - region.left) as f64 / f64::from(region.bottom - region.top) > 20.0
+        {
+            return Err(
+                "OCR single line aspect ratio exceeds 20; split into smaller regions".into(),
+            );
+        }
+        Ok(NativeVisionRequest {
+            frame,
+            template,
+            region,
+            minimum_score,
+        })
+    }
+
+    fn start_callback(
+        &mut self,
+        owner: TaskToken,
+        callback: u64,
+        timer: Option<TimerId>,
+    ) -> Result<TaskToken, ExecutorError> {
+        let child = self.scheduler.spawn(Some(owner), false)?;
+        self.callback_tasks.insert(child, (owner, timer));
+        if let Err(error) = self.scheduler.finalizer_mut().register_callback_task(
+            child,
+            owner,
+            callback,
+            timer.is_some(),
+        ) {
+            self.scheduler
+                .handle()
+                .request_cancel(child)
+                .map_err(submit_error)?;
+            return Err(error.into());
+        }
+        Ok(child)
+    }
+
+    fn stop_callback_timer(&mut self, timer: TimerId) -> Result<(), ExecutorError> {
+        if let Some(record) = self.callback_timers.remove(&timer) {
+            self.scheduler.cancel_timer(timer);
+            self.lua().remove_callback(record.owner, record.callback);
+            if let Some(active) = record.active {
+                self.scheduler
+                    .handle()
+                    .request_cancel(active)
+                    .map_err(submit_error)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_callback_operation(
+        &mut self,
+        owner: TaskToken,
+        opcode: u32,
+        args: &[LuaScalar],
+    ) -> Result<(), ExecutorError> {
+        let result = (|| -> Result<LuaScalar, ExecutorError> {
+            match (opcode, args) {
+                (3001, [LuaScalar::Integer(callback)]) => {
+                    let callback = self.checked_callback_id(owner, *callback)?;
+                    let result = self.start_callback(owner, callback, None);
+                    if result.is_err() {
+                        self.lua().remove_callback(owner, callback);
+                    }
+                    let child = result?;
+                    match i64::try_from(child.id.get()) {
+                        Ok(id) => Ok(LuaScalar::Integer(id)),
+                        Err(_) => {
+                            self.scheduler
+                                .handle()
+                                .request_cancel(child)
+                                .map_err(submit_error)?;
+                            Err(ExecutorError::InvalidYield(
+                                "task IDs exhausted Lua integer range".into(),
+                            ))
+                        }
+                    }
+                }
+                (3002, [LuaScalar::Integer(id)]) if *id > 0 => {
+                    let id = u64::try_from(*id)
+                        .map_err(|_| ExecutorError::InvalidYield("invalid task ID".into()))?;
+                    let target = self.callback_tasks.iter().find_map(|(task, (parent, _))| {
+                        (task.id.get() == id && *parent == owner).then_some(*task)
+                    });
+                    if let Some(target) = target {
+                        self.scheduler
+                            .handle()
+                            .request_cancel(target)
+                            .map_err(submit_error)?;
+                    }
+                    Ok(LuaScalar::Boolean(target.is_some()))
+                }
+                (3003, [LuaScalar::Integer(period), LuaScalar::Integer(callback)])
+                    if (10..=60_000).contains(period) =>
+                {
+                    let callback = self.checked_callback_id(owner, *callback)?;
+                    let milliseconds = u64::try_from(*period)
+                        .map_err(|_| ExecutorError::InvalidYield("invalid timer period".into()))?;
+                    match self
+                        .scheduler
+                        .every(owner, Duration::from_millis(milliseconds))
+                    {
+                        Ok(timer) => {
+                            let Ok(id) = i64::try_from(timer.get()) else {
+                                self.scheduler.cancel_timer(timer);
+                                self.lua().remove_callback(owner, callback);
+                                return Err(ExecutorError::InvalidYield(
+                                    "timer IDs exhausted Lua integer range".into(),
+                                ));
+                            };
+                            self.callback_timers.insert(
+                                timer,
+                                CallbackTimer {
+                                    owner,
+                                    callback,
+                                    active: None,
+                                },
+                            );
+                            Ok(LuaScalar::Integer(id))
+                        }
+                        Err(error) => {
+                            self.lua().remove_callback(owner, callback);
+                            Err(error.into())
+                        }
+                    }
+                }
+                (3004, [LuaScalar::Integer(id)]) if *id > 0 => {
+                    let timer = TimerId(
+                        u64::try_from(*id)
+                            .map_err(|_| ExecutorError::InvalidYield("invalid timer ID".into()))?,
+                    );
+                    let belongs_to_owner = self
+                        .callback_timers
+                        .get(&timer)
+                        .is_some_and(|record| record.owner == owner);
+                    if belongs_to_owner {
+                        self.stop_callback_timer(timer)?;
+                    }
+                    Ok(LuaScalar::Boolean(belongs_to_owner))
+                }
+                _ => Err(ExecutorError::InvalidYield(
+                    "invalid or foreign callback request".into(),
+                )),
+            }
+        })();
+        let input = match result {
+            Ok(value) => LuaInput::Values(vec![LuaScalar::Boolean(true), value]),
+            Err(error) => LuaInput::Values(vec![
+                LuaScalar::Boolean(false),
+                LuaScalar::Nil,
+                LuaScalar::Nil,
+                LuaScalar::Bytes(b"TASK_CALLBACK_ERROR".to_vec()),
+                LuaScalar::Bytes(format!("{error:?}").into_bytes()),
+            ]),
+        };
+        self.resume_inputs.insert(owner, input);
+        self.scheduler.yield_budget(owner)?;
+        Ok(())
+    }
+
+    fn checked_callback_id(&self, owner: TaskToken, value: i64) -> Result<u64, ExecutorError> {
+        u64::try_from(value)
+            .ok()
+            .filter(|id| *id != 0 && self.lua().owns_callback(owner, *id))
+            .ok_or_else(|| ExecutorError::InvalidYield("invalid or foreign callback ID".into()))
     }
 
     fn apply_event(&mut self, event: &SchedulerEvent) -> Result<(), ExecutorError> {
@@ -1578,11 +2449,78 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 }
                 self.resume_inputs.remove(task);
             }
-            SchedulerEvent::TimerReady { task, .. } => {
-                self.resume_inputs.insert(*task, LuaInput::None);
+            SchedulerEvent::TimerReady {
+                timer,
+                task,
+                interval,
+                ..
+            } => {
+                if let Some(record) = self.callback_timers.get(timer).copied() {
+                    if record.active.is_none()
+                        && self.scheduler.task_state(record.owner) == Some(TaskState::Running)
+                    {
+                        match self.start_callback(record.owner, record.callback, Some(*timer)) {
+                            Ok(child) => {
+                                if let Some(record) = self.callback_timers.get_mut(timer) {
+                                    record.active = Some(child);
+                                }
+                            }
+                            Err(error) => {
+                                self.stop_callback_timer(*timer)?;
+                                self.scheduler.fail(
+                                    record.owner,
+                                    TaskFailure {
+                                        code: "TIMER_START_FAILED".into(),
+                                        message: format!("{error:?}"),
+                                    },
+                                )?;
+                            }
+                        }
+                    }
+                } else if !interval && self.scheduler.task_state(*task) == Some(TaskState::Running)
+                {
+                    self.resume_inputs.insert(*task, LuaInput::None);
+                }
             }
-            SchedulerEvent::TaskFinished { task, .. } => {
+            SchedulerEvent::TaskFinished { task, state } => {
                 self.resume_inputs.remove(task);
+                if let Some((owner, timer)) = self.callback_tasks.remove(task) {
+                    if let Some(timer) = timer {
+                        if let Some(record) = self.callback_timers.get_mut(&timer) {
+                            record.active = None;
+                        }
+                        if *state == TaskState::Completed
+                            && self.scheduler.task_state(owner) == Some(TaskState::Running)
+                            && self.callback_timers.contains_key(&timer)
+                        {
+                            self.scheduler.complete_timer_callback(timer)?;
+                        } else {
+                            self.stop_callback_timer(timer)?;
+                        }
+                    }
+                    if *state == TaskState::Failed
+                        && self.scheduler.task_state(owner) == Some(TaskState::Running)
+                    {
+                        let error = self
+                            .scheduler
+                            .task_outcome(*task)
+                            .and_then(|outcome| outcome.error.clone())
+                            .unwrap_or(TaskFailure {
+                                code: "CALLBACK_FAILED".into(),
+                                message: "callback failed".into(),
+                            });
+                        self.scheduler.fail(owner, error)?;
+                    }
+                    self.scheduler.discard_outcome(*task)?;
+                }
+                let timers = self
+                    .callback_timers
+                    .iter()
+                    .filter_map(|(timer, record)| (record.owner == *task).then_some(*timer))
+                    .collect::<Vec<_>>();
+                for timer in timers {
+                    self.stop_callback_timer(timer)?;
+                }
             }
             SchedulerEvent::ResourceReleased(resource) => match resource.kind() {
                 ResourceKind::Frame => {
@@ -1770,6 +2708,18 @@ fn decode_dictionary_handle(encoded: i64) -> Result<DictionaryHandle, String> {
     })
 }
 
+fn decode_search_direction(direction: i64) -> Result<automation_core::SearchOrder, String> {
+    use automation_core::SearchOrder;
+    match direction {
+        0 => Ok(SearchOrder::TopLeftToBottomRight),
+        1 => Ok(SearchOrder::TopRightToBottomLeft),
+        2 => Ok(SearchOrder::BottomLeftToTopRight),
+        3 => Ok(SearchOrder::BottomRightToTopLeft),
+        4 => Ok(SearchOrder::CenterOut),
+        _ => Err("search direction must be 0..=4".to_owned()),
+    }
+}
+
 fn search_options(left: i64, top: i64, right: i64, bottom: i64) -> Result<SearchOptions, String> {
     let roi = PixelRect {
         left: u32::try_from(left).map_err(|_| "ROI left is invalid".to_owned())?,
@@ -1824,6 +2774,10 @@ fn points_input(points: &[PixelPoint]) -> Result<LuaInput, String> {
 
 fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, ExecutorError> {
     match result {
+        HostResult::Success(payload) if opcode == 1200 => Ok(LuaInput::Values(vec![
+            LuaScalar::Boolean(true),
+            LuaScalar::Bytes(payload.clone()),
+        ])),
         HostResult::Failure { code, message } => Ok(LuaInput::Values(vec![
             LuaScalar::Boolean(false),
             LuaScalar::Nil,
@@ -1865,7 +2819,15 @@ fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, Execu
         HostResult::Success(payload)
             if matches!(
                 opcode,
-                OP_INPUT_TAP | OP_INPUT_SWIPE | OP_INPUT_KEY_EVENT | OP_SCREEN_RELEASE
+                OP_INPUT_TAP
+                    | OP_INPUT_SWIPE
+                    | OP_INPUT_KEY_EVENT
+                    | OP_INPUT_POINTER_DOWN
+                    | OP_INPUT_POINTER_MOVE
+                    | OP_INPUT_POINTER_UP
+                    | OP_INPUT_TAP_SCREEN
+                    | OP_INPUT_POINTER_DOWN_SCREEN
+                    | OP_SCREEN_RELEASE
             ) =>
         {
             if !payload.is_empty() {
@@ -1916,6 +2878,49 @@ fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, Execu
                 LuaScalar::Boolean(true),
                 LuaScalar::Integer(i64::from(x)),
                 LuaScalar::Integer(i64::from(y)),
+            ]))
+        }
+        HostResult::Success(payload) if opcode == 5108 => {
+            if payload.is_empty() {
+                return Ok(LuaInput::Values(vec![
+                    LuaScalar::Boolean(true),
+                    LuaScalar::Nil,
+                ]));
+            }
+            if payload.len() != 10 {
+                return Err(ExecutorError::InvalidYield(
+                    "gray result length invalid".into(),
+                ));
+            }
+            let x = u32::from_le_bytes(payload[0..4].try_into().expect("length"));
+            let y = u32::from_le_bytes(payload[4..8].try_into().expect("length"));
+            let score = u16::from_le_bytes(payload[8..10].try_into().expect("length"));
+            if score > 1000 {
+                return Err(ExecutorError::InvalidYield("gray score invalid".into()));
+            }
+            Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Integer(i64::from(x)),
+                LuaScalar::Integer(i64::from(y)),
+                LuaScalar::Integer(i64::from(score)),
+            ]))
+        }
+        HostResult::Success(payload) if opcode == 6101 => {
+            if !(2..=1026).contains(&payload.len())
+                || payload[2..]
+                    .iter()
+                    .any(|byte| !byte.is_ascii_alphanumeric())
+            {
+                return Err(ExecutorError::InvalidYield("OCR result invalid".into()));
+            }
+            let score = u16::from_le_bytes(payload[..2].try_into().expect("length"));
+            if score > 1000 {
+                return Err(ExecutorError::InvalidYield("OCR score invalid".into()));
+            }
+            Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Bytes(payload[2..].to_vec()),
+                LuaScalar::Integer(i64::from(score)),
             ]))
         }
         HostResult::Success(_) => Err(ExecutorError::UnknownOpcode(opcode)),
@@ -2040,9 +3045,17 @@ impl HostBackend for VirtualHost {
                     OP_SYSTEM_ELAPSED_REALTIME_MILLIS if request.args.is_empty() => {
                         0_u64.to_le_bytes().to_vec()
                     }
-                    OP_INPUT_TAP if request.args.len() == 2 => Vec::new(),
+                    OP_INPUT_TAP | OP_INPUT_TAP_SCREEN | OP_INPUT_POINTER_DOWN_SCREEN
+                        if request.args.len() == 2 =>
+                    {
+                        Vec::new()
+                    }
                     OP_INPUT_SWIPE if request.args.len() == 5 => Vec::new(),
                     OP_INPUT_KEY_EVENT if request.args.len() == 1 => Vec::new(),
+                    OP_INPUT_POINTER_DOWN | OP_INPUT_POINTER_MOVE if request.args.len() == 2 => {
+                        Vec::new()
+                    }
+                    OP_INPUT_POINTER_UP if request.args.is_empty() => Vec::new(),
                     _ => return Err("unsupported virtual host request".to_owned()),
                 };
                 completion
@@ -2085,6 +3098,102 @@ mod tests {
     #[derive(Debug)]
     struct OneCaptureHost {
         capture_id: u64,
+    }
+
+    #[derive(Debug)]
+    struct NativeVisionTestHost {
+        capture_id: u64,
+    }
+    impl HostBackend for NativeVisionTestHost {
+        fn dispatch(
+            &mut self,
+            request: &HostRequest,
+            completion: &runtime_scheduler::SchedulerHandle,
+        ) -> Result<(), String> {
+            let payload = match request.opcode {
+                OP_SCREEN_CAPTURE => self.capture_id.to_le_bytes().to_vec(),
+                5108 => {
+                    let input = request.native_vision.as_ref().expect("typed leased input");
+                    assert!(input.template.is_some());
+                    assert_eq!(input.region.right, 1);
+                    [
+                        0u32.to_le_bytes().to_vec(),
+                        0u32.to_le_bytes().to_vec(),
+                        999u16.to_le_bytes().to_vec(),
+                    ]
+                    .concat()
+                }
+                6101 => {
+                    let input = request.native_vision.as_ref().expect("typed leased input");
+                    assert!(input.template.is_none());
+                    assert_eq!(input.frame.pixels.len(), 4);
+                    [998u16.to_le_bytes().to_vec(), b"AbZ019".to_vec()].concat()
+                }
+                _ => panic!("unexpected opcode"),
+            };
+            completion
+                .submit_host_completion(runtime_scheduler::HostCompletion {
+                    request_id: request.request_id,
+                    task: request.task,
+                    result: runtime_scheduler::HostResult::Success(payload),
+                })
+                .map_err(|e| format!("{e:?}"))
+        }
+        fn cancel(&mut self, _: RequestId, _: TaskToken, _: CancelMode) {}
+    }
+    #[test]
+    fn native_vision_lua_uses_owned_frame_views_and_decodes_bounded_results() {
+        let frames = Arc::new(std::sync::Mutex::new(FramePool::new(
+            FramePoolConfig::default(),
+        )));
+        let capture = frames
+            .lock()
+            .unwrap()
+            .publish_capture(
+                FrameMetadata {
+                    width: 1,
+                    height: 1,
+                    row_stride: 4,
+                    pixel_stride: 4,
+                    format: FrameFormat::Rgba8888,
+                    rotation: Rotation::Degrees0,
+                    timestamp_nanos: 1,
+                    snapshot_id: 1,
+                },
+                &[1, 2, 3, 255],
+            )
+            .unwrap();
+        let mut executor = RuntimeExecutor::new_with_frames(
+            ManualClock::new(MonoTime::ZERO),
+            SchedulerConfig::default(),
+            LuaRuntimeConfig::default(),
+            ExecutorConfig::default(),
+            NativeVisionTestHost {
+                capture_id: capture.0,
+            },
+            frames,
+        )
+        .unwrap();
+        let task=executor.start_entry_chunk(b"return function() local f=Screen.cache(Screen.capture()); local r=Screen.findGray(f,f,900,0,0,1,1); gray_score=r.scorePermille; local o=Ocr.alphanumeric(f,0,0,1,1,500); ocr_text=o.text; Screen.release(f) end","native-vision").unwrap();
+        executor.drive().unwrap();
+        assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        assert_eq!(
+            executor.lua().global_scalar("gray_score").unwrap(),
+            LuaScalar::Integer(999)
+        );
+        assert_eq!(
+            executor.lua().global_scalar("ocr_text").unwrap(),
+            LuaScalar::Bytes(b"AbZ019".to_vec())
+        );
+        assert_eq!(executor.resources().resource_count(), 0);
+    }
+    #[test]
+    fn malformed_native_results_never_become_lua_values() {
+        use runtime_scheduler::HostResult;
+        assert!(super::host_resume_input(5108, &HostResult::Success(vec![0; 9])).is_err());
+        assert!(super::host_resume_input(6101, &HostResult::Success(vec![0, 0, b'$'])).is_err());
+        assert!(super::host_resume_input(6101, &HostResult::Success(vec![255, 255])).is_err());
+        assert!(super::host_resume_input(6101, &HostResult::Success(vec![0; 1027])).is_err());
     }
 
     impl HostBackend for OneCaptureHost {
@@ -2157,6 +3266,141 @@ mod tests {
     }
 
     #[test]
+    fn real_interval_callbacks_are_non_reentrant_and_preserve_parent_sleep() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        let owner=runtime.start_entry_chunk(br"return function()
+            count=0; active=0; peak=0
+            local timer=Timer.every(10,function() active=active+1; peak=math.max(peak,active); count=count+1; Task.sleep(25); active=active-1 end)
+            Task.sleep(100)
+            assert(Timer.cancel(timer)); done=true
+        end", "timer-non-reentrant").unwrap();
+        runtime.drive().unwrap();
+        for _ in 0..10 {
+            clock.advance(Duration::from_millis(10));
+            runtime.drive().unwrap();
+        }
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(
+            runtime.lua().global_scalar("peak").unwrap(),
+            LuaScalar::Integer(1)
+        );
+        assert_eq!(
+            runtime.lua().global_scalar("done").unwrap(),
+            LuaScalar::Boolean(true)
+        );
+        assert!(runtime.callback_timers.is_empty());
+        assert!(runtime.callback_tasks.is_empty());
+        assert_eq!(runtime.lua().task_count(), 0);
+    }
+
+    #[test]
+    fn hundreds_of_timer_callbacks_reap_outcomes_and_owner_stop_cleans_children() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        let owner=runtime.start_entry_chunk(br"return function() count=0; Timer.every(10,function() count=count+1 end); Task.sleep(60000) end", "timer-reap").unwrap();
+        runtime.drive().unwrap();
+        for _ in 0..400 {
+            clock.advance(Duration::from_millis(10));
+            runtime.drive().unwrap();
+        }
+        assert_eq!(
+            runtime.lua().global_scalar("count").unwrap(),
+            LuaScalar::Integer(400)
+        );
+        runtime.scheduler.handle().request_cancel(owner).unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Cancelled));
+        assert!(runtime.callback_timers.is_empty());
+        assert!(runtime.callback_tasks.is_empty());
+    }
+
+    #[test]
+    fn callback_failure_propagates_and_spawn_is_owner_scoped() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        let owner=runtime.start_entry_chunk(br"return function() Task.spawn(function() error('child-failed') end); Task.sleep(500) end", "task-fail").unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Failed));
+        assert!(runtime
+            .task_failure(owner)
+            .unwrap()
+            .message
+            .contains("child-failed"));
+        assert!(runtime.callback_tasks.is_empty());
+        let owner=runtime.start_entry_chunk(br"return function() local child=Task.spawn(function() Task.sleep(500) end); assert(not Task.cancel(999999)); assert(Task.cancel(child)); assert(not Timer.cancel(999999)); end", "task-cancel").unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert!(runtime.callback_tasks.is_empty());
+    }
+
+    #[test]
+    fn timers_do_not_clobber_pending_host_resume_values_and_pause_shifts_deadlines() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        let owner=runtime.start_entry_chunk(br"return function() ticks=0; Timer.every(10,function() ticks=ticks+1; local size=System.getScreenSize(); assert(size.width==720) end); Task.sleep(100); end", "timer-pause").unwrap();
+        runtime.drive().unwrap();
+        runtime.pause().unwrap();
+        clock.advance(Duration::from_millis(100));
+        runtime.drive().unwrap();
+        assert_eq!(
+            runtime.lua().global_scalar("ticks").unwrap(),
+            LuaScalar::Integer(0)
+        );
+        runtime.resume().unwrap();
+        clock.advance(Duration::from_millis(10));
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Running));
+        assert_eq!(
+            runtime.lua().global_scalar("ticks").unwrap(),
+            LuaScalar::Integer(1)
+        );
+        runtime.scheduler.handle().request_stop();
+        runtime.drive().unwrap();
+        assert!(runtime.callback_timers.is_empty());
+    }
+
+    #[test]
+    fn denied_callback_registration_does_not_exhaust_function_registry() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        runtime.set_allowed_capabilities(&[]).unwrap();
+        let owner = runtime
+            .start_entry_chunk(
+                br"return function()
+            for n=1,300 do
+                local ok,err=pcall(Task.spawn,function() end)
+                assert(not ok and string.find(err,'capability core.task',1,true))
+                ok,err=pcall(Timer.every,10,function() end)
+                assert(not ok and string.find(err,'capability core.task',1,true))
+            end
+            completed=true
+        end",
+                "denied-callback-registry",
+            )
+            .unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(
+            runtime.lua().global_scalar("completed").unwrap(),
+            LuaScalar::Boolean(true)
+        );
+        assert!(runtime.callback_tasks.is_empty());
+        assert!(runtime.callback_timers.is_empty());
+    }
+
+    #[test]
+    fn raw_screen_input_opcodes_return_void_success() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        let owner=runtime.start_entry_chunk(br"return function() Input.tapScreen(10,20); Input.pointerDownScreen(30,40); Input.pointerUp(); end", "raw-input").unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(runtime.backend().requests()[0].opcode, 4006);
+        assert_eq!(runtime.backend().requests()[1].opcode, 4007);
+    }
+
+    #[test]
     fn host_timeout_cancels_backend_and_fails_script() {
         let clock = ManualClock::new(MonoTime::ZERO);
         let mut host = VirtualHost::new(1080, 1920);
@@ -2198,13 +3442,13 @@ mod tests {
         let mut executor = executor(&clock, VirtualHost::new(1080, 1920));
         let task = executor
             .start_entry_chunk(
-                b"return function() Input.tap(12, 34); Input.swipe(1, 2, 3, 4, 50); input_done = true end",
+                b"return function() Input.tap(12, 34); Input.swipe(1, 2, 3, 4, 50); Input.pointerDown(5, 6); Input.pointerMove(7, 8); Input.pointerUp(); input_done = true end",
                 "input-api",
             )
             .expect("start");
         executor.drive().expect("drive");
         assert_eq!(executor.task_state(task), Some(TaskState::Completed));
-        assert_eq!(executor.backend().requests().len(), 2);
+        assert_eq!(executor.backend().requests().len(), 5);
         assert_eq!(
             executor.lua().global_scalar("input_done").expect("result"),
             LuaScalar::Boolean(true)
@@ -2236,6 +3480,175 @@ mod tests {
     }
 
     #[test]
+    fn runtime_prompts_are_separate_from_developer_logs() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut executor = executor(&clock, VirtualHost::new(1, 1));
+        let task = executor
+            .start_entry_chunk(
+                b"return function() Prompt.show('running'); Log.info('internal log') end",
+                "script-prompt",
+            )
+            .expect("start");
+        executor.drive().expect("drive prompt");
+        assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        assert!(executor.backend().requests().is_empty());
+        assert_eq!(
+            executor.drain_script_prompts(),
+            vec![r#"{"kind":"window","message":"running"}"#.to_owned()]
+        );
+        assert_eq!(
+            executor.drain_script_logs(),
+            vec!["脚本/INFO: internal log".to_owned()]
+        );
+    }
+
+    #[test]
+    fn ui_items_updates_selection_and_rejects_invalid_state() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(1, 1));
+        runtime
+            .seed_ui_values(std::collections::BTreeMap::from([(
+                "choice".to_owned(),
+                "old".to_owned(),
+            )]))
+            .unwrap();
+        let owner = runtime.start_entry_chunk(br"return function() UI.command('choice','items','A\nB'); picked=UI.getValue('choice') end", "ui-items").unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(
+            runtime.lua().global_scalar("picked").unwrap(),
+            LuaScalar::Bytes(b"A".to_vec())
+        );
+        let mut invalid = executor(&clock, VirtualHost::new(1, 1));
+        invalid
+            .start_entry_chunk(
+                b"return function() UI.command('choice','enabled','maybe') end",
+                "ui-invalid",
+            )
+            .unwrap();
+        assert!(invalid.drive().is_err());
+    }
+
+    #[test]
+    fn ui_initial_values_and_edits_do_not_create_events() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(1, 1));
+        runtime
+            .seed_ui_values(std::collections::BTreeMap::from([(
+                "input".to_owned(),
+                "initial".to_owned(),
+            )]))
+            .unwrap();
+        for i in 0..200 {
+            runtime.update_ui_value("input", &i.to_string()).unwrap();
+        }
+        assert!(runtime.ui_events.is_empty());
+        let owner = runtime
+            .start_entry_chunk(
+                b"return function() latest=UI.getValue('input') end",
+                "ui-sync",
+            )
+            .unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(
+            runtime.lua().global_scalar("latest").unwrap(),
+            LuaScalar::Bytes(b"199".to_vec())
+        );
+        assert!(runtime
+            .seed_ui_values(std::collections::BTreeMap::new())
+            .is_err());
+        assert!(runtime.update_ui_value("bad/id", "x").is_err());
+    }
+
+    #[test]
+    fn ui_wait_is_event_driven_and_preserves_queued_event_values() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+        let owner = runtime.start_entry_chunk(br"return function() first=UI.waitEvent(); one=UI.getValue('button'); second=UI.waitEvent(); two=UI.getValue('button'); UI.setValue('label','done') end", "ui-events").unwrap();
+        runtime.drive().unwrap();
+        assert!(runtime.backend().requests().is_empty());
+        assert!(runtime.ui_waiting.is_some());
+        runtime.push_ui_event("button", "click", "one").unwrap();
+        runtime.push_ui_event("button", "click", "two").unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(
+            runtime.lua().global_scalar("one").unwrap(),
+            LuaScalar::Bytes(b"one".to_vec())
+        );
+        assert_eq!(
+            runtime.lua().global_scalar("two").unwrap(),
+            LuaScalar::Bytes(b"two".to_vec())
+        );
+        assert_eq!(runtime.drain_script_prompts().len(), 1);
+    }
+
+    #[test]
+    fn ui_queue_has_backpressure_and_wait_is_cancelable() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(1, 1));
+        for _ in 0..64 {
+            runtime.push_ui_event("button", "click", "").unwrap();
+        }
+        assert!(runtime.push_ui_event("button", "click", "").is_err());
+        runtime.ui_events.clear();
+        let owner = runtime
+            .start_entry_chunk(b"return function() UI.waitEvent() end", "ui-cancel")
+            .unwrap();
+        runtime.drive().unwrap();
+        runtime.scheduler.handle().request_cancel(owner).unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Cancelled));
+        assert!(runtime.pending_host.is_empty());
+    }
+
+    #[test]
+    fn ui_api_does_not_bypass_capabilities() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(1, 1));
+        runtime
+            .set_allowed_capabilities(&["core.task".to_owned()])
+            .unwrap();
+        let owner = runtime
+            .start_entry_chunk(
+                b"return function() allowed=pcall(UI.getValue,'button') end",
+                "ui-capabilities",
+            )
+            .unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(runtime.task_state(owner), Some(TaskState::Completed));
+        assert_eq!(
+            runtime.lua().global_scalar("allowed").unwrap(),
+            LuaScalar::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn popup_toast_is_typed_and_carries_a_bounded_auto_dismiss_style() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut executor = executor(&clock, VirtualHost::new(1, 1));
+        let task = executor
+            .start_entry_chunk(
+                b"return function() Prompt.toast('short', '{\"widthPx\":100,\"heightPx\":30,\"durationMs\":1500,\"fontPx\":18,\"backgroundColor\":\"#CC102030\"}') end",
+                "script-toast",
+            )
+            .expect("start");
+        executor.drive().expect("drive toast");
+        assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        let events = executor.drain_script_prompts();
+        assert_eq!(events.len(), 1);
+        let event: serde_json::Value = serde_json::from_str(&events[0]).expect("typed event");
+        assert_eq!(event["kind"], "toast");
+        assert_eq!(event["message"], "short");
+        assert_eq!(event["style"]["durationMs"], 1500);
+        assert_eq!(event["style"]["widthPx"], 100);
+        assert_eq!(event["style"]["heightPx"], 30);
+        assert_eq!(event["style"]["fontPx"], 18);
+        assert_eq!(event["style"]["backgroundColor"], "#CC102030");
+    }
+
+    #[test]
     fn external_queue_prioritizes_stop_and_cancellation_over_business_work() {
         let clock = ManualClock::new(MonoTime::ZERO);
         let executor = executor(&clock, VirtualHost::new(1, 1));
@@ -2254,6 +3667,7 @@ mod tests {
                         cancel_mode: CancelMode::Cooperative,
                         timeout: Duration::from_secs(1),
                         args: vec![LuaScalar::Integer(1), LuaScalar::Integer(2)],
+                        native_vision: None,
                     },
                     executor.handle(),
                 )
@@ -2292,6 +3706,11 @@ mod tests {
         };
         queue.interrupt();
         assert!(matches!(queue.wait_next(), ExternalHostEvent::Interrupted));
+        queue.task_finished(task);
+        assert!(matches!(
+            queue.wait_next(),
+            ExternalHostEvent::TaskFinished(finished) if finished == task
+        ));
         queue
             .dispatch(
                 HostRequest {
@@ -2301,6 +3720,7 @@ mod tests {
                     cancel_mode: CancelMode::Cooperative,
                     timeout: Duration::from_secs(1),
                     args: vec![LuaScalar::Integer(1), LuaScalar::Integer(2)],
+                    native_vision: None,
                 },
                 executor.handle(),
             )
@@ -2765,6 +4185,79 @@ mod tests {
             LuaScalar::Integer(1)
         );
         assert_eq!(executor.resources().resource_count(), 0);
+    }
+
+    #[test]
+    fn modern_template_directions_and_old_default_execute_through_lua() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut executor = executor(&clock, VirtualHost::new(3, 3));
+        let pool = executor.frame_pool();
+        let mut pool = pool.lock().unwrap();
+        let metadata = FrameMetadata {
+            width: 1,
+            height: 1,
+            row_stride: 4,
+            pixel_stride: 4,
+            format: FrameFormat::Rgba8888,
+            rotation: Rotation::Degrees0,
+            timestamp_nanos: 0,
+            snapshot_id: 1,
+        };
+        pool.register_template(
+            "assets/images/same.png",
+            metadata,
+            Arc::from([10, 20, 30, 255]),
+        )
+        .unwrap();
+        let capture = pool
+            .publish_capture(
+                FrameMetadata {
+                    width: 3,
+                    height: 3,
+                    row_stride: 12,
+                    ..metadata
+                },
+                &[10, 20, 30, 255].repeat(9),
+            )
+            .unwrap();
+        drop(pool);
+        let task = executor
+            .start_entry_chunk(
+                format!(
+                    r"return function()
+            local f=Screen.cache({}); local t=Screen.loadImage('assets/images/same.png')
+            local expected={{{{0,0}},{{2,0}},{{0,2}},{{2,2}},{{1,1}}}}
+            for direction=0,4 do
+                local p=Screen.findImage(f,t,0,1000,0,0,3,3,direction)
+                assert(p.x==expected[direction+1][1] and p.y==expected[direction+1][2])
+            end
+            local old=Screen.findImage(f,t,0,1000,0,0,3,3); assert(old.x==0 and old.y==0)
+            Screen.release(t); Screen.release(f)
+        end",
+                    capture.0
+                )
+                .as_bytes(),
+                "ordered-template",
+            )
+            .unwrap();
+        executor.drive().unwrap();
+        assert_eq!(
+            executor.task_state(task),
+            Some(TaskState::Completed),
+            "{:?}",
+            executor.task_failure(task)
+        );
+        assert_eq!(executor.resources().resource_count(), 0);
+    }
+
+    #[test]
+    fn modern_template_direction_decoder_is_not_the_legacy_enum() {
+        assert_eq!(
+            super::decode_search_direction(0).unwrap(),
+            automation_core::SearchOrder::TopLeftToBottomRight
+        );
+        assert!(super::decode_search_direction(-1).is_err());
+        assert!(super::decode_search_direction(5).is_err());
     }
 
     #[test]

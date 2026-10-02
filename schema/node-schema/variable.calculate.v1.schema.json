@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/variable.calculate/1/variable.calculate.schema.json",
+  "title": "variable.calculate node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "variable.calculate" },
+    "nodeVersion": { "const": 1 },
+    "args": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "expression"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "expression": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    }
+  }
+}

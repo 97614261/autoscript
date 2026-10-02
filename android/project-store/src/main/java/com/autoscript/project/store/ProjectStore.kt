@@ -11,6 +11,7 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlin.math.roundToInt
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
@@ -192,6 +193,7 @@ class ProjectStore(
         sourceName: String,
         source: InputStream,
         expectedResourcePaths: Set<String>,
+        imageDirectory: String = "",
     ): ProjectSnapshot {
         val current = openProject(projectId)
         requireResourcePathsMatch(current, expectedResourcePaths)
@@ -207,14 +209,21 @@ class ProjectStore(
             }
             writeBoundedAndSync(staging, source, maximumBytes)
             val extension = validateImportedResource(kind, staging)
+            val normalizedImageDirectory = if (kind == ProjectResourceKind.IMAGE) {
+                validateImageResourceDirectory(imageDirectory)
+            } else {
+                require(imageDirectory.isEmpty()) { "字库资源不能指定图片目录" }
+                ""
+            }
             val fileName = uniqueResourceFileName(
                 current,
                 kind,
                 sanitizeResourceStem(sourceName),
                 extension,
+                normalizedImageDirectory,
             )
             val path = when (kind) {
-                ProjectResourceKind.IMAGE -> "assets/images/$fileName"
+                ProjectResourceKind.IMAGE -> "assets/images/${normalizedImageDirectory}$fileName"
                 ProjectResourceKind.GLYPH_DICTIONARY -> "dictionaries/$fileName"
             }
             val target = File(current.directory, path)
@@ -322,10 +331,13 @@ class ProjectStore(
             throw ProjectManifestConflictException()
         }
         validateRunnerUi(runnerUi)
+        validateInterfaceReferences(current.manifest.copy(runnerUi = runnerUi))
         invalidateGeneration(current.directory)
         writeManifest(
             current.directory,
-            current.manifest.copy(runnerUi = runnerUi?.deepCopy()),
+            current.manifest.copy(runnerUi = runnerUi?.deepCopy(), capabilities =
+                if (runnerUi?.get("version")?.asInt == 2) (current.manifest.capabilities + "ui.control" + "core.task").distinct().sorted() else current.manifest.capabilities,
+                runtimeApi = if (runnerUi?.get("version")?.asInt == 2 && current.manifest.runtimeApi.substringBefore('.') == "1" && current.manifest.runtimeApi.substringAfter('.').toInt() < 7) "1.7" else current.manifest.runtimeApi),
             keepBackup = true,
         )
         touchProject(current.directory)
@@ -451,20 +463,31 @@ class ProjectStore(
         val directory = current.directory
         val manifest = current.manifest
         require(manifest.sourceMode == ProjectSourceMode.VISUAL) {
-            "只有可视化项目可以保存 Flow"
+            "只有可视化项目可以保存插件"
         }
         val declaration = manifest.flows.singleOrNull { it.flowId == flowId }
-            ?: throw IllegalArgumentException("Flow 不在项目清单中：$flowId")
+            ?: throw IllegalArgumentException("插件不在项目清单中：$flowId")
         if (current.flowSources[flowId] != expectedSource) {
             throw FlowWriteConflictException(flowId)
         }
         val sourceBytes = source.toByteArray(Charsets.UTF_8)
-        require(sourceBytes.size <= MAX_FLOW_SOURCE_BYTES) { "Flow 源码不能超过 64 MiB" }
+        require(sourceBytes.size <= MAX_FLOW_SOURCE_BYTES) { "插件源码不能超过 64 MiB" }
         val target = File(directory, declaration.path)
         checkContained(target)
 
         // 先让生成代次失效。即使随后写 Flow 失败，也绝不能运行旧生成物。
         invalidateGeneration(directory)
+        val usesApi17 = source.lineSequence().filter(String::isNotBlank).any { line ->
+            runCatching {
+                val node = json.fromJson(line, JsonObject::class.java)
+                val kind = node?.get("kind")?.asString
+                kind in setOf("task.spawn", "task.cancel", "timer.every", "timer.cancel", "vision.findgray", "ocr.alphanumeric", "ui.get", "ui.set", "ui.command") ||
+                    (kind == "vision.findimage" && (node.get("nodeVersion")?.asInt ?: 1) >= 2)
+            }.getOrDefault(false)
+        }
+        if (usesApi17 && manifest.runtimeApi.substringBefore('.').toInt() == 1 && manifest.runtimeApi.substringAfter('.').toInt() < 7) {
+            writeManifest(directory, manifest.copy(runtimeApi = "1.7"), keepBackup = true)
+        }
         writeAtomic(target, sourceBytes, File(directory, "$FLOW_BACKUP_ROOT/$flowId.jsonl.bak"))
         val state = readState(directory)
         writeState(directory, state.copy(updatedAt = clock()))
@@ -484,14 +507,14 @@ class ProjectStore(
     ): ProjectSnapshot {
         val current = openProject(projectId)
         require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
-            "只有可视化项目可以新建 Flow"
+            "只有可视化项目可以新建插件"
         }
         require(current.manifest.flows.map(ProjectFlow::flowId).toSet() == expectedFlowIds) {
             throw ProjectManifestConflictException()
         }
-        require(FLOW_ID.matches(flowId)) { "非法 Flow ID：$flowId" }
-        require(current.manifest.flows.none { it.flowId == flowId }) { "Flow 已存在：$flowId" }
-        require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "Flow 数量不能超过 256" }
+        require(FLOW_ID.matches(flowId)) { "非法插件 ID：$flowId" }
+        require(current.manifest.flows.none { it.flowId == flowId }) { "插件已存在：$flowId" }
+        require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "插件数量不能超过 256" }
         val path = flowPathForName(fileName)
         require(current.manifest.flows.none { it.path == path }) { "源文件名已存在：$fileName" }
         val declaration = ProjectFlow(
@@ -501,7 +524,7 @@ class ProjectStore(
         )
         val flowFile = File(current.directory, declaration.path)
         checkContained(flowFile)
-        require(!flowFile.exists()) { "Flow 文件已存在：${declaration.path}" }
+        require(!flowFile.exists()) { "插件文件已存在：${declaration.path}" }
         writeAtomic(
             flowFile,
             "${initialVisualNode(declaration.rootBlockId)}\n".toByteArray(Charsets.UTF_8),
@@ -531,15 +554,15 @@ class ProjectStore(
     ): ProjectSnapshot {
         val current = openProject(projectId)
         require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
-            "只有可视化项目可以删除 Flow"
+            "只有可视化项目可以删除插件"
         }
         require(current.manifest.flows.map(ProjectFlow::flowId).toSet() == expectedFlowIds) {
             throw ProjectManifestConflictException()
         }
-        require(flowId != current.manifest.entryFlowId) { "不能删除入口 Flow" }
+        require(flowId != current.manifest.entryFlowId) { "不能删除入口插件" }
         val declaration = current.manifest.flows.singleOrNull { it.flowId == flowId }
-            ?: throw IllegalArgumentException("Flow 不存在：$flowId")
-        require(!isFlowReferenced(current.flowSources, flowId)) { "Flow $flowId 仍被 flow.call 引用" }
+            ?: throw IllegalArgumentException("插件不存在：$flowId")
+        require(!isFlowReferenced(current.flowSources, flowId)) { "插件 $flowId 仍被 flow.call 引用" }
 
         invalidateGeneration(current.directory)
         writeManifest(
@@ -550,7 +573,7 @@ class ProjectStore(
         val flowFile = File(current.directory, declaration.path)
         checkContained(flowFile)
         if (flowFile.exists() && !flowFile.delete()) {
-            throw ProjectStoreException("Flow 已从清单移除，但旧文件清理失败：$flowId")
+            throw ProjectStoreException("插件已从清单移除，但旧文件清理失败：$flowId")
         }
         pruneSourceGroups(current.directory, current.manifest.flows.map(ProjectFlow::flowId).toSet() - flowId)
         val state = readState(current.directory)
@@ -574,13 +597,13 @@ class ProjectStore(
     ): ProjectSnapshot {
         val current = openProject(projectId)
         require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
-            "只有可视化项目可以移动 Flow"
+            "只有可视化项目可以移动插件"
         }
         require(current.manifest.flows.map(ProjectFlow::flowId).toSet() == expectedFlowIds) {
             throw ProjectManifestConflictException()
         }
         val declaration = current.manifest.flows.singleOrNull { it.flowId == flowId }
-            ?: throw IllegalArgumentException("Flow 不存在：$flowId")
+            ?: throw IllegalArgumentException("插件不存在：$flowId")
         val target = normalizeFlowPath(relativePath)
         if (target == declaration.path) return current
         require(current.manifest.flows.none { it.path == target }) { "目标路径已被占用：$target" }
@@ -591,7 +614,7 @@ class ProjectStore(
         checkContained(targetFile)
         require(!targetFile.exists()) { "目标文件已存在：$target" }
         targetFile.parentFile?.mkdirs()
-        require(sourceFile.renameTo(targetFile)) { "移动 Flow 文件失败：$flowId" }
+        require(sourceFile.renameTo(targetFile)) { "移动插件文件失败：$flowId" }
         try {
             invalidateGeneration(current.directory)
             writeManifest(
@@ -655,8 +678,8 @@ class ProjectStore(
             require(isValidFlowName(name)) { "非法分组名：${group.name}" }
             require(seenNames.add(name)) { "分组名重复：$name" }
             group.flowIds.forEach { flowId ->
-                require(flowId in flowIds) { "分组引用了不存在的 Flow：$flowId" }
-                require(seenFlows.add(flowId)) { "Flow 只能属于一个分组：$flowId" }
+                require(flowId in flowIds) { "分组引用了不存在的插件：$flowId" }
+                require(seenFlows.add(flowId)) { "插件只能属于一个分组：$flowId" }
             }
             SourceGroup(name, group.flowIds.toList())
         }
@@ -685,21 +708,21 @@ class ProjectStore(
     ): ProjectSnapshot {
         val current = openProject(projectId)
         require(current.manifest.sourceMode == ProjectSourceMode.VISUAL) {
-            "只有可视化项目可以复制 Flow"
+            "只有可视化项目可以复制插件"
         }
         require(current.manifest.flows.map(ProjectFlow::flowId).toSet() == expectedFlowIds) {
             throw ProjectManifestConflictException()
         }
-        require(FLOW_ID.matches(targetFlowId)) { "非法 Flow ID：$targetFlowId" }
-        require(current.manifest.flows.none { it.flowId == targetFlowId }) { "Flow 已存在：$targetFlowId" }
-        require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "Flow 数量不能超过 256" }
+        require(FLOW_ID.matches(targetFlowId)) { "非法插件 ID：$targetFlowId" }
+        require(current.manifest.flows.none { it.flowId == targetFlowId }) { "插件已存在：$targetFlowId" }
+        require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "插件数量不能超过 256" }
         val origin = current.manifest.flows.singleOrNull { it.flowId == sourceFlowId }
-            ?: throw IllegalArgumentException("Flow 不存在：$sourceFlowId")
+            ?: throw IllegalArgumentException("插件不存在：$sourceFlowId")
         val target = flowPathForName(fileName)
         require(current.manifest.flows.none { it.path == target }) { "源文件名已存在：$fileName" }
 
         val originSource = current.flowSources[sourceFlowId]
-            ?: throw ProjectStoreException("Flow 源码缺失：$sourceFlowId")
+            ?: throw ProjectStoreException("插件源码缺失：$sourceFlowId")
         val rootBlockId = "block-${UUID.randomUUID()}"
         val copied = reidentifyFlowSource(originSource, origin.rootBlockId, rootBlockId, sourceFlowId)
         val declaration = ProjectFlow(
@@ -711,7 +734,7 @@ class ProjectStore(
         )
         val flowFile = File(current.directory, target)
         checkContained(flowFile)
-        require(!flowFile.exists()) { "Flow 文件已存在：$target" }
+        require(!flowFile.exists()) { "插件文件已存在：$target" }
         writeAtomic(flowFile, copied.toByteArray(Charsets.UTF_8), backup = null)
         try {
             invalidateGeneration(current.directory)
@@ -996,7 +1019,7 @@ class ProjectStore(
             ProjectSourceMode.VISUAL -> manifest.flows.forEach { flow ->
                 val file = File(directory, flow.path)
                 require(file.length() in 1..MAX_FLOW_SOURCE_BYTES.toLong()) {
-                    "Flow 文件大小无效：${flow.path}"
+                    "插件文件大小无效：${flow.path}"
                 }
                 file.readText(Charsets.UTF_8)
             }
@@ -1084,7 +1107,23 @@ class ProjectStore(
             if (!normalized.has("flows")) normalized.add("flows", com.google.gson.JsonArray())
             if (!normalized.has("resources")) normalized.add("resources", com.google.gson.JsonArray())
             if (!normalized.has("debugSettings")) {
-                normalized.add("debugSettings", JsonObject().apply { addProperty("runDelayMs", 0) })
+                normalized.add("debugSettings", JsonObject().apply {
+                    addProperty("runDelayMs", 0)
+                    addProperty("showRunPrompts", true)
+                    add("runPromptFilters", json.toJsonTree(RunPromptFilters()))
+                    add("popupStyle", json.toJsonTree(PopupStyle()))
+                })
+            } else {
+                normalized.getAsJsonObject("debugSettings").let { settings ->
+                    if (!settings.has("showRunPrompts")) settings.addProperty("showRunPrompts", true)
+                    if (!settings.has("runPromptFilters")) settings.add("runPromptFilters", json.toJsonTree(RunPromptFilters()))
+                    if (!settings.has("popupStyle")) {
+                        settings.add("popupStyle", json.toJsonTree(PopupStyle()))
+                    } else {
+                        val style = settings.getAsJsonObject("popupStyle")
+                        if (!style.has("widthPx")) settings.add("popupStyle", migrateLegacyPopupStyle(style))
+                    }
+                }
             }
             val manifest = json.fromJson(normalized, ProjectManifestDocument::class.java)
             validateManifest(manifest)
@@ -1254,9 +1293,10 @@ class ProjectStore(
         kind: ProjectResourceKind,
         stem: String,
         extension: String,
+        imageDirectory: String = "",
     ): String {
         val prefix = when (kind) {
-            ProjectResourceKind.IMAGE -> "assets/images/"
+            ProjectResourceKind.IMAGE -> "assets/images/$imageDirectory"
             ProjectResourceKind.GLYPH_DICTIONARY -> "dictionaries/"
         }
         val existing = current.manifest.resources.map { it.get("path").asString }.toSet()
@@ -1269,18 +1309,33 @@ class ProjectStore(
         throw ProjectStoreException("无法生成唯一资源名")
     }
 
+    private fun validateImageResourceDirectory(directory: String): String {
+        if (directory.isEmpty()) return ""
+        require(directory.length <= 120 && !directory.startsWith('/') && !directory.endsWith('/') &&
+            '\\' !in directory && '\u0000' !in directory) {
+            "图片文件夹路径无效"
+        }
+        val segments = directory.split('/')
+        require(segments.size in 1..4 && segments.all { segment ->
+            segment.length in 1..40 && segment != "." && segment != ".." &&
+                segment.all { it.isLetterOrDigit() || it in "._-" }
+        }) { "图片文件夹名称只能包含文字、数字、点、横线和下划线，最多四层" }
+        return segments.joinToString("/", postfix = "/")
+    }
+
     private fun resourceManifestKind(kind: ProjectResourceKind): String = when (kind) {
         ProjectResourceKind.IMAGE -> "image"
         ProjectResourceKind.GLYPH_DICTIONARY -> "glyphDictionary"
     }
 
     private fun isResourceReferenced(snapshot: ProjectSnapshot, path: String): Boolean =
+        snapshot.manifest.runnerUi?.let { com.autoscript.script.ui.ScriptUiDefinition.parse(it.toString()).fields.any { field -> field.control == com.autoscript.script.ui.UiControl.IMAGE && field.initialValue == path } } == true ||
         when (snapshot.manifest.sourceMode) {
             ProjectSourceMode.LUA -> snapshot.luaSources.values.any { it.contains(path) }
             ProjectSourceMode.VISUAL -> snapshot.flowSources.any { (flowId, source) ->
                 source.lineSequence().filter(String::isNotBlank).any { line ->
                     val node = runCatching { JsonParser.parseString(line).asJsonObject }
-                        .getOrElse { throw ProjectStoreException("Flow $flowId 损坏，不能安全删除资源") }
+                        .getOrElse { throw ProjectStoreException("插件 $flowId 损坏，不能安全删除资源") }
                     jsonContainsString(node.get("args"), path)
                 }
             }
@@ -1312,7 +1367,7 @@ class ProjectStore(
         targetRootBlockId: String,
         sourceFlowId: String,
     ): String {
-        fun corrupt() = ProjectStoreException("Flow $sourceFlowId 损坏，不能安全复制")
+        fun corrupt() = ProjectStoreException("插件 $sourceFlowId 损坏，不能安全复制")
         fun text(node: JsonObject, key: String): String? =
             node.get(key)?.takeIf { it.isJsonPrimitive }?.asString
 
@@ -1357,7 +1412,7 @@ class ProjectStore(
             if (sourceFlowId == targetFlowId) return@any false
             source.lineSequence().filter(String::isNotBlank).any { line ->
                 val node = runCatching { JsonParser.parseString(line).asJsonObject }
-                    .getOrElse { throw ProjectStoreException("Flow $sourceFlowId 损坏，不能安全删除") }
+                    .getOrElse { throw ProjectStoreException("插件 $sourceFlowId 损坏，不能安全删除") }
                 node.get("kind")?.asString == "flow.call" &&
                     node.getAsJsonObject("args")?.get("targetFlowId")?.asString == targetFlowId
             }
@@ -1387,7 +1442,7 @@ class ProjectStore(
             ProjectSourceMode.VISUAL -> manifest.flows.forEach { flow ->
                 val file = File(directory, flow.path)
                 checkContained(file)
-                require(file.isFile) { "缺少 Flow 文件：${flow.path}" }
+                require(file.isFile) { "缺少插件文件：${flow.path}" }
             }
         }
         manifest.resources.forEach { resource ->
@@ -1439,7 +1494,7 @@ class ProjectStore(
 
     private fun validateManifest(manifest: ProjectManifestDocument) {
         require(manifest.formatVersion == CURRENT_PROJECT_FORMAT_VERSION) { "不支持的项目版本" }
-        require(manifest.flowSchemaVersion == 1) { "不支持的 Flow 版本" }
+        require(manifest.flowSchemaVersion == 1) { "不支持的插件版本" }
         require(RUNTIME_API.matches(manifest.runtimeApi)) { "非法 Runtime API 版本" }
         validateProjectId(manifest.projectId)
         validateName(manifest.name)
@@ -1475,29 +1530,29 @@ class ProjectStore(
                 require(luaDirectories.all(::isValidLuaDirectory)) { "Lua 文件夹路径无效" }
                 require(LUA_MODULE_ROOT in luaDirectories) { "Lua 根文件夹缺失" }
                 require(luaFiles.flatMap(::luaParentDirectories).all { it in luaDirectories }) { "Lua 文件父文件夹缺失" }
-                require(manifest.entryFlowId == null && manifest.flows.isEmpty()) { "Lua 项目不能声明 Flow 入口" }
+                require(manifest.entryFlowId == null && manifest.flows.isEmpty()) { "Lua 项目不能声明插件入口" }
             }
             ProjectSourceMode.VISUAL -> {
                 require(manifest.entryPoint == null) { "可视化项目不能声明 Lua 入口" }
                 require(manifest.luaFiles.isEmpty()) { "可视化项目不能声明 Lua 文件" }
                 require(manifest.luaDirectories.isEmpty()) { "可视化项目不能声明 Lua 文件夹" }
-                val entry = requireNotNull(manifest.entryFlowId) { "可视化项目缺少入口 Flow" }
+                val entry = requireNotNull(manifest.entryFlowId) { "可视化项目缺少入口插件" }
                 require(manifest.flows.isNotEmpty() && manifest.flows.any { it.flowId == entry }) {
-                    "入口 Flow 不存在"
+                    "入口插件不存在"
                 }
                 require(manifest.flows.map(ProjectFlow::flowId).distinct().size == manifest.flows.size) {
-                    "Flow ID 重复"
+                    "插件 ID 重复"
                 }
                 require(manifest.flows.map(ProjectFlow::path).distinct().size == manifest.flows.size) {
-                    "Flow 路径重复"
+                    "插件路径重复"
                 }
                 require(manifest.flows.map(ProjectFlow::rootBlockId).distinct().size == manifest.flows.size) {
                     "根积木 ID 重复"
                 }
                 manifest.flows.forEach { flow ->
-                    require(FLOW_ID.matches(flow.flowId)) { "非法 Flow ID：${flow.flowId}" }
+                    require(FLOW_ID.matches(flow.flowId)) { "非法插件 ID：${flow.flowId}" }
                     require(flow.rootBlockId.isNotEmpty() && flow.rootBlockId.length <= 128) { "非法根积木 ID" }
-                    require(isValidFlowPath(flow.path)) { "非法 Flow 路径：${flow.path}" }
+                    require(isValidFlowPath(flow.path)) { "非法插件路径：${flow.path}" }
                 }
             }
         }
@@ -1528,17 +1583,112 @@ class ProjectStore(
         variables.forEach { variable ->
             require(PARAMETER_NAME.matches(variable.name) && variable.name.length <= 64) { "非法变量名：${variable.name}" }
             require(keys.add(variable.scope to "${variable.flowId.orEmpty()}:${variable.name}")) { "变量声明重复：${variable.name}" }
-            if (variable.scope == ProjectVariableScope.GLOBAL) require(variable.flowId == null) { "全局变量不能指定 Flow" }
-            else require(variable.flowId != null && flows.any { it.flowId == variable.flowId }) { "局部变量缺少有效 Flow" }
+            if (variable.scope == ProjectVariableScope.GLOBAL) require(variable.flowId == null) { "全局变量不能指定插件" }
+            else require(variable.flowId != null && flows.any { it.flowId == variable.flowId }) { "局部变量缺少有效插件" }
         }
+    }
+
+    private fun migrateLegacyPopupStyle(style: JsonObject): JsonElement {
+        require(style.keySet().all { it in setOf(
+            "widthDp", "heightDp", "xPercent", "yPercent", "backgroundColor", "textColor",
+            "fontSp", "cornerDp", "durationMs", "textAlign",
+        ) }) { "旧版弹窗样式含未知字段" }
+        fun oldInt(key: String, default: Int) = style.get(key)?.asInt ?: default
+        val widthDp = oldInt("widthDp", 260)
+        val heightDp = oldInt("heightDp", 72)
+        val xPercent = oldInt("xPercent", 50)
+        val yPercent = oldInt("yPercent", 40)
+        val fontSp = oldInt("fontSp", 14)
+        val cornerDp = oldInt("cornerDp", 8)
+        require(widthDp in 120..600 && heightDp in 44..400 && xPercent in 0..100 &&
+            yPercent in 0..100 && fontSp in 10..48 && cornerDp in 0..48) {
+            "旧版弹窗样式无效"
+        }
+        val metrics = runCatching { android.content.res.Resources.getSystem().displayMetrics }.getOrNull()
+        val density = metrics?.density?.takeIf { it > 0f } ?: 1f
+        val scaledDensity = metrics?.scaledDensity?.takeIf { it > 0f } ?: density
+        val widthPx = (widthDp * density).roundToInt().coerceIn(120, 2160)
+        val heightPx = (heightDp * density).roundToInt().coerceIn(44, 1200)
+        val xPx = metrics?.widthPixels?.takeIf { it > 0 }?.let {
+            (it * xPercent / 100 - widthPx / 2).coerceAtLeast(0)
+        } ?: -1
+        val yPx = metrics?.heightPixels?.takeIf { it > 0 }?.let {
+            (it * yPercent / 100 - heightPx / 2).coerceAtLeast(0)
+        } ?: -1
+        return json.toJsonTree(PopupStyle(
+            widthPx = widthPx, heightPx = heightPx, xPx = xPx, yPx = yPx,
+            backgroundColor = style.get("backgroundColor")?.asString ?: "#B3000000",
+            textColor = style.get("textColor")?.asString ?: "#FFFFFFFF",
+            fontPx = (fontSp * scaledDensity).roundToInt().coerceIn(10, 160),
+            cornerPx = (cornerDp * density).roundToInt().coerceIn(0, 200),
+            durationMs = oldInt("durationMs", 3_000),
+            textAlign = style.get("textAlign")?.asString ?: "center",
+        ))
     }
 
     private fun validateDebugSettings(settings: ProjectDebugSettings) {
         require(settings.runDelayMs in 0..60_000) { "运行延迟必须在 0 至 60000 毫秒之间" }
+        val style = settings.popupStyle
+        require(style.widthPx in 1..2160 && style.heightPx in 1..1200 &&
+            style.xPx in -1..10_000 && style.yPx in -1..10_000 &&
+            style.fontPx in 10..160 && style.cornerPx in 0..200 &&
+            style.durationMs in 500..30_000 && style.textAlign in setOf("left", "center", "right") &&
+            listOf(style.backgroundColor, style.textColor).all { it.matches(Regex("#[0-9A-Fa-f]{8}")) }) {
+            "弹出提示样式无效"
+        }
+        val filters = settings.runPromptFilters
+        require(filters.variableScope == "all" || filters.variableScope == "global" ||
+            (filters.variableScope.startsWith("flow:") && filters.variableScope.length <= 133)) {
+            "运行提示变量范围无效"
+        }
+        require(filters.variableType in setOf("all", "integer", "number", "string", "image")) {
+            "运行提示变量类型无效"
+        }
+        require(filters.variableName == "all" ||
+            (filters.variableName.length <= 64 && PARAMETER_NAME.matches(filters.variableName))) {
+            "运行提示变量名称无效"
+        }
     }
 
+    private fun validateInterfaceReferences(manifest: ProjectManifestDocument) {
+        val json = manifest.runnerUi?.takeIf { it.has("version") } ?: return
+        val model = com.autoscript.script.ui.ScriptUiDefinition.parse(json.toString())
+        val bindings = mutableSetOf<String>()
+        model.fields.forEach { field ->
+            val ui = requireNotNull(field.ui)
+            if (field.control == com.autoscript.script.ui.UiControl.IMAGE && field.initialValue.isNotBlank())
+                require(manifest.resources.any { it.get("kind")?.asString == "image" && it.get("path")?.asString == field.initialValue }) { "${field.label} 图片不是已声明的项目资源" }
+            ui.binding?.let { binding ->
+                require(bindings.add(binding)) { "多个控件不能绑定同一变量" }
+                val parts = binding.split(':')
+                if (parts[0] == "param") {
+                    val entry = manifest.flows.find { it.flowId == manifest.entryFlowId }
+                    val parameter = entry?.params?.find { it.get("name").asString == parts[1] } ?: throw IllegalArgumentException("绑定参数不存在")
+                    require(uiParameterCompatible(field.kind, parameter.get("type").asString)) { "绑定参数类型不匹配" }
+                } else {
+                    val variable = manifest.variables.find { it.name == parts.last() &&
+                        if (parts[0] == "global") it.scope == ProjectVariableScope.GLOBAL else it.scope == ProjectVariableScope.FLOW && it.flowId == parts[1] } ?: throw IllegalArgumentException("绑定变量不存在")
+                    require(if (field.kind in setOf("integer", "boolean")) variable.type in setOf(ProjectVariableType.INTEGER, ProjectVariableType.NUMBER) else variable.type == ProjectVariableType.STRING) { "绑定变量类型不匹配" }
+                }
+            }
+            ui.events.values.filter { it.startsWith("flow:") }.forEach { action ->
+                val plugin = manifest.flows.find { it.flowId == action.removePrefix("flow:") } ?: throw IllegalArgumentException("事件插件不存在")
+                plugin.params.forEach { p ->
+                    val name = p.get("name").asString; val type = p.get("type").asString
+                    require(when (name) { "controlId", "event" -> type == "string"; "value" -> uiParameterCompatible(field.kind, type); else -> !p.get("required").asBoolean }) { "事件插件参数不匹配：$name" }
+                }
+            }
+        }
+    }
+    private fun uiParameterCompatible(kind: String, type: String) = when (kind) {
+        "integer" -> type in setOf("integer", "number"); "boolean" -> type == "boolean"; else -> type == "string"
+    }
     private fun validateRunnerUi(runnerUi: JsonObject?) {
         if (runnerUi == null) return
+        if (runnerUi.has("version")) {
+            com.autoscript.script.ui.ScriptUiDefinition.parse(runnerUi.toString())
+            return
+        }
         require(runnerUi.keySet() == setOf("description", "fields")) { "runnerUi 含未知字段" }
         val description = runnerUi.get("description")
         require(description != null) { "runnerUi 缺少description" }
@@ -1642,27 +1792,27 @@ class ProjectStore(
             val flow = element.asJsonObject
             val flowKeys = setOf("flowId", "path", "rootBlockId", "params", "returns")
             require(flow.keySet() == flowKeys) {
-                "Flow 声明字段不完整或含未知字段"
+                "插件声明字段不完整或含未知字段"
             }
             flow.getAsJsonArray("params").forEach { parameter ->
                 val value = parameter.asJsonObject
                 require(value.keySet() == setOf("name", "type", "required")) {
-                    "Flow 参数含未知字段"
+                    "插件参数含未知字段"
                 }
-                require(PARAMETER_NAME.matches(value.get("name").asString)) { "非法 Flow 参数名" }
-                require(value.get("type").asString in VALUE_TYPES) { "非法 Flow 参数类型" }
+                require(PARAMETER_NAME.matches(value.get("name").asString)) { "非法插件参数名" }
+                require(value.get("type").asString in VALUE_TYPES) { "非法插件参数类型" }
                 require(value.get("required").isJsonPrimitive && value.get("required").asJsonPrimitive.isBoolean) {
-                    "Flow 参数 required 必须是布尔值"
+                    "插件参数 required 必须是布尔值"
                 }
             }
             if (!flow.get("returns").isJsonNull) {
                 val returns = flow.getAsJsonObject("returns")
                 require(returns.keySet() == setOf("type", "nullable")) {
-                    "Flow 返回值含未知字段"
+                    "插件返回值含未知字段"
                 }
-                require(returns.get("type").asString in VALUE_TYPES) { "非法 Flow 返回类型" }
+                require(returns.get("type").asString in VALUE_TYPES) { "非法插件返回类型" }
                 require(returns.get("nullable").isJsonPrimitive && returns.get("nullable").asJsonPrimitive.isBoolean) {
-                    "Flow 返回 nullable 必须是布尔值"
+                    "插件返回 nullable 必须是布尔值"
                 }
             }
         }
@@ -1724,7 +1874,7 @@ class ProjectStore(
      */
     private fun normalizeFlowPath(relativePath: String): String {
         val clean = relativePath.trim().trim('/')
-        require(isValidFlowPath(clean)) { "非法 Flow 路径：$relativePath" }
+        require(isValidFlowPath(clean)) { "非法插件路径：$relativePath" }
         return clean
     }
 

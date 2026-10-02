@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/input.pointerup/1/input.pointerup.schema.json",
+  "title": "input.pointerup node semantics",
+  "type": "object",
+  "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": { "const": "input.pointerup" },
+    "nodeVersion": { "const": 1 },
+    "args": { "type": "object", "additionalProperties": false }
+  }
+}

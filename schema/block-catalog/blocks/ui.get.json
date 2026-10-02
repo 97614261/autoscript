@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "ui.get",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ui.get/1/ui.get.schema.json",
+  "title": "读取页面参数",
+  "category": "task",
+  "summary": "按控件 ID 读取脚本页面参数的当前值，以字符串写入变量；可读取任意设计页的控件，不限于当前显示页。",
+  "searchTerms": [
+    "界面",
+    "ui",
+    "读取控件值",
+    "读取页面参数",
+    "界面参数",
+    "输入框",
+    "复选框",
+    "UI.getValue"
+  ],
+  "requiredCapabilities": [
+    "ui.control"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "controlId",
+      "label": "控件 ID",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "control1"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符串）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "uiValue"
+    }
+  ],
+  "migrations": []
+}

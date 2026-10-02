@@ -1,0 +1,6 @@
+{
+  "schemaVersion":1,"opcode":3004,"name":"Timer.cancel","since":"1.7","capability":"core.task","execution":"async_task","cancelMode":"cooperative","sideEffect":"task","timeoutMs":null,"resourceOwnership":"task",
+  "summary":"取消自己的周期定时器及正在运行的回调。",
+  "params":[{"name":"timer","type":"integer","required":true,"summary":"Timer.every返回的ID。"}],
+  "returns":{"type":"boolean","nullable":false,"summary":"是否找到所属定时器。"},"legacyAliases":[]
+}

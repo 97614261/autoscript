@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "control.label",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.label/1/control.label.schema.json",
+  "title": "放置标记",
+  "category": "control",
+  "summary": "在当前 插件 根层级放置跳转目标。",
+  "searchTerms": ["label", "标记", "跳转"],
+  "requiredCapabilities": [],
+  "childBlocks": [],
+  "properties": [{ "path": "name", "label": "标记名", "editor": "string", "required": true, "defaultValue": "mark" }],
+  "migrations": []
+}

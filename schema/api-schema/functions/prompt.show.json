@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1101,
+  "name": "Prompt.show",
+  "since": "1.5",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "向脚本使用者显示一条运行中的提示信息。",
+  "params": [
+    { "name": "message", "type": "string", "required": true, "summary": "最多2048字节的 UTF-8 提示文本。" }
+  ],
+  "returns": { "type": "void", "nullable": false, "summary": "提示已交给 Runner 显示。" },
+  "legacyAliases": ["Prompt"]
+}

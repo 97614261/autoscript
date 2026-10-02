@@ -84,6 +84,187 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 1101,
+      "name": "Prompt.show",
+      "since": "1.5",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "向脚本使用者显示一条运行中的提示信息。",
+      "params": [
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "summary": "最多2048字节的 UTF-8 提示文本。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "提示已交给 Runner 显示。"
+      },
+      "legacyAliases": [
+        "Prompt"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1102,
+      "name": "Prompt.toast",
+      "since": "1.6",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "按项目提示样式显示一条短时弹出提示。",
+      "params": [
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "summary": "最多2048字节的 UTF-8 提示文本。"
+        },
+        {
+          "name": "styleJson",
+          "type": "string",
+          "required": false,
+          "summary": "可选的受限提示样式 JSON；缺省使用默认样式。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "提示已交给 Runner 显示并会按时长消失。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1200,
+      "name": "UI.waitEvent",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": 1800000,
+      "resourceOwnership": "task",
+      "summary": "等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。",
+      "params": [],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1201,
+      "name": "UI.getValue",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "读取控件字符串值。",
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "summary": "id"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "读取控件字符串值。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1202,
+      "name": "UI.setValue",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "设置控件值，不触发用户事件。",
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "summary": "id"
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "required": true,
+          "summary": "value"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "设置控件值，不触发用户事件。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1203,
+      "name": "UI.command",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。",
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "summary": "id"
+        },
+        {
+          "name": "operation",
+          "type": "string",
+          "required": true,
+          "summary": "operation"
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "required": true,
+          "summary": "value"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 2000,
       "name": "System.getScreenSize",
       "since": "1.0",
@@ -150,6 +331,120 @@
       "legacyAliases": [
         "Sleep"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3001,
+      "name": "Task.spawn",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "task",
+      "timeoutMs": null,
+      "resourceOwnership": "task",
+      "summary": "在同一Lua VM启动子任务；父任务结束时自动取消，失败向父任务传播。",
+      "params": [
+        {
+          "name": "callback",
+          "type": "function",
+          "required": true,
+          "summary": "无参数回调，只保存在VM内，宿主边界仅传不透明登记ID。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "子任务ID，仅创建者可取消。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3002,
+      "name": "Task.cancel",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "task",
+      "timeoutMs": null,
+      "resourceOwnership": "task",
+      "summary": "优先取消自己创建的子任务，不能取消其他任务或父任务。",
+      "params": [
+        {
+          "name": "task",
+          "type": "integer",
+          "required": true,
+          "summary": "Task.spawn返回的ID。"
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "nullable": false,
+        "summary": "是否找到可取消的子任务。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3003,
+      "name": "Timer.every",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "task",
+      "timeoutMs": null,
+      "resourceOwnership": "task",
+      "summary": "创建非重入周期回调；错过tick合并，回调失败终止所有者，父任务结束自动取消。",
+      "params": [
+        {
+          "name": "milliseconds",
+          "type": "integer",
+          "required": true,
+          "summary": "10–60000毫秒。"
+        },
+        {
+          "name": "callback",
+          "type": "function",
+          "required": true,
+          "summary": "VM内无参数回调，不能通过宿主边界。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "定时器ID，仅创建者可取消。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3004,
+      "name": "Timer.cancel",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "task",
+      "timeoutMs": null,
+      "resourceOwnership": "task",
+      "summary": "取消自己的周期定时器及正在运行的回调。",
+      "params": [
+        {
+          "name": "timer",
+          "type": "integer",
+          "required": true,
+          "summary": "Timer.every返回的ID。"
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "nullable": false,
+        "summary": "是否找到所属定时器。"
+      },
+      "legacyAliases": []
     },
     {
       "schemaVersion": 1,
@@ -268,6 +563,158 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 4003,
+      "name": "Input.pointerDown",
+      "since": "1.6",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "task_pointer_lease",
+      "summary": "在设计坐标按下单指触点；触点由当前任务持有，任务结束或超时自动释放。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "设计坐标X。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "设计坐标Y。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "Root输入后端确认按下时返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4004,
+      "name": "Input.pointerMove",
+      "since": "1.6",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "task_pointer_lease",
+      "summary": "移动当前任务持有的单指触点；未按下或非持有任务调用会失败。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "设计坐标X。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "设计坐标Y。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "Root输入后端确认移动时返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4005,
+      "name": "Input.pointerUp",
+      "since": "1.6",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "task_pointer_lease",
+      "summary": "释放当前任务持有的单指触点；其他任务不能代替持有者释放。",
+      "params": [],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "Root输入后端确认弹起时返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4006,
+      "name": "Input.tapScreen",
+      "since": "1.7",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "input",
+      "timeoutMs": 5000,
+      "resourceOwnership": "task_input_transaction",
+      "summary": "按原始屏幕像素点击，不再进行设计坐标缩放。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "原始屏幕X像素。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "原始屏幕Y像素。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "失败抛出受控错误。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4007,
+      "name": "Input.pointerDownScreen",
+      "since": "1.7",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "input",
+      "timeoutMs": 5000,
+      "resourceOwnership": "task_input_transaction",
+      "summary": "按原始屏幕像素按住单触点，使用既有任务触点租约和弹起清理。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "原始屏幕X像素。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "原始屏幕Y像素。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "失败抛出受控错误。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 5000,
       "name": "Screen.capture",
       "since": "1.1",
@@ -370,6 +817,57 @@
       "legacyAliases": [
         "LoadImage"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5005,
+      "name": "Screen.crop",
+      "since": "1.7",
+      "capability": "screen.capture",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "resource_create",
+      "timeoutMs": 5000,
+      "resourceOwnership": "task_owned_frame",
+      "summary": "从已有帧裁剪半开矩形，返回任务拥有的独立不可变图像句柄，需Screen.release释放。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "源帧句柄。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "左边界。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "上边界。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "下边界，不包含。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "裁剪图像句柄；任务结束时自动清理。"
+      },
+      "legacyAliases": []
     },
     {
       "schemaVersion": 1,
@@ -496,6 +994,12 @@
           "type": "integer",
           "required": true,
           "summary": "ROI下边界，不包含。"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "required": false,
+          "summary": "API 1.7新增：0左上、1右上、2左下、3右下、4中心向外；省略为0。与旧版多点找色枚举独立。"
         }
       ],
       "returns": {
@@ -813,6 +1317,144 @@
       "legacyAliases": [
         "FindAllColor"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5107,
+      "name": "Screen.findImages",
+      "since": "1.7",
+      "capability": "vision.template",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "按给定顺序匹配1–64个已声明图片，共享比较预算，返回第一个匹配的模板标识、坐标与得分。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "缓存帧句柄。"
+        },
+        {
+          "name": "pathsJson",
+          "type": "string",
+          "required": true,
+          "summary": "已声明模板路径的JSON字符串数组，最多64项和16384字节。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "通道容差0–255。"
+        },
+        {
+          "name": "similarityPermille",
+          "type": "integer",
+          "required": true,
+          "summary": "相似度0–1000。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "左边界。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "上边界。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "右边界，不包含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "下边界，不包含。"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "required": false,
+          "summary": "0左上、1右上、2左下、3右下、4中心向外，默认0。"
+        }
+      ],
+      "returns": {
+        "type": "TemplateMatch",
+        "nullable": true,
+        "summary": "x/y、path、scorePermille、width/height；没有匹配为nil。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5108,
+      "name": "Screen.findGray",
+      "since": "1.7",
+      "capability": "vision.opencv",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frames",
+      "summary": "OpenCV灰度归一化平方差找图，返回最高分位置；不支持缩放旋转，与像素算法得分不同。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "缓存帧。"
+        },
+        {
+          "name": "template",
+          "type": "integer",
+          "required": true,
+          "summary": "Screen.loadImage加载的声明图片帧。"
+        },
+        {
+          "name": "similarityPermille",
+          "type": "integer",
+          "required": true,
+          "summary": "最低灰度得分0–1000。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "左边界。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "上边界。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "右边界，不含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "下边界，不含。"
+        }
+      ],
+      "returns": {
+        "type": "GrayMatchResult",
+        "nullable": true,
+        "summary": "x/y和scorePermille；无匹配nil。"
+      },
+      "legacyAliases": []
     },
     {
       "schemaVersion": 1,
@@ -1213,6 +1855,63 @@
       "legacyAliases": [
         "GlyphOcr"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 6101,
+      "name": "Ocr.alphanumeric",
+      "since": "1.7",
+      "capability": "ocr.onnx",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "ONNX英文移动模型识别指定单行ROI，只输出A-Z/a-z/0-9；无检测或中文识别。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "缓存帧。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "左边界。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "上边界。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "右边界，不含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "下边界，不含。"
+        },
+        {
+          "name": "minimumConfidencePermille",
+          "type": "integer",
+          "required": false,
+          "summary": "最低逐字置信度0–1000，默认500。"
+        }
+      ],
+      "returns": {
+        "type": "AlphanumericResult",
+        "nullable": false,
+        "summary": "text与averageScorePermille，无可信字符为空文本。"
+      },
+      "legacyAliases": []
     }
   ]
 }

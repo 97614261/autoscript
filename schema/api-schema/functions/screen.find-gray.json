@@ -1,0 +1,13 @@
+{
+ "schemaVersion":1,"opcode":5108,"name":"Screen.findGray","since":"1.7","capability":"vision.opencv","execution":"async_task","cancelMode":"cooperative","sideEffect":"none","timeoutMs":5000,"resourceOwnership":"borrowed_frames",
+ "summary":"OpenCV灰度归一化平方差找图，返回最高分位置；不支持缩放旋转，与像素算法得分不同。",
+ "params":[
+ {"name":"frame","type":"integer","required":true,"summary":"缓存帧。"},
+ {"name":"template","type":"integer","required":true,"summary":"Screen.loadImage加载的声明图片帧。"},
+ {"name":"similarityPermille","type":"integer","required":true,"summary":"最低灰度得分0–1000。"},
+ {"name":"left","type":"integer","required":true,"summary":"左边界。"},
+ {"name":"top","type":"integer","required":true,"summary":"上边界。"},
+ {"name":"right","type":"integer","required":true,"summary":"右边界，不含。"},
+ {"name":"bottom","type":"integer","required":true,"summary":"下边界，不含。"}],
+ "returns":{"type":"GrayMatchResult","nullable":true,"summary":"x/y和scorePermille；无匹配nil。"},"legacyAliases":[]
+}

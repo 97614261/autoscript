@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ui.command/1/ui.command.schema.json",
+  "title": "界面操作",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ui.command"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlId",
+        "operation",
+        "value"
+      ],
+      "properties": {
+        "controlId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "operation": {
+          "enum": [
+            "text",
+            "visible",
+            "enabled",
+            "items",
+            "progress",
+            "page",
+            "show",
+            "hide",
+            "minimize"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "valueVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

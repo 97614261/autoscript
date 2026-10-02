@@ -1,0 +1,13 @@
+Bundled model: en_PP-OCRv4_rec_mobile.onnx
+SHA256: e8770c967605983d1570cdf5352041dfb68fa0c21664f49f47b155abd3e0e318
+Size: 7653044 bytes
+Source registry: https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml
+Artifact: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx
+Upstream: PaddlePaddle/PaddleOCR, PP-OCRv4 English mobile recognition.
+Model weights: Baidu / applicable PaddleOCR rights holders, Apache License 2.0.
+Converted to ONNX and packaged by RapidOCR; this repository does not modify the weights.
+No endorsement by PaddlePaddle, Baidu, RapidOCR, OpenCV or Microsoft is implied.
+
+OpenCV 4.10.0: Apache License 2.0, https://opencv.org/license/
+ONNX Runtime Android 1.19.2: MIT, https://github.com/microsoft/onnxruntime/blob/v1.19.2/LICENSE
+Runtime code and model weights are separate licensed works.

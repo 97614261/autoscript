@@ -1,0 +1,7 @@
+{
+  "schemaVersion":1,"opcode":4006,"name":"Input.tapScreen","since":"1.7",
+  "capability":"input.basic","execution":"async_task","cancelMode":"cooperative","sideEffect":"input","timeoutMs":5000,
+  "resourceOwnership":"task_input_transaction","summary":"按原始屏幕像素点击，不再进行设计坐标缩放。",
+  "params":[{"name":"x","type":"integer","required":true,"summary":"原始屏幕X像素。"},{"name":"y","type":"integer","required":true,"summary":"原始屏幕Y像素。"}],
+  "returns":{"type":"void","nullable":false,"summary":"失败抛出受控错误。"},"legacyAliases":[]
+}

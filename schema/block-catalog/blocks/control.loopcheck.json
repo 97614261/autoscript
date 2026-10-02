@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1, "kind": "control.loopcheck", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.loopcheck/1/control.loopcheck.schema.json",
+  "title": "循环阈值检查", "category": "control",
+  "summary": "在循环体中检测超次/超时；达到阈值时退出最近循环。",
+  "searchTerms": ["循环超次", "循环超时", "阈值", "loop"], "requiredCapabilities": [], "childBlocks": [],
+  "properties": [
+    { "path": "metric", "label": "检查类型", "editor": "enum", "required": true, "defaultValue": "count", "choices": ["count", "elapsed"] },
+    { "path": "limit", "label": "阈值", "editor": "scalar", "required": true, "defaultValue": "3" },
+    { "path": "limitVariable", "label": "阈值变量(可选)", "editor": "string", "required": false },
+    { "path": "unit", "label": "时间单位", "editor": "enum", "required": true, "defaultValue": "milliseconds", "choices": ["milliseconds", "seconds", "minutes"] }
+  ], "migrations": []
+}

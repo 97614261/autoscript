@@ -15,10 +15,20 @@ import com.autoscript.core.model.RuntimeEngineState
 import com.autoscript.core.model.RuntimeRootState
 import com.autoscript.runtime.api.IRuntimeService
 import com.autoscript.runtime.api.IRuntimeStateListener
+import com.autoscript.runtime.api.IInputPointPickListener
+import com.autoscript.runtime.api.InputPointAction
+import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.runtime.api.RuntimeProtocol
 import com.autoscript.runtime.api.VisualCompileReply
+import com.autoscript.runtime.api.TemplateMatchReply
+import com.autoscript.runtime.api.RuntimeDebugReply
 import java.io.File
 import java.io.FileOutputStream
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 
 enum class RuntimeProjectResourceKind {
     IMAGE,
@@ -60,10 +70,28 @@ class RuntimeClient(context: Context) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var remote: IRuntimeService? = null
+    private val startGate = RuntimeStartGate()
     private var bound = false
     @Volatile private var lastSessionGeneration: Long? = null
     @Volatile private var lastEngineState: RuntimeEngineState = RuntimeEngineState.UNKNOWN
     @Volatile private var lastRootState: RuntimeRootState = RuntimeRootState.UNKNOWN
+    private val stateRevision = java.util.concurrent.atomic.AtomicLong(0)
+    private val connectionStates = MutableStateFlow(RuntimeConnectionState())
+    private data class PendingInputPick(val id: Long, val generation: Long, val features: Int, val callback: (InputPointPickReply) -> Unit)
+    private var pendingInputPick: PendingInputPick? = null
+    private val inputPickListener = object : IInputPointPickListener.Stub() {
+        override fun onFinished(reply: InputPointPickReply) {
+            mainHandler.post {
+                val pending = pendingInputPick ?: return@post
+                if (pending.id != reply.requestId) return@post
+                pendingInputPick = null
+                val valid = reply.status in InputPointPickReply.SUCCESS..InputPointPickReply.FAILED && pending.generation == lastSessionGeneration &&
+                    (reply.status != InputPointPickReply.SUCCESS || reply.validFor(pending.id, pending.features))
+                pending.callback(if (valid) reply.copy(message = reply.message.take(160)) else InputPointPickReply(pending.id, InputPointPickReply.FAILED,
+                    reply.action.take(20), message = "选点结果已失效，请重新选择"))
+            }
+        }
+    }
 
     var onStateChanged: ((RuntimeConnectionState) -> Unit)? = null
 
@@ -76,6 +104,7 @@ class RuntimeClient(context: Context) {
         ) {
             mainHandler.post {
                 if (remote == null) return@post
+                if (pendingInputPick?.generation?.let { it != sessionGeneration } == true) failInputPointPick("Runner会话已重建")
                 lastSessionGeneration = sessionGeneration
                 lastEngineState = mapEngineState(stateCode)
                 lastRootState = mapRootState(rootStateCode)
@@ -125,6 +154,8 @@ class RuntimeClient(context: Context) {
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
+            startGate.cancel()
+            failInputPointPick("Runner连接已断开")
             remote = null
             lastSessionGeneration = null
             lastEngineState = RuntimeEngineState.UNKNOWN
@@ -133,6 +164,8 @@ class RuntimeClient(context: Context) {
         }
 
         override fun onBindingDied(name: ComponentName) {
+            startGate.cancel()
+            failInputPointPick("Runner进程已退出")
             remote = null
             bound = false
             lastSessionGeneration = null
@@ -142,6 +175,8 @@ class RuntimeClient(context: Context) {
         }
 
         override fun onNullBinding(name: ComponentName) {
+            startGate.cancel()
+            failInputPointPick("Runner未提供控制接口")
             remote = null
             lastSessionGeneration = null
             lastEngineState = RuntimeEngineState.UNKNOWN
@@ -161,6 +196,8 @@ class RuntimeClient(context: Context) {
     }
 
     fun unbind() {
+        startGate.cancel()
+        cancelInputPointPick()
         runCatching { remote?.unregisterStateListener(stateListener) }
         if (bound) appContext.unbindService(connection)
         bound = false
@@ -304,8 +341,10 @@ class RuntimeClient(context: Context) {
         assetPath: String,
         imageFile: File,
         requestId: Long = System.nanoTime(),
-    ): Boolean {
-        val expectedGeneration = lastSessionGeneration
+    ): Boolean = registerTemplate(remote, lastSessionGeneration, assetPath, imageFile, requestId)
+
+    private fun registerTemplate(service: IRuntimeService?, expectedGeneration: Long?,
+        assetPath: String, imageFile: File, requestId: Long): Boolean {
         if (expectedGeneration == null) {
             publishOperationError("Runner会话尚未建立")
             return false
@@ -315,7 +354,7 @@ class RuntimeClient(context: Context) {
                 imageFile,
                 ParcelFileDescriptor.MODE_READ_ONLY,
             ).use { descriptor ->
-                remote?.registerTemplate(requestId, expectedGeneration, assetPath, descriptor)
+                service?.registerTemplate(requestId, expectedGeneration, assetPath, descriptor)
             }
             when (result) {
                 RuntimeProtocol.TEMPLATE_ACCEPTED -> true
@@ -350,8 +389,10 @@ class RuntimeClient(context: Context) {
         resourcePath: String,
         dictionaryFile: File,
         requestId: Long = System.nanoTime(),
-    ): Boolean {
-        val expectedGeneration = lastSessionGeneration
+    ): Boolean = registerDictionary(remote, lastSessionGeneration, resourcePath, dictionaryFile, requestId)
+
+    private fun registerDictionary(service: IRuntimeService?, expectedGeneration: Long?,
+        resourcePath: String, dictionaryFile: File, requestId: Long): Boolean {
         if (expectedGeneration == null) {
             publishOperationError("Runner会话尚未建立")
             return false
@@ -361,7 +402,7 @@ class RuntimeClient(context: Context) {
                 dictionaryFile,
                 ParcelFileDescriptor.MODE_READ_ONLY,
             ).use { descriptor ->
-                remote?.registerDictionary(
+                service?.registerDictionary(
                     requestId,
                     expectedGeneration,
                     resourcePath,
@@ -398,7 +439,7 @@ class RuntimeClient(context: Context) {
     }
 
     /** Registers every declared project resource in stable path order, then starts the script. */
-    fun startProject(
+    suspend fun startProject(
         projectId: String = "",
         generatedLuaModule: ByteArray,
         resources: List<RuntimeProjectResource>,
@@ -407,7 +448,52 @@ class RuntimeClient(context: Context) {
         designHeight: Int = 1280,
         scaleMode: Int = RuntimeProtocol.SCALE_LETTERBOX,
         requestId: Long = System.nanoTime(),
+        requiresPointerInput: Boolean = false,
+        scriptUiJson: String? = null,
+        scriptUiValuesJson: String = "{}",
     ): Boolean {
+        val job = currentCoroutineContext().job
+        if (!startGate.begin(job)) {
+            publishOperationError("已有启动请求正在准备，请勿重复运行")
+            return false
+        }
+        return try {
+            startPreparedProject(projectId, generatedLuaModule, resources, capabilities, designWidth,
+                designHeight, scaleMode, requestId, requiresPointerInput, scriptUiJson, scriptUiValuesJson)
+        } finally {
+            startGate.finish(job)
+        }
+    }
+
+    private suspend fun startPreparedProject(projectId: String, generatedLuaModule: ByteArray,
+        resources: List<RuntimeProjectResource>, capabilities: List<String>, designWidth: Int,
+        designHeight: Int, scaleMode: Int, requestId: Long, requiresPointerInput: Boolean,
+        scriptUiJson: String?, scriptUiValuesJson: String): Boolean {
+        // Binding is not Root readiness. Keep the first run request alive while Root starts,
+        // using state notifications rather than blocking the UI or polling the daemon.
+        publishRemoteState()
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null) {
+            publishOperationError("Runner会话尚未建立")
+            return false
+        }
+        val ready = awaitRuntimeReady(connectionStates, generation)
+        if (ready != RuntimeStartReadiness.READY) {
+            publishOperationError(if (ready == RuntimeStartReadiness.TIMEOUT) {
+                "等待 Root 就绪超时，请检查 Root 授权后重试"
+            } else "运行环境已变化或 Root 授权失败，请检查运行环境")
+            return false
+        }
+        currentCoroutineContext().ensureActive()
+        suspend fun ensureSession() {
+            currentCoroutineContext().ensureActive()
+            check(remote === service && lastSessionGeneration == generation) { "Runner会话已变化，请重试" }
+        }
+        if (requiresPointerInput && inputFeatures() and RuntimeProtocol.INPUT_FEATURE_SINGLE_POINTER == 0) {
+            publishOperationError("当前 Root 后端不支持持续触点，请移除按下/移动/弹起或更换支持的 Android 系统")
+            return false
+        }
         val invalid = validateProjectResources(resources)
         if (invalid != null) {
             publishOperationError(invalid)
@@ -424,27 +510,47 @@ class RuntimeClient(context: Context) {
             publishOperationError("项目请求编号溢出")
             return false
         }
-        if (!prepareProject(requestIds[0])) return false
+        ensureSession()
+        if (!prepareProject(requestIds[0], service, generation)) return false
+        var started = false
+        try {
         for ((index, resource) in resources.sortedBy(RuntimeProjectResource::path).withIndex()) {
+            ensureSession()
             val resourceRequestId = requestIds[index + 1]
             val registered = when (resource.kind) {
                 RuntimeProjectResourceKind.IMAGE -> registerTemplate(
+                    service, generation,
                     resource.path,
                     resource.file,
                     resourceRequestId,
                 )
                 RuntimeProjectResourceKind.GLYPH_DICTIONARY -> registerDictionary(
+                    service, generation,
                     resource.path,
                     resource.file,
                     resourceRequestId,
                 )
             }
             if (!registered) {
-                stopPartiallyPreparedSession(requestIds.last())
                 return false
             }
         }
-        val started = startScript(
+        if (scriptUiJson != null) {
+            ensureSession()
+            val images = resources.filter { it.kind == RuntimeProjectResourceKind.IMAGE }
+            val configured = runCatching {
+                service.configureScriptUi(generation, projectId, scriptUiJson,
+                    scriptUiValuesJson, images.map { it.path }.toTypedArray(),
+                    images.map { it.file.canonicalPath }.toTypedArray()) == RuntimeProtocol.CONTROL_ACCEPTED
+            }.getOrDefault(false)
+            if (!configured) {
+                publishOperationError("脚本界面准备失败，请检查界面配置与悬浮窗权限")
+                return false
+            }
+        }
+        ensureSession()
+        started = startScript(
+            service = service, expectedGeneration = generation,
             projectId = projectId,
             generatedLuaModule = generatedLuaModule,
             capabilities = capabilities,
@@ -453,11 +559,21 @@ class RuntimeClient(context: Context) {
             scaleMode = scaleMode,
             requestId = requestIds[resources.size + 1],
         )
-        if (!started) stopPartiallyPreparedSession(requestIds.last())
         return started
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            publishOperationError(failure.message ?: "项目启动准备失败")
+            return false
+        } finally {
+            if (!started || !currentCoroutineContext().job.isActive) {
+                stopPartiallyPreparedSession(requestIds.last(), service, generation)
+            }
+        }
     }
 
     fun requestStop(requestId: Long = System.nanoTime()): Boolean {
+        startGate.cancel()
         val expectedGeneration = lastSessionGeneration
         if (expectedGeneration == null) {
             publishOperationError("Runner会话尚未建立")
@@ -598,6 +714,87 @@ class RuntimeClient(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    fun debugSnapshot(projectId: String, expectedGeneration: Long? = lastSessionGeneration): RuntimeDebugReply {
+        val service = remote ?: return RuntimeDebugReply.unavailable()
+        val generation = expectedGeneration ?: return RuntimeDebugReply.unavailable()
+        if (generation != lastSessionGeneration) return RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+        return runCatching { service.getDebugSnapshot(generation, projectId) }.getOrElse { RuntimeDebugReply.unavailable() }
+    }
+
+    fun inputFeatures(): Int {
+        val service = remote ?: return 0
+        val generation = lastSessionGeneration ?: return 0
+        return runCatching { service.getInputFeatures(generation) and 3 }.getOrDefault(0)
+    }
+
+    /** Call on the editor thread. A callback is one-shot and always delivered on the main thread. */
+    fun beginInputPointPick(projectId: String, flowId: String, action: InputPointAction, onResult: (InputPointPickReply) -> Unit): Long? {
+        if (pendingInputPick != null) { publishOperationError("已有选点会话，请先取消"); return null }
+        val service = remote ?: return null
+        val generation = lastSessionGeneration ?: return null
+        val features = inputFeatures()
+        if (!action.available(features)) { publishOperationError("Root输入能力不可用"); return null }
+        val requestId = System.nanoTime().and(Long.MAX_VALUE).coerceAtLeast(1L)
+        pendingInputPick = PendingInputPick(requestId, generation, features, onResult)
+        val accepted = runCatching {
+            service.beginInputPointPick(requestId, generation, projectId, flowId, action.wire, inputPickListener) == RuntimeProtocol.CONTROL_ACCEPTED
+        }.getOrDefault(false)
+        if (!accepted) {
+            pendingInputPick = null
+            publishOperationError("选点未能启动：请检查悬浮窗权限、Root状态，并先停止脚本")
+            return null
+        }
+        return requestId
+    }
+
+    fun cancelInputPointPick(requestId: Long? = pendingInputPick?.id) {
+        val pending = pendingInputPick ?: return
+        if (requestId != pending.id) return
+        pendingInputPick = null
+        runCatching { remote?.cancelInputPointPick(pending.id, pending.generation) }
+    }
+
+    private fun failInputPointPick(message: String) {
+        val pending = pendingInputPick ?: return
+        pendingInputPick = null
+        pending.callback(InputPointPickReply(pending.id, InputPointPickReply.FAILED, "", message = message))
+    }
+
+    fun requestStep(projectId: String, expectedGeneration: Long?): Boolean {
+        return requestDebugControl(projectId, expectedGeneration, step = true)
+    }
+
+    fun resumeDebugProject(projectId: String, expectedGeneration: Long?): Boolean =
+        requestDebugControl(projectId, expectedGeneration, step = false)
+
+    private fun requestDebugControl(projectId: String, expectedGeneration: Long?, step: Boolean): Boolean {
+        val service = remote ?: return false
+        val generation = expectedGeneration ?: return false
+        if (generation != lastSessionGeneration) return false
+        return runCatching {
+            if (service.getDebugSnapshot(generation, projectId).status != RuntimeDebugReply.SUCCESS) false
+            else (if (step) service.requestStep(System.nanoTime(), generation)
+                else service.requestResume(System.nanoTime(), generation)) == RuntimeProtocol.CONTROL_ACCEPTED
+        }.getOrDefault(false)
+    }
+
+    /** Explicit preview on saved images; callers execute this bounded operation off the UI thread. */
+    fun testTemplate(frame: File, template: File, tolerance: Int, similarityPermille: Int): TemplateMatchReply {
+        val service = remote
+        val generation = lastSessionGeneration
+        if (service == null || generation == null) return TemplateMatchReply(TemplateMatchReply.SESSION_MISMATCH, -1, -1, 0)
+        if (tolerance !in 0..255 || similarityPermille !in 0..1000 ||
+            frame.length() !in 1..MAX_PREVIEW_FILE_BYTES || template.length() !in 1..MAX_PREVIEW_FILE_BYTES
+        ) return TemplateMatchReply(TemplateMatchReply.INVALID_IMAGE, -1, -1, 0)
+        return runCatching {
+            ParcelFileDescriptor.open(frame, ParcelFileDescriptor.MODE_READ_ONLY).use { source ->
+                ParcelFileDescriptor.open(template, ParcelFileDescriptor.MODE_READ_ONLY).use { target ->
+                    service.testTemplate(generation, source, target, tolerance, similarityPermille)
+                }
+            }
+        }.getOrElse { TemplateMatchReply(TemplateMatchReply.INVALID_IMAGE, -1, -1, 0) }
+    }
+
     /** Requests a single Root-backed screenshot and copies its FD into the Studio-readable cache. */
     fun capturePreview(requestId: Long = System.nanoTime()): ScreenshotPreviewResult {
         val service = remote
@@ -643,8 +840,12 @@ class RuntimeClient(context: Context) {
         designHeight: Int = 1280,
         scaleMode: Int = RuntimeProtocol.SCALE_LETTERBOX,
         requestId: Long = System.nanoTime(),
-    ): Boolean {
-        val expectedGeneration = lastSessionGeneration
+    ): Boolean = startScript(remote, lastSessionGeneration, projectId, generatedLuaModule, capabilities,
+        designWidth, designHeight, scaleMode, requestId)
+
+    private fun startScript(service: IRuntimeService?, expectedGeneration: Long?, projectId: String,
+        generatedLuaModule: ByteArray, capabilities: List<String>, designWidth: Int,
+        designHeight: Int, scaleMode: Int, requestId: Long): Boolean {
         if (expectedGeneration == null) {
             publishOperationError("Runner会话尚未建立")
             return false
@@ -655,7 +856,7 @@ class RuntimeClient(context: Context) {
             return false
         }
         return try {
-            when (remote?.startScript(
+            when (service?.startScript(
                 requestId,
                 expectedGeneration,
                 projectId,
@@ -730,9 +931,7 @@ class RuntimeClient(context: Context) {
         return null
     }
 
-    private fun prepareProject(requestId: Long): Boolean {
-        val service = remote
-        val generation = lastSessionGeneration
+    private fun prepareProject(requestId: Long, service: IRuntimeService?, generation: Long?): Boolean {
         if (service == null || generation == null) {
             publishOperationError("Runner会话尚未建立")
             return false
@@ -770,9 +969,8 @@ class RuntimeClient(context: Context) {
             '\u0000' !in path &&
             path.split('/').all { it.isNotEmpty() && it != "." && it != ".." }
 
-    private fun stopPartiallyPreparedSession(requestId: Long) {
-        val generation = lastSessionGeneration ?: return
-        runCatching { remote?.requestStop(requestId, generation) }
+    private fun stopPartiallyPreparedSession(requestId: Long, service: IRuntimeService?, generation: Long) {
+        runCatching { service?.requestStop(requestId, generation) }
     }
 
     private fun publishRemoteState() {
@@ -835,7 +1033,9 @@ class RuntimeClient(context: Context) {
             engineState = engineState,
             rootState = rootState,
             message = message,
+            stateRevision = stateRevision.incrementAndGet(),
         )
+        connectionStates.value = state
         if (Looper.myLooper() == Looper.getMainLooper()) {
             onStateChanged?.invoke(state)
         } else {

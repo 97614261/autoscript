@@ -66,6 +66,7 @@ pub enum SchedulerEvent {
         timer: TimerId,
         task: TaskToken,
         missed_count: u32,
+        interval: bool,
     },
     TaskFinished {
         task: TaskToken,
@@ -215,6 +216,18 @@ pub struct SchedulerHandle {
 }
 
 impl SchedulerHandle {
+    /// Reads the priority control channel without consuming a cancellation event.
+    #[must_use]
+    pub fn cancellation_requested(&self, task: TaskToken) -> bool {
+        self.shared.stop_requested.load(Ordering::Acquire)
+            || self
+                .shared
+                .cancelled_tasks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&task)
+    }
+
     pub fn request_stop(&self) {
         self.shared.stop_requested.store(true, Ordering::Release);
         self.shared.wake();
@@ -503,6 +516,9 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
     }
 
     pub fn take_next_runnable(&mut self) -> Option<TaskToken> {
+        if self.paused_at.is_some() || self.stopped {
+            return None;
+        }
         while let Some(token) = self.run_queue.pop_front() {
             let Some(record) = self.tasks.get_mut(&token.id) else {
                 continue;
@@ -671,6 +687,7 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
                 timer,
                 task: record.owner,
                 missed_count: ticks.saturating_sub(1),
+                interval: true,
             });
         }
         Ok(())
@@ -678,6 +695,13 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
 
     pub fn cancel_timer(&mut self, timer: TimerId) -> bool {
         self.timers.remove(&timer).is_some()
+    }
+
+    #[must_use]
+    pub fn is_interval_timer(&self, timer: TimerId) -> bool {
+        self.timers
+            .get(&timer)
+            .is_some_and(|record| matches!(record.kind, TimerKind::Interval { .. }))
     }
 
     /// Freezes business timers. Host completions may still arrive but tasks do not run.
@@ -1202,6 +1226,7 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
                                 timer,
                                 task: owner,
                                 missed_count: 0,
+                                interval: false,
                             });
                         }
                     }
@@ -1258,6 +1283,7 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
                             timer,
                             task: owner,
                             missed_count: ticks.saturating_sub(1),
+                            interval: true,
                         });
                     }
                 }

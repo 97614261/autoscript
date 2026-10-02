@@ -335,6 +335,7 @@ pub enum VisionError {
     PointOutsideImage,
     InvalidResultLimit,
     ComparisonBudgetExceeded,
+    Cancelled,
 }
 
 pub const MAX_COLOR_RESULTS: usize = 4_096;
@@ -716,6 +717,40 @@ pub fn find_prepared_template(
     template: &PreparedTemplate,
     options: TemplateOptions,
 ) -> Result<Option<TemplateMatch>, VisionError> {
+    let mut remaining = options.search.max_pixel_comparisons;
+    find_prepared_template_controlled(image, template, options, &mut remaining, &mut || false)
+}
+
+/// Searches using a shared comparison budget and cooperative cancellation checkpoints.
+/// The budget is consumed even when matching fails or is cancelled.
+///
+/// # Errors
+///
+/// Returns geometry/threshold errors, cancellation, or comparison-budget exhaustion.
+pub fn find_prepared_template_controlled(
+    image: ImageView<'_>,
+    template: &PreparedTemplate,
+    options: TemplateOptions,
+    remaining: &mut u64,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<Option<TemplateMatch>, VisionError> {
+    let initial = (*remaining).min(options.search.max_pixel_comparisons);
+    let mut budget = ComparisonBudget {
+        remaining: initial,
+        checkpoint: Some(cancelled),
+        next_check: initial,
+    };
+    let result = search_prepared_template(image, template, options, &mut budget);
+    *remaining = remaining.saturating_sub(initial - budget.remaining);
+    result
+}
+
+fn search_prepared_template(
+    image: ImageView<'_>,
+    template: &PreparedTemplate,
+    options: TemplateOptions,
+    budget: &mut ComparisonBudget<'_>,
+) -> Result<Option<TemplateMatch>, VisionError> {
     validate_search(image, options.search)?;
     if template.width == 0 || template.height == 0 {
         return Err(VisionError::EmptyTemplate);
@@ -738,9 +773,8 @@ pub fn find_prepared_template(
         },
         ..options.search
     };
-    let mut budget = ComparisonBudget::new(options.search.max_pixel_comparisons);
     for origin in SearchPoints::new(candidate_options) {
-        let score = compare_template(image, template, origin, options, &mut budget)?;
+        let score = compare_template(image, template, origin, options, budget)?;
         if score >= options.minimum_match_permille {
             return Ok(Some(TemplateMatch {
                 origin,
@@ -1013,16 +1047,28 @@ fn axis_len(start: u32, end: u32, step: u32) -> u64 {
     u64::from(end - start - 1) / u64::from(step) + 1
 }
 
-struct ComparisonBudget {
+struct ComparisonBudget<'a> {
     remaining: u64,
+    checkpoint: Option<&'a mut dyn FnMut() -> bool>,
+    next_check: u64,
 }
 
-impl ComparisonBudget {
+impl ComparisonBudget<'_> {
     const fn new(maximum: u64) -> Self {
-        Self { remaining: maximum }
+        Self {
+            remaining: maximum,
+            checkpoint: None,
+            next_check: maximum,
+        }
     }
 
     fn consume(&mut self, count: u64) -> Result<(), VisionError> {
+        if self.remaining <= self.next_check {
+            if self.checkpoint.as_mut().is_some_and(|check| check()) {
+                return Err(VisionError::Cancelled);
+            }
+            self.next_check = self.remaining.saturating_sub(1024);
+        }
         self.remaining = self
             .remaining
             .checked_sub(count)

@@ -2,17 +2,20 @@
 mod android {
     use std::ffi::CString;
     use std::fs;
-    use std::io::{self, Read};
+    use std::io::{self, Read, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
-    use std::process::{Command as ProcessCommand, Stdio};
+    use std::process::{
+        Child, ChildStdin, ChildStdout, Command as ProcessCommand, ExitStatus, Stdio,
+    };
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use root_daemon::{read_packet, write_packet};
+    use root_daemon_core::priority::{InputCancellation, InputFence};
     use root_daemon_core::{
         CommandDispatcher, DaemonSession, DaemonSessionConfig, DispatchError, DispatchResponse,
         SessionState,
@@ -36,23 +39,61 @@ mod android {
         prepare_ready_path(&arguments.ready_file, &arguments.socket)?;
         let key = read_session_key(&arguments.key_file)?;
         let listener = UnixListener::bind(&arguments.socket).map_err(io_error)?;
-        let endpoint_guard =
+        let mut endpoint_guard =
             EndpointGuard::new(arguments.socket.clone(), arguments.ready_file.clone());
         set_socket_owner(&arguments.socket, arguments.expected_uid)?;
         fs::set_permissions(&arguments.socket, fs::Permissions::from_mode(0o600))
             .map_err(io_error)?;
+        let control_path = arguments.socket.with_extension("ctl");
+        prepare_socket_path(&control_path)?;
+        let control_listener = UnixListener::bind(&control_path).map_err(io_error)?;
+        endpoint_guard.control = Some(control_path.clone());
+        set_socket_owner(&control_path, arguments.expected_uid)?;
+        fs::set_permissions(&control_path, fs::Permissions::from_mode(0o600)).map_err(io_error)?;
         fs::write(&arguments.ready_file, []).map_err(io_error)?;
         let (mut stream, _) = listener.accept().map_err(io_error)?;
         fs::remove_file(&arguments.ready_file).map_err(io_error)?;
         stream
             .set_read_timeout(Some(arguments.idle_timeout))
             .map_err(io_error)?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(8)))
+            .map_err(io_error)?;
         let peer_uid = peer_uid(&stream).map_err(io_error)?;
         let started = Instant::now();
-        let mut capability_bits = Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW;
-        if supports_pointer_commands() {
+        let input_bridge = arguments
+            .apk
+            .as_deref()
+            .and_then(|apk| RootInputProcess::start(apk).ok());
+        let mut capability_bits = Capabilities::INPUT_BASIC
+            | Capabilities::CAPTURE_RAW
+            | Capabilities::INPUT_PRIORITY_STOP;
+        if input_bridge.is_some() || supports_pointer_commands() {
             capability_bits |= Capabilities::INPUT_POINTER_SINGLE;
         }
+        let dispatcher = Arc::new(Mutex::new(AndroidDispatcher {
+            input_bridge,
+            next_capture_id: 0,
+            capture: None,
+            active_pointer: None,
+            pointer_owner: 0,
+            cancellation: InputCancellation::default(),
+        }));
+        let fence = Arc::new(InputFence::default());
+        // This guard is owned by the business connection, not the detached control thread.
+        // EOF must still release pointers even while the control listener holds another Arc.
+        let _disconnect_cleanup = DisconnectCleanup {
+            dispatcher: dispatcher.clone(),
+            fence: fence.clone(),
+        };
+        start_priority_server(
+            control_listener,
+            root_protocol::priority_control_key(&key),
+            arguments.expected_uid,
+            arguments.idle_timeout,
+            dispatcher.clone(),
+            fence.clone(),
+        )?;
         let mut session = DaemonSession::new(
             key,
             peer_uid,
@@ -64,7 +105,7 @@ mod android {
                     .map_err(|error| error.to_string())?,
                 now_ms: 0,
             },
-            AndroidDispatcher::default(),
+            SharedDispatcher { dispatcher, fence },
         )
         .map_err(|error| format!("daemon handshake initialization failed: {error:?}"))?;
         while session.state() != SessionState::Closed {
@@ -98,14 +139,15 @@ mod android {
         key_file: PathBuf,
         ready_file: PathBuf,
         idle_timeout: Duration,
+        apk: Option<PathBuf>,
     }
 
     impl Arguments {
         fn parse() -> Result<Self, String> {
             let values = std::env::args().skip(1).collect::<Vec<_>>();
-            if values.len() != 5 {
+            if !matches!(values.len(), 5 | 6) {
                 return Err(
-                    "usage: root-daemon <socket-path> <runner-uid> <key-file> <ready-file> <idle-ms>"
+                    "usage: root-daemon <socket-path> <runner-uid> <key-file> <ready-file> <idle-ms> [installed-apk]"
                         .to_owned(),
                 );
             }
@@ -127,6 +169,7 @@ mod android {
                 key_file,
                 ready_file,
                 idle_timeout: Duration::from_millis(idle_millis),
+                apk: values.get(5).map(PathBuf::from),
             })
         }
     }
@@ -174,11 +217,16 @@ mod android {
     struct EndpointGuard {
         socket: PathBuf,
         ready_file: PathBuf,
+        control: Option<PathBuf>,
     }
 
     impl EndpointGuard {
         const fn new(socket: PathBuf, ready_file: PathBuf) -> Self {
-            Self { socket, ready_file }
+            Self {
+                socket,
+                ready_file,
+                control: None,
+            }
         }
     }
 
@@ -186,6 +234,9 @@ mod android {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.ready_file);
             let _ = fs::remove_file(&self.socket);
+            if let Some(control) = self.control.as_ref() {
+                let _ = fs::remove_file(control);
+            }
         }
     }
 
@@ -235,6 +286,159 @@ mod android {
         next_capture_id: u64,
         capture: Option<StagedCapture>,
         active_pointer: Option<(u8, i32, i32)>,
+        input_bridge: Option<RootInputProcess>,
+        pointer_owner: u64,
+        cancellation: InputCancellation,
+    }
+
+    struct SharedDispatcher {
+        dispatcher: Arc<Mutex<AndroidDispatcher>>,
+        fence: Arc<InputFence>,
+    }
+    struct DisconnectCleanup {
+        dispatcher: Arc<Mutex<AndroidDispatcher>>,
+        fence: Arc<InputFence>,
+    }
+    impl Drop for DisconnectCleanup {
+        fn drop(&mut self) {
+            self.fence.cancel_through(u64::MAX);
+            if let Ok(mut dispatcher) = self.dispatcher.lock() {
+                dispatcher.cancellation = InputCancellation::default();
+                if let Some((_, x, y)) = dispatcher.active_pointer {
+                    if dispatcher.inject_pointer(1, x, y) == StatusCode::Ok {
+                        dispatcher.active_pointer = None;
+                    } else {
+                        self.fence.fail_closed();
+                    }
+                }
+                dispatcher.input_bridge.take(); // EOF/finally is an additional bounded cleanup attempt.
+            }
+        }
+    }
+    fn input_command(command: Command) -> bool {
+        matches!(
+            command,
+            Command::Tap
+                | Command::Swipe
+                | Command::KeyEvent
+                | Command::PointerDown
+                | Command::PointerMove
+                | Command::PointerUp
+        )
+    }
+    impl CommandDispatcher for SharedDispatcher {
+        fn dispatch(&mut self, frame: &Frame) -> Result<DispatchResponse, DispatchError> {
+            let mut dispatcher = self.dispatcher.lock().map_err(|_| DispatchError)?;
+            if !input_command(frame.command) {
+                return dispatcher.dispatch(frame);
+            }
+            let Some(token) = self.fence.begin(frame.request_id) else {
+                return Ok(empty_response(if self.fence.is_failed() {
+                    StatusCode::BackendFailure
+                } else {
+                    StatusCode::Cancelled
+                }));
+            };
+            dispatcher.cancellation = token.clone();
+            dispatcher.pointer_owner = frame.request_id;
+            let result = dispatcher.dispatch(frame);
+            self.fence.finish(frame.request_id);
+            if token.is_cancelled() {
+                Ok(empty_response(StatusCode::Cancelled))
+            } else {
+                result
+            }
+        }
+    }
+    struct StopDispatcher {
+        dispatcher: Arc<Mutex<AndroidDispatcher>>,
+        fence: Arc<InputFence>,
+    }
+    impl CommandDispatcher for StopDispatcher {
+        fn dispatch(&mut self, frame: &Frame) -> Result<DispatchResponse, DispatchError> {
+            if frame.command != Command::Cancel {
+                return Ok(empty_response(StatusCode::InvalidRequest));
+            }
+            let cutoff = read_u64(&frame.payload, 0);
+            // Stale stop acknowledges without waiting for a newer long gesture's mutex.
+            if !self.fence.cancel_through(cutoff) {
+                return Ok(empty_response(StatusCode::Ok));
+            }
+            let mut dispatcher = self.dispatcher.lock().map_err(|_| DispatchError)?;
+            if self.fence.is_failed() {
+                return Ok(empty_response(StatusCode::BackendFailure));
+            }
+            let mut status = StatusCode::Ok;
+            if dispatcher.pointer_owner <= cutoff {
+                if let Some((_, x, y)) = dispatcher.active_pointer {
+                    dispatcher.cancellation = InputCancellation::default();
+                    status = dispatcher.inject_pointer(1, x, y);
+                    if status == StatusCode::Ok {
+                        dispatcher.active_pointer = None;
+                    }
+                }
+            }
+            if status != StatusCode::Ok {
+                self.fence.fail_closed();
+            }
+            Ok(empty_response(status))
+        }
+    }
+    fn start_priority_server(
+        listener: UnixListener,
+        key: [u8; 32],
+        uid: u32,
+        idle: Duration,
+        dispatcher: Arc<Mutex<AndroidDispatcher>>,
+        fence: Arc<InputFence>,
+    ) -> Result<(), String> {
+        std::thread::Builder::new()
+            .name("root-priority-stop".into())
+            .spawn(move || {
+                let result = (|| -> Result<(), String> {
+                    let (mut stream, _) = listener.accept().map_err(io_error)?;
+                    stream.set_read_timeout(Some(idle)).map_err(io_error)?;
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(8)))
+                        .map_err(io_error)?;
+                    let mut session = DaemonSession::new(
+                        key,
+                        peer_uid(&stream).map_err(io_error)?,
+                        DaemonSessionConfig {
+                            expected_runner_uid: uid,
+                            server_capabilities: Capabilities::from_bits(
+                                Capabilities::INPUT_PRIORITY_STOP,
+                            ),
+                            required_client_capabilities: Capabilities::INPUT_PRIORITY_STOP,
+                            idle_timeout_ms: u64::try_from(idle.as_millis())
+                                .map_err(|e| e.to_string())?,
+                            now_ms: 0,
+                        },
+                        StopDispatcher {
+                            dispatcher,
+                            fence: fence.clone(),
+                        },
+                    )
+                    .map_err(|_| "stop handshake failed")?;
+                    let clock = Instant::now();
+                    loop {
+                        let request =
+                            read_packet(&mut stream).map_err(|_| "stop transport failed")?;
+                        let reply = session
+                            .receive(
+                                &request,
+                                u64::try_from(clock.elapsed().as_millis()).unwrap_or(u64::MAX),
+                            )
+                            .map_err(|_| "stop protocol failed")?;
+                        write_packet(&mut stream, &reply).map_err(|_| "stop response failed")?;
+                    }
+                })();
+                if result.is_err() {
+                    fence.fail_closed();
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     struct StagedCapture {
@@ -258,28 +462,50 @@ mod android {
                 Command::Tap => {
                     let x = read_i32(&frame.payload, 0);
                     let y = read_i32(&frame.payload, 4);
-                    run_input_retryable(&["tap".to_owned(), x.to_string(), y.to_string()])
+                    self.active_pointer = Some((0, x, y));
+                    let status = run_input_once(
+                        &["tap".to_owned(), x.to_string(), y.to_string()],
+                        &self.cancellation,
+                    )
+                    .0;
+                    if status == StatusCode::Ok {
+                        self.active_pointer = None;
+                    }
+                    status
                 }
                 Command::Swipe => {
                     let duration = read_u32(&frame.payload, 16);
-                    run_input_retryable(&[
-                        "swipe".to_owned(),
-                        read_i32(&frame.payload, 0).to_string(),
-                        read_i32(&frame.payload, 4).to_string(),
-                        read_i32(&frame.payload, 8).to_string(),
-                        read_i32(&frame.payload, 12).to_string(),
-                        duration.to_string(),
-                    ])
+                    self.active_pointer =
+                        Some((0, read_i32(&frame.payload, 8), read_i32(&frame.payload, 12)));
+                    let status = run_input_once(
+                        &[
+                            "swipe".to_owned(),
+                            read_i32(&frame.payload, 0).to_string(),
+                            read_i32(&frame.payload, 4).to_string(),
+                            read_i32(&frame.payload, 8).to_string(),
+                            read_i32(&frame.payload, 12).to_string(),
+                            duration.to_string(),
+                        ],
+                        &self.cancellation,
+                    )
+                    .0;
+                    if status == StatusCode::Ok {
+                        self.active_pointer = None;
+                    }
+                    status
                 }
-                Command::KeyEvent => run_input_retryable(&[
-                    "keyevent".to_owned(),
-                    read_u32(&frame.payload, 0).to_string(),
-                ]),
+                Command::KeyEvent => run_input_retryable(
+                    &[
+                        "keyevent".to_owned(),
+                        read_u32(&frame.payload, 0).to_string(),
+                    ],
+                    &self.cancellation,
+                ),
                 Command::PointerDown => self.pointer_down(&frame.payload),
                 Command::PointerMove => self.pointer_move(&frame.payload),
                 Command::PointerUp => self.pointer_up(&frame.payload),
                 Command::GetWindowBounds => StatusCode::BackendUnavailable,
-                Command::Cancel => StatusCode::Ok,
+                Command::Cancel => StatusCode::InvalidRequest,
                 Command::Ping | Command::Shutdown => StatusCode::Ok,
                 Command::Hello
                 | Command::Capture
@@ -301,9 +527,10 @@ mod android {
             if self.active_pointer.is_some() {
                 return StatusCode::InvalidRequest;
             }
-            let status = run_pointer("DOWN", x, y);
-            if status == StatusCode::Ok {
-                self.active_pointer = Some((pointer_id, x, y));
+            self.active_pointer = Some((pointer_id, x, y));
+            let status = self.inject_pointer(0, x, y);
+            if status != StatusCode::Ok && self.inject_pointer(1, x, y) == StatusCode::Ok {
+                self.active_pointer = None;
             }
             status
         }
@@ -318,7 +545,7 @@ mod android {
             {
                 return StatusCode::InvalidRequest;
             }
-            let status = run_pointer("MOVE", x, y);
+            let status = self.inject_pointer(2, x, y);
             if status == StatusCode::Ok {
                 self.active_pointer = Some((pointer_id, x, y));
             }
@@ -335,11 +562,29 @@ mod android {
             if active_id != pointer_id {
                 return StatusCode::InvalidRequest;
             }
-            let status = run_pointer("UP", x, y);
+            let status = self.inject_pointer(1, x, y);
             if status == StatusCode::Ok {
                 self.active_pointer = None;
             }
             status
+        }
+
+        fn inject_pointer(&mut self, action: i32, x: i32, y: i32) -> StatusCode {
+            if let Some(bridge) = self.input_bridge.as_mut() {
+                return bridge
+                    .inject(action, x, y)
+                    .unwrap_or(StatusCode::BackendUnavailable);
+            }
+            run_pointer(
+                match action {
+                    0 => "DOWN",
+                    1 => "UP",
+                    _ => "MOVE",
+                },
+                x,
+                y,
+                &self.cancellation,
+            )
         }
 
         fn capture(&mut self) -> DispatchResponse {
@@ -408,33 +653,290 @@ mod android {
     impl Drop for AndroidDispatcher {
         fn drop(&mut self) {
             if let Some((_, x, y)) = self.active_pointer.take() {
-                let _ = run_pointer("UP", x, y);
+                self.cancellation = InputCancellation::default();
+                let _ = self.inject_pointer(1, x, y);
+            }
+        }
+    }
+
+    struct RootInputProcess {
+        apk: PathBuf,
+        child: Child,
+        input: Option<ChildStdin>,
+        output: ChildStdout,
+        failed: bool,
+    }
+
+    impl RootInputProcess {
+        fn start(apk: &Path) -> io::Result<Self> {
+            let name = apk
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid APK path"))?;
+            if !apk.is_absolute()
+                || !name.starts_with("/data/app/")
+                || apk.extension().is_none_or(|value| value != "apk")
+                || !fs::symlink_metadata(apk)?.is_file()
+                || fs::metadata(apk)?.permissions().mode() & 0o002 != 0
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "bridge requires an installed APK",
+                ));
+            }
+            let mut child = ProcessCommand::new("/system/bin/app_process")
+                .env("CLASSPATH", apk)
+                .arg("/system/bin")
+                .arg("com.autoscript.runtime.service.RootInputBridge")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()?;
+            let input = child
+                .stdin
+                .take()
+                .ok_or_else(|| io::Error::other("bridge stdin unavailable"))?;
+            let output = child
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::other("bridge stdout unavailable"))?;
+            let mut bridge = Self {
+                apk: apk.to_path_buf(),
+                child,
+                input: Some(input),
+                output,
+                failed: false,
+            };
+            let mut hello = [0; 4];
+            bridge.read_bounded(&mut hello, Duration::from_secs(5))?;
+            if u32::from_be_bytes(hello) != 0x41534931 {
+                return Err(io::Error::other("invalid bridge handshake"));
+            }
+            Ok(bridge)
+        }
+
+        fn read_bounded(&mut self, output: &mut [u8], timeout: Duration) -> io::Result<()> {
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .ok_or_else(|| io::Error::other("bridge deadline overflow"))?;
+            let mut offset = 0;
+            while offset < output.len() {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "input bridge timed out",
+                    ));
+                }
+                let mut fd = libc::pollfd {
+                    fd: self.output.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                // SAFETY: fd refers to the owned child pipe, and pollfd is valid for exactly one entry.
+                let ready = unsafe {
+                    libc::poll(
+                        std::ptr::addr_of_mut!(fd),
+                        1,
+                        i32::try_from(remaining.as_millis())
+                            .unwrap_or(i32::MAX)
+                            .max(1),
+                    )
+                };
+                if ready < 0 {
+                    let error = io::Error::last_os_error();
+                    if error.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Err(error);
+                }
+                if ready == 0 {
+                    continue;
+                }
+                let read = self.output.read(&mut output[offset..])?;
+                if read == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "input bridge exited",
+                    ));
+                }
+                offset += read;
+            }
+            Ok(())
+        }
+
+        fn inject(&mut self, action: i32, x: i32, y: i32) -> io::Result<StatusCode> {
+            if self.failed {
+                // A fresh bridge may send UP even without an acknowledged DOWN, to clear an
+                // uncertain injection. The arbiter flushes this release before new business input.
+                *self = Self::start(&self.apk)?;
+            }
+            let result = (|| {
+                let input = self
+                    .input
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("input bridge closed"))?;
+                let mut request = [0; 12];
+                request[..4].copy_from_slice(&action.to_be_bytes());
+                request[4..8].copy_from_slice(&x.to_be_bytes());
+                request[8..].copy_from_slice(&y.to_be_bytes());
+                input.write_all(&request)?;
+                input.flush()?;
+                let mut reply = [0; 4];
+                self.read_bounded(&mut reply, Duration::from_secs(2))?;
+                match i32::from_be_bytes(reply) {
+                    0 => Ok(StatusCode::Ok),
+                    1 => Ok(StatusCode::InvalidRequest),
+                    3 => Ok(StatusCode::BackendFailure),
+                    _ => Err(io::Error::other("invalid bridge response")),
+                }
+            })();
+            if result.is_err() {
+                self.failed = true;
+                self.input.take();
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+            result
+        }
+    }
+
+    impl Drop for RootInputProcess {
+        fn drop(&mut self) {
+            self.input.take();
+            if !self.failed {
+                // EOF lets the bridge release its pointer; bound exit even if Android Binder hangs.
+                let mut byte = [0];
+                let _ = self.read_bounded(&mut byte, Duration::from_millis(500));
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+        }
+    }
+
+    // The watchdog must finish before the child is reaped: an owned zombie pins its PID.
+    struct BoundedChild {
+        process: Child,
+        finished: Arc<AtomicBool>,
+        timed_out: Arc<AtomicBool>,
+        watchdog: Option<std::thread::JoinHandle<()>>,
+        reaped: bool,
+    }
+
+    impl BoundedChild {
+        fn spawn(command: &mut ProcessCommand, timeout: Duration) -> io::Result<Self> {
+            Self::spawn_cancellable(command, timeout, InputCancellation::default())
+        }
+        fn spawn_cancellable(
+            command: &mut ProcessCommand,
+            timeout: Duration,
+            cancellation: InputCancellation,
+        ) -> io::Result<Self> {
+            let mut process = command.spawn()?;
+            let pid =
+                i32::try_from(process.id()).map_err(|_| io::Error::other("invalid child PID"))?;
+            let finished = Arc::new(AtomicBool::new(false));
+            let timed_out = Arc::new(AtomicBool::new(false));
+            let watchdog_finished = Arc::clone(&finished);
+            let watchdog_timeout = Arc::clone(&timed_out);
+            let deadline = Instant::now() + timeout;
+            let watchdog = match std::thread::Builder::new()
+                .name("root-child-deadline".into())
+                .spawn(move || {
+                    cancellation.register_watchdog(std::thread::current());
+                    loop {
+                        if watchdog_finished.load(Ordering::Acquire) {
+                            return;
+                        }
+                        let now = Instant::now();
+                        if now >= deadline || cancellation.is_cancelled() {
+                            break;
+                        }
+                        std::thread::park_timeout(deadline - now);
+                    }
+                    if !watchdog_finished.load(Ordering::Acquire) {
+                        watchdog_timeout.store(!cancellation.is_cancelled(), Ordering::Release);
+                        // SAFETY: this nonzero PID belongs to our unreaped child. No other code reaps
+                        // it before finish_watchdog joins this thread, including the timeout path.
+                        unsafe {
+                            libc::kill(pid, libc::SIGKILL);
+                        }
+                    }
+                }) {
+                Ok(thread) => thread,
+                Err(error) => {
+                    let _ = process.kill();
+                    let _ = process.wait();
+                    return Err(error);
+                }
+            };
+            Ok(Self {
+                process,
+                finished,
+                timed_out,
+                watchdog: Some(watchdog),
+                reaped: false,
+            })
+        }
+
+        fn finish_watchdog(&mut self) {
+            self.finished.store(true, Ordering::Release);
+            if let Some(thread) = self.watchdog.take() {
+                thread.thread().unpark();
+                let _ = thread.join();
+            }
+        }
+
+        fn wait(&mut self) -> io::Result<ExitStatus> {
+            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+            loop {
+                // SAFETY: waitid writes siginfo_t and observes only our owned child. WNOWAIT is
+                // essential: it prevents PID reuse until the watchdog is joined below.
+                let result = unsafe {
+                    libc::waitid(
+                        libc::P_PID,
+                        self.process.id(),
+                        info.as_mut_ptr(),
+                        libc::WEXITED | libc::WNOWAIT,
+                    )
+                };
+                if result == 0 {
+                    break;
+                }
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(error);
+                }
+            }
+            self.finish_watchdog();
+            let result = self.process.wait();
+            if result.is_ok() {
+                self.reaped = true;
+            }
+            result
+        }
+    }
+
+    impl Drop for BoundedChild {
+        fn drop(&mut self) {
+            self.finish_watchdog();
+            if !self.reaped {
+                let _ = self.process.kill();
+                let _ = self.process.wait();
             }
         }
     }
 
     fn run_screencap(id: u64) -> Result<StagedCapture, ()> {
-        let mut child = ProcessCommand::new(SCREENCAP_BINARY)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| ())?;
-        let finished = Arc::new(AtomicBool::new(false));
-        let watchdog_finished = Arc::clone(&finished);
-        let child_pid = child.id();
-        let watchdog = std::thread::spawn(move || {
-            std::thread::park_timeout(CAPTURE_TIMEOUT);
-            if !watchdog_finished.load(Ordering::Acquire) {
-                // SAFETY: a non-zero PID came directly from the still-owned child. Until it is
-                // waited, an exited child remains a zombie and its PID cannot be reused.
-                unsafe {
-                    libc::kill(i32::try_from(child_pid).unwrap_or(i32::MAX), libc::SIGKILL);
-                }
-            }
-        });
+        let mut child = BoundedChild::spawn(
+            ProcessCommand::new(SCREENCAP_BINARY)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+            CAPTURE_TIMEOUT,
+        )
+        .map_err(|_| ())?;
         let result = (|| {
-            let stdout = child.stdout.take().ok_or(())?;
+            let stdout = child.process.stdout.take().ok_or(())?;
             let limit = u64::try_from(MAX_CAPTURE_BYTES + 17).expect("constant fits u64");
             let mut bytes = Vec::new();
             stdout.take(limit).read_to_end(&mut bytes).map_err(|_| ())?;
@@ -478,9 +980,6 @@ mod android {
                 pixels,
             })
         })();
-        finished.store(true, Ordering::Release);
-        watchdog.thread().unpark();
-        let _ = watchdog.join();
         result
     }
 
@@ -491,34 +990,76 @@ mod android {
         }
     }
 
-    fn run_input(arguments: &[String]) -> StatusCode {
-        match ProcessCommand::new(INPUT_BINARY).args(arguments).status() {
-            Ok(status) if status.success() => StatusCode::Ok,
-            Ok(_) => StatusCode::BackendFailure,
-            Err(_) => StatusCode::BackendUnavailable,
+    fn run_input(arguments: &[String], cancellation: &InputCancellation) -> StatusCode {
+        run_input_once(arguments, cancellation).0
+    }
+
+    fn run_input_once(
+        arguments: &[String],
+        cancellation: &InputCancellation,
+    ) -> (StatusCode, bool) {
+        if cancellation.is_cancelled() {
+            return (StatusCode::Cancelled, false);
+        }
+        let timeout = if arguments.first().is_some_and(|value| value == "swipe") {
+            Duration::from_millis(
+                arguments
+                    .last()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(0)
+                    .min(60_000)
+                    + 2_000,
+            )
+        } else {
+            Duration::from_secs(2)
+        };
+        let mut child = match BoundedChild::spawn_cancellable(
+            ProcessCommand::new(INPUT_BINARY)
+                .args(arguments)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            timeout,
+            cancellation.clone(),
+        ) {
+            Ok(child) => child,
+            Err(_) => return (StatusCode::BackendUnavailable, false),
+        };
+        let result = child.wait();
+        if cancellation.is_cancelled() {
+            return (StatusCode::Cancelled, false);
+        }
+        let timed_out = child.timed_out.load(Ordering::Acquire);
+        match result {
+            Ok(status) if status.success() && !timed_out => (StatusCode::Ok, false),
+            Ok(_) => (StatusCode::BackendFailure, !timed_out),
+            Err(_) => (StatusCode::BackendUnavailable, false),
         }
     }
 
-    fn run_input_retryable(arguments: &[String]) -> StatusCode {
-        let mut status = run_input(arguments);
+    fn run_input_retryable(arguments: &[String], cancellation: &InputCancellation) -> StatusCode {
+        let (mut status, mut retryable) = run_input_once(arguments, cancellation);
         for delay in INPUT_RETRY_DELAYS {
-            if status != StatusCode::BackendFailure {
+            if !retryable {
                 break;
             }
             std::thread::sleep(delay);
-            status = run_input(arguments);
+            (status, retryable) = run_input_once(arguments, cancellation);
         }
         status
     }
 
-    fn run_pointer(action: &str, x: i32, y: i32) -> StatusCode {
-        run_input(&[
-            "touchscreen".to_owned(),
-            "motionevent".to_owned(),
-            action.to_owned(),
-            x.to_string(),
-            y.to_string(),
-        ])
+    fn run_pointer(action: &str, x: i32, y: i32, cancellation: &InputCancellation) -> StatusCode {
+        run_input(
+            &[
+                "touchscreen".to_owned(),
+                "motionevent".to_owned(),
+                action.to_owned(),
+                x.to_string(),
+                y.to_string(),
+            ],
+            cancellation,
+        )
     }
 
     fn supports_pointer_commands() -> bool {

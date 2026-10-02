@@ -61,11 +61,6 @@ val syncRustLibraries = rustTargets.mapIndexed { index, target ->
         environment(target.arEnvironment, llvmBin.resolve("llvm-ar.exe").absolutePath)
         environment(target.linkerEnvironment, llvmBin.resolve(target.clang).absolutePath)
         inputs.files(rootProject.fileTree("engine/crates") { include("**/*.rs", "**/Cargo.toml") })
-        inputs.files(
-            rootProject.fileTree("tools/flow-compiler") {
-                include("src/**/*.rs", "Cargo.toml")
-            },
-        )
         inputs.files(rootProject.file("Cargo.toml"), rootProject.file("Cargo.lock"))
         outputs.file(cargoOutput)
     }
@@ -80,7 +75,10 @@ android {
     namespace = "com.autoscript.engine.jni"
     compileSdk = 36
     ndkVersion = "30.0.14904198"
-    defaultConfig { minSdk = 24 }
+    defaultConfig {
+        minSdk = 24
+        consumerProguardFiles("consumer-rules.pro")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

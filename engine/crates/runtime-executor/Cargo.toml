@@ -11,6 +11,8 @@ glyph-ocr = { path = "../glyph-ocr" }
 lua-runtime = { path = "../lua-runtime" }
 runtime-scheduler = { path = "../runtime-scheduler" }
 script-api = { path = "../script-api" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.prompt",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.prompt/1/task.prompt.schema.json",
+  "title": "弹出提示",
+  "category": "task",
+  "summary": "按项目样式弹出短时提示，到时自动消失。",
+  "searchTerms": ["prompt", "提示", "弹窗", "运行状态", "进度"],
+  "requiredCapabilities": ["core.task"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "message", "label": "提示内容", "editor": "string", "required": true, "defaultValue": "正在执行" },
+    { "path": "valueVariable", "label": "变量值（可选）", "editor": "string", "required": false }
+  ],
+  "migrations": []
+}

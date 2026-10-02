@@ -1,13 +1,20 @@
 use mlua::prelude::{LuaChunkMode, LuaThreadStatus};
 use mlua::{HookTriggers, Lua, LuaOptions, MultiValue, StdLib, Thread, Value, VmState};
 use runtime_scheduler::{TaskFinalizer, TaskToken};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 use std::thread::{self, ThreadId};
 
 const MAX_CHUNK_BYTES: usize = 16 * 1024 * 1024;
+
+struct ActiveTaskGuard<'a>(&'a Cell<Option<TaskToken>>);
+impl Drop for ActiveTaskGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(None);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LuaValidationError {
@@ -23,6 +30,13 @@ pub enum LuaScalar {
     Integer(i64),
     Number(f64),
     Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Clone)]
+pub struct LuaDebugSnapshot {
+    pub flow_id: String,
+    pub node_id: String,
+    pub variables: Vec<(String, String, LuaScalar, bool)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +135,9 @@ pub struct LuaTaskRegistry {
     instruction_budget: u32,
     max_tasks: usize,
     tasks: BTreeMap<TaskToken, LuaTask>,
+    callbacks: Rc<RefCell<BTreeMap<u64, (TaskToken, mlua::Function)>>>,
+    active_task: Rc<Cell<Option<TaskToken>>>,
+    next_callback: Rc<Cell<u64>>,
 }
 
 impl LuaTaskRegistry {
@@ -167,6 +184,9 @@ impl LuaTaskRegistry {
             instruction_budget: config.instruction_budget,
             max_tasks: config.max_tasks,
             tasks: BTreeMap::new(),
+            callbacks: Rc::new(RefCell::new(BTreeMap::new())),
+            active_task: Rc::new(Cell::new(None)),
+            next_callback: Rc::new(Cell::new(1)),
         })
     }
 
@@ -248,11 +268,44 @@ impl LuaTaskRegistry {
     )]
     pub fn install_api(&self) -> Result<(), LuaRuntimeError> {
         self.ensure_owner_thread()?;
+        let callbacks = Rc::clone(&self.callbacks);
+        let active = Rc::clone(&self.active_task);
+        let next = Rc::clone(&self.next_callback);
+        let maximum = self.max_tasks;
+        let register = self
+            .lua
+            .create_function(move |_, function: mlua::Function| {
+                let owner = active.get().ok_or_else(|| {
+                    mlua::Error::RuntimeError(
+                        "callback registration requires a running task".into(),
+                    )
+                })?;
+                let mut callbacks = callbacks.borrow_mut();
+                if callbacks.len() >= maximum {
+                    return Err(mlua::Error::RuntimeError("callback limit reached".into()));
+                }
+                let id = next.get();
+                let following = id
+                    .checked_add(1)
+                    .filter(|id| i64::try_from(*id).is_ok())
+                    .ok_or_else(|| mlua::Error::RuntimeError("callback IDs exhausted".into()))?;
+                next.set(following);
+                callbacks.insert(id, (owner, function));
+                Ok(id)
+            })
+            .map_err(|error| LuaRuntimeError::Lua(error.to_string()))?;
+        self.lua
+            .globals()
+            .set("__register_callback", register)
+            .map_err(|error| LuaRuntimeError::Lua(error.to_string()))?;
         self.lua
             .load(
                 &br#"
                     local marker = "__AUTOSCRIPT_HOST_V1"
+                    local registerCallback = __register_callback
+                    __register_callback = nil
                     Task = {}
+                    Timer = {}
                     System = {}
                     Math = {}
                     Input = {}
@@ -260,6 +313,8 @@ impl LuaTaskRegistry {
                     Ocr = {}
                     Legacy = {}
                     Log = {}
+                    Prompt = {}
+                    UI = {}
 
                     local function integer(value, name, minimum, maximum)
                         if type(value) ~= "number" or value % 1 ~= 0 or value < minimum or value > maximum then
@@ -283,6 +338,24 @@ impl LuaTaskRegistry {
                         if ok == false then error((code or "TASK_SLEEP") .. ": " .. (message or "failed"), 2) end
                     end
 
+                    function Task.spawn(callback)
+                        if type(callback) ~= "function" then error("Task.spawn requires a function", 2) end
+                        return host(3001, registerCallback(callback))
+                    end
+                    function Task.cancel(task)
+                        integer(task, "Task.cancel task", 1, 9223372036854775807)
+                        return host(3002, task)
+                    end
+                    function Timer.every(milliseconds, callback)
+                        integer(milliseconds, "Timer.every milliseconds", 10, 60000)
+                        if type(callback) ~= "function" then error("Timer.every requires a function", 2) end
+                        return host(3003, milliseconds, registerCallback(callback))
+                    end
+                    function Timer.cancel(timer)
+                        integer(timer, "Timer.cancel timer", 1, 9223372036854775807)
+                        return host(3004, timer)
+                    end
+
                     local function writeLog(level, message)
                         local valueType = type(message)
                         if valueType ~= "string" and valueType ~= "number" and valueType ~= "boolean" and valueType ~= "nil" then
@@ -294,6 +367,45 @@ impl LuaTaskRegistry {
                     function Log.info(message) writeLog(1, message) end
                     function Log.warn(message) writeLog(2, message) end
                     function Log.error(message) writeLog(3, message) end
+
+                    local function showPrompt(message)
+                        local valueType = type(message)
+                        if valueType ~= "string" and valueType ~= "number" and valueType ~= "boolean" and valueType ~= "nil" then
+                            error("Prompt message must be a string, number, boolean, or nil", 3)
+                        end
+                        host(1101, tostring(message))
+                    end
+
+                    function Prompt.show(message) showPrompt(message) end
+
+                    function Prompt.toast(message, styleJson)
+                        local valueType = type(message)
+                        if valueType ~= "string" and valueType ~= "number" and valueType ~= "boolean" and valueType ~= "nil" then
+                            error("Prompt message must be a string, number, boolean, or nil", 2)
+                        end
+                        if styleJson ~= nil and type(styleJson) ~= "string" then
+                            error("Prompt style must be JSON text", 2)
+                        end
+                        host(1102, tostring(message), styleJson or "{}")
+                    end
+
+                    function UI.waitEvent() return host(1200) end
+                    function UI.getValue(id)
+                        if type(id) ~= 'string' then error('UI requires a control ID',2) end
+                        return host(1201,id)
+                    end
+                    function UI.setValue(id,value)
+                        if type(id) ~= 'string' then error('UI requires a control ID',2) end
+                        local kind=type(value)
+                        if kind ~= 'string' and kind ~= 'boolean' and kind ~= 'number' then error('UI value must be scalar',2) end
+                        host(1202,id,tostring(value))
+                    end
+                    function UI.command(id,operation,value)
+                        if type(id) ~= 'string' or type(operation) ~= 'string' then error('invalid UI command',2) end
+                        local kind=type(value)
+                        if kind ~= 'string' and kind ~= 'boolean' and kind ~= 'number' then error('UI command value must be scalar',2) end
+                        host(1203,id,operation,tostring(value))
+                    end
 
                     function System.getScreenSize()
                         local ok, width, height, code, message = coroutine.yield(marker, 2000)
@@ -325,6 +437,34 @@ impl LuaTaskRegistry {
                         integer(y2, "Input.swipe y2", -2147483648, 2147483647)
                         integer(durationMs, "Input.swipe durationMs", 1, 5000)
                         host(4001, x1, y1, x2, y2, durationMs)
+                    end
+
+                    function Input.pointerDown(x, y)
+                        integer(x, "Input.pointerDown x", -2147483648, 2147483647)
+                        integer(y, "Input.pointerDown y", -2147483648, 2147483647)
+                        host(4003, x, y)
+                    end
+
+                    function Input.pointerMove(x, y)
+                        integer(x, "Input.pointerMove x", -2147483648, 2147483647)
+                        integer(y, "Input.pointerMove y", -2147483648, 2147483647)
+                        host(4004, x, y)
+                    end
+
+                    function Input.pointerUp()
+                        host(4005)
+                    end
+
+                    function Input.tapScreen(x, y)
+                        integer(x, "Input.tapScreen x", 0, 2147483647)
+                        integer(y, "Input.tapScreen y", 0, 2147483647)
+                        host(4006,x,y)
+                    end
+
+                    function Input.pointerDownScreen(x, y)
+                        integer(x, "Input.pointerDownScreen x", 0, 2147483647)
+                        integer(y, "Input.pointerDownScreen y", 0, 2147483647)
+                        host(4007,x,y)
                     end
 
                     function Input.keyEvent(keyCode)
@@ -371,13 +511,19 @@ impl LuaTaskRegistry {
                         return { x = x, y = y }
                     end
 
-                    function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom)
+                    function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom, direction)
                         integer(frame, "Screen.findImage frame", 1, 9223372036854775807)
                         integer(template, "Screen.findImage template", 1, 9223372036854775807)
                         integer(tolerance, "Screen.findImage tolerance", 0, 255)
                         integer(similarityPermille, "Screen.findImage similarityPermille", 0, 1000)
                         searchRegion(left, top, right, bottom, "Screen.findImage")
-                        local x, y = host(5101, frame, template, tolerance, similarityPermille, left, top, right, bottom)
+                        local x, y
+                        if direction == nil then
+                            x, y = host(5101, frame, template, tolerance, similarityPermille, left, top, right, bottom)
+                        else
+                            integer(direction, "Screen.findImage direction", 0, 4)
+                            x, y = host(5101, frame, template, tolerance, similarityPermille, left, top, right, bottom, direction)
+                        end
                         if x == nil then return nil end
                         return { x = x, y = y }
                     end
@@ -387,6 +533,24 @@ impl LuaTaskRegistry {
                         integer(x, "Screen.getColor x", 0, 2147483647)
                         integer(y, "Screen.getColor y", 0, 2147483647)
                         return host(5102, frame, x, y)
+                    end
+
+                    function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction)
+                        integer(frame, "Screen.findImages frame", 1, 9223372036854775807)
+                        if type(pathsJson) ~= "string" or #pathsJson > 16384 then error("Screen.findImages expects bounded JSON paths", 2) end
+                        integer(tolerance, "Screen.findImages tolerance", 0, 255)
+                        integer(similarityPermille, "Screen.findImages similarity", 0, 1000)
+                        integer(direction or 0, "Screen.findImages direction", 0, 4)
+                        searchRegion(left, top, right, bottom, "Screen.findImages")
+                        local x,y,path,score,width,height = host(5107, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction or 0)
+                        if x == nil then return nil end
+                        return {x=x,y=y,path=path,scorePermille=score,width=width,height=height}
+                    end
+
+                    function Screen.crop(frame, left, top, right, bottom)
+                        integer(frame, "Screen.crop frame", 1, 9223372036854775807)
+                        searchRegion(left, top, right, bottom, "Screen.crop")
+                        return host(5005, frame, left, top, right, bottom)
                     end
 
                     function Screen.compareColor(frame, x, y, rgb, tolerance)
@@ -591,6 +755,7 @@ impl LuaTaskRegistry {
                     end
 
                     function Ocr.loadDictionary(path)
+                        -- Existing glyph dictionary path stays unchanged.
                         if type(path) ~= "string" or #path == 0 or #path > 256 then
                             error("Ocr.loadDictionary path must be a non-empty string up to 256 bytes", 2)
                         end
@@ -618,6 +783,25 @@ impl LuaTaskRegistry {
                         }
                     end
 
+                    function Screen.findGray(frame, template, similarity, left, top, right, bottom)
+                        integer(frame, "Screen.findGray frame", 1, 9223372036854775807)
+                        integer(template, "Screen.findGray template", 1, 9223372036854775807)
+                        integer(similarity, "Screen.findGray similarity", 0, 1000)
+                        searchRegion(left, top, right, bottom, "Screen.findGray")
+                        local x,y,score=host(5108,frame,template,similarity,left,top,right,bottom)
+                        if x==nil then return nil end
+                        return {x=x,y=y,scorePermille=score}
+                    end
+
+                    function Ocr.alphanumeric(frame, left, top, right, bottom, confidence)
+                        confidence=confidence or 500
+                        integer(frame, "Ocr.alphanumeric frame", 1, 9223372036854775807)
+                        integer(confidence, "Ocr.alphanumeric confidence", 0, 1000)
+                        searchRegion(left, top, right, bottom, "Ocr.alphanumeric")
+                        local text,score=host(6101,frame,left,top,right,bottom,confidence)
+                        return {text=text,averageScorePermille=score}
+                    end
+
                     Sleep = Task.sleep
                     Tap = Input.tap
                     Swipe = Input.swipe
@@ -641,6 +825,49 @@ impl LuaTaskRegistry {
             .set_mode(LuaChunkMode::Text)
             .exec()
             .map_err(|error| LuaRuntimeError::Lua(error.to_string()))
+    }
+
+    /// Starts a VM-local callback without moving Lua functions across the host boundary.
+    /// # Errors
+    /// Rejects foreign callbacks, stale IDs, task limits and coroutine initialization failures.
+    pub fn register_callback_task(
+        &mut self,
+        task: TaskToken,
+        owner: TaskToken,
+        callback: u64,
+        retain: bool,
+    ) -> Result<(), LuaRuntimeError> {
+        self.ensure_owner_thread()?;
+        let function = self
+            .callbacks
+            .borrow()
+            .get(&callback)
+            .filter(|(registered, _)| *registered == owner)
+            .map(|(_, function)| function.clone())
+            .ok_or_else(|| LuaRuntimeError::Lua("unknown or foreign callback".into()))?;
+        self.register_function(task, function)?;
+        if !retain {
+            self.callbacks.borrow_mut().remove(&callback);
+        }
+        Ok(())
+    }
+
+    pub fn remove_callback(&self, owner: TaskToken, callback: u64) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if callbacks
+            .get(&callback)
+            .is_some_and(|(registered, _)| *registered == owner)
+        {
+            callbacks.remove(&callback);
+        }
+    }
+
+    #[must_use]
+    pub fn owns_callback(&self, owner: TaskToken, callback: u64) -> bool {
+        self.callbacks
+            .borrow()
+            .get(&callback)
+            .is_some_and(|(registered, _)| *registered == owner)
     }
 
     fn register_function(
@@ -694,6 +921,8 @@ impl LuaTaskRegistry {
             .get(&task)
             .ok_or(LuaRuntimeError::UnknownTask(task))?;
         record.budget_yielded.set(false);
+        self.active_task.set(Some(task));
+        let _active_guard = ActiveTaskGuard(&self.active_task);
         let values = match input {
             LuaInput::None => record.thread.resume::<MultiValue>(()),
             LuaInput::Boolean(value) => record.thread.resume::<MultiValue>(value),
@@ -715,8 +944,9 @@ impl LuaTaskRegistry {
                     .thread
                     .resume::<MultiValue>(MultiValue::from_vec(values))
             }
-        }
-        .map_err(|error| LuaRuntimeError::Lua(error.to_string()))?;
+        };
+        self.active_task.set(None);
+        let values = values.map_err(|error| LuaRuntimeError::Lua(error.to_string()))?;
         if record.budget_yielded.get() {
             return Ok(LuaStep::BudgetExhausted);
         }
@@ -748,6 +978,76 @@ impl LuaTaskRegistry {
         lua_scalar(value)
     }
 
+    /// Owner-thread-only debugger switch; never evaluates caller-provided code.
+    ///
+    /// # Errors
+    /// Returns an error on wrong-thread access or when the VM rejects the assignment.
+    pub fn set_debug_step(&self, enabled: bool) -> Result<(), LuaRuntimeError> {
+        self.ensure_owner_thread()?;
+        self.lua
+            .globals()
+            .raw_set("__autoscript_debug_step", enabled)
+            .map_err(|e| LuaRuntimeError::Lua(e.to_string()))
+    }
+
+    /// Bounded passive snapshot of the most recent compiled node boundary.
+    #[must_use]
+    pub fn debug_snapshot(&self) -> Option<LuaDebugSnapshot> {
+        self.ensure_owner_thread().ok()?;
+        let snapshot: mlua::Table = self
+            .lua
+            .globals()
+            .raw_get("__autoscript_debug_snapshot")
+            .ok()?;
+        let read_id = |key| -> Option<String> {
+            let value: mlua::LuaString = snapshot.raw_get(key).ok()?;
+            (value.as_bytes().len() <= 128).then(|| value.to_string_lossy())
+        };
+        let mut result = LuaDebugSnapshot {
+            flow_id: read_id("flowId")?,
+            node_id: read_id("nodeId")?,
+            variables: Vec::new(),
+        };
+        for (scope, type_key, value_key) in [
+            ("local", "localTypes", "locals"),
+            ("global", "globalTypes", "globals"),
+        ] {
+            let types: mlua::Table = snapshot.raw_get(type_key).ok()?;
+            let values: mlua::Table = snapshot.raw_get(value_key).ok()?;
+            let mut names = std::collections::BTreeSet::new();
+            for table in [&types, &values] {
+                for entry in table.clone().pairs::<mlua::LuaString, Value>().take(128) {
+                    let (name, _) = entry.ok()?;
+                    if name.as_bytes().len() <= 128 {
+                        names.insert(name.to_string_lossy());
+                    }
+                }
+            }
+            for name in names {
+                if result.variables.len() >= 128 {
+                    break;
+                }
+                let value: Value = values.raw_get(name.as_str()).ok()?;
+                let (scalar, truncated) = match value {
+                    Value::String(bytes) => (
+                        LuaScalar::Bytes(
+                            bytes.as_bytes()[..bytes.as_bytes().len().min(1024)].to_vec(),
+                        ),
+                        bytes.as_bytes().len() > 1024,
+                    ),
+                    other => match lua_scalar(other) {
+                        Ok(value) => (value, false),
+                        Err(_) => continue,
+                    },
+                };
+                result
+                    .variables
+                    .push((scope.into(), name, scalar, truncated));
+            }
+        }
+        Some(result)
+    }
+
     fn ensure_owner_thread(&self) -> Result<(), LuaRuntimeError> {
         if thread::current().id() == self.owner_thread {
             Ok(())
@@ -758,6 +1058,9 @@ impl LuaTaskRegistry {
 
     fn close_registered_task(&mut self, task: TaskToken) -> Result<(), LuaRuntimeError> {
         self.ensure_owner_thread()?;
+        self.callbacks
+            .borrow_mut()
+            .retain(|_, (owner, _)| *owner != task);
         let record = self
             .tasks
             .remove(&task)

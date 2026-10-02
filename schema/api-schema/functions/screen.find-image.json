@@ -18,7 +18,8 @@
     { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
     { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
     { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
-    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" }
+    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" },
+    { "name": "direction", "type": "integer", "required": false, "summary": "API 1.7新增：0左上、1右上、2左下、3右下、4中心向外；省略为0。与旧版多点找色枚举独立。" }
   ],
   "returns": { "type": "Point", "nullable": true, "summary": "首个匹配模板的左上角；未找到时为nil。" },
   "legacyAliases": ["FindImage"]

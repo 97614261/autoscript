@@ -55,6 +55,36 @@ data class ProjectDesign(
 /** Runtime-affecting debug controls. Values are per project and travel with a backup/export. */
 data class ProjectDebugSettings(
     val runDelayMs: Int = 0,
+    val showRunPrompts: Boolean = true,
+    val runPromptFilters: RunPromptFilters = RunPromptFilters(),
+    val popupStyle: PopupStyle = PopupStyle(),
+)
+
+/** Project-level appearance for short-lived script popup tips. */
+data class PopupStyle(
+    val widthPx: Int = 520,
+    val heightPx: Int = 144,
+    val xPx: Int = -1,
+    val yPx: Int = -1,
+    val backgroundColor: String = "#B3000000",
+    val textColor: String = "#FFFFFFFF",
+    val fontPx: Int = 32,
+    val cornerPx: Int = 16,
+    val durationMs: Int = 3_000,
+    val textAlign: String = "center",
+)
+
+/** Automatic visual Flow events sent to the user-facing floating prompt window. */
+data class RunPromptFilters(
+    val loops: Boolean = false,
+    val jumps: Boolean = false,
+    val flowStart: Boolean = false,
+    val flowReturn: Boolean = false,
+    val imageSearch: Boolean = false,
+    val variables: Boolean = false,
+    val variableScope: String = "all",
+    val variableType: String = "all",
+    val variableName: String = "all",
 )
 
 data class ProjectFlow(
@@ -68,7 +98,7 @@ data class ProjectFlow(
 data class ProjectManifestDocument(
     val formatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
     val flowSchemaVersion: Int = 1,
-    val runtimeApi: String = "1.5",
+    val runtimeApi: String = "1.7",
     val projectId: String,
     val name: String,
     val sourceMode: ProjectSourceMode,
@@ -151,7 +181,7 @@ class ProjectStoreException(message: String, cause: Throwable? = null) :
 class ProjectWriteConflictException : IllegalStateException("main.lua 已被其他写入修改，请重新打开项目")
 
 class FlowWriteConflictException(flowId: String) :
-    IllegalStateException("Flow $flowId 已被其他写入修改，请重新打开项目")
+    IllegalStateException("插件 $flowId 已被其他写入修改，请重新打开项目")
 
 class ProjectManifestConflictException :
     IllegalStateException("项目清单已被其他写入修改，请重新打开项目")

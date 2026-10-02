@@ -57,6 +57,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,6 +104,8 @@ import com.autoscript.runtime.client.RuntimeClient
 import com.autoscript.runtime.client.ScreenshotPreviewResult
 import com.autoscript.runtime.client.ScriptValidationResult
 import com.autoscript.runtime.client.VisualCompileResult
+import com.autoscript.runtime.api.InputPointPickReply
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -131,10 +134,21 @@ internal fun ProjectPage(
     var designingRunnerUi by remember { mutableStateOf(false) }
     var showingImageTools by remember { mutableStateOf(false) }
     var showingImageLibrary by remember { mutableStateOf(false) }
+    var floatingRecognitionTest by remember { mutableStateOf(false) }
+    var floatingDebugInspector by remember { mutableStateOf<EditorToolPanel?>(null) }
+    var floatingImageBlockKind by remember { mutableStateOf<String?>(null) }
+    var floatingImageBlockValues by remember { mutableStateOf<JsonObject?>(null) }
+    var floatingRecognitionInsert by remember { mutableStateOf<RecognitionInsertRequest?>(null) }
+    var recognitionCaptureActive by remember { mutableStateOf(false) }
+    var recognitionCaptureSelection by remember { mutableStateOf<ImageToolCodeGen.VisualSelection?>(null) }
+    var recognitionCaptureTemplatePath by remember { mutableStateOf<String?>(null) }
+    var floatingImageRegion by remember { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
+    var imageToolInitialMode by remember { mutableStateOf(ImageToolMode.TAP) }
     // 图像工具悬浮窗的状态。截图是 Root 通道的真实画面，不是占位图。
     var imageToolBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var imageToolCapturing by remember { mutableStateOf(false) }
     var imageToolCropping by remember { mutableStateOf(false) }
+    var pendingImageTemplateRoi by remember { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
     var imageToolMessage by remember { mutableStateOf<String?>(null) }
     var imageToolRequestId by remember { mutableIntStateOf(0) }
     var imageToolCaptureJob by remember { mutableStateOf<Job?>(null) }
@@ -160,20 +174,35 @@ internal fun ProjectPage(
     var backupsRevision by remember { mutableStateOf(0) }
     var floatingEditorProject by remember { mutableStateOf<ProjectSummary?>(null) }
     var floatingEditorSnapshot by remember { mutableStateOf<ProjectSnapshot?>(null) }
+    var floatingVariablesVisible by remember { mutableStateOf(false) }
     var floatingVisualEditor by remember { mutableStateOf<VisualEditorState?>(null) }
     var floatingEditorRevision by remember { mutableStateOf(0) }
     var floatingInsertSnippet by remember { mutableStateOf<String?>(null) }
-    var floatingClipboard by remember { mutableStateOf<VisualSubtreeClipboard?>(null) }
+    var floatingCalculationInsert by remember { mutableStateOf<RecognitionInsertRequest?>(null) }
+    var floatingClipboard by remember { mutableStateOf<List<VisualSubtreeClipboard>?>(null) }
     var floatingPastePending by remember { mutableStateOf(false) }
     var floatingIndentSlots by remember { mutableStateOf<List<String>?>(null) }
     var floatingEditingNodeId by remember { mutableStateOf<String?>(null) }
+    var floatingReflectionPosition by remember { mutableStateOf<EditorInsertPosition?>(null) }
+    var floatingReflectionChildSlot by remember { mutableStateOf<String?>(null) }
+    var showInterfacePreview by remember { mutableStateOf(false) }
     var floatingFlowId by remember { mutableStateOf<String?>(null) }
+    val floatingStepState = rememberVisualStepState(floatingEditorProject?.projectId, runtimeState, runtimeClient)
+    var floatingInputTarget by remember { mutableStateOf<InputPickTarget?>(null) }
+    var floatingInputInsertion by remember { mutableStateOf<InputInsertionDraft?>(null) }
+    var floatingInputRequest by remember { mutableStateOf<Long?>(null) }
+    var floatingInputOpenRequest by remember { mutableIntStateOf(0) }
     var floatingTree by remember { mutableStateOf(SourceFileTree()) }
     var floatingSourceBusy by remember { mutableStateOf(false) }
     var floatingSourceMessage by remember { mutableStateOf<String?>(null) }
     var busyProjectId by remember { mutableStateOf<String?>(null) }
     val sourceFiles = remember(store) { ProjectSourceFiles(store) }
     val scope = rememberCoroutineScope()
+    var inputBackendFeatures by remember { mutableIntStateOf(0) }
+    LaunchedEffect(runtimeState.rootState, runtimeState.sessionGeneration) {
+        inputBackendFeatures = 0
+        inputBackendFeatures = withContext(Dispatchers.IO) { runtimeClient.inputFeatures() }
+    }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val currentExportTarget by rememberUpdatedState(exportTarget)
@@ -188,6 +217,7 @@ internal fun ProjectPage(
         imageToolCropJob = null
         imageToolCapturing = false
         imageToolCropping = false
+        pendingImageTemplateRoi = null
         imageToolBitmap?.recycle()
         imageToolBitmap = null
         imageToolMessage = null
@@ -198,8 +228,19 @@ internal fun ProjectPage(
     }
     DisposableEffect(Unit) {
         onDispose {
+            floatingInputRequest?.let(runtimeClient::cancelInputPointPick)
             onFullScreenChanged(false)
             handoffCaptureBitmap?.recycle()
+        }
+    }
+
+    LaunchedEffect(floatingEditorProject?.projectId, floatingFlowId) {
+        floatingInputRequest?.let(runtimeClient::cancelInputPointPick)
+        floatingInputRequest = null
+        val target = floatingInputTarget
+        if (target?.projectId != floatingEditorProject?.projectId || target?.flowId != floatingFlowId) {
+            floatingInputTarget = null
+            floatingInputInsertion = null
         }
     }
 
@@ -338,10 +379,16 @@ internal fun ProjectPage(
     fun stopRunningProject() {
         if (!runtimeRunning || busyProjectId != null) return
         error = null
-        scope.launch { withContext(Dispatchers.IO) { runtimeClient.requestStop() } }
+        scope.launch {
+            val accepted = withContext(Dispatchers.IO) { runtimeClient.requestStop() }
+            if (accepted) notice = "正在停止运行" else error = "停止请求未被 Runner 接受"
+        }
     }
 
-    fun runProject(project: ProjectSummary) {
+    var pendingRunInterface by remember { mutableStateOf<Triple<ProjectSummary, ProjectSnapshot, Boolean>?>(null) }
+    fun runProject(project: ProjectSummary, saveCurrentFlowBeforeRun: Boolean = false, entry: StudioRunEntry = StudioRunEntry.EDITOR,
+        uiValues: Map<String, String>? = null, expectedUi: com.google.gson.JsonObject? = null) {
+        val singleStep = entry == StudioRunEntry.SINGLE_STEP
         if (busyProjectId != null) return
         if (runtimeState.phase != RuntimeConnectionPhase.CONNECTED) {
             error = "Runner尚未连接"
@@ -356,73 +403,136 @@ internal fun ProjectPage(
             error = "已有脚本正在运行，请先停止"
             return
         }
+        val pendingEditor = if (saveCurrentFlowBeforeRun && project.sourceMode == ProjectSourceMode.VISUAL) {
+            floatingVisualEditor ?: run {
+                error = "程序树尚未加载完成"
+                return
+            }
+        } else null
+        val pendingFlow = pendingEditor?.takeIf { it.isDirty }?.let { editor ->
+            val flowId = floatingFlowId ?: run {
+                error = "当前插件尚未加载完成"
+                return
+            }
+            Triple(flowId, editor.currentSource, editor.savedSource)
+        }
+        val selectedRunFlowId = if (saveCurrentFlowBeforeRun && project.sourceMode == ProjectSourceMode.VISUAL) {
+            floatingFlowId ?: run {
+                error = "当前插件尚未加载完成"
+                return
+            }
+        } else null
+        val stepNodeId = if (singleStep) floatingVisualEditor?.selectedNodeId else null
+        if (singleStep && (stepNodeId == null || floatingVisualEditor?.isNodeDisabled(stepNodeId) != false)) {
+            error = "请选择可执行积木"; return
+        }
         busyProjectId = project.projectId
         error = null
         notice = null
         scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    var snapshot = store.openProject(project.projectId)
-                    val plan = when (snapshot.manifest.sourceMode) {
-                        ProjectSourceMode.LUA -> {
-                            val source = requireNotNull(snapshot.luaSource) { "Lua项目缺少 main.lua" }
-                            when (val validation = runtimeClient.validateScript(source.toByteArray(Charsets.UTF_8))) {
-                                ScriptValidationResult.Valid -> Unit
-                                is ScriptValidationResult.Invalid -> throw IllegalArgumentException(validation.diagnostic)
-                                is ScriptValidationResult.Unavailable -> throw IllegalStateException(validation.message)
-                            }
-                            RuntimeProjectPlan.fromSnapshot(snapshot, source)
-                        }
-                        ProjectSourceMode.VISUAL -> {
-                            val generationId = when (
-                                val result = runtimeClient.compileVisualProject(project.projectId)
-                            ) {
-                                is VisualCompileResult.Success -> result.generationId
-                                is VisualCompileResult.Invalid -> {
-                                    val location = listOfNotNull(
-                                        result.diagnostic.flowId?.let { "Flow $it" },
-                                        result.diagnostic.nodeId?.let { "节点 $it" },
-                                        result.diagnostic.line?.let { "第 $it 行" },
-                                    ).joinToString(" · ")
-                                    throw IllegalArgumentException(
-                                        if (location.isEmpty()) result.diagnostic.message
-                                        else "$location：${result.diagnostic.message}",
-                                    )
-                                }
-                                is VisualCompileResult.Unavailable -> throw IllegalStateException(result.message)
-                            }
-                            snapshot = store.openProject(project.projectId)
-                            RuntimeProjectPlan.fromVisualSnapshot(snapshot, generationId)
-                        }
+            try {
+                if (entry.opensInterface(hasDefinition = true, hasSubmittedValues = uiValues != null)) {
+                    val uiSnapshot = runCatching { withContext(Dispatchers.IO) { store.openProject(project.projectId) } }
+                        .getOrElse { error = it.message ?: "读取项目失败"; busyProjectId = null; return@launch }
+                    if (entry.opensInterface(uiSnapshot.manifest.runnerUi != null)) {
+                        pendingRunInterface = Triple(project, uiSnapshot, saveCurrentFlowBeforeRun)
+                        busyProjectId = null; return@launch
                     }
-                    require(
-                        runtimeClient.startProject(
-                            projectId = project.projectId,
-                            generatedLuaModule = plan.luaSource,
-                            resources = plan.resources,
-                            capabilities = plan.capabilities,
-                            designWidth = plan.designWidth,
-                            designHeight = plan.designHeight,
-                            scaleMode = plan.scaleMode,
-                        ),
-                    ) { "Runner拒绝启动，请查看引擎状态" }
-                    snapshot
                 }
-            }.onSuccess {
-                notice = "“${project.name}”已提交运行"
-                projects = withContext(Dispatchers.IO) { store.listProjects() }
-            }.onFailure { failure ->
+                var savedFlow: ProjectSnapshot? = null
+                val result = runCatching {
+                    withContext(Dispatchers.IO) {
+                        pendingFlow?.let { (flowId, submitted, expected) ->
+                            savedFlow = store.saveFlow(project.projectId, flowId, submitted, expected)
+                        }
+                        var snapshot = store.openProject(project.projectId)
+                        if (uiValues != null) require(snapshot.manifest.runnerUi == expectedUi) { "脚本界面已变化，请重新运行" }
+                        val plan = when (snapshot.manifest.sourceMode) {
+                            ProjectSourceMode.LUA -> {
+                                val source = requireNotNull(snapshot.luaSource) { "Lua项目缺少 main.lua" }
+                                when (val validation = runtimeClient.validateScript(source.toByteArray(Charsets.UTF_8))) {
+                                    ScriptValidationResult.Valid -> Unit
+                                    is ScriptValidationResult.Invalid -> throw IllegalArgumentException(validation.diagnostic)
+                                    is ScriptValidationResult.Unavailable -> throw IllegalStateException(validation.message)
+                                }
+                                RuntimeProjectPlan.fromSnapshot(snapshot, source)
+                            }
+                            ProjectSourceMode.VISUAL -> {
+                                val generationId = when (
+                                    val result = runtimeClient.compileVisualProject(project.projectId)
+                                ) {
+                                    is VisualCompileResult.Success -> result.generationId
+                                    is VisualCompileResult.Invalid -> {
+                                        val location = listOfNotNull(
+                                            result.diagnostic.flowId?.let { "Flow $it" },
+                                            result.diagnostic.nodeId?.let { "节点 $it" },
+                                            result.diagnostic.line?.let { "第 $it 行" },
+                                        ).joinToString(" · ")
+                                        throw IllegalArgumentException(
+                                            if (location.isEmpty()) result.diagnostic.message
+                                            else "$location：${result.diagnostic.message}",
+                                        )
+                                    }
+                                    is VisualCompileResult.Unavailable -> throw IllegalStateException(result.message)
+                                }
+                                snapshot = store.openProject(project.projectId)
+                                RuntimeProjectPlan.fromVisualSnapshot(snapshot, generationId, selectedRunFlowId).let { if (singleStep) it.forSingleStep(selectedRunFlowId, stepNodeId) else it }
+                            }
+                        }
+                        val runtimePlan = if (uiValues != null) plan.withInterface(snapshot, uiValues)
+                            else if (!singleStep) plan.forEditorRun(snapshot) else plan
+                        require(
+                            runtimeClient.startProject(
+                                projectId = project.projectId,
+                                generatedLuaModule = runtimePlan.luaSource,
+                                resources = plan.resources,
+                                requiresPointerInput = plan.requiresPointerInput,
+                                capabilities = plan.capabilities,
+                                designWidth = plan.designWidth,
+                                designHeight = plan.designHeight,
+                                scaleMode = plan.scaleMode,
+                                scriptUiJson = if (uiValues != null) snapshot.manifest.runnerUi?.toString() else null,
+                                scriptUiValuesJson = com.google.gson.Gson().toJson(uiValues ?: emptyMap<String, String>()),
+                            ),
+                        ) { "Runner拒绝启动，请查看引擎状态" }
+                        snapshot
+                    }
+                }
+                savedFlow?.let { saved ->
+                    pendingEditor?.markSaved(requireNotNull(pendingFlow).second)
+                    floatingEditorSnapshot = result.getOrNull() ?: saved
+                }
+                result.onSuccess {
+                    notice = if (singleStep) "单步已提交：前置步骤会执行，所选步骤后停在下一检查点；未到达所选步骤则结束"
+                        else if (selectedRunFlowId == null) "“${project.name}”已提交运行"
+                        else "插件 $selectedRunFlowId 已提交运行"
+                    projects = withContext(Dispatchers.IO) { store.listProjects() }
+                }.onFailure { failure ->
+                    if (failure is CancellationException) throw failure
+                    error = failure.message ?: "项目启动失败"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
                 error = failure.message ?: "项目启动失败"
+            } finally {
+                busyProjectId = null
             }
-            busyProjectId = null
         }
     }
 
-    fun saveFloatingFlow() {
+    pendingRunInterface?.let { (project, uiSnapshot, saveFlow) ->
+        ScriptInterfaceDialog(requireNotNull(uiSnapshot.manifest.runnerUi), uiSnapshot.directory, project.projectId,
+            onDismiss = { pendingRunInterface = null }, onConfirm = { values ->
+                pendingRunInterface = null; runProject(project, saveFlow, StudioRunEntry.LAUNCH, uiValues = values, expectedUi = uiSnapshot.manifest.runnerUi)
+            })
+    }
+    fun saveFloatingFlow(inputSummary: String? = null) {
         val project = floatingEditorProject ?: return
         if (floatingEditorSnapshot == null) return
         val editor = floatingVisualEditor ?: return
         val flowId = floatingFlowId ?: return
+        if (!editorCanMutate(busyProjectId != null, editor.isReadOnly, runtimeState.engineState)) { error = "请停止运行后再修改插件"; return }
         if (busyProjectId != null || !editor.isDirty) return
         val submitted = editor.currentSource
         val expected = editor.savedSource
@@ -430,18 +540,25 @@ internal fun ProjectPage(
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
+                    // Retry uses the same validation as the first input insertion; saving alone cannot bypass it.
+                    when (val validation = runtimeClient.validateVisualDraft(project.projectId, flowId, submitted.toByteArray(Charsets.UTF_8))) {
+                        is VisualCompileResult.Success -> Unit
+                        is VisualCompileResult.Invalid -> error(validation.diagnostic.message)
+                        is VisualCompileResult.Unavailable -> error(validation.message)
+                    }
                     store.saveFlow(project.projectId, flowId, submitted, expected)
                 }
             }.onSuccess { saved ->
                 editor.markSaved(submitted)
                 floatingEditorSnapshot = saved
                 projects = withContext(Dispatchers.IO) { store.listProjects() }
-                notice = "程序树已保存"
+                notice = inputSummary?.let { "已加入并保存：$it" } ?: "程序树已保存"
                 error = null
             }.onFailure { failure ->
                 // currentSource is intentionally retained; the user can retry
                 // or open the full editor to resolve an external write conflict.
-                error = failure.message ?: "程序树保存失败"
+                error = if (inputSummary != null) "动作已加入草稿，尚未保存；请用保存重试：${failure.message.orEmpty()}"
+                    else failure.message ?: "程序树保存失败"
             }
             busyProjectId = null
         }
@@ -450,14 +567,19 @@ internal fun ProjectPage(
     fun insertFloatingBlock(
         snippet: String,
         childSlot: String?,
-        position: LegacyInsertPosition = LegacyInsertPosition.BELOW,
+        position: EditorInsertPosition = EditorInsertPosition.BELOW,
     ) {
         val snapshot = floatingEditorSnapshot ?: return
         val editor = floatingVisualEditor ?: return
         val flowId = floatingFlowId ?: return
+        if (!editorCanMutate(busyProjectId != null, editor.isReadOnly, runtimeState.engineState)) { error = "请停止运行后再修改插件"; return }
+        if (snippet.trimStart().startsWith(LOOP_CONFIG_HINT) && loopInsertionFromHint(snippet) == null) {
+            error = "循环配置无效，未加入积木"
+            return
+        }
         val capabilities = snapshot.manifest.capabilities.toSet()
         // 函数库直接给出积木 kind 时不做模糊搜索；能力不足要明确说明。
-        val direct = LegacyFunctionCatalog.blockKindOf(snippet)?.let(BlockCatalog::find)
+        val direct = FunctionCatalog.blockKindOf(snippet)?.let(BlockCatalog::find)
             ?.let { BlockSearchResult(it, it.requiredCapabilities - capabilities) }
         if (direct != null && !direct.isAvailable) {
             error = "${direct.contract.title}需要能力：${direct.missingCapabilities.joinToString()}"
@@ -470,18 +592,33 @@ internal fun ProjectPage(
             error = if (matches.isEmpty()) "当前命令还没有可用的正式积木" else "命令匹配到多个积木，请进入完整编辑器选择"
             return
         }
+        if (contract.contract.kind in visualRecognitionKinds) {
+            floatingRecognitionInsert = RecognitionInsertRequest(contract.contract,
+                legacyDockBlockArguments(contract.contract, snippet, initialRecognitionArguments(contract.contract, snapshot)), childSlot, position)
+            recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null
+            return
+        }
         val defaults = initialBlockArguments(
             contract.contract,
             snapshot.manifest.flows,
             snapshot.manifest.resources,
             flowId,
+            preferredFlowId = if (contract.contract.kind == "flow.call") JumpPanelCode.callTargetId(snippet) else null,
         )
         if (defaults == null) {
             error = "缺少${contract.contract.title}所需的项目资源"
             return
         }
         val arguments = legacyDockBlockArguments(contract.contract, snippet, defaults)
-        if (position == LegacyInsertPosition.REPLACE) {
+        visualJumpInsertionError(contract.contract.kind, arguments, editor, childSlot, position)?.let {
+            error = it
+            return
+        }
+        if (contract.contract.kind == "variable.calculate" && variableCalculationArguments(snippet) == null) {
+            floatingCalculationInsert = RecognitionInsertRequest(contract.contract, arguments, childSlot, position)
+            return
+        }
+        if (position == EditorInsertPosition.REPLACE) {
             if (!editor.replaceSelectedBlock(contract.contract, arguments)) {
                 error = "无法修改当前选择行"
                 return
@@ -493,28 +630,104 @@ internal fun ProjectPage(
             return
         }
         val originalSelection = editor.selectedNodeId
-        if (position == LegacyInsertPosition.LIST_BOTTOM) {
+        if (position == EditorInsertPosition.LIST_BOTTOM) {
             editor.selectedNodeId = editor.rows.lastOrNull { it.depth == 0 }?.nodeId
         }
         val inserted = editor.insertBlock(contract.contract, arguments, intoChildBlockName = childSlot)
-        if (inserted != null && position == LegacyInsertPosition.ABOVE && originalSelection != null) {
+        if (inserted != null && position == EditorInsertPosition.ABOVE && originalSelection != null) {
             editor.moveSelected(-1)
         }
         if (inserted == null) {
-            error = "无法把${contract.contract.title}加入当前位置"
+            error = if (contract.contract.kind in positionLoopKinds) "${contract.contract.title}只能加入循环体，请先选中循环体中的积木或选择循环体插入位置"
+                else "无法把${contract.contract.title}加入当前位置"
             return
         }
         floatingEditorRevision++
         notice = "已加入：${contract.contract.title}"
         error = null
+        if (contract.contract.kind == "flow.call") floatingEditingNodeId = inserted
         saveFloatingFlow()
+    }
+
+    /** Insert a related gesture as one editor transaction, then persist it once. */
+    fun queueFloatingInput(snippet: ImageToolCodeGen.Snippet) {
+        val project = floatingEditorProject ?: return
+        val editor = floatingVisualEditor ?: return
+        val flowId = floatingFlowId ?: return
+        val target = floatingInputTarget ?: InputPickTarget(project.projectId, flowId, editor.currentSource, editor.selectedNodeId)
+        val draft = target.draft(snippet)
+        if (busyProjectId != null || !draft.matches(project.projectId, flowId, editor)) {
+            error = "插件或内容已变化，请重新选点"
+            showingImageTools = false
+            clearImageToolState()
+            return
+        }
+        runCatching { prepareInputBlocks(snippet, floatingEditorSnapshot?.manifest?.capabilities.orEmpty().toSet()) }
+            .onFailure { error = it.message ?: "输入动作不可用"; imageToolMessage = error }
+            .onSuccess {
+                floatingInputInsertion = draft
+                showingImageTools = false
+                clearImageToolState()
+                floatingInputOpenRequest++
+            }
+    }
+
+    fun confirmFloatingInput(draft: InputInsertionDraft, position: EditorInsertPosition, slot: String?) {
+        val project = floatingEditorProject ?: return
+        val editor = floatingVisualEditor ?: return
+        val flowId = floatingFlowId ?: return
+        if (busyProjectId != null || runtimeState.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING) ||
+            !draft.matches(project.projectId, flowId, editor)) {
+            error = "插件内容已变化或正在运行，请重新选点"
+            floatingInputInsertion = null
+            return
+        }
+        val prepared = runCatching { prepareInputBlocks(draft.snippet, floatingEditorSnapshot?.manifest?.capabilities.orEmpty().toSet()) }
+            .getOrElse { error = it.message ?: "输入动作不可用"; return }
+        if (!editor.insertBlocks(prepared, position, draft.anchorNodeId, slot)) {
+            error = "无法在指定位置加入完整动作，未保留部分积木"
+            return
+        }
+        floatingInputInsertion = null
+        floatingInputTarget = null
+        floatingEditorRevision++
+        showingImageTools = false
+        clearImageToolState()
+        notice = "已加入草稿，正在保存：${draft.snippet.summary}"
+        saveFloatingFlow(draft.snippet.summary)
     }
 
     /**
      * 图像工具的输出必须回到它打开时的悬浮编辑器，不能只停在系统剪贴板。
-     * 可视化项目目前只有点击/滑动可无损映射为真实积木；其余 Lua 片段不能伪装成已插入。
+     * 可视化项目的输入与取色/多点结果走结构化数据；未映射的 Lua 片段仍只复制，不伪装成积木。
      */
     fun emitImageToolSnippet(snippet: ImageToolCodeGen.Snippet) {
+        if (floatingEditorProject?.sourceMode == ProjectSourceMode.VISUAL && snippet.imageSelection != null) {
+            val selection = snippet.imageSelection
+            if (recognitionCaptureActive) {
+                recognitionCaptureSelection = selection
+                recognitionCaptureActive = false
+                showingImageTools = false
+                clearImageToolState()
+                return
+            }
+            if (selection.mode == ImageToolMode.REGION) {
+                floatingImageRegion = selection.roi
+                imageToolMessage = "已选识别范围；返回图像面板选择识别积木"
+                notice = imageToolMessage
+                return
+            }
+            val draft = visualImageToolDraft(selection)
+            if (draft == null) {
+                imageToolMessage = "多点找色至少需要锚点和一个采样点"
+                return
+            }
+            floatingImageBlockKind = draft.first
+            floatingImageBlockValues = draft.second
+            showingImageTools = false
+            clearImageToolState()
+            return
+        }
         val project = floatingEditorProject
         if (project == null) {
             clipboard.setText(AnnotatedString(snippet.code))
@@ -522,6 +735,10 @@ internal fun ProjectPage(
             return
         }
         if (project.sourceMode == ProjectSourceMode.VISUAL) {
+            if (snippet.flowBlocks.isNotEmpty()) {
+                queueFloatingInput(snippet)
+                return
+            }
             val visualKind = when {
                 snippet.code.trimStart().startsWith("Input.tap(") -> "input.tap"
                 snippet.code.trimStart().startsWith("Input.swipe(") -> "input.swipe"
@@ -532,7 +749,7 @@ internal fun ProjectPage(
                 imageToolMessage = "当前可视化项目只能直接加入单击/滑动；此 Lua 片段已复制"
                 return
             }
-            insertFloatingBlock("${LegacyFunctionCatalog.BLOCK_HINT_PREFIX}$visualKind\n${snippet.code}", null)
+            insertFloatingBlock("${FunctionCatalog.BLOCK_HINT_PREFIX}$visualKind\n${snippet.code}", null)
             imageToolMessage = if (error == null) "已加入程序树：${snippet.summary}" else error ?: "加入程序树失败"
             return
         }
@@ -564,6 +781,28 @@ internal fun ProjectPage(
         }
     }
 
+    fun openFloatingInputPicker(mode: ImageToolMode) {
+        val project = floatingEditorProject ?: return
+        val editor = floatingVisualEditor ?: return
+        val current = floatingEditorSnapshot ?: return
+        val flowId = floatingFlowId ?: return
+        if (busyProjectId != null || runtimeState.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING)) {
+            error = "请先停止运行"; return
+        }
+        val target = InputPickTarget(project.projectId, flowId, editor.currentSource, editor.selectedNodeId)
+        floatingInputTarget = target
+        val design = current.manifest.design
+        floatingInputRequest = runtimeClient.beginInputPointPick(project.projectId, flowId, inputPointAction(mode)) { result ->
+            floatingInputRequest = null
+            if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
+            else if (floatingInputTarget != target || floatingEditorSnapshot?.manifest?.design != design) error = "插件或设计分辨率已变化，请重新选点"
+            else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
+                .onSuccess(::queueFloatingInput).onFailure { error = it.message ?: "选点转换失败" }
+        }
+        if (floatingInputRequest != null) context.inputPickerActivity()?.moveTaskToBack(true)
+        else error = "悬浮选点未启动，请检查悬浮窗权限和Root状态"
+    }
+
     fun finishFloatingMutation(changed: Boolean, message: String) {
         if (!changed) {
             error = "当前节点不能执行此操作"
@@ -579,44 +818,44 @@ internal fun ProjectPage(
         val editor = floatingVisualEditor ?: return
         val clipboard = floatingClipboard ?: run { error = "剪贴板为空"; return }
         finishFloatingMutation(
-            editor.pasteSubtree(clipboard, intoChildBlockName = childSlot) != null,
+            editor.pasteSelection(clipboard, childSlot),
             "已粘贴节点副本",
         )
     }
 
-    fun runFloatingCommand(command: LegacyDockProgramCommand) {
+    fun runFloatingCommand(command: EditorProgramCommand) {
         val editor = floatingVisualEditor ?: return
-        if (busyProjectId != null || editor.isReadOnly) return
+        if (!editorCanMutate(busyProjectId != null, editor.isReadOnly, runtimeState.engineState)) return
         when (command) {
-            LegacyDockProgramCommand.MOVE_UP -> finishFloatingMutation(editor.moveSelected(-1), "节点已上移")
-            LegacyDockProgramCommand.MOVE_DOWN -> finishFloatingMutation(editor.moveSelected(1), "节点已下移")
-            LegacyDockProgramCommand.OUTDENT -> finishFloatingMutation(editor.outdentSelected(), "节点已减少一级缩进")
-            LegacyDockProgramCommand.INDENT -> {
-                val selected = editor.rows.firstOrNull { it.nodeId == editor.selectedNodeId }
+            EditorProgramCommand.MOVE_UP -> finishFloatingMutation(editor.moveSelection(-1), "节点已上移")
+            EditorProgramCommand.MOVE_DOWN -> finishFloatingMutation(editor.moveSelection(1), "节点已下移")
+            EditorProgramCommand.OUTDENT -> finishFloatingMutation(editor.outdentSelection(), "节点已减少一级缩进")
+            EditorProgramCommand.INDENT -> {
+                val selected = editor.rows.firstOrNull { it.nodeId == editor.selectedRoots().firstOrNull() }
                 val siblings = editor.rows.filter { it.blockId == selected?.blockId }.sortedBy { it.orderKey }
                 val previous = siblings.getOrNull(siblings.indexOfFirst { it.nodeId == selected?.nodeId } - 1)
                 val slots = previous?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
                 when (slots.size) {
                     0 -> error = "上一节点不是容器"
-                    1 -> finishFloatingMutation(editor.indentSelected(slots.single()), "节点已缩进")
+                    1 -> finishFloatingMutation(editor.indentSelection(slots.single()), "节点已缩进")
                     else -> floatingIndentSlots = slots
                 }
             }
-            LegacyDockProgramCommand.COPY -> {
-                floatingClipboard = editor.copySelectedSubtree()
+            EditorProgramCommand.COPY -> {
+                floatingClipboard = editor.copySelection().takeIf { it.isNotEmpty() }
                 if (floatingClipboard == null) error = "请先选择节点" else {
                     error = null
                     notice = "已复制整棵子树"
                 }
             }
-            LegacyDockProgramCommand.CUT -> {
-                val copied = editor.copySelectedSubtree()
+            EditorProgramCommand.CUT -> {
+                val copied = editor.copySelection().takeIf { it.isNotEmpty() }
                 if (copied == null) error = "请先选择节点" else {
                     floatingClipboard = copied
-                    finishFloatingMutation(editor.deleteSelected(), "已剪切整棵子树")
+                    finishFloatingMutation(editor.deleteSelection(), "已剪切整棵子树")
                 }
             }
-            LegacyDockProgramCommand.PASTE -> {
+            EditorProgramCommand.PASTE -> {
                 if (floatingClipboard == null) error = "剪贴板为空" else {
                     val selected = editor.rows.firstOrNull { it.nodeId == editor.selectedNodeId }
                     val slots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
@@ -624,15 +863,16 @@ internal fun ProjectPage(
                     else pasteFloatingClipboard(null)
                 }
             }
-            LegacyDockProgramCommand.UNDO -> finishFloatingMutation(editor.undo(), "已撤销")
-            LegacyDockProgramCommand.REDO -> finishFloatingMutation(editor.redo(), "已重做")
-            LegacyDockProgramCommand.DATA_BACKFILL -> {
+            EditorProgramCommand.UNDO -> finishFloatingMutation(editor.undo(), "已撤销")
+            EditorProgramCommand.REDO -> finishFloatingMutation(editor.redo(), "已重做")
+            EditorProgramCommand.DATA_BACKFILL -> {
                 error = null
-                notice = "当前没有可回填的调试结果，未修改节点参数"
+                floatingDebugInspector = EditorToolPanel.DATA_BACKFILL
             }
-            LegacyDockProgramCommand.SEARCH,
-            LegacyDockProgramCommand.EXPAND_ALL,
-            LegacyDockProgramCommand.COLLAPSE_ALL -> Unit
+            EditorProgramCommand.TOGGLE_DISABLED -> finishFloatingMutation(editor.toggleDisabledSelection(), "已更新积木执行状态")
+            EditorProgramCommand.SEARCH,
+            EditorProgramCommand.EXPAND_ALL,
+            EditorProgramCommand.COLLAPSE_ALL -> Unit
         }
     }
 
@@ -640,9 +880,19 @@ internal fun ProjectPage(
     fun showFloatingFlow(snapshot: ProjectSnapshot, flowId: String) {
         val flow = snapshot.manifest.flows.singleOrNull { it.flowId == flowId } ?: return
         floatingFlowId = flowId
+        floatingEditingNodeId = null
+        floatingReflectionPosition = null
+        floatingCalculationInsert = null
         floatingVisualEditor = VisualEditorState.create(snapshot.flowSources[flowId].orEmpty(), flow.rootBlockId)
         floatingClipboard = null
         floatingEditorRevision++
+    }
+    LaunchedEffect(floatingStepState.position) {
+        val position = floatingStepState.position ?: return@LaunchedEffect
+        val current = floatingEditorSnapshot ?: return@LaunchedEffect
+        if (position.flowId != floatingFlowId && floatingVisualEditor?.isDirty != true) {
+            showFloatingFlow(current, position.flowId)
+        }
     }
 
     /** 源文件操作前先把当前程序树落盘；失败时返回 null 并保留未保存内容。 */
@@ -743,11 +993,11 @@ internal fun ProjectPage(
     }
 
     /** 旧版插件管理里需要宿主执行的动作：检错走 Rust 编译，未调用列出没被引用的源文件。 */
-    fun handleFloatingPluginAction(pluginAction: LegacyPluginAction) {
+    fun handleFloatingPluginAction(pluginAction: PluginManagerAction) {
         val project = floatingEditorProject ?: return
         val snapshot = floatingEditorSnapshot ?: return
         when (pluginAction) {
-            LegacyPluginAction.CHECK, LegacyPluginAction.CHECK_ALL -> {
+            PluginManagerAction.CHECK, PluginManagerAction.CHECK_ALL -> {
                 if (busyProjectId != null) return
                 busyProjectId = project.projectId
                 error = null
@@ -769,15 +1019,15 @@ internal fun ProjectPage(
                     busyProjectId = null
                 }
             }
-            LegacyPluginAction.UNUSED -> {
+            PluginManagerAction.UNUSED -> {
                 val unused = sourceFiles.unreferencedFlows(snapshot)
                 notice = if (unused.isEmpty()) "所有源文件都被调用或是入口" else "未调用源文件：" + unused.joinToString("、") { it.displayName() }
             }
-            LegacyPluginAction.TEMPLATE -> notice = "存储为模版属于预留功能，尚未开放"
-            LegacyPluginAction.CREATE,
-            LegacyPluginAction.DELETE,
-            LegacyPluginAction.SAVE_AS,
-            LegacyPluginAction.GROUP,
+            PluginManagerAction.TEMPLATE -> notice = "存储为模版属于预留功能，尚未开放"
+            PluginManagerAction.CREATE,
+            PluginManagerAction.DELETE,
+            PluginManagerAction.SAVE_AS,
+            PluginManagerAction.GROUP,
             -> Unit // 面板已转到源文件管理
         }
     }
@@ -824,6 +1074,7 @@ internal fun ProjectPage(
     LaunchedEffect(floatingEditorProject?.projectId) {
         val project = floatingEditorProject
         floatingEditorSnapshot = null
+        floatingVariablesVisible = false
         floatingVisualEditor = null
         floatingFlowId = null
         floatingTree = SourceFileTree()
@@ -833,6 +1084,10 @@ internal fun ProjectPage(
         floatingPastePending = false
         floatingIndentSlots = null
         floatingEditingNodeId = null
+        floatingRecognitionInsert = null
+        recognitionCaptureActive = false
+        recognitionCaptureSelection = null
+        recognitionCaptureTemplatePath = null
         if (project == null) return@LaunchedEffect
         val snapshot = runCatching { withContext(Dispatchers.IO) { store.openProject(project.projectId) } }
             .getOrElse { failure ->
@@ -844,7 +1099,7 @@ internal fun ProjectPage(
         if (project.sourceMode != ProjectSourceMode.VISUAL) return@LaunchedEffect
         val entryFlow = snapshot.manifest.flows.singleOrNull { it.flowId == snapshot.manifest.entryFlowId }
         if (entryFlow == null) {
-            error = "可视化项目缺少入口 Flow"
+            error = "可视化项目缺少入口插件"
             return@LaunchedEffect
         }
         showFloatingFlow(snapshot, entryFlow.flowId)
@@ -954,9 +1209,15 @@ internal fun ProjectPage(
         return
     }
 
-    // 工具页和编辑器都是从工作台卡片直接进入的全屏页；返回时清掉 opened，
-    // 直接回到工作台（参考产品没有中间的“项目文件页”）。
+    // 工具页和 Lua 源码页仍是独立页面；可视化编辑直接叠在项目列表上。
     fun leaveOpenedProject() {
+        floatingRecognitionInsert = null
+        recognitionCaptureActive = false
+        recognitionCaptureSelection = null
+        recognitionCaptureTemplatePath = null
+        floatingImageBlockKind = null
+        floatingImageBlockValues = null
+        floatingImageRegion = null
         designingRunnerUi = false
         showingImageTools = false
         showingImageLibrary = false
@@ -1050,20 +1311,13 @@ internal fun ProjectPage(
     val visualProject = opened?.takeIf {
         editingOpenedProject && it.manifest.sourceMode == ProjectSourceMode.VISUAL
     }
-    if (visualProject != null) {
-        VisualProjectScreen(
-            snapshot = visualProject,
-            store = store,
-            runtimeClient = runtimeClient,
-            runtimeState = runtimeState,
-            consoleLines = consoleLines,
-            active = active,
-            initialFlowId = requestedFlowId,
-            modifier = modifier,
-            onSnapshotChanged = { opened = it },
-            onExit = ::leaveOpenedProject,
-        )
-        return
+
+    floatingInputInsertion?.let { draft ->
+        floatingVisualEditor?.let { editor ->
+            InputInsertPositionDialog(draft, editor,
+                onDismiss = { floatingInputInsertion = null; floatingInputTarget = null },
+                onConfirm = { position, slot -> confirmFloatingInput(draft, position, slot) })
+        }
     }
 
     run {
@@ -1160,7 +1414,7 @@ internal fun ProjectPage(
                     ProjectRow(
                         project = project,
                         expanded = expanded,
-                        enabled = !loading && busyProjectId == null,
+                        enabled = !loading && busyProjectId == null && visualProject == null,
                         busy = busyProjectId == project.projectId,
                         onToggle = {
                             expandedProjectIds = if (expanded) {
@@ -1170,14 +1424,13 @@ internal fun ProjectPage(
                             }
                         },
                         onOpen = {
-                            // "编辑"必须进入项目声明的正式编辑器：Lua 进源码页，Flow 进程序树。
-                            // LegacyScriptDock 只由明确的旧式悬浮入口打开，不能再劫持卡片入口。
+                            // 使用正式可视化编辑状态直接展开弹窗，不切换到旧全屏诊断界面。
                             editingOpenedProject = true
                             requestedFlowId = null
                             floatingEditorProject = null
                             runStoreAction(openResult = true) { store.openProject(project.projectId) }
                         },
-                        onRun = { runProject(project) },
+                        onRun = { runProject(project, entry = StudioRunEntry.LAUNCH) },
                         onSettings = { openSettings(project) },
                         onUi = {
                             designingRunnerUi = true
@@ -1199,15 +1452,24 @@ internal fun ProjectPage(
                 }
             }
             }
-            // LegacyScriptDock 自己的 BackHandler 只在面板展开（或菜单打开）时启用，
+            visualProject?.let { visual ->
+                key(visual.manifest.projectId) {
+                    VisualProjectScreen(
+                        snapshot = visual, store = store, runtimeClient = runtimeClient,
+                        runtimeState = runtimeState, consoleLines = consoleLines, active = active,
+                        initialFlowId = requestedFlowId, modifier = Modifier.fillMaxSize(),
+                        onSnapshotChanged = { opened = it }, onExit = ::leaveOpenedProject,
+                    )
+                }
+            }
+            // EditorDock 自己的 BackHandler 只在面板展开（或菜单打开）时启用，
             // 收成小球后返回键会穿透到 Activity 直接退出 App。这里兜底：退出悬浮编辑，回项目列表。
             BackHandler(enabled = floatingEditorProject != null && !showingImageTools) {
                 floatingEditorProject = null
             }
             // 图像工具的截图：参考产品是先把自己的悬浮窗 hideFloating() 藏起来、截好图存成
             // temporaryBMP.bmp，再打开工具页去加载它——工具页里根本没有"截图"按钮。
-            // 这里沿用本仓库既有的 3 秒延时（给用户切到目标应用），期间 ImageToolWindow
-            // 什么都不渲染，倒计时提示走工作台的 notice 横幅。
+            // 默认不等待用户延时，仅给弹窗隐藏保留200ms；工具在截图期间不铺不透明背景。
             fun captureForImageTool(delayMillis: Long = 0L) {
                 if (imageToolCapturing || imageToolCropping) return
                 val requestId = imageToolRequestId + 1
@@ -1218,7 +1480,7 @@ internal fun ProjectPage(
                 imageToolCaptureJob = scope.launch {
                     var decoded: Bitmap? = null
                     try {
-                        delay(delayMillis)
+                        delay(delayMillis.coerceAtLeast(200L))
                         when (val result = withContext(Dispatchers.IO) { runtimeClient.capturePreview() }) {
                             is ScreenshotPreviewResult.Success -> {
                                 decoded = try {
@@ -1258,18 +1520,37 @@ internal fun ProjectPage(
             val imageToolSnapshot = opened?.takeIf { showingImageTools }
             if (imageToolSnapshot != null) {
                 // ImageToolWindow 自带 BackHandler 关窗；这里不再叠一层，避免两个
-                // BackHandler 争同一次返回键（LegacyScriptDock 那次踩过类似的坑）。
+                // BackHandler 争同一次返回键（EditorDock 那次踩过类似的坑）。
                 ImageToolWindow(
+                    pointerInputSupported = inputBackendFeatures and 2 != 0,
                     bitmap = imageToolBitmap,
                     // 基准分辨率在 manifest.design 里；ProjectSummary 上那对同名字段是列表用的投影。
                     designWidth = imageToolSnapshot.manifest.design.width,
                     designHeight = imageToolSnapshot.manifest.design.height,
                     scaleMode = imageToolSnapshot.manifest.design.scaleMode,
+                    initialMode = imageToolInitialMode,
                     capturing = imageToolCapturing,
                     message = imageToolMessage,
                     onCapture = { captureForImageTool() },
                     onEmit = ::emitImageToolSnippet,
                     onCropToTemplate = { roi ->
+                        if (imageToolBitmap == null) imageToolMessage = "请先截图"
+                        else pendingImageTemplateRoi = roi
+                    },
+                    onClose = {
+                        floatingCalculationInsert = null
+                        showingImageTools = false
+                        recognitionCaptureActive = false
+                        clearImageToolState()
+                    },
+                    modifier = Modifier.zIndex(1f),
+                )
+                pendingImageTemplateRoi?.let { roi ->
+                    ImageTemplateSaveDialog(
+                        imagePaths = imageToolSnapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
+                        onDismiss = { pendingImageTemplateRoi = null },
+                        onSave = { folder, name ->
+                        pendingImageTemplateRoi = null
                         val source = imageToolBitmap
                         if (source == null) {
                             imageToolMessage = "请先截图"
@@ -1278,7 +1559,7 @@ internal fun ProjectPage(
                                 source.copy(source.config ?: Bitmap.Config.ARGB_8888, false)
                             }.getOrElse {
                                 imageToolMessage = it.message ?: "无法准备模板图片"
-                                return@ImageToolWindow
+                                return@ImageTemplateSaveDialog
                             }
                             val requestId = imageToolRequestId + 1
                             imageToolRequestId = requestId
@@ -1287,12 +1568,15 @@ internal fun ProjectPage(
                                 try {
                                     val result = withContext(Dispatchers.IO) {
                                         runCatching {
-                                            cropAndImportTemplate(store, imageToolSnapshot, sourceCopy, roi, context)
+                                            cropAndImportTemplate(store, imageToolSnapshot, sourceCopy, roi, context, folder, name)
                                         }
                                     }
                                     if (requestId != imageToolRequestId) return@launch
                                     result.onSuccess { (snapshot, path) ->
                                     opened = snapshot
+                                    if (floatingEditorSnapshot?.manifest?.projectId == snapshot.manifest.projectId) {
+                                        floatingEditorSnapshot = snapshot
+                                    }
                                     // 存完模板顺手给出能用的找图代码：路径这时才确定，
                                     // 提前猜路径会生成一段运行时必然失败的调用。
                                     val snippet = runCatching {
@@ -1309,11 +1593,19 @@ internal fun ProjectPage(
                                         )
                                     }.getOrNull()
                                     val name = path.substringAfterLast('/')
-                                    imageToolMessage = if (snippet?.rejection == null && snippet != null) {
+                                    imageToolMessage = if (floatingEditorProject?.sourceMode == ProjectSourceMode.VISUAL) {
+                                        "已存为模板：$name；返回图像面板可直接选择"
+                                    } else if (snippet?.rejection == null && snippet != null) {
                                         emitImageToolSnippet(snippet)
                                         imageToolMessage ?: "已存为模板：$name"
                                     } else {
                                         "已存为模板：$name"
+                                    }
+                                    if (recognitionCaptureActive) {
+                                        recognitionCaptureTemplatePath = path
+                                        recognitionCaptureActive = false
+                                        showingImageTools = false
+                                        clearImageToolState()
                                     }
                                     }.onFailure {
                                         imageToolMessage = it.message ?: "模板保存失败"
@@ -1327,31 +1619,58 @@ internal fun ProjectPage(
                                 }
                             }
                         }
-                    },
-                    onClose = {
-                        showingImageTools = false
-                        clearImageToolState()
-                    },
-                    modifier = Modifier.zIndex(1f),
-                )
+                        },
+                    )
+                }
             }
             floatingEditorProject?.let { project ->
                 val visualSnapshot = floatingEditorSnapshot
                 val visualEditor = floatingVisualEditor
                 @Suppress("UNUSED_VARIABLE")
                 val revision = floatingEditorRevision
-                LegacyScriptDock(
+                if (showInterfacePreview) ProjectInterfacePreview(visualSnapshot?.manifest?.runnerUi, visualSnapshot?.directory) { showInterfacePreview = false }
+                EditorDock(
                     projectName = project.name,
-                    onRun = {
-                        if (visualEditor?.isDirty == true) {
-                            notice = "请先完成程序树保存后再运行"
-                            saveFloatingFlow()
-                        } else {
-                            runProject(project)
+                    onOpenSettings = {
+                        when {
+                            busyProjectId != null || floatingSourceBusy -> notice = "正在处理项目，请稍后打开设置"
+                            runtimeRunning || runtimeState.engineState == RuntimeEngineState.STOPPING -> notice = "请先停止运行，再打开项目设置"
+                            visualEditor?.isDirty == true -> notice = "请先保存当前插件，再打开项目设置"
+                            else -> openSettings(project)
                         }
                     },
+                    onRun = { runProject(project, saveCurrentFlowBeforeRun = true) },
                     running = runtimeRunning,
+                    runEnabled = busyProjectId == null &&
+                        runtimeState.engineState != RuntimeEngineState.STOPPING &&
+                        (project.sourceMode != ProjectSourceMode.VISUAL || visualEditor != null),
                     onStop = ::stopRunningProject,
+                    paused = runtimeState.engineState == RuntimeEngineState.PAUSED,
+                    resumeEnabled = busyProjectId == null && !floatingStepState.pending && !floatingStepState.loading,
+                    onPause = {
+                        if (busyProjectId == null) {
+                            busyProjectId = project.projectId
+                            scope.launch {
+                                try {
+                                    if (!withContext(Dispatchers.IO) { runtimeClient.requestPause() }) error = "暂停请求被拒绝"
+                                } finally { busyProjectId = null }
+                            }
+                        }
+                    },
+                    onResume = {
+                        if (floatingStepState.position == null && busyProjectId == null) {
+                            busyProjectId = project.projectId
+                            scope.launch {
+                                try {
+                                    if (!withContext(Dispatchers.IO) { runtimeClient.requestResume() }) error = "继续请求被拒绝"
+                                } finally { busyProjectId = null }
+                            }
+                        } else if (floatingStepState.begin(continueRun = true)) scope.launch {
+                            if (!withContext(Dispatchers.IO) { runtimeClient.resumeDebugProject(project.projectId, runtimeState.sessionGeneration) }) {
+                                floatingStepState.rejected(); error = "继续请求被拒绝，会话可能已变化"
+                            }
+                        }
+                    },
                     consoleLines = consoleLines,
                     sourceName = if (project.sourceMode == ProjectSourceMode.VISUAL) {
                         floatingFlowId?.let { flowId ->
@@ -1363,10 +1682,16 @@ internal fun ProjectPage(
                     sourceBusy = floatingSourceBusy,
                     sourceMessage = floatingSourceMessage,
                     onSourceAction = ::handleFloatingSourceAction,
+                    onManageVariables = { floatingVariablesVisible = true },
+                    availableVariables = if (visualEditor != null && visualSnapshot != null) visualKnownVariables(visualEditor, visualSnapshot.manifest.variables, floatingFlowId.orEmpty()) else emptyList(),
+                    availableLabels = visualEditor?.rows?.filter { it.kind == "control.label" && it.depth == 0 }
+                        ?.mapNotNull { row -> visualEditor.nodeArguments(row.nodeId)?.get("name")?.asString }?.distinct().orEmpty(),
+                    projectVariables = visualSnapshot?.manifest?.variables.orEmpty(),
+                    projectFlows = visualSnapshot?.manifest?.flows.orEmpty(),
                     debugSettings = visualSnapshot?.manifest?.debugSettings
                         ?: com.autoscript.project.store.ProjectDebugSettings(),
                     onSaveDebugSettings = { settings ->
-                        val current = visualSnapshot ?: return@LegacyScriptDock
+                        val current = visualSnapshot ?: return@EditorDock
                         scope.launch {
                             runCatching {
                                 withContext(Dispatchers.IO) {
@@ -1386,7 +1711,7 @@ internal fun ProjectPage(
                     },
                     projectFiles = visualSnapshot?.let { current -> remember(current) { projectFileCatalog(current) } }.orEmpty(),
                     onOpenProjectFile = { file ->
-                        val current = visualSnapshot ?: return@LegacyScriptDock
+                        val current = visualSnapshot ?: return@EditorDock
                         when (file.kind) {
                             StudioProjectFileKind.LUA -> {
                                 opened = current
@@ -1408,6 +1733,7 @@ internal fun ProjectPage(
                     onDeleteProjectFiles = ::deleteFloatingProjectFiles,
                     onPluginAction = ::handleFloatingPluginAction,
                     capabilities = visualSnapshot?.manifest?.capabilities?.toSet().orEmpty(),
+                    inputBackendFeatures = inputBackendFeatures,
                     onOpenRecorder = visualSnapshot?.let { current ->
                         {
                             opened = current
@@ -1419,10 +1745,47 @@ internal fun ProjectPage(
                         { delayMillis ->
                             opened = current
                             showingImageTools = true
+                            imageToolInitialMode = ImageToolMode.CROP
                             // 和参考一样：进入工具就先截图，工具打开时图已经在了。
                             captureForImageTool(delayMillis)
                         }
                     },
+                    onOpenImageToolMode = visualSnapshot?.let { current ->
+                        { mode, delayMillis ->
+                            opened = current
+                            imageToolInitialMode = mode
+                            showingImageTools = true
+                            captureForImageTool(delayMillis)
+                        }
+                    },
+                    onCreateImageBlock = if (visualSnapshot != null && visualEditor != null) {
+                        { kind ->
+                            floatingImageBlockValues = null
+                            floatingImageBlockKind = kind
+                            recognitionCaptureSelection = null
+                            recognitionCaptureTemplatePath = null
+                        }
+                    } else null,
+                    onTestRecognition = if (visualSnapshot != null && visualEditor != null) {
+                        { floatingRecognitionTest = true }
+                    } else null,
+                    onOpenDebugTool = if (visualSnapshot != null && visualEditor != null) { { floatingDebugInspector = it } } else null,
+                    onOpenInputPointPicker = visualSnapshot?.let { current ->
+                        { mode ->
+                            floatingVisualEditor?.let { editor -> floatingFlowId?.let { flowId ->
+                                floatingInputTarget = InputPickTarget(current.manifest.projectId, flowId, editor.currentSource, editor.selectedNodeId)
+                            } }
+                            opened = current
+                            if (mode == ImageToolMode.POINTER_UP) queueFloatingInput(ImageToolCodeGen.pointerUp())
+                            else {
+                                imageToolInitialMode = mode
+                                showingImageTools = true
+                                captureForImageTool(0L)
+                            }
+                        }
+                    },
+                    onOpenInputFloatingPicker = if (visualSnapshot != null) ::openFloatingInputPicker else null,
+                    inputPickOpenRequest = floatingInputOpenRequest,
                     onOpenImageLibrary = visualSnapshot?.let { current ->
                         {
                             opened = current
@@ -1433,7 +1796,7 @@ internal fun ProjectPage(
                     programNodes = if (project.sourceMode == ProjectSourceMode.VISUAL) {
                         visualEditor?.rows?.map { node ->
                             val contract = BlockCatalog.find(node.kind)
-                            LegacyDockProgramNode(
+                            EditorProgramNode(
                                 nodeId = node.nodeId,
                                 label = buildString {
                                     node.childSlot?.let { append('[').append(childBlockLabel(it)).append("] ") }
@@ -1442,14 +1805,38 @@ internal fun ProjectPage(
                                 kind = node.kind,
                                 depth = node.depth,
                                 childSlots = contract?.childBlocks.orEmpty(),
+                                disabled = visualEditor.isNodeDisabled(node.nodeId, inherited = false),
                             )
                         }.orEmpty()
                     } else null,
                     programSelectedNodeId = visualEditor?.selectedNodeId,
-                    editingEnabled = busyProjectId == null && (
+                    programCurrentNodeId = floatingStepState.position?.takeIf { it.flowId == floatingFlowId }?.nodeId,
+                    executionStatus = when {
+                        floatingStepState.pending -> floatingStepState.pendingMessage
+                        runtimeState.engineState == RuntimeEngineState.PAUSED && floatingStepState.loading -> "已暂停 · 正在读取执行位置…"
+                        runtimeState.engineState == RuntimeEngineState.PAUSED && floatingStepState.position != null -> "已暂停 · 黄色 ▶ 为下一步，点击单步执行；点运行继续"
+                        else -> null
+                    },
+                    programSelectedNodeIds = visualEditor?.selectedNodeIds.orEmpty(),
+                    onProgramNodeSelectionToggled = { nodeId -> visualEditor?.toggleSelection(nodeId); floatingEditorRevision++ },
+                    editingEnabled = editorCanMutate(busyProjectId != null, false, runtimeState.engineState) && (
                         project.sourceMode == ProjectSourceMode.LUA ||
                             visualEditor?.isReadOnly == false
                         ),
+                    programSource = visualEditor?.currentSource,
+                    onReplaceProgramText = if (visualEditor == null) null else { query, replacement, selectedOnly ->
+                        if (!editorCanMutate(busyProjectId != null, visualEditor.isReadOnly, runtimeState.engineState)) "请停止运行后再替换"
+                        else {
+                            val count = visualEditor.replaceDisplayText(query, replacement, selectedOnly)
+                            if (count == 0) "没有可替换的文字，或替换结果超过长度限制"
+                            else { finishFloatingMutation(true, "已替换 $count 个积木的文字"); null }
+                        }
+                    },
+                    stepEnabled = !floatingStepState.pending && !floatingStepState.loading &&
+                        (runtimeState.engineState != RuntimeEngineState.PAUSED || floatingStepState.position != null) &&
+                        project.sourceMode == ProjectSourceMode.VISUAL && editorCanStep(busyProjectId != null,
+                        runtimeState.phase == RuntimeConnectionPhase.CONNECTED, runtimeState.engineState,
+                        visualEditor?.selectedNodeId?.let { !visualEditor.isNodeDisabled(it) } == true),
                     onProgramNodeSelected = { nodeId ->
                         visualEditor?.selectedNodeId = nodeId
                         floatingEditorRevision++
@@ -1458,22 +1845,21 @@ internal fun ProjectPage(
                         val selected = visualEditor?.rows?.firstOrNull { it.nodeId == visualEditor.selectedNodeId }
                         val slots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
                         when {
-                            position == LegacyInsertPosition.INSIDE && slots.isEmpty() -> error = "当前选择行不能加入内部"
-                            position == LegacyInsertPosition.INSIDE -> insertFloatingBlock(snippet, slots.first(), position)
+                            position == EditorInsertPosition.INSIDE && slots.isEmpty() -> error = "当前选择行不能加入内部"
+                            position == EditorInsertPosition.INSIDE -> insertFloatingBlock(snippet, slots.first(), position)
                             else -> insertFloatingBlock(snippet, null, position)
                         }
                     },
                     onProgramNodeDeleted = {
-                        if (busyProjectId == null && visualEditor?.deleteSelected() == true) {
+                        if (editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState) && visualEditor?.deleteSelection() == true) {
                             floatingEditorRevision++
                             saveFloatingFlow()
                         }
                     },
                     onProgramNodeEdited = {
-                        if (visualEditor?.isDirty == true) {
-                            notice = "正在保存程序树，保存完成后再编辑参数"
-                            saveFloatingFlow()
-                        } else if (visualSnapshot != null) {
+                        floatingReflectionPosition = null
+                        floatingReflectionChildSlot = null
+                        if (visualSnapshot != null && editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState)) {
                             val selectedId = visualEditor?.selectedNodeId
                             val selected = visualEditor?.rows?.firstOrNull { it.nodeId == selectedId }
                             val contract = selected?.kind?.let(BlockCatalog::find)
@@ -1484,14 +1870,41 @@ internal fun ProjectPage(
                             }
                         }
                     },
+                    onProgramNodeReflected = { nodeId, position, slot ->
+                        if (editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState)) {
+                            floatingReflectionPosition = position.takeUnless { it == EditorInsertPosition.REPLACE }
+                            floatingReflectionChildSlot = slot
+                            floatingEditingNodeId = nodeId
+                        }
+                    },
+                    onShowInterface = { showInterfacePreview = true },
                     onProgramCommand = { command ->
                         if (project.sourceMode == ProjectSourceMode.VISUAL) runFloatingCommand(command)
                         else error = "结构化节点操作仅适用于可视化项目，Lua 请进入源码编辑器"
                     },
                     onStep = {
-                        notice = "单步运行需要 Runtime 调试协议，当前版本未开放，未执行脚本"
+                        if (project.sourceMode != ProjectSourceMode.VISUAL) error = "单步仅支持可视化插件"
+                        else if (runtimeState.engineState == RuntimeEngineState.PAUSED) {
+                            if (floatingStepState.begin()) scope.launch {
+                                if (!withContext(Dispatchers.IO) { runtimeClient.requestStep(project.projectId, runtimeState.sessionGeneration) }) {
+                                    floatingStepState.rejected(); error = "无法单步：当前项目的会话或暂停状态已变化"
+                                }
+                            }
+                        } else if (editorCanStep(busyProjectId != null, runtimeState.phase == RuntimeConnectionPhase.CONNECTED,
+                                runtimeState.engineState, visualEditor?.selectedNodeId?.let { !visualEditor.isNodeDisabled(it) } == true)) {
+                            runProject(project, saveCurrentFlowBeforeRun = true, entry = StudioRunEntry.SINGLE_STEP)
+                        } else error = "请先选择可执行积木，并暂停或停止当前任务"
                     },
-                    onClose = { floatingEditorProject = null },
+                    onClose = {
+                        floatingImageBlockKind = null
+                        floatingImageBlockValues = null
+                        floatingRecognitionInsert = null
+                        recognitionCaptureActive = false
+                        recognitionCaptureSelection = null
+                        recognitionCaptureTemplatePath = null
+                        floatingImageRegion = null
+                        floatingEditorProject = null
+                    },
                     onInsert = insert@{ snippet ->
                         if (project.sourceMode == ProjectSourceMode.VISUAL) {
                             val selected = visualEditor?.rows?.firstOrNull { it.nodeId == visualEditor.selectedNodeId }
@@ -1532,11 +1945,69 @@ internal fun ProjectPage(
                         }
                     },
                 )
+                if (floatingVariablesVisible && visualSnapshot != null) {
+                    VisualVariableManagerDialog(
+                        variables = visualSnapshot.manifest.variables,
+                        currentFlowId = floatingFlowId.orEmpty(),
+                        flows = visualSnapshot.manifest.flows,
+                        allowFlowScope = project.sourceMode == ProjectSourceMode.VISUAL,
+                        onDismiss = { floatingVariablesVisible = false },
+                        onSave = { variables ->
+                            scope.launch {
+                                if (!editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState)) {
+                                    error = "请停止运行后再修改变量"; return@launch
+                                }
+                                runCatching {
+                                    withContext(Dispatchers.IO) {
+                                        store.updateVariables(
+                                            visualSnapshot.manifest.projectId,
+                                            variables,
+                                            visualSnapshot.manifest.variables,
+                                        )
+                                    }
+                                }.onSuccess { updated ->
+                                    floatingEditorSnapshot = updated
+                                    floatingVariablesVisible = false
+                                    notice = "变量已保存"
+                                }.onFailure { failure ->
+                                    error = failure.message ?: "变量保存失败"
+                                }
+                            }
+                        },
+                        onSaveAndInsert = if (project.sourceMode == ProjectSourceMode.VISUAL) { variables, arguments ->
+                            scope.launch {
+                                if (!editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState)) {
+                                    error = "请停止运行后再修改变量"; return@launch
+                                }
+                                runCatching {
+                                    withContext(Dispatchers.IO) { store.updateVariables(visualSnapshot.manifest.projectId, variables, visualSnapshot.manifest.variables) }
+                                }.onSuccess { updated ->
+                                    floatingEditorSnapshot = updated
+                                    floatingVariablesVisible = false
+                                    floatingCalculationInsert = null
+                                    insertFloatingBlock(variableCalculationHint(arguments), null)
+                                }.onFailure { error = it.message ?: "变量表保存失败" }
+                            }
+                        } else null,
+                    )
+                }
+                floatingCalculationInsert?.let { pending ->
+                    if (visualSnapshot != null) VisualVariableCalculationDialog(
+                        pending.arguments, visualSnapshot.manifest.variables, floatingFlowId.orEmpty(), visualSnapshot.manifest.flows,
+                        onDismiss = { floatingCalculationInsert = null },
+                        onManageVariables = { floatingVariablesVisible = true },
+                        onConfirm = { configured ->
+                            floatingCalculationInsert = null
+                            insertFloatingBlock(variableCalculationHint(configured), pending.childSlot, pending.position)
+                            null
+                        },
+                    )
+                }
                 val pendingSnippet = floatingInsertSnippet
                 if (pendingSnippet != null && visualEditor != null) {
                     val selected = visualEditor.rows.firstOrNull { it.nodeId == visualEditor.selectedNodeId }
                     val childSlots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
-                    LegacyOptionDialog(
+                    EditorOptionDialog(
                         title = "选择插入位置",
                         options = listOf<Pair<String?, String>>(null to "当前节点之后") +
                             childSlots.map { slot -> slot to "${childBlockLabel(slot)}内新增" },
@@ -1548,14 +2019,14 @@ internal fun ProjectPage(
                     )
                 }
                 floatingIndentSlots?.let { slots ->
-                    LegacyOptionDialog(
+                    EditorOptionDialog(
                         title = "选择缩进分支",
                         options = slots.map { slot -> slot to childBlockLabel(slot) },
                         onDismiss = { floatingIndentSlots = null },
                         onConfirm = { slot ->
                             floatingIndentSlots = null
                             finishFloatingMutation(
-                                visualEditor?.indentSelected(slot) == true,
+                                visualEditor?.indentSelection(slot) == true,
                                 "节点已缩进到${childBlockLabel(slot)}",
                             )
                         },
@@ -1564,7 +2035,7 @@ internal fun ProjectPage(
                 if (floatingPastePending && visualEditor != null) {
                     val selected = visualEditor.rows.firstOrNull { it.nodeId == visualEditor.selectedNodeId }
                     val slots = selected?.kind?.let(BlockCatalog::find)?.childBlocks.orEmpty()
-                    LegacyOptionDialog(
+                    EditorOptionDialog(
                         title = "选择粘贴位置",
                         options = listOf<Pair<String?, String>>(null to "当前节点之后") +
                             slots.map { slot -> slot to "${childBlockLabel(slot)}内" },
@@ -1576,10 +2047,165 @@ internal fun ProjectPage(
                     )
                 }
                 val editingNodeId = floatingEditingNodeId
+                val imageKind = floatingImageBlockKind
+                floatingRecognitionInsert?.takeIf { visualEditor != null && visualSnapshot != null }?.let { request ->
+                    val current = requireNotNull(visualSnapshot)
+                    val editor = requireNotNull(visualEditor)
+                    VisualImageRecognitionDialog(
+                        request.contract, request.arguments, current.manifest.resources,
+                        visualKnownVariables(editor, current.manifest.variables, floatingFlowId.orEmpty()), current,
+                        confirmLabel = if (request.position == EditorInsertPosition.REPLACE) "确定" else "加入",
+                        visible = !showingImageTools, captureSelection = recognitionCaptureSelection,
+                        captureTemplatePath = recognitionCaptureTemplatePath,
+                        onPickFromScreen = { mode ->
+                            recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null
+                            recognitionCaptureActive = true; opened = current
+                            imageToolInitialMode = mode; showingImageTools = true; captureForImageTool(0L)
+                        },
+                        onDismiss = { floatingRecognitionInsert = null; recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null },
+                        onConfirm = { _, configured ->
+                            val changed = insertConfiguredRecognition(editor, request, configured)
+                            if (changed) {
+                                floatingRecognitionInsert = null
+                                recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null
+                            }
+                            finishFloatingMutation(changed, "已加入：${request.contract.title}")
+                        },
+                    )
+                }
+                floatingDebugInspector?.takeIf { visualEditor != null && visualSnapshot != null }?.let { mode ->
+                    val current = requireNotNull(visualSnapshot)
+                    val editor = requireNotNull(visualEditor)
+                    val flowId = floatingFlowId.orEmpty()
+                    VisualDebugInspector(mode, current, flowId, editor, runtimeClient,
+                        onDismiss = { floatingDebugInspector = null },
+                        onBackfill = { nodeId, args ->
+                            if (busyProjectId != null || editor.isReadOnly || runtimeState.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING)) "请停止运行后再回填" else {
+                                val original = editor.currentSource
+                                val root = current.manifest.flows.first { it.flowId == flowId }.rootBlockId
+                                val candidate = VisualEditorState.create(original, root)
+                                if (!candidate.updateArguments(nodeId, args)) "节点已变化" else {
+                                    when (val validation = withContext(Dispatchers.IO) {
+                                        runtimeClient.validateVisualDraft(current.manifest.projectId, flowId, candidate.currentSource.toByteArray(Charsets.UTF_8))
+                                    }) {
+                                        is VisualCompileResult.Success -> {
+                                            if (editor.currentSource != original) "编辑内容已变化，请重新选择" else {
+                                                editor.updateArguments(nodeId, args)
+                                                floatingEditorRevision++
+                                                saveFloatingFlow()
+                                                null
+                                            }
+                                        }
+                                        is VisualCompileResult.Invalid -> validation.diagnostic.message
+                                        is VisualCompileResult.Unavailable -> validation.message
+                                    }
+                                }
+                            }
+                        },
+                    )
+                }
+                if (floatingRecognitionTest && visualEditor != null && visualSnapshot != null) {
+                    ImageRecognitionTestDialog(visualSnapshot, runtimeClient,
+                        onDismiss = { floatingRecognitionTest = false },
+                        onCapture = {
+                            floatingRecognitionTest = false
+                            opened = visualSnapshot
+                            imageToolInitialMode = ImageToolMode.CROP
+                            showingImageTools = true
+                            captureForImageTool(0L)
+                        },
+                        onInsert = { arguments ->
+                            val blocks = recognitionBlockSequence(arguments)
+                            val missing = blocks.flatMap { it.first.requiredCapabilities }.toSet() - visualSnapshot.manifest.capabilities.toSet()
+                            if (missing.isNotEmpty()) error = "找图需要能力：${missing.joinToString()}"
+                            else if (busyProjectId == null && visualEditor.insertBlocks(blocks)) {
+                                floatingRecognitionTest = false
+                                floatingEditorRevision++
+                                saveFloatingFlow()
+                            }
+                        },
+                    )
+                }
+                if (imageKind != null && visualEditor != null && visualSnapshot != null) {
+                    val contract = BlockCatalog.find(imageKind)
+                    val capture = BlockCatalog.find("screen.capture")
+                    val release = BlockCatalog.find("screen.release")
+                    val missing = listOfNotNull(contract, capture, release).flatMap { it.requiredCapabilities }
+                        .toSet() - visualSnapshot.manifest.capabilities.toSet()
+                    val arguments = remember(imageKind, visualSnapshot.manifest.projectId, floatingFlowId, floatingImageBlockValues) { contract?.let {
+                        initialRecognitionArguments(it, visualSnapshot)
+                    }?.let { base ->
+                        val picked = floatingImageBlockValues
+                        if (picked != null) base.withImageToolValues(picked) else base.apply {
+                            floatingImageRegion?.takeIf { has("region") }?.let { roi ->
+                                add("region", JsonObject().apply {
+                                    addProperty("left", roi.left); addProperty("top", roi.top)
+                                    addProperty("right", roi.right); addProperty("bottom", roi.bottom)
+                                })
+                            }
+                        }
+                    } }
+                    when {
+                        contract == null || capture == null || release == null -> {
+                            error = "缺少图像积木契约：$imageKind"
+                            floatingImageBlockKind = null
+                        }
+                        missing.isNotEmpty() -> {
+                            error = "${contract.title}需要能力：${missing.joinToString()}"
+                            floatingImageBlockKind = null
+                        }
+                        arguments == null -> {
+                            error = "请先导入${if (imageKind == "ocr.glyph") "字库" else "截图模板"}资源"
+                            floatingImageBlockKind = null
+                        }
+                        else -> VisualImageRecognitionDialog(
+                            contract = contract,
+                            arguments = arguments,
+                            resources = visualSnapshot.manifest.resources,
+                            knownVariables = visualKnownVariables(visualEditor, visualSnapshot.manifest.variables, floatingFlowId.orEmpty()),
+                            snapshot = visualSnapshot,
+                            confirmLabel = "加入",
+                            automaticCapture = true,
+                            allowKindChange = true,
+                            visible = !showingImageTools,
+                            captureSelection = recognitionCaptureSelection,
+                            captureTemplatePath = recognitionCaptureTemplatePath,
+                            onPickFromScreen = { mode ->
+                                recognitionCaptureSelection = null
+                                recognitionCaptureTemplatePath = null
+                                recognitionCaptureActive = true
+                                opened = visualSnapshot
+                                imageToolInitialMode = mode
+                                showingImageTools = true
+                                captureForImageTool(0L)
+                            },
+                            onDismiss = { floatingImageBlockKind = null; floatingImageBlockValues = null; recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null },
+                            onConfirm = { selectedContract, configured ->
+                                val frame = configured.get("frameVariable")?.asString ?: "frame"
+                                val captureArgs = JsonObject().apply { addProperty("resultVariable", frame) }
+                                val releaseArgs = JsonObject().apply { addProperty("frameVariable", frame) }
+                                val blocks = if (selectedContract.kind in setOf("vision.findimage", "vision.findgray", "ocr.alphanumeric")) {
+                                    configured.addProperty("autoCapture", true)
+                                    listOf(selectedContract to configured)
+                                } else listOf(capture to captureArgs, selectedContract to configured, release to releaseArgs)
+                                val required = blocks.flatMap { it.first.requiredCapabilities }.toSet() - visualSnapshot.manifest.capabilities.toSet()
+                                if (required.isNotEmpty()) error = "识别需要能力：${required.joinToString()}"
+                                else {
+                                    floatingImageBlockKind = null
+                                    floatingImageBlockValues = null
+                                    recognitionCaptureSelection = null
+                                    recognitionCaptureTemplatePath = null
+                                    finishFloatingMutation(visualEditor.insertBlocks(blocks), "已加入：截图 → ${selectedContract.title} → 释放截图")
+                                }
+                            },
+                        )
+                    }
+                }
                 if (editingNodeId != null && visualEditor != null && visualSnapshot != null) {
                     val row = visualEditor.rows.firstOrNull { it.nodeId == editingNodeId }
                     val contract = row?.kind?.let(BlockCatalog::find)
                     val arguments = visualEditor.nodeArguments(editingNodeId)
+                    val originalArguments = remember(visualEditor, editingNodeId) { arguments?.deepCopy() }
                     if (contract == null || arguments == null) {
                         floatingEditingNodeId = null
                     } else {
@@ -1587,15 +2213,42 @@ internal fun ProjectPage(
                             contract = contract,
                             arguments = arguments,
                             flows = visualSnapshot.manifest.flows,
-                            currentFlowId = visualSnapshot.manifest.entryFlowId.orEmpty(),
+                            currentFlowId = floatingFlowId.orEmpty(),
+                            knownLabels = visualEditor.rows.filter { it.kind == "control.label" && !visualEditor.isNodeDisabled(it.nodeId) }
+                                .mapNotNull { visualEditor.nodeArguments(it.nodeId)?.get("name")?.asString },
+                            confirmLabel = if (floatingReflectionPosition == null) "保存" else "加入",
+                            onManageVariables = { floatingVariablesVisible = true },
                             resources = visualSnapshot.manifest.resources,
-                            onDismiss = { floatingEditingNodeId = null },
+                            knownVariables = visualKnownVariables(visualEditor, visualSnapshot.manifest.variables, floatingFlowId.orEmpty()),
+                            imageProject = visualSnapshot,
+                            imageDialogVisible = !showingImageTools,
+                            imageCaptureSelection = recognitionCaptureSelection,
+                            imageCaptureTemplatePath = recognitionCaptureTemplatePath,
+                            onPickImageFromScreen = { mode ->
+                                recognitionCaptureSelection = null
+                                recognitionCaptureTemplatePath = null
+                                recognitionCaptureActive = true
+                                opened = visualSnapshot
+                                imageToolInitialMode = mode
+                                showingImageTools = true
+                                captureForImageTool(0L)
+                            },
+                            onDismiss = { floatingEditingNodeId = null; recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null },
                             onConfirm = { updated ->
+                                recognitionCaptureSelection = null
+                                recognitionCaptureTemplatePath = null
                                 floatingEditingNodeId = null
-                                finishFloatingMutation(
-                                    visualEditor.updateArguments(editingNodeId, updated),
-                                    "节点参数已更新",
-                                )
+                                if (!editorCanMutate(busyProjectId != null, visualEditor.isReadOnly, runtimeState.engineState)) {
+                                    error = "请停止运行后再修改插件"
+                                } else if (floatingReflectionPosition == null && visualEditor.nodeArguments(editingNodeId) == updated) {
+                                    error = null
+                                } else {
+                                    finishFloatingMutation(
+                                        applyReflectedArguments(visualEditor, editingNodeId, contract, updated, floatingReflectionPosition,
+                                            floatingReflectionChildSlot, originalArguments),
+                                        "节点参数已更新",
+                                    )
+                                }
                             },
                         )
                     }
@@ -1650,6 +2303,9 @@ internal fun ProjectPage(
             onSnapshotChanged = { updated ->
                 settingsSnapshot = updated
                 if (opened?.manifest?.projectId == updated.manifest.projectId) opened = updated
+                if (floatingEditorSnapshot?.manifest?.projectId == updated.manifest.projectId) {
+                    floatingEditorSnapshot = updated
+                }
                 scope.launch {
                     projects = withContext(Dispatchers.IO) { store.listProjects() }
                 }

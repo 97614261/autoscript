@@ -1,0 +1,12 @@
+{
+ "schemaVersion":1,"opcode":6101,"name":"Ocr.alphanumeric","since":"1.7","capability":"ocr.onnx","execution":"async_task","cancelMode":"cooperative","sideEffect":"none","timeoutMs":5000,"resourceOwnership":"borrowed_frame",
+ "summary":"ONNX英文移动模型识别指定单行ROI，只输出A-Z/a-z/0-9；无检测或中文识别。",
+ "params":[
+ {"name":"frame","type":"integer","required":true,"summary":"缓存帧。"},
+ {"name":"left","type":"integer","required":true,"summary":"左边界。"},
+ {"name":"top","type":"integer","required":true,"summary":"上边界。"},
+ {"name":"right","type":"integer","required":true,"summary":"右边界，不含。"},
+ {"name":"bottom","type":"integer","required":true,"summary":"下边界，不含。"},
+ {"name":"minimumConfidencePermille","type":"integer","required":false,"summary":"最低逐字置信度0–1000，默认500。"}],
+ "returns":{"type":"AlphanumericResult","nullable":false,"summary":"text与averageScorePermille，无可信字符为空文本。"},"legacyAliases":[]
+}

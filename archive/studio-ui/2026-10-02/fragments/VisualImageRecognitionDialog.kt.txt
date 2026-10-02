@@ -1,0 +1,106 @@
+// ARCHIVED 2026-10-02 — not a compilable standalone Kotlin source.
+// Original source: apps/studio-android/src/main/java/com/autoscript/studio/VisualImageRecognitionDialog.kt
+// Only unused declarations were extracted; active dependencies remain in production.
+// Restore individual declarations with the naming map in ../README.md.
+
+package com.autoscript.studio
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.autoscript.core.designsystem.AutoScriptPalette
+import com.autoscript.project.store.ProjectSnapshot
+import com.autoscript.studio.generated.BlockContract
+import com.autoscript.studio.generated.BlockPropertyEditor
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
+
+@Composable
+private fun RecognitionPreviewDialog(preview: RecognitionPreview, initialBounds: List<String>?, onDismiss: () -> Unit, onRegion: (List<String>) -> Unit) {
+    var bounds by remember(preview, initialBounds) {
+        mutableStateOf(initialBounds?.takeIf { values ->
+            imageRecognitionBounds(values)?.let { it.get("right").asInt <= preview.width && it.get("bottom").asInt <= preview.height } == true
+        })
+    }
+    var dragStart by remember { mutableStateOf(Offset.Zero) }
+    var dragEnd by remember { mutableStateOf(Offset.Zero) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 620.dp).fillMaxHeight(.82f), color = Color.White) {
+            Column {
+                RecognitionHeader(if (initialBounds == null) "模板预览 · ${preview.width} × ${preview.height}px" else "拖动框选范围 · 原图像素", onDismiss)
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF20242C)), contentAlignment = Alignment.Center) {
+                    val scale = min(constraints.maxWidth.toFloat() / preview.width, constraints.maxHeight.toFloat() / preview.height)
+                    val density = LocalDensity.current
+                    val widthDp = with(density) { (preview.width * scale).toDp() }
+                    val heightDp = with(density) { (preview.height * scale).toDp() }
+                    Box(Modifier.size(widthDp, heightDp)) {
+                        Image(preview.bitmap.asImageBitmap(), "原图", Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                        Canvas(Modifier.fillMaxSize().pointerInput(preview, initialBounds != null, scale) {
+                            if (initialBounds != null && scale > 0) detectDragGestures(
+                                onDragStart = { dragStart = it; dragEnd = it },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragEnd += amount
+                                    bounds = imageRecognitionDragRegion(dragStart.x / scale, dragStart.y / scale, dragEnd.x / scale, dragEnd.y / scale, preview.width, preview.height)
+                                },
+                            )
+                        }) {
+                            bounds?.let(::imageRecognitionBounds)?.let { region ->
+                                drawRect(Color(0xFF00E5FF), Offset(region.get("left").asFloat * scale, region.get("top").asFloat * scale),
+                                    Size((region.get("right").asFloat - region.get("left").asFloat) * scale, (region.get("bottom").asFloat - region.get("top").asFloat) * scale), style = Stroke(2.dp.toPx()))
+                            }
+                        }
+                    }
+                }
+                if (initialBounds != null) Text("X/Y/宽/高：${bounds?.joinToString(", ") ?: "请拖动选框"}", Modifier.padding(8.dp), fontSize = 12.sp)
+                RecognitionFooter("取消", if (initialBounds == null) "关闭" else "使用范围", onDismiss) {
+                    if (initialBounds == null) onDismiss() else bounds?.takeIf { imageRecognitionBounds(it) != null }?.let(onRegion)
+                }
+            }
+        }
+    }
+}
+

@@ -1,0 +1,11 @@
+{
+ "schemaVersion":1,"kind":"ocr.alphanumeric","nodeVersion":1,"nodeSchemaId":"https://autoscript.local/schema/node/ocr.alphanumeric/1/schema.json",
+ "title":"字母数字 · ONNX","category":"ocr","summary":"指定单行区域，输出A-Z/a-z/0-9，默认自动截图。","searchTerms":["onnx","ocr","字母","数字"],"requiredCapabilities":["ocr.onnx","screen.capture"],"childBlocks":[],
+ "properties":[
+ {"path":"frameVariable","label":"帧变量","editor":"string","required":true,"defaultValue":"frame"},
+ {"path":"region","label":"单行区域(L,T,R,B)","editor":"rect","required":true,"defaultValue":"0,0,320,48"},
+ {"path":"minimumConfidencePermille","label":"逐字最低置信度(‰)","editor":"integer","required":true,"defaultValue":"500"},
+ {"path":"autoCapture","label":"自动截图","editor":"boolean","required":false,"defaultValue":"true"},
+ {"path":"textVariable","label":"文本变量","editor":"string","required":true,"defaultValue":"ocrText"},
+ {"path":"scoreVariable","label":"平均置信度变量","editor":"string","required":true,"defaultValue":"ocrScore"}],"migrations":[]
+}

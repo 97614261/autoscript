@@ -28,7 +28,7 @@ const MAX_RELEASE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_RESOURCES: usize = 256;
 const MAX_CAPABILITIES: usize = 64;
 const MAX_SOURCE_MAP_ENTRIES: usize = 100_000;
-const SUPPORTED_RUNTIME_API: &str = "1.5";
+const SUPPORTED_RUNTIME_API: &str = "1.7";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrepareOptions {
@@ -396,7 +396,36 @@ fn compile_or_load_lua(
                 .entry_point
                 .as_deref()
                 .ok_or_else(|| ReleaseError::InvalidProject("Lua entry is missing".to_owned()))?;
-            let bytes = read_bounded(&contained_file(root, entry)?, MAX_LUA_BYTES, entry)?;
+            let paths = if project.lua_files.is_empty() {
+                vec![entry.to_owned()]
+            } else {
+                project.lua_files.clone()
+            };
+            let mut sources = std::collections::BTreeMap::new();
+            let mut total = 0_u64;
+            for path in paths {
+                let bytes = read_bounded(&contained_file(root, &path)?, MAX_LUA_BYTES, &path)?;
+                total += u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+                if total > MAX_LUA_BYTES {
+                    return Err(ReleaseError::InvalidProject(
+                        "Lua modules exceed 16 MiB".into(),
+                    ));
+                }
+                let source = String::from_utf8(bytes).map_err(|_| {
+                    ReleaseError::InvalidProject(format!("Lua module is not UTF-8: {path}"))
+                })?;
+                sources.insert(path, source);
+            }
+            let bundled = flow_compiler::bundle_lua_project(entry, &sources)
+                .map_err(ReleaseError::InvalidProject)?;
+            let style = flow_compiler::popup_style_prefix(&project.debug_settings.popup_style)
+                .map_err(|e| ReleaseError::InvalidProject(e.to_string()))?;
+            let bytes = (style + &bundled).into_bytes();
+            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_LUA_BYTES {
+                return Err(ReleaseError::InvalidProject(
+                    "Bundled Lua exceeds 16 MiB".into(),
+                ));
+            }
             lua_runtime::validate_text_chunk(&bytes, "main.lua")
                 .map_err(|error| ReleaseError::InvalidProject(format!("invalid Lua: {error}")))?;
             Ok(CompiledPayload {
@@ -608,6 +637,22 @@ fn calculate_release_id(release: &ReleaseManifest) -> String {
             for option in &field.options {
                 digest_field(&mut digest, option);
             }
+            if runner_ui.version == Some(2) {
+                digest_field(
+                    &mut digest,
+                    &field
+                        .ui
+                        .as_ref()
+                        .map_or(String::new(), serde_json::Value::to_string),
+                );
+            }
+        }
+        if runner_ui.version == Some(2) {
+            digest_field(&mut digest, "2");
+            digest_field(
+                &mut digest,
+                &serde_json::to_string(&runner_ui.pages).expect("JSON page values"),
+            );
         }
     }
     for resource in &release.resources {
@@ -942,7 +987,9 @@ fn resource_limit(message: impl Into<String>) -> ReleaseError {
 
 #[cfg(test)]
 mod tests {
-    use super::{prepare_project, verify_bundle, PrepareOptions, ReleaseError};
+    use super::{
+        prepare_project, runtime_api_compatible, verify_bundle, PrepareOptions, ReleaseError,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1012,12 +1059,94 @@ mod tests {
         .expect("Flow");
     }
 
+    #[test]
+    fn published_lua_keeps_modules_and_popup_style_but_not_development_delay() {
+        let root = temporary_root("modules").canonicalize().unwrap();
+        write_lua_project(&root);
+        let manifest_path = root.join("project.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        value["entryPoint"] = serde_json::json!("lua/main.lua");
+        value["luaFiles"] = serde_json::json!(["lua/a.lua", "lua/b.lua", "lua/main.lua"]);
+        value["luaDirectories"] = serde_json::json!(["lua"]);
+        value["debugSettings"] =
+            serde_json::json!({"runDelayMs":99,"popupStyle":{"widthPx":100,"heightPx":30}});
+        fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+        fs::create_dir(root.join("lua")).unwrap();
+        fs::write(
+            root.join("lua/main.lua"),
+            "local a=require('a'); return function() Prompt.toast(a) end",
+        )
+        .unwrap();
+        fs::write(root.join("lua/a.lua"), "return require('b')").unwrap();
+        fs::write(root.join("lua/b.lua"), "return 'nested module'").unwrap();
+        let project = flow_ir::parse_project_manifest(&fs::read(manifest_path).unwrap()).unwrap();
+        let frozen = super::compile_or_load_lua(&root, &project).unwrap();
+        assert!(!String::from_utf8_lossy(&frozen.lua).contains("Task.sleep(99)"));
+        let lua = mlua::Lua::new();
+        lua.load("Prompt={toast=function(message,style) output=message; styling=style end}")
+            .exec()
+            .unwrap();
+        let entry: mlua::Function = lua.load(frozen.lua).eval().unwrap();
+        entry.call::<()>(()).unwrap();
+        assert_eq!(
+            lua.globals().get::<String>("output").unwrap(),
+            "nested module"
+        );
+        let styling: String = lua.globals().get("styling").unwrap();
+        let style: flow_ir::PopupStyle = serde_json::from_str(&styling).unwrap();
+        assert_eq!((style.width_px, style.height_px), (100, 30));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn options() -> PrepareOptions {
         PrepareOptions {
             application_id: "com.autoscript.release_test".to_owned(),
             version_code: 7,
             version_name: "1.2.3".to_owned(),
         }
+    }
+
+    #[test]
+    fn runtime_16_is_supported_without_dropping_older_project_compatibility() {
+        assert!(runtime_api_compatible("1.6"));
+        assert!(runtime_api_compatible("1.5"));
+        assert!(runtime_api_compatible("1.7"));
+        assert!(!runtime_api_compatible("1.8"));
+        assert!(!runtime_api_compatible("2.0"));
+    }
+
+    #[test]
+    fn designed_interface_layout_is_frozen_and_digest_protected() {
+        let root = temporary_root("designed-ui");
+        let project = root.join("project");
+        fs::create_dir(&project).unwrap();
+        write_lua_project(&project);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&fs::read(project.join("project.json")).unwrap()).unwrap();
+        json["runtimeApi"] = serde_json::json!("1.7");
+        json["capabilities"] = serde_json::json!(["core.task", "ui.control"]);
+        json["runnerUi"]["version"] = serde_json::json!(2);
+        json["runnerUi"]["pages"] = serde_json::json!([{"id":"main","title":"中文<>&=","width":720,"height":960,"background":"#FFFFFFFF"}]);
+        json["runnerUi"]["fields"][0]["ui"] = serde_json::json!({"control":"NUMBER","pageId":"main","parentId":null,"x":20,"y":20,"width":320,"height":72,"fontPx":28,"textColor":"#FF202938","background":"#FFFFFFFF","alignment":"center","visible":true,"enabled":true,"events":{}});
+        fs::write(
+            project.join("project.json"),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let output = root.join("release");
+        let first = prepare_project(&project, &output, &options()).unwrap();
+        assert_eq!(verify_bundle(&output).unwrap(), first);
+        let manifest_path = output.join("release.json");
+        let mut release: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        release["runnerUi"]["fields"][0]["ui"]["x"] = serde_json::json!(40);
+        fs::write(manifest_path, serde_json::to_vec(&release).unwrap()).unwrap();
+        assert!(matches!(
+            verify_bundle(&output),
+            Err(ReleaseError::InvalidRelease(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1202,
+  "name": "UI.setValue",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "设置控件值，不触发用户事件。",
+  "params": [
+    {
+      "name": "id",
+      "type": "string",
+      "required": true,
+      "summary": "id"
+    },
+    {
+      "name": "value",
+      "type": "string",
+      "required": true,
+      "summary": "value"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "设置控件值，不触发用户事件。"
+  },
+  "legacyAliases": []
+}

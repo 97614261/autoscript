@@ -34,6 +34,8 @@ pub struct ProjectManifest {
     pub capabilities: Vec<String>,
     pub design: DesignSpec,
     #[serde(default)]
+    pub debug_settings: ProjectDebugSettings,
+    #[serde(default)]
     pub runner_ui: Option<RunnerUi>,
     #[serde(default)]
     pub owner_id: Option<String>,
@@ -47,6 +49,154 @@ pub struct ProjectManifest {
     pub license_policy: Option<Map<String, Value>>,
 }
 
+/// Optional project-level controls used while developing a project.
+///
+/// The field is deliberately defaultable so manifests written before debug settings were added
+/// remain loadable. Runtime consumers should treat a missing value as the defaults below.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectDebugSettings {
+    #[serde(default)]
+    pub run_delay_ms: u32,
+    #[serde(default = "default_show_run_prompts")]
+    pub show_run_prompts: bool,
+    #[serde(default)]
+    pub run_prompt_filters: RunPromptFilters,
+    #[serde(default)]
+    pub popup_style: PopupStyle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PopupStyle {
+    #[serde(default = "default_popup_width", alias = "widthDp")]
+    pub width_px: u16,
+    #[serde(default = "default_popup_height", alias = "heightDp")]
+    pub height_px: u16,
+    #[serde(default = "default_popup_x", alias = "xPercent")]
+    pub x_px: i32,
+    #[serde(default = "default_popup_y", alias = "yPercent")]
+    pub y_px: i32,
+    #[serde(default = "default_popup_background")]
+    pub background_color: String,
+    #[serde(default = "default_popup_text")]
+    pub text_color: String,
+    #[serde(default = "default_popup_font", alias = "fontSp")]
+    pub font_px: u8,
+    #[serde(default = "default_popup_corner", alias = "cornerDp")]
+    pub corner_px: u16,
+    #[serde(default = "default_popup_duration")]
+    pub duration_ms: u16,
+    #[serde(default = "default_popup_align")]
+    pub text_align: String,
+}
+
+fn default_popup_width() -> u16 {
+    520
+}
+fn default_popup_height() -> u16 {
+    144
+}
+fn default_popup_x() -> i32 {
+    -1
+}
+fn default_popup_y() -> i32 {
+    -1
+}
+fn default_popup_background() -> String {
+    "#B3000000".into()
+}
+fn default_popup_text() -> String {
+    "#FFFFFFFF".into()
+}
+fn default_popup_font() -> u8 {
+    32
+}
+fn default_popup_corner() -> u16 {
+    16
+}
+fn default_popup_duration() -> u16 {
+    3_000
+}
+fn default_popup_align() -> String {
+    "center".into()
+}
+
+impl Default for PopupStyle {
+    fn default() -> Self {
+        Self {
+            width_px: default_popup_width(),
+            height_px: default_popup_height(),
+            x_px: default_popup_x(),
+            y_px: default_popup_y(),
+            background_color: default_popup_background(),
+            text_color: default_popup_text(),
+            font_px: default_popup_font(),
+            corner_px: default_popup_corner(),
+            duration_ms: default_popup_duration(),
+            text_align: default_popup_align(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunPromptFilters {
+    #[serde(default)]
+    pub loops: bool,
+    #[serde(default)]
+    pub jumps: bool,
+    #[serde(default)]
+    pub flow_start: bool,
+    #[serde(default)]
+    pub flow_return: bool,
+    #[serde(default)]
+    pub image_search: bool,
+    #[serde(default)]
+    pub variables: bool,
+    #[serde(default = "default_filter_all")]
+    pub variable_scope: String,
+    #[serde(default = "default_filter_all")]
+    pub variable_type: String,
+    #[serde(default = "default_filter_all")]
+    pub variable_name: String,
+}
+
+fn default_filter_all() -> String {
+    "all".into()
+}
+
+impl Default for RunPromptFilters {
+    fn default() -> Self {
+        Self {
+            loops: false,
+            jumps: false,
+            flow_start: false,
+            flow_return: false,
+            image_search: false,
+            variables: false,
+            variable_scope: default_filter_all(),
+            variable_type: default_filter_all(),
+            variable_name: default_filter_all(),
+        }
+    }
+}
+
+fn default_show_run_prompts() -> bool {
+    true
+}
+
+impl Default for ProjectDebugSettings {
+    fn default() -> Self {
+        Self {
+            run_delay_ms: 0,
+            show_run_prompts: true,
+            run_prompt_filters: RunPromptFilters::default(),
+            popup_style: PopupStyle::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectSourceMode {
@@ -54,7 +204,7 @@ pub enum ProjectSourceMode {
     Visual,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectFlow {
     pub flow_id: String,
@@ -64,7 +214,7 @@ pub struct ProjectFlow {
     pub returns: Option<ProjectReturn>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectVariable {
     pub name: String,
@@ -75,14 +225,14 @@ pub struct ProjectVariable {
     pub value_type: ProjectVariableType,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectVariableScope {
     Global,
     Flow,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectVariableType {
     Integer,
@@ -105,7 +255,7 @@ pub enum ProjectResourceKind {
     GlyphDictionary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectParameter {
     pub name: String,
@@ -114,7 +264,7 @@ pub struct ProjectParameter {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectReturn {
     #[serde(rename = "type")]
@@ -122,7 +272,7 @@ pub struct ProjectReturn {
     pub nullable: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ValueType {
     Boolean,
@@ -159,6 +309,10 @@ pub enum OrientationPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunnerUi {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<Value>,
     #[serde(default)]
     pub description: Option<String>,
     pub fields: Vec<RunnerUiField>,
@@ -167,6 +321,8 @@ pub struct RunnerUi {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunnerUiField {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<Value>,
     pub id: String,
     pub label: String,
     pub kind: RunnerUiFieldKind,
@@ -219,6 +375,7 @@ pub enum ProjectManifestError {
     TooManyResources,
     InvalidResourcePath(String),
     DuplicateResourcePath(String),
+    InvalidDebugSettings,
     InvalidRunnerUi(String),
 }
 
@@ -233,7 +390,8 @@ impl fmt::Display for ProjectManifestError {
 /// # Errors
 ///
 /// Returns a stable error for invalid JSON, unsupported versions, duplicate identities, an unsafe
-/// Flow path, a missing entry Flow, invalid capabilities, or an out-of-range design size.
+/// Flow path, a missing entry Flow, invalid capabilities, debug settings, or an out-of-range
+/// design size.
 pub fn parse_project_manifest(source: &[u8]) -> Result<ProjectManifest, ProjectManifestError> {
     let mut value: Value = serde_json::from_slice(source)
         .map_err(|error| ProjectManifestError::InvalidJson(error.to_string()))?;
@@ -282,7 +440,12 @@ fn validate_runner_ui_json_shape(value: &Value) -> Result<(), ProjectManifestErr
     let object = runner_ui.as_object().ok_or_else(|| {
         ProjectManifestError::InvalidRunnerUi("runnerUi must be an object or null".to_owned())
     })?;
-    if object.len() != 2 || !object.contains_key("description") || !object.contains_key("fields") {
+    if !object.contains_key("description")
+        || !object.contains_key("fields")
+        || object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "description" | "fields" | "version" | "pages"))
+    {
         return Err(ProjectManifestError::InvalidRunnerUi(
             "runnerUi fields are incomplete or unknown".to_owned(),
         ));
@@ -295,7 +458,8 @@ fn validate_runner_ui_json_shape(value: &Value) -> Result<(), ProjectManifestErr
         })?;
     if fields.iter().any(|field| {
         field.as_object().is_none_or(|field| {
-            field.len() != FIELD_KEYS.len()
+            !(field.len() == FIELD_KEYS.len()
+                || field.len() == FIELD_KEYS.len() + 1 && field.contains_key("ui"))
                 || FIELD_KEYS.iter().any(|key| !field.contains_key(*key))
         })
     }) {
@@ -327,11 +491,53 @@ fn validate_manifest(manifest: &ProjectManifest) -> Result<(), ProjectManifestEr
     {
         return Err(ProjectManifestError::InvalidDesignSize);
     }
+    validate_debug_settings(&manifest.debug_settings)?;
     validate_source_mode(manifest)?;
     validate_variables(manifest)?;
     validate_resources(&manifest.resources)?;
     validate_capabilities(&manifest.capabilities)?;
-    validate_runner_ui(manifest.runner_ui.as_ref())
+    validate_runner_ui(manifest.runner_ui.as_ref())?;
+    crate::runner_ui::validate_references(manifest).map_err(ProjectManifestError::InvalidRunnerUi)
+}
+
+fn validate_debug_settings(settings: &ProjectDebugSettings) -> Result<(), ProjectManifestError> {
+    if settings.run_delay_ms > 60_000 {
+        return Err(ProjectManifestError::InvalidDebugSettings);
+    }
+    let style = &settings.popup_style;
+    let valid_color = |color: &str| {
+        color.len() == 9
+            && color.starts_with('#')
+            && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    if !(1..=2160).contains(&style.width_px)
+        || !(1..=1200).contains(&style.height_px)
+        || !(-1..=10_000).contains(&style.x_px)
+        || !(-1..=10_000).contains(&style.y_px)
+        || !(10..=160).contains(&style.font_px)
+        || style.corner_px > 200
+        || !(500..=30_000).contains(&style.duration_ms)
+        || !matches!(style.text_align.as_str(), "left" | "center" | "right")
+        || !valid_color(&style.background_color)
+        || !valid_color(&style.text_color)
+    {
+        return Err(ProjectManifestError::InvalidDebugSettings);
+    }
+    let filters = &settings.run_prompt_filters;
+    if !matches!(filters.variable_scope.as_str(), "all" | "global")
+        && !(filters.variable_scope.starts_with("flow:") && filters.variable_scope.len() <= 133)
+    {
+        return Err(ProjectManifestError::InvalidDebugSettings);
+    }
+    if !matches!(
+        filters.variable_type.as_str(),
+        "all" | "integer" | "number" | "string" | "image"
+    ) || filters.variable_name != "all"
+        && (filters.variable_name.len() > 64 || !valid_identifier(&filters.variable_name))
+    {
+        return Err(ProjectManifestError::InvalidDebugSettings);
+    }
+    Ok(())
 }
 
 fn validate_variables(manifest: &ProjectManifest) -> Result<(), ProjectManifestError> {
@@ -386,7 +592,15 @@ pub fn validate_runner_ui(runner_ui: Option<&RunnerUi>) -> Result<(), ProjectMan
     let Some(runner_ui) = runner_ui else {
         return Ok(());
     };
-    if runner_ui.fields.is_empty() || runner_ui.fields.len() > 32 {
+    crate::runner_ui::validate_layout(runner_ui).map_err(ProjectManifestError::InvalidRunnerUi)?;
+    if runner_ui.fields.is_empty()
+        || runner_ui.fields.len()
+            > if runner_ui.version == Some(2) {
+                128
+            } else {
+                32
+            }
+    {
         return Err(ProjectManifestError::InvalidRunnerUi(
             "runnerUi must contain 1..32 fields".to_owned(),
         ));
@@ -417,11 +631,15 @@ pub fn validate_runner_ui(runner_ui: Option<&RunnerUi>) -> Result<(), ProjectMan
         }
         let valid = match field.kind {
             RunnerUiFieldKind::Text => {
-                field
-                    .initial_value
-                    .as_str()
-                    .is_some_and(|value| value.chars().count() <= 256 && !value.contains('\0'))
-                    && field.minimum.is_none()
+                field.initial_value.as_str().is_some_and(|value| {
+                    value.chars().count()
+                        <= if runner_ui.version == Some(2) {
+                            2048
+                        } else {
+                            256
+                        }
+                        && !value.contains('\0')
+                }) && field.minimum.is_none()
                     && field.maximum.is_none()
                     && field.options.is_empty()
             }
@@ -441,11 +659,17 @@ pub fn validate_runner_ui(runner_ui: Option<&RunnerUi>) -> Result<(), ProjectMan
             }
             RunnerUiFieldKind::Choice => {
                 let unique = field.options.iter().collect::<HashSet<_>>();
-                (1..=32).contains(&field.options.len())
+                (1..=if runner_ui.version == Some(2) { 64 } else { 32 })
+                    .contains(&field.options.len())
                     && unique.len() == field.options.len()
                     && field.options.iter().all(|value| {
                         !value.is_empty()
-                            && value.chars().count() <= 64
+                            && value.chars().count()
+                                <= if runner_ui.version == Some(2) {
+                                    128
+                                } else {
+                                    64
+                                }
                             && !value.chars().any(char::is_control)
                     })
                     && field
@@ -892,6 +1116,67 @@ mod tests {
             .expect("valid manifest");
         assert_eq!(parsed.flows[0].flow_id, "main");
         assert_eq!(parsed.source_mode, ProjectSourceMode::Visual);
+        assert_eq!(parsed.debug_settings.run_delay_ms, 0);
+        assert!(parsed.debug_settings.show_run_prompts);
+    }
+
+    #[test]
+    fn debug_settings_are_optional_and_bounded() {
+        let source = manifest("visual/flows/main.jsonl", "main").replace(
+            r#""capabilities""#,
+            r#""debugSettings":{"runDelayMs":1500},"capabilities""#,
+        );
+        let parsed = parse_project_manifest(source.as_bytes()).expect("debug settings");
+        assert_eq!(parsed.debug_settings.run_delay_ms, 1500);
+        assert!(parsed.debug_settings.show_run_prompts);
+
+        let hidden = source.replace(
+            r#""debugSettings":{"runDelayMs":1500}"#,
+            r#""debugSettings":{"runDelayMs":1500,"showRunPrompts":false}"#,
+        );
+        let parsed_hidden = parse_project_manifest(hidden.as_bytes()).expect("prompt setting");
+        assert!(!parsed_hidden.debug_settings.show_run_prompts);
+
+        let filtered = source.replace(
+            r#""debugSettings":{"runDelayMs":1500}"#,
+            r#""debugSettings":{"runDelayMs":1500,"runPromptFilters":{"loops":true,"variables":true,"variableScope":"flow:main","variableType":"integer","variableName":"score"}}"#,
+        );
+        let parsed_filtered = parse_project_manifest(filtered.as_bytes()).expect("prompt filters");
+        assert!(parsed_filtered.debug_settings.run_prompt_filters.loops);
+        assert!(parsed_filtered.debug_settings.run_prompt_filters.variables);
+        assert_eq!(
+            parsed_filtered
+                .debug_settings
+                .run_prompt_filters
+                .variable_name,
+            "score"
+        );
+
+        let unknown_filter = filtered.replace("\"loops\":true", "\"surprise\":true");
+        assert!(matches!(
+            parse_project_manifest(unknown_filter.as_bytes()),
+            Err(ProjectManifestError::InvalidJson(_)),
+        ));
+
+        let pixel_style = source.replace(
+            r#""debugSettings":{"runDelayMs":1500}"#,
+            r##""debugSettings":{"runDelayMs":1500,"popupStyle":{"widthPx":720,"heightPx":180,"xPx":-1,"yPx":220,"fontPx":42,"cornerPx":20,"backgroundColor":"#B3000000","textColor":"#FFFFFFFF","durationMs":3000,"textAlign":"center"}}"##,
+        );
+        let parsed_style =
+            parse_project_manifest(pixel_style.as_bytes()).expect("pixel popup style");
+        assert_eq!(parsed_style.debug_settings.popup_style.width_px, 720);
+        assert_eq!(parsed_style.debug_settings.popup_style.x_px, -1);
+
+        let legacy_style = pixel_style
+            .replace("widthPx", "widthDp")
+            .replace("fontPx", "fontSp");
+        assert!(parse_project_manifest(legacy_style.as_bytes()).is_ok());
+
+        let invalid = source.replace("1500", "60001");
+        assert_eq!(
+            parse_project_manifest(invalid.as_bytes()),
+            Err(ProjectManifestError::InvalidDebugSettings)
+        );
     }
 
     #[test]

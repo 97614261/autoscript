@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -64,12 +63,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.MAX_LUA_SOURCE_BYTES
-import com.autoscript.project.store.ProjectVariable
-import com.autoscript.project.store.ProjectVariableScope
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.core.model.RuntimeConnectionPhase
@@ -282,6 +277,7 @@ internal fun LuaEditorScreen(
                     designWidth = plan.designWidth,
                     designHeight = plan.designHeight,
                     scaleMode = plan.scaleMode,
+                    scriptUiJson = null,
                 )
             }
             if (started) {
@@ -473,7 +469,7 @@ internal fun LuaEditorScreen(
             runLabel = if (canStop) "停止" else if (runtimeAction == RuntimeAction.RUNNING) "启动中" else "运行",
             canScreenshot = runtimeState.phase == RuntimeConnectionPhase.CONNECTED && !imageToolCapturing,
             canUndo = undoStack.isNotEmpty(),
-            onRun = if (canStop) ::stopProject else ::runProject,
+            onRun = if (canStop) ::stopProject else { { runProject() } },
             onScreenshot = ::showSystemCamera,
             onSave = ::save,
             onUndo = ::undoEdit,
@@ -605,6 +601,7 @@ internal fun LuaEditorScreen(
                 projectFiles = projectFiles,
                 consoleLines = consoleLines,
                 initialApiGroup = apiGroupTarget,
+                capabilities = snapshot.manifest.capabilities.toSet(),
                 onDismiss = { activeToolPopup = null },
                 onInsert = ::insertSnippet,
                 onOpenFile = { file ->
@@ -622,7 +619,7 @@ internal fun LuaEditorScreen(
             // 而不是在 Lua 工作台里另起一套通用 AlertDialog 样式。
             if (dialog == LuaRightToolDialog.TOOLS) {
                 EditorEntryDialog(
-                    entry = LegacyToolDialog.TOOLS,
+                    entry = EditorToolPanel.TOOLS,
                     projectName = snapshot.manifest.name,
                     files = projectFiles,
                     onDismiss = { rightToolDialog = null },
@@ -686,7 +683,7 @@ internal fun LuaEditorScreen(
     }
 
     if (confirmExit) {
-        LegacyPromptDialog(
+        EditorPromptDialog(
             title = "放弃未保存修改？",
             text = "main.lua 中的修改尚未保存。返回后这些修改将丢失。",
             cancelLabel = "继续编辑",
@@ -847,7 +844,7 @@ private fun LuaRightToolDialogScreen(
                                 "已插入字库识字骨架",
                             )
                         }
-                        LuaRightToolChoice("浏览图像 API", "查看全部找色、找图和 OCR 调用。") { onOpenLibrary("屏幕") }
+                        LuaRightToolChoice("浏览图像 API", "查看找色、找图；OCR 在函数库的“文字”分类。") { onOpenLibrary("图像") }
                     }
                     LuaRightToolDialog.JUDGMENT -> {
                         if (judgmentMode == null) {
@@ -918,6 +915,8 @@ private fun LuaRightToolDialogScreen(
                         LuaRightToolChoice("跳转标记", "跳到同一作用域的 label。") { onInsert("goto label\n", "已插入跳转") }
                     }
                     LuaRightToolDialog.DEBUG -> {
+                        LuaRightToolChoice("运行提示", "向脚本使用者显示运行中状态。") { onInsert("Prompt.show(\"message\")\n", "已插入运行提示") }
+                        LuaRightToolChoice("弹出提示", "按项目样式短时显示，到时自动消失。") { onInsert("Prompt.toast(\"message\")\n", "已插入弹出提示") }
                         LuaRightToolChoice("信息日志", "向 Runner 控制台写入普通信息。") { onInsert("Log.info(\"message\")\n", "已插入信息日志") }
                         LuaRightToolChoice("警告日志", "向 Runner 控制台写入警告。") { onInsert("Log.warn(\"message\")\n", "已插入警告日志") }
                         LuaRightToolChoice("错误日志", "向 Runner 控制台写入错误。") { onInsert("Log.error(\"message\")\n", "已插入错误日志") }
@@ -1192,66 +1191,7 @@ private fun LuaScreenshotLauncher(onCapture: () -> Unit) {
     }
 }
 
-@Composable
-private fun LuaWorkbenchHeader(
-    projectName: String,
-    sourceName: String,
-    lineCount: Int,
-    dirty: Boolean,
-    saving: Boolean,
-    runtimeState: RuntimeEngineState,
-    canScreenshot: Boolean,
-    canSave: Boolean,
-    primaryLabel: String,
-    canPrimary: Boolean,
-    onPrimary: () -> Unit,
-    onScreenshot: () -> Unit,
-    onSave: () -> Unit,
-    onMore: () -> Unit,
-) {
-    Column(Modifier.fillMaxWidth().background(LuaChromeBackground)) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(projectName, color = LuaChromeText, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "$sourceName · ${if (dirty) "未保存" else "已保存"}",
-                    color = if (dirty) LuaChromeUnsaved else LuaChromeMuted,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                LuaWorkbenchAction("截图", canScreenshot, onScreenshot)
-                LuaWorkbenchAction(if (saving) "保存中" else "保存", canSave, onSave)
-                LuaWorkbenchAction(primaryLabel, canPrimary, onPrimary)
-                LuaWorkbenchAction("菜单", true, onMore)
-            }
-        }
-        Text(
-            "$lineCount 行 · Runner $runtimeState",
-            color = LuaChromeMuted,
-            fontSize = 9.sp,
-            modifier = Modifier.fillMaxWidth().background(LuaChromeDivider).padding(horizontal = 9.dp, vertical = 3.dp),
-        )
-    }
-}
 
-@Composable
-private fun LuaWorkbenchAction(label: String, enabled: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        color = Color.White.copy(alpha = if (enabled) 1f else 0.35f),
-        fontSize = 11.sp,
-        modifier = Modifier
-            .padding(start = 5.dp)
-            .background(if (enabled) Color(0xFF344052) else Color(0xFF2B313D))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 7.dp, vertical = 5.dp),
-    )
-}
 
 @Composable
 private fun LuaToolPopupDialog(
@@ -1259,99 +1199,28 @@ private fun LuaToolPopupDialog(
     projectFiles: List<StudioProjectFile>,
     consoleLines: List<String>,
     initialApiGroup: String?,
+    capabilities: Set<String>,
     onDismiss: () -> Unit,
     onInsert: (String, String) -> Unit,
     onOpenFile: (StudioProjectFile) -> Unit,
 ) {
-    // 易编精灵 guagua_fun_main.xml 是独立的三列函数页，而不是普通的搜索弹窗。
-    // Lua 方法库直接沿用这个页面层级；详情页再承接函数参数与加入操作。
+    // All function entry points share the compact browser and schema-backed docs.
     if (popup == LuaToolPopup.API) {
-        LuaFunctionBrowserDialog(initialApiGroup, onDismiss, onInsert)
+        val groups = remember { FunctionCatalog.luaGroups() }
+        FunctionLibraryDialog(groups, capabilities, onDismiss, onInsert = { snippet ->
+            val title = groups.flatMap { it.entries }.firstOrNull { it.snippet == snippet }?.title.orEmpty()
+            onInsert(snippet, "已插入 $title")
+            onDismiss()
+        }, initialGroup = initialApiGroup)
         return
     }
-    var query by remember { mutableStateOf("") }
-    var selectedApiGroup by remember { mutableStateOf(initialApiGroup ?: "全部") }
-    LaunchedEffect(initialApiGroup) { selectedApiGroup = initialApiGroup ?: "全部" }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(popup.title, color = AutoScriptPalette.TextPrimary, fontSize = 16.sp) },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 410.dp)) {
                 when (popup) {
-            LuaToolPopup.API -> {
-                val groups = remember { LegacyFunctionCatalog.luaGroups() }
-                BasicTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = AutoScriptPalette.TextPrimary, fontSize = 12.sp),
-                    modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 12.dp, vertical = 8.dp),
-                    decorationBox = { input ->
-                        Box {
-                            if (query.isEmpty()) Text("搜索 API，例如 Input.tap、Screen.capture", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp)
-                            input()
-                        }
-                    },
-                )
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                ) {
-                    (listOf("全部") + groups.map { it.label }).forEach { label ->
-                        val selected = selectedApiGroup == label
-                        Text(
-                            label,
-                            color = if (selected) Color.White else AutoScriptPalette.TextSecondary,
-                            fontSize = 11.sp,
-                            modifier = Modifier
-                                .padding(end = 5.dp)
-                                .background(if (selected) AutoScriptPalette.Accent else Color(0xFFF0F3F8), CircleShape)
-                                .clickable { selectedApiGroup = label }
-                                .padding(horizontal = 9.dp, vertical = 5.dp),
-                        )
-                    }
-                }
-                val matchedGroups = remember(groups, query, selectedApiGroup) {
-                    groups.mapNotNull { group ->
-                        if (selectedApiGroup != "全部" && selectedApiGroup != group.label) return@mapNotNull null
-                        val entries = group.entries.filter { entry ->
-                            query.isBlank() || entry.title.contains(query, ignoreCase = true) ||
-                                entry.detail.contains(query, ignoreCase = true) || entry.snippet.contains(query, ignoreCase = true)
-                        }
-                        entries.takeIf { it.isNotEmpty() }?.let { group.label to it }
-                    }
-                }
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    if (matchedGroups.isEmpty()) {
-                        Text("没有匹配的已实现 API", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
-                    }
-                    matchedGroups.forEach { (label, entries) ->
-                        Text(
-                            label,
-                            color = AutoScriptPalette.TextSecondary,
-                            fontSize = 10.sp,
-                            modifier = Modifier.padding(start = 3.dp, top = 5.dp, bottom = 3.dp),
-                        )
-                        entries.chunked(2).forEach { rowEntries ->
-                            Row(Modifier.fillMaxWidth().padding(bottom = 5.dp)) {
-                                rowEntries.forEach { entry ->
-                                    Column(
-                                        Modifier.weight(1f).heightIn(min = 54.dp)
-                                            .background(Color(0xFFF5F7FB))
-                                            .clickable { onInsert(entry.snippet, "已插入 ${entry.title}") }
-                                            .padding(horizontal = 9.dp, vertical = 6.dp),
-                                    ) {
-                                        Text(entry.title, color = AutoScriptPalette.TextPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(entry.detail, color = AutoScriptPalette.TextSecondary, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    }
-                                    if (entry != rowEntries.last()) Spacer(Modifier.size(5.dp))
-                                }
-                                if (rowEntries.size == 1) Spacer(Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-            }
+            LuaToolPopup.API -> Unit // Routed to the shared browser above.
             LuaToolPopup.LOG -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 3.dp)) {
                 if (consoleLines.isEmpty()) Text("暂无运行日志。运行脚本后，Log.info / warn / error 会显示在这里。", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp)
                 consoleLines.takeLast(80).forEach { line -> Text(line, color = AutoScriptPalette.TextPrimary, fontSize = 10.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 2.dp)) }
@@ -1374,145 +1243,6 @@ private fun LuaToolPopupDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
 }
-
-private data class LuaFunctionCategory(val label: String, val groups: List<String>)
-
-private val LuaFunctionCategories = listOf(
-    LuaFunctionCategory("脚本控制", listOf("任务", "判断", "循环")),
-    LuaFunctionCategory("按键函数", listOf("按键")),
-    LuaFunctionCategory("图像函数", listOf("屏幕", "文字")),
-    LuaFunctionCategory("系统函数", listOf("其它", "调试")),
-    LuaFunctionCategory("兼容函数", listOf("旧版兼容")),
-)
-
-@Composable
-private fun LuaFunctionBrowserDialog(
-    initialGroup: String?,
-    onDismiss: () -> Unit,
-    onInsert: (String, String) -> Unit,
-) {
-    val groups = remember { LegacyFunctionCatalog.luaGroups() }
-    val supported = remember(groups) { LuaFunctionCategories.filter { category -> category.groups.any { group -> groups.any { it.label == group } } } }
-    var category by remember { mutableStateOf(supported.firstOrNull()?.label.orEmpty()) }
-    var group by remember { mutableStateOf(initialGroup ?: supported.firstOrNull()?.groups?.firstOrNull().orEmpty()) }
-    var entry by remember { mutableStateOf<LegacyFunctionEntry?>(null) }
-    LaunchedEffect(initialGroup) {
-        val initial = initialGroup ?: return@LaunchedEffect
-        supported.firstOrNull { initial in it.groups }?.let { category = it.label; group = initial }
-    }
-    val categoryGroups = supported.firstOrNull { it.label == category }?.groups.orEmpty().filter { name -> groups.any { it.label == name } }
-    val functions = groups.firstOrNull { it.label == group }?.entries.orEmpty()
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        // Keep this dialog in the same compact visual family as the Lua "工具" panel.
-        // The browser still has three levels, but it must not cover the whole editor.
-        Surface(
-            Modifier.fillMaxWidth(.92f).height(390.dp).widthIn(max = 560.dp),
-            color = Color.White,
-            shape = RoundedCornerShape(3.dp),
-            shadowElevation = 10.dp,
-        ) {
-            Column {
-                Row(
-                    Modifier.fillMaxWidth().height(38.dp).padding(start = 14.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("函数库", color = AutoScriptPalette.Accent, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                    Text(
-                        "×",
-                        color = AutoScriptPalette.TextSecondary,
-                        fontSize = 23.sp,
-                        modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 8.dp),
-                    )
-                }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(AutoScriptPalette.Divider))
-                Row(
-                    Modifier.weight(1f).padding(8.dp)
-                        .border(1.dp, Color(0xFFC7CBD1), RoundedCornerShape(3.dp))
-                        .background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp)),
-                ) {
-                    LuaFunctionColumn("分类", supported.map { it.label }, category, Modifier.weight(.86f), LuaFunctionColumnStyle.LEFT) { selected ->
-                        category = selected
-                        group = supported.first { it.label == selected }.groups.firstOrNull { name -> groups.any { it.label == name } }.orEmpty()
-                    }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))
-                    LuaFunctionColumn("分组", categoryGroups, group, Modifier.weight(.90f), LuaFunctionColumnStyle.UNDERLINE) { group = it }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))
-                    LuaFunctionColumn("函数", functions.map { it.title }, "", Modifier.weight(1.24f), LuaFunctionColumnStyle.PLAIN) { selected -> entry = functions.firstOrNull { it.title == selected } }
-                }
-                Box(Modifier.fillMaxWidth().height(36.dp).border(1.dp, AutoScriptPalette.Divider).clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
-                    Text("关闭", color = AutoScriptPalette.TextPrimary, fontSize = 13.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
-                }
-            }
-        }
-    }
-    entry?.let { selected -> LuaFunctionDetailDialog(selected, onDismiss = { entry = null }, onInsert = { onInsert(selected.snippet, "已插入 ${selected.title}"); entry = null; onDismiss() }) }
-}
-
-private enum class LuaFunctionColumnStyle { LEFT, UNDERLINE, PLAIN }
-
-@Composable
-private fun LuaFunctionColumn(title: String, items: List<String>, selected: String, modifier: Modifier, style: LuaFunctionColumnStyle, onSelect: (String) -> Unit) {
-    Column(modifier.fillMaxHeight()) {
-        Text(
-            title,
-            color = AutoScriptPalette.Accent,
-            fontSize = 10.sp,
-            modifier = Modifier.fillMaxWidth().height(25.dp).padding(start = 8.dp, top = 7.dp),
-        )
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE7EAF0)))
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            items.forEach { item ->
-                val active = item == selected
-                Box(
-                    Modifier.fillMaxWidth().height(32.dp)
-                        .background(if (active) Color(0xFFEFF4FF) else Color.Transparent)
-                        .clickable { onSelect(item) },
-                ) {
-                    if (active && style == LuaFunctionColumnStyle.LEFT) Box(Modifier.fillMaxHeight().width(2.dp).background(AutoScriptPalette.Accent))
-                    if (active && style == LuaFunctionColumnStyle.UNDERLINE) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(2.dp).background(AutoScriptPalette.Accent))
-                    Text(
-                        item,
-                        color = if (active) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 7.dp),
-                        textAlign = TextAlign.Center,
-                        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LuaFunctionDetailDialog(entry: LegacyFunctionEntry, onDismiss: () -> Unit, onInsert: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth(.94f).fillMaxHeight(.78f).widthIn(max = 620.dp), color = Color(0xFFF6F7FA), shape = RoundedCornerShape(2.dp), shadowElevation = 10.dp) {
-            Column {
-                Text("${entry.title} · 函数说明", color = AutoScriptPalette.Accent, fontSize = 16.sp, modifier = Modifier.fillMaxWidth().background(Color.White).padding(14.dp))
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(10.dp)) {
-                    LuaFunctionDocumentSection("参数") {
-                        if (entry.parameters.isEmpty()) Text("无参数", fontSize = 12.sp, modifier = Modifier.padding(8.dp))
-                        entry.parameters.forEachIndexed { index, parameter -> Text("${index + 1}  ·  $parameter", fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp)) }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    LuaFunctionDocumentSection("函数说明") { Text(entry.detail, fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
-                    Spacer(Modifier.height(8.dp))
-                    LuaFunctionDocumentSection("Lua 调用") { Text(entry.snippet.trim(), fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
-                }
-                Row(Modifier.fillMaxWidth().height(42.dp).background(Color.White)) {
-                    Box(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onDismiss), contentAlignment = Alignment.Center) { Text("取消") }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))
-                    Box(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onInsert), contentAlignment = Alignment.Center) { Text("加入", color = AutoScriptPalette.Accent) }
-                }
-            }
-        }
-    }
-}
-
-@Composable private fun LuaFunctionDocumentSection(title: String, content: @Composable () -> Unit) = Column(Modifier.fillMaxWidth().border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).background(Color.White)) { Text(title, color = AutoScriptPalette.Accent, fontSize = 11.sp, modifier = Modifier.fillMaxWidth().background(Color(0xFFF0F3F8)).padding(horizontal = 8.dp, vertical = 6.dp)); content() }
 
 @Composable
 private fun LuaSourceField(
@@ -1575,11 +1305,6 @@ private fun LuaChromeMenuItem(label: String, enabled: Boolean = true, onClick: (
     )
 }
 
-private val LuaChromeBackground = Color(0xFF242A33)
-private val LuaChromeDivider = Color(0xFF344052)
-private val LuaChromeText = Color(0xFFE8EAED)
-private val LuaChromeMuted = Color(0xFFC8CCD2)
-private val LuaChromeUnsaved = Color(0xFFFFB4B4)
 private val LuaGutterBackground = Color(0xFFF3F4F6)
 private const val EDIT_COALESCE_MILLIS = 700L
 private const val MAX_UNDO_STEPS = 200

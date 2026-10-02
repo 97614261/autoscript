@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1, "kind": "variable.calculate", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/variable.calculate/1/variable.calculate.schema.json",
+  "title": "变量计算", "category": "variable",
+  "summary": "对已声明的整数、浮点或字符变量赋值、计算与类型转换；图像不参与标量计算。",
+  "searchTerms": ["计算", "赋值", "转换", "加减乘除", "取余", "字符连接", "自增"],
+  "requiredCapabilities": [], "childBlocks": [],
+  "properties": [
+    {"path": "name", "label": "目标变量", "editor": "string", "required": true, "defaultValue": "value"},
+    {"path": "expression", "label": "计算表达式", "editor": "string", "required": true, "defaultValue": "0"}
+  ], "migrations": []
+}

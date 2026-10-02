@@ -6,8 +6,8 @@ use crate::capture_series::{
     CaptureSeriesUpdate,
 };
 use pixel_vision::{
-    Color, ColorTolerance, ImageView, PatternSample, PixelFormat, PixelPoint, PreparedTemplate,
-    SearchOptions, TemplateMatch, TemplateOptions, VisionError,
+    Color, ColorTolerance, ImageView, PatternSample, PixelFormat, PixelPoint, PixelRect,
+    PreparedTemplate, SearchOptions, TemplateMatch, TemplateOptions, VisionError,
 };
 use runtime_scheduler::{ResourceId, ResourceKind, ResourceOwner, TaskResourceRegistry, TaskToken};
 
@@ -41,6 +41,14 @@ pub struct FrameMetadata {
 pub struct FrameHandle {
     pub frame_id: u64,
     pub resource_id: ResourceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedTemplateMatch {
+    pub path: String,
+    pub matched: TemplateMatch,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -642,20 +650,180 @@ impl FramePool {
         resources: &TaskResourceRegistry,
         options: TemplateOptions,
     ) -> Result<Option<TemplateMatch>, FrameVisionError> {
+        self.find_template_controlled(
+            task,
+            screen_handle,
+            template_handle,
+            resources,
+            options,
+            &mut || false,
+        )
+    }
+
+    /// Searches with bounded cancellation checkpoints, preserving old matching semantics.
+    /// # Errors
+    /// Rejects stale leases, malformed options, cancellation and exhausted budgets.
+    pub fn find_template_controlled(
+        &self,
+        task: TaskToken,
+        screen_handle: FrameHandle,
+        template_handle: FrameHandle,
+        resources: &TaskResourceRegistry,
+        options: TemplateOptions,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<TemplateMatch>, FrameVisionError> {
         let screen = self.view(task, screen_handle, resources)?;
         let template = self.view(task, template_handle, resources)?;
+        let mut remaining = options.search.max_pixel_comparisons;
         if let Some(prepared) = template.prepared_template.as_deref() {
-            Ok(pixel_vision::find_prepared_template(
+            Ok(pixel_vision::find_prepared_template_controlled(
                 screen.image_view()?,
                 prepared,
                 options,
+                &mut remaining,
+                cancelled,
             )?)
         } else {
-            Ok(pixel_vision::find_template(
+            if cancelled() {
+                return Err(VisionError::Cancelled.into());
+            }
+            let prepared = PreparedTemplate::prepare(template.image_view()?)?;
+            Ok(pixel_vision::find_prepared_template_controlled(
                 screen.image_view()?,
-                template.image_view()?,
+                &prepared,
                 options,
+                &mut remaining,
+                cancelled,
             )?)
+        }
+    }
+
+    /// Matches declared templates in caller order with one total budget and no temporary leases.
+    ///
+    /// # Errors
+    ///
+    /// Rejects stale frame ownership, missing/duplicate paths, more than 64 templates,
+    /// invalid search options, cancellation, and exhausted shared comparison budgets.
+    pub fn find_named_templates(
+        &self,
+        task: TaskToken,
+        screen: FrameHandle,
+        resources: &TaskResourceRegistry,
+        paths: &[String],
+        options: TemplateOptions,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<NamedTemplateMatch>, FrameVisionError> {
+        if paths.is_empty() || paths.len() > 64 {
+            return Err(FrameError::InvalidTemplateName.into());
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for path in paths {
+            if !names.insert(path) || !self.templates.contains_key(path) {
+                return Err(FrameError::InvalidTemplateName.into());
+            }
+        }
+        let frame = self.view(task, screen, resources)?;
+        let roi = options.search.roi;
+        if roi.left >= roi.right
+            || roi.top >= roi.bottom
+            || roi.right > frame.metadata.width
+            || roi.bottom > frame.metadata.height
+        {
+            return Err(VisionError::InvalidRoi.into());
+        }
+        let mut remaining = options.search.max_pixel_comparisons;
+        if options.minimum_match_permille > 1000 {
+            return Err(VisionError::InvalidSimilarity.into());
+        }
+        for path in paths {
+            if cancelled() {
+                return Err(VisionError::Cancelled.into());
+            }
+            let template = self
+                .templates
+                .get(path)
+                .ok_or(FrameError::InvalidTemplateName)?;
+            if template.metadata.width > options.search.roi.width()
+                || template.metadata.height > options.search.roi.height()
+            {
+                continue;
+            }
+            if let Some(matched) = pixel_vision::find_prepared_template_controlled(
+                frame.image_view()?,
+                &template.prepared,
+                options,
+                &mut remaining,
+                cancelled,
+            )? {
+                return Ok(Some(NamedTemplateMatch {
+                    path: path.clone(),
+                    matched,
+                    width: template.metadata.width,
+                    height: template.metadata.height,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Creates a packed immutable crop owned by the calling task.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid ROI, stale task leases, geometry overflow and resource budgets.
+    pub fn crop(
+        &mut self,
+        task: TaskToken,
+        source: FrameHandle,
+        resources: &mut TaskResourceRegistry,
+        roi: PixelRect,
+    ) -> Result<FrameHandle, FrameError> {
+        let frame = self.view(task, source, resources)?;
+        if roi.left >= roi.right
+            || roi.top >= roi.bottom
+            || roi.right > frame.metadata.width
+            || roi.bottom > frame.metadata.height
+        {
+            return Err(FrameError::InvalidGeometry);
+        }
+        let stride = roi
+            .width()
+            .checked_mul(4)
+            .ok_or(FrameError::InvalidGeometry)?;
+        let bytes = usize::try_from(u64::from(stride) * u64::from(roi.height()))
+            .map_err(|_| FrameError::InvalidGeometry)?;
+        if bytes > self.config.max_total_bytes {
+            return Err(FrameError::FrameBudgetExceeded);
+        }
+        let mut pixels = Vec::with_capacity(bytes);
+        for y in roi.top..roi.bottom {
+            let start = usize::try_from(
+                u64::from(y) * u64::from(frame.metadata.row_stride) + u64::from(roi.left) * 4,
+            )
+            .map_err(|_| FrameError::InvalidGeometry)?;
+            let end = start
+                .checked_add(usize::try_from(stride).map_err(|_| FrameError::InvalidGeometry)?)
+                .ok_or(FrameError::InvalidGeometry)?;
+            pixels.extend_from_slice(
+                frame
+                    .pixels
+                    .get(start..end)
+                    .ok_or(FrameError::InvalidGeometry)?,
+            );
+        }
+        let metadata = FrameMetadata {
+            width: roi.width(),
+            height: roi.height(),
+            row_stride: stride,
+            ..frame.metadata
+        };
+        let capture = self.publish_owned(metadata, Arc::from(pixels), None, false)?;
+        match self.cache(task, capture, resources) {
+            Ok(handle) => Ok(handle),
+            Err(error) => {
+                self.remove_frame(capture.0);
+                Err(error)
+            }
         }
     }
 
@@ -1041,6 +1209,138 @@ mod tests {
             timestamp_nanos: 10,
             snapshot_id: 3,
         }
+    }
+
+    #[test]
+    fn crop_is_independent_task_owned_and_rejects_invalid_regions() {
+        let mut pool = FramePool::new(FramePoolConfig::default());
+        let mut resources = TaskResourceRegistry::default();
+        let source = pool
+            .insert(
+                task(1),
+                metadata(),
+                &[1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255],
+                &mut resources,
+            )
+            .unwrap();
+        let roi = PixelRect {
+            left: 1,
+            top: 1,
+            right: 2,
+            bottom: 2,
+        };
+        assert!(pool.crop(task(2), source, &mut resources, roi).is_err());
+        let cropped = pool.crop(task(1), source, &mut resources, roi).unwrap();
+        assert_eq!(
+            pool.view(task(1), cropped, &resources)
+                .unwrap()
+                .pixels
+                .as_ref(),
+            &[10, 11, 12, 255]
+        );
+        assert!(pool
+            .crop(
+                task(1),
+                source,
+                &mut resources,
+                PixelRect { right: 3, ..roi }
+            )
+            .is_err());
+        resources
+            .release_lease(ResourceOwner::Task(task(1)), source.resource_id)
+            .unwrap();
+        pool.release_resource(source.resource_id);
+        assert_eq!(
+            pool.view(task(1), cropped, &resources)
+                .unwrap()
+                .metadata
+                .width,
+            1
+        );
+        for resource in resources.release_owner(ResourceOwner::Task(task(1))) {
+            pool.release_resource(resource);
+        }
+        pool.reclaim_expired(5_000_000_010);
+        assert_eq!(pool.total_bytes(), 0);
+    }
+
+    #[test]
+    fn named_templates_share_budget_and_accept_only_declared_resources() {
+        let mut pool = FramePool::new(FramePoolConfig::default());
+        let mut resources = TaskResourceRegistry::default();
+        let screen = pool
+            .insert(task(1), metadata(), &[1; 16], &mut resources)
+            .unwrap();
+        let template_meta = FrameMetadata {
+            width: 1,
+            height: 1,
+            row_stride: 4,
+            ..metadata()
+        };
+        pool.register_template("assets/images/a.png", template_meta, Arc::from([2; 4]))
+            .unwrap();
+        pool.register_template("assets/images/b.png", template_meta, Arc::from([1; 4]))
+            .unwrap();
+        let paths = vec![
+            "assets/images/a.png".to_owned(),
+            "assets/images/b.png".to_owned(),
+        ];
+        let options = TemplateOptions {
+            search: SearchOptions {
+                roi: PixelRect {
+                    left: 0,
+                    top: 0,
+                    right: 2,
+                    bottom: 2,
+                },
+                order: SearchOrder::TopLeftToBottomRight,
+                max_pixel_comparisons: 100,
+                step_x: 1,
+                step_y: 1,
+            },
+            tolerance: ColorTolerance {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: 0,
+            },
+            minimum_match_permille: 1000,
+            ignore_transparent_template_pixels: false,
+        };
+        let matched = pool
+            .find_named_templates(task(1), screen, &resources, &paths, options, &mut || false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(matched.path, paths[1]);
+        assert!(pool
+            .find_named_templates(
+                task(1),
+                screen,
+                &resources,
+                &paths,
+                TemplateOptions {
+                    search: SearchOptions {
+                        max_pixel_comparisons: 1,
+                        ..options.search
+                    },
+                    ..options
+                },
+                &mut || false
+            )
+            .is_err());
+        assert!(pool
+            .find_named_templates(task(1), screen, &resources, &paths, options, &mut || true)
+            .is_err());
+        assert!(pool
+            .find_named_templates(
+                task(1),
+                screen,
+                &resources,
+                &["unknown".into()],
+                options,
+                &mut || false
+            )
+            .is_err());
     }
 
     #[test]

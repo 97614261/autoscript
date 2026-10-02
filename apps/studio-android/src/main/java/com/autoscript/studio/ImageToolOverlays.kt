@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -221,6 +223,7 @@ internal fun BoxScope.ImageToolBar(
     ready: Boolean,
     selection: ImageToolSelection,
     swipeDuration: Int,
+    gestureDuration: Int,
     tolerance: Int,
     offsetX: Float,
     offsetY: Float,
@@ -230,6 +233,7 @@ internal fun BoxScope.ImageToolBar(
     onCapture: () -> Unit,
     onClear: () -> Unit,
     onSwipeDuration: (Float) -> Unit,
+    onGestureDuration: (Float) -> Unit,
     onTolerance: (Float) -> Unit,
     onConfirm: () -> Unit,
     onCropToTemplate: () -> Unit,
@@ -298,6 +302,15 @@ internal fun BoxScope.ImageToolBar(
                         ImageToolStepper("${swipeDuration}ms") {
                             onSwipeDuration((swipeDuration + it * 100).coerceIn(100, 5_000).toFloat())
                         }
+                    mode == ImageToolMode.LONG_PRESS || mode == ImageToolMode.DRAG ->
+                        ImageToolStepper("${gestureDuration}ms") {
+                            onGestureDuration(
+                                (gestureDuration + it * 100).coerceIn(
+                                    ImageToolCodeGen.MIN_GESTURE_DURATION_MS,
+                                    ImageToolCodeGen.MAX_GESTURE_DURATION_MS,
+                                ).toFloat(),
+                            )
+                        }
                     else -> Unit
                 }
                 if (selection.box != null || selection.points.isNotEmpty()) {
@@ -329,7 +342,7 @@ internal fun BoxScope.ImageToolMenu(
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier, shape = RoundedCornerShape(8.dp), color = ToolChrome, shadowElevation = 12.dp) {
-        Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             ImageToolMode.menuOrder.chunked(2).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     row.forEach { entry -> ImageToolMenuItem(entry, entry == current, onPick) }

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ocr.alphanumeric/1/schema.json",
+  "title": "ocr.alphanumeric node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ocr.alphanumeric"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "region",
+        "minimumConfidencePermille",
+        "textVariable",
+        "scoreVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "minimumConfidencePermille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "autoCapture": {
+          "type": "boolean"
+        },
+        "region": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "left",
+            "top",
+            "right",
+            "bottom"
+          ],
+          "properties": {
+            "left": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "top": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "right": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "bottom": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "textVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "scoreVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

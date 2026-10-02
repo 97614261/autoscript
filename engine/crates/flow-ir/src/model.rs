@@ -15,6 +15,8 @@ pub struct NodeEnvelope {
     pub order_key: String,
     pub kind: String,
     pub node_version: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub child_blocks: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -140,6 +142,26 @@ pub struct FlowDocument {
 }
 
 impl FlowDocument {
+    /// Includes descendants of disabled containers; canonical order visits owners first.
+    #[must_use]
+    pub fn disabled_node_ids(&self) -> std::collections::HashSet<&str> {
+        let mut disabled = std::collections::HashSet::new();
+        if let Some(nodes) = self.canonical_nodes() {
+            for node in nodes {
+                if node.envelope.disabled
+                    || node
+                        .envelope
+                        .parent_id
+                        .as_deref()
+                        .is_some_and(|id| disabled.contains(id))
+                {
+                    disabled.insert(node.envelope.node_id.as_str());
+                }
+            }
+        }
+        disabled
+    }
+
     /// Iterates nodes in authoritative structural and `orderKey` order.
     #[must_use]
     pub fn canonical_nodes(&self) -> Option<impl Iterator<Item = &FlowNode>> {

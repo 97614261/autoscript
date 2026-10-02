@@ -3,6 +3,9 @@
 use root_daemon::TransportError;
 use root_protocol::{Capabilities, Command, FrameKind, ProtocolError, SecureChannel, StatusCode};
 
+pub mod priority;
+pub use priority::{PriorityStop, StopStatus};
+
 const CAPTURE_CHUNK_BYTES: usize = 60 * 1024;
 const MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -96,6 +99,15 @@ pub struct RootClient<T> {
     next_request_id: u64,
     negotiated_capabilities: Capabilities,
     closed: bool,
+    priority: Option<PriorityStop>,
+}
+
+impl<T> Drop for RootClient<T> {
+    fn drop(&mut self) {
+        if let Some(control) = self.priority.as_ref() {
+            control.close();
+        }
+    }
 }
 
 impl<T: PacketTransport> RootClient<T> {
@@ -134,6 +146,7 @@ impl<T: PacketTransport> RootClient<T> {
             next_request_id: 1,
             negotiated_capabilities: Capabilities::from_bits(0),
             closed: false,
+            priority: None,
         };
         let payload =
             client.transact(Command::Hello, &requested_capabilities.bits().to_le_bytes())?;
@@ -154,6 +167,21 @@ impl<T: PacketTransport> RootClient<T> {
     #[must_use]
     pub const fn negotiated_capabilities(&self) -> Capabilities {
         self.negotiated_capabilities
+    }
+    pub fn priority_stop(&self) -> Option<PriorityStop> {
+        self.priority.clone()
+    }
+
+    /// Editor backend flags, derived only from the authenticated handshake.
+    #[must_use]
+    pub fn input_features(&self) -> u32 {
+        u32::from(
+            self.negotiated_capabilities
+                .supports(Capabilities::INPUT_BASIC),
+        ) | (u32::from(
+            self.negotiated_capabilities
+                .supports(Capabilities::INPUT_POINTER_SINGLE),
+        ) << 1)
     }
 
     /// Injects a physical-pixel tap.
@@ -371,8 +399,43 @@ impl<T: PacketTransport> RootClient<T> {
         self.next_request_id = request_id
             .checked_add(1)
             .ok_or(ClientError::RequestIdExhausted)?;
-        let packet = self.channel.encode(command, request_id, payload)?;
-        self.transport.send_packet(&packet)?;
+        if matches!(
+            command,
+            Command::Tap
+                | Command::Swipe
+                | Command::KeyEvent
+                | Command::PointerDown
+                | Command::PointerMove
+                | Command::PointerUp
+        ) {
+            if let Some(priority) = self.priority.as_ref() {
+                let mut gate = priority
+                    .shared()
+                    .gate
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if gate.status != StopStatus::Ready {
+                    // Priority ACK already released every old pointer; ordinary cleanup is idempotent.
+                    if command == Command::PointerUp && gate.status == StopStatus::Clean {
+                        return Ok(Vec::new());
+                    }
+                    return Err(ClientError::Remote(if gate.status == StopStatus::Failed {
+                        StatusCode::BackendFailure
+                    } else {
+                        StatusCode::Cancelled
+                    }));
+                }
+                gate.last_input = request_id;
+                let packet = self.channel.encode(command, request_id, payload)?;
+                self.transport.send_packet(&packet)?;
+            } else {
+                let packet = self.channel.encode(command, request_id, payload)?;
+                self.transport.send_packet(&packet)?;
+            }
+        } else {
+            let packet = self.channel.encode(command, request_id, payload)?;
+            self.transport.send_packet(&packet)?;
+        }
         let response = self.transport.receive_packet()?;
         let frame = self.channel.decode(&response)?;
         if frame.kind != FrameKind::Response
@@ -419,18 +482,41 @@ pub fn connect_android(
         .set_read_timeout(Some(timeout))
         .map_err(|error| ClientError::Transport(TransportError::Io(error)))?;
     stream
-        .set_write_timeout(Some(timeout))
+        .set_write_timeout(Some(timeout.min(std::time::Duration::from_secs(2))))
         .map_err(|error| ClientError::Transport(TransportError::Io(error)))?;
-    RootClient::connect_with_required(
+    let mut client = RootClient::connect_with_required(
         stream,
         key,
         Capabilities::from_bits(
             Capabilities::INPUT_BASIC
                 | Capabilities::INPUT_POINTER_SINGLE
+                | Capabilities::INPUT_PRIORITY_STOP
                 | Capabilities::CAPTURE_RAW,
         ),
         Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
-    )
+    )?;
+    if client
+        .negotiated_capabilities()
+        .supports(Capabilities::INPUT_PRIORITY_STOP)
+    {
+        let control = std::os::unix::net::UnixStream::connect(socket_path.with_extension("ctl"))
+            .map_err(|e| ClientError::Transport(TransportError::Io(e)))?;
+        control
+            .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+            .map_err(|e| ClientError::Transport(TransportError::Io(e)))?;
+        control
+            .set_write_timeout(Some(std::time::Duration::from_secs(2)))
+            .map_err(|e| ClientError::Transport(TransportError::Io(e)))?;
+        let control = RootClient::connect(
+            control,
+            root_protocol::priority_control_key(&key),
+            Capabilities::from_bits(Capabilities::INPUT_PRIORITY_STOP),
+        )?;
+        client.priority = Some(
+            priority::spawn(control).map_err(|e| ClientError::Transport(TransportError::Io(e)))?,
+        );
+    }
+    Ok(client)
 }
 
 #[cfg(test)]
@@ -602,6 +688,8 @@ mod tests {
     #[test]
     fn optional_pointer_capability_does_not_block_basic_android_seven_input() {
         let mut client = connect_without_pointer_capability();
+        assert_eq!(client.input_features(), 1);
+        assert_eq!(connect().input_features(), 3);
         client.tap(1, 2).expect("basic input remains available");
         assert!(matches!(
             client.pointer_down(0, 1, 2),

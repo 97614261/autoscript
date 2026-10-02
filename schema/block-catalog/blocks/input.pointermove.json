@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.pointermove",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.pointermove/1/input.pointermove.schema.json",
+  "title": "移动触点",
+  "category": "task",
+  "summary": "将当前按住的 Root 触点移动到指定设计坐标。",
+  "searchTerms": ["pointerMove", "drag", "移动手指", "拖动"],
+  "requiredCapabilities": ["input.basic"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "x", "label": "X 坐标", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "y", "label": "Y 坐标", "editor": "integer", "required": true, "defaultValue": "0" }
+  ],
+  "migrations": []
+}

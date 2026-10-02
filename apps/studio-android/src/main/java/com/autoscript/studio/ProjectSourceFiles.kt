@@ -152,7 +152,7 @@ internal class ProjectSourceFiles(
             val candidate = idFactory()
             if (candidate !in taken) return candidate
         }
-        error("无法生成唯一 Flow ID")
+        error("无法生成唯一插件 ID")
     }
 
     private fun ProjectSnapshot.flowIds(): Set<String> = manifest.flows.map(ProjectFlow::flowId).toSet()

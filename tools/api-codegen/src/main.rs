@@ -1,5 +1,6 @@
 use api_codegen::{
-    load_block_catalog, load_catalog, render_block_kotlin, render_kotlin, reviewable_outputs,
+    load_block_catalog, load_catalog, render_block_kotlin, render_function_docs_kotlin,
+    render_kotlin, reviewable_outputs,
 };
 use std::env;
 use std::fs;
@@ -38,26 +39,33 @@ fn run() -> Result<(), String> {
         println!("generated {}", path.display());
         return Ok(());
     }
-    if mode == "kotlin" {
-        let output = args.next().ok_or_else(|| {
-            "usage: api-codegen kotlin <repository-root> <output-file>".to_string()
-        })?;
+    if mode == "kotlin" || mode == "studio-functions-kotlin" {
+        let output = args
+            .next()
+            .ok_or_else(|| format!("usage: api-codegen {mode} <repository-root> <output-file>"))?;
         if args.next().is_some() {
-            return Err("usage: api-codegen kotlin <repository-root> <output-file>".into());
+            return Err(format!(
+                "usage: api-codegen {mode} <repository-root> <output-file>"
+            ));
         }
         let path = PathBuf::from(output);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
         }
-        fs::write(&path, render_kotlin(&functions))
+        let content = if mode == "studio-functions-kotlin" {
+            render_function_docs_kotlin(&functions)
+        } else {
+            render_kotlin(&functions)
+        };
+        fs::write(&path, content)
             .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
         println!("generated {}", path.display());
         return Ok(());
     }
     if args.next().is_some() || (mode != "generate" && mode != "check") {
         return Err(
-            "usage: api-codegen [generate|check] [repository-root]\n       api-codegen kotlin <repository-root> <output-file>\n       api-codegen blocks-kotlin <repository-root> <output-file>"
+            "usage: api-codegen [generate|check] [repository-root]\n       api-codegen kotlin <repository-root> <output-file>\n       api-codegen blocks-kotlin <repository-root> <output-file>\n       api-codegen studio-functions-kotlin <repository-root> <output-file>"
                 .into(),
         );
     }

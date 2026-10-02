@@ -102,6 +102,54 @@ class ImageToolCodeGenTest {
         }
     }
 
+    @Test
+    fun longPressEmitsBalancedTypedBlocksAndMapsThePickedPoint() {
+        val snippet = ImageToolCodeGen.longPress(PickedPoint(540, 960, 0), 1_200, downscale)
+        assertEquals(
+            listOf("input.pointerdown", "task.sleep", "input.pointerup"),
+            snippet.flowBlocks.map { it.kind },
+        )
+        assertEquals(mapOf("x" to 360, "y" to 640), snippet.flowBlocks.first().arguments)
+        assertEquals(mapOf("milliseconds" to 1_200), snippet.flowBlocks[1].arguments)
+        assertTrue(snippet.code, snippet.code.contains("Input.pointerDown(360, 640)"))
+        assertTrue(snippet.code, snippet.code.contains("Task.sleep(1200)"))
+        assertTrue(snippet.code, snippet.code.endsWith("Input.pointerUp()"))
+        assertNull(snippet.rejection)
+    }
+
+    @Test
+    fun dragEmitsTimedInterpolatedMovesAndBalancedRelease() {
+        val snippet = ImageToolCodeGen.drag(
+            start = PickedPoint(0, 0, 0),
+            end = PickedPoint(100, 100, 0),
+            durationMs = 150,
+            mapping = identity,
+        )
+        assertEquals("input.pointerdown", snippet.flowBlocks.first().kind)
+        assertEquals("input.pointerup", snippet.flowBlocks.last().kind)
+        assertEquals(3, snippet.flowBlocks.count { it.kind == "input.pointermove" })
+        assertEquals(150, snippet.flowBlocks.filter { it.kind == "task.sleep" }
+            .sumOf { it.arguments.getValue("milliseconds") })
+        assertEquals(
+            listOf(33, 67, 100),
+            snippet.flowBlocks.filter { it.kind == "input.pointermove" }
+                .map { it.arguments.getValue("x") },
+        )
+        assertTrue(snippet.code, snippet.code.contains("Input.pointerDown(0, 0)"))
+        assertTrue(snippet.code, snippet.code.contains("Input.pointerMove(100, 100)"))
+        assertNull(snippet.rejection)
+    }
+
+    @Test
+    fun pressAndDragDurationsAreBounded() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ImageToolCodeGen.longPress(PickedPoint(0, 0, 0), 99, identity)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ImageToolCodeGen.drag(PickedPoint(0, 0, 0), PickedPoint(1, 1, 0), 5_001, identity)
+        }
+    }
+
     /** getColor 需要帧句柄，片段必须自带 capture 且配对 release，否则会漏掉帧池租约。 */
     @Test
     fun getColorCapturesAndReleasesFrame() {
@@ -223,6 +271,8 @@ class ImageToolCodeGenTest {
         val snippets = listOf(
             ImageToolCodeGen.tap(PickedPoint(1, 1, 0), identity),
             ImageToolCodeGen.swipe(PickedPoint(1, 1, 0), PickedPoint(2, 2, 0), 200, identity),
+            ImageToolCodeGen.longPress(PickedPoint(1, 1, 0), 800, identity),
+            ImageToolCodeGen.drag(PickedPoint(1, 1, 0), PickedPoint(2, 2, 0), 200, identity),
             ImageToolCodeGen.getColor(PickedPoint(1, 1, 0), identity),
             ImageToolCodeGen.region(Roi(0, 0, 10, 10), identity),
             ImageToolCodeGen.findMultiColor(PickedPoint(1, 1, 0), emptyList(), 8, null, identity),

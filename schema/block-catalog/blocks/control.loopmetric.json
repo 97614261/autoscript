@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1, "kind": "control.loopmetric", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.loopmetric/1/control.loopmetric.schema.json",
+  "title": "获取循环指标", "category": "control",
+  "summary": "在循环体当前位置读取最近循环的次数或耗时；输出到声明变量。",
+  "searchTerms": ["获取循环次数", "获取循环时间", "指标", "loop"], "requiredCapabilities": [], "childBlocks": [],
+  "properties": [
+    { "path": "metric", "label": "指标", "editor": "enum", "required": true, "defaultValue": "count", "choices": ["count", "elapsed"] },
+    { "path": "name", "label": "输出变量", "editor": "string", "required": true, "defaultValue": "loopCount" },
+    { "path": "unit", "label": "时间单位", "editor": "enum", "required": true, "defaultValue": "milliseconds", "choices": ["milliseconds", "seconds", "minutes"] }
+  ], "migrations": []
+}

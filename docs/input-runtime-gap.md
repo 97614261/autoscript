@@ -1,10 +1,27 @@
 # 输入与定时器运行时缺口：三个「阻塞点」的核实结论
 
+> 2026-09-29 按键编辑增量见[按键流程交付](input-ui-workflow-audit.md)：系统悬浮选点、七动作与统一插入位置已接线，
+> 取消/超时/断连/旋转关闭会话，保存失败保留草稿；设备验收未执行，后文早期编辑流程缺口为历史记录。
+
+> 2026-09-29 当前状态：Timer.every/cancel、Task.spawn/cancel 已有真实 Lua API 与可视化任务积木（1.7/core.task）。
+> VM内回调登记有界、归属校验、非重入、合并错过tick、完成回写/所有者结束清理均已接线并回归，不再是不可达功能。
+> 健康单指后端现在把 swipe 变成一个连续有界事务，用优先控制通知响应取消；APK内 RootInputBridge 为API24提供固定结构化输入。
+> input/screencap子进程有硬截止，超时不重复注入。桥和系统单指能力均不可用时仍保留旧原生swipe，命令中途抢占缺口未解决。
+> 后续历史段落仅是取证记录，不代表当前状态；最新边界见 ADR0012/0013 与 rust-completion-plan.md。没有设备实测结论。
+
 > 2026-09-18 状态更新：输入部分已按
 > `docs/adr/0001-root-input-runtime-ownership.md` 接线。tap/swipe/keyevent 已进入
 > `InputTransaction -> InputArbiter -> AutomationBackend -> RootClient`，stop/reset 和
 > 单触点协议也已落地。本文保留为原始缺口取证；`Timer.every` 仍未实现。同步的
 > `/system/bin/input swipe` 只能在命令边界响应 stop，持久化可取消注入后端仍是后续项。
+
+> 2026-09-23 状态更新：单指触点现在由 `Input.pointerDown/Move/Up` 对外暴露，并在 Root 输入仲裁层
+> 按 `TaskToken` 校验所有权。任务结束/取消、运行停止、Root 断连重连和 30 秒空闲租约超时都会释放触点；
+> `input.basic` 能力门控与设计坐标映射继续复用现有路径。第三阶段现已为按下、移动触点、弹起提供可视化积木，
+> 串入 Flow 校验和 Lua 编译，并要求项目 `runtimeApi >= 1.6`；发布器接受 1.6，同时保留 1.5 向后兼容。
+> 第四阶段在截图坐标工具中开放长按与连续拖动：通过浮动工具栏定位，长按生成按下/等待/弹起，拖动生成分段移动节点，
+> 可视化项目以一个批次写入当前 Flow。系统级触摸穿透悬浮层、多点触控与录制事件流仍未实现。
+> 下文第 2–4 节是基线取证，不再代表当前代码状态；`Timer.every` 缺口仍有效。
 
 面向：接手完整端到端流程的人
 

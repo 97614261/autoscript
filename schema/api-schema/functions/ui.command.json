@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1203,
+  "name": "UI.command",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。",
+  "params": [
+    {
+      "name": "id",
+      "type": "string",
+      "required": true,
+      "summary": "id"
+    },
+    {
+      "name": "operation",
+      "type": "string",
+      "required": true,
+      "summary": "operation"
+    },
+    {
+      "name": "value",
+      "type": "string",
+      "required": true,
+      "summary": "value"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。"
+  },
+  "legacyAliases": []
+}

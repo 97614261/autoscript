@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use runtime_scheduler::{MonoTime, TaskToken};
 
@@ -52,6 +53,8 @@ pub struct InputArbiterConfig {
     pub max_queued: usize,
     pub max_per_task: usize,
     pub max_commands_per_transaction: usize,
+    /// Maximum time a task may retain the single physical pointer without refreshing its lease.
+    pub pointer_lease_timeout: Duration,
 }
 
 impl Default for InputArbiterConfig {
@@ -60,6 +63,7 @@ impl Default for InputArbiterConfig {
             max_queued: 128,
             max_per_task: 16,
             max_commands_per_transaction: 1_024,
+            pointer_lease_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -73,6 +77,7 @@ pub enum InputError {
     TooManyCommands,
     DelayTooLong,
     InvalidPointerSequence,
+    PointerOwnedByAnotherTask,
     TransactionAlreadyActive,
     NoActiveTransaction,
     TransactionMismatch,
@@ -102,12 +107,24 @@ pub struct InputArbiter {
     round_robin: VecDeque<TaskToken>,
     active: Option<InputTransaction>,
     dispatched_index: usize,
-    pressed_pointers: BTreeSet<u8>,
+    pressed_pointers: BTreeMap<u8, PointerLease>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PointerLease {
+    task: TaskToken,
+    expires_at: Instant,
 }
 
 impl InputArbiter {
     #[must_use]
-    pub fn new(config: InputArbiterConfig) -> Self {
+    pub fn new(mut config: InputArbiterConfig) -> Self {
+        if config.pointer_lease_timeout.is_zero() {
+            config.pointer_lease_timeout = Duration::from_millis(1);
+        } else {
+            config.pointer_lease_timeout =
+                config.pointer_lease_timeout.min(Duration::from_secs(60));
+        }
         Self {
             config,
             accepting: true,
@@ -116,7 +133,7 @@ impl InputArbiter {
             round_robin: VecDeque::new(),
             active: None,
             dispatched_index: 0,
-            pressed_pointers: BTreeSet::new(),
+            pressed_pointers: BTreeMap::new(),
         }
     }
 
@@ -135,7 +152,11 @@ impl InputArbiter {
         if transaction.commands.len() > self.config.max_commands_per_transaction {
             return Err(InputError::TooManyCommands);
         }
-        validate_pointer_sequence(&transaction.commands)?;
+        validate_pointer_sequence(
+            &transaction.commands,
+            transaction.task,
+            &self.pressed_pointers,
+        )?;
         if self.queued >= self.config.max_queued {
             return Err(InputError::QueueFull);
         }
@@ -211,15 +232,25 @@ impl InputArbiter {
         }
         match command {
             InputCommand::PointerDown { pointer_id, .. } => {
-                self.pressed_pointers.insert(*pointer_id);
+                self.pressed_pointers.insert(
+                    *pointer_id,
+                    PointerLease {
+                        task: active.task,
+                        expires_at: Instant::now() + self.config.pointer_lease_timeout,
+                    },
+                );
             }
             InputCommand::PointerUp { pointer_id } => {
                 self.pressed_pointers.remove(pointer_id);
             }
+            InputCommand::PointerMove { pointer_id, .. } => {
+                if let Some(lease) = self.pressed_pointers.get_mut(pointer_id) {
+                    lease.expires_at = Instant::now() + self.config.pointer_lease_timeout;
+                }
+            }
             InputCommand::Tap { .. }
             | InputCommand::Swipe { .. }
             | InputCommand::KeyEvent { .. }
-            | InputCommand::PointerMove { .. }
             | InputCommand::Delay { .. } => {}
         }
         self.dispatched_index += 1;
@@ -255,10 +286,17 @@ impl InputArbiter {
             .as_ref()
             .is_some_and(|active| active.id == transaction)
         {
+            let task = self.active.as_ref().map(|active| active.task);
             self.active = None;
             self.dispatched_index = 0;
-            let release_pointer_ids = self.pressed_pointers.iter().copied().collect();
-            self.pressed_pointers.clear();
+            let release_pointer_ids = self
+                .pressed_pointers
+                .iter()
+                .filter_map(|(pointer_id, lease)| (Some(lease.task) == task).then_some(*pointer_id))
+                .collect::<Vec<_>>();
+            for pointer_id in &release_pointer_ids {
+                self.pressed_pointers.remove(pointer_id);
+            }
             return Some(StopPlan {
                 discarded: vec![transaction],
                 release_pointer_ids,
@@ -303,7 +341,7 @@ impl InputArbiter {
             discarded.push(active.id);
         }
         discarded.sort();
-        let release_pointer_ids = self.pressed_pointers.iter().copied().collect();
+        let release_pointer_ids = self.pressed_pointers.keys().copied().collect();
         self.by_task.clear();
         self.round_robin.clear();
         self.pressed_pointers.clear();
@@ -314,36 +352,88 @@ impl InputArbiter {
             release_pointer_ids,
         }
     }
+
+    /// Releases every pointer lease held by one finished/cancelled task.
+    pub fn release_task_pointers(&mut self, task: TaskToken) -> Vec<u8> {
+        let pointers = self
+            .pressed_pointers
+            .iter()
+            .filter_map(|(pointer, lease)| (lease.task == task).then_some(*pointer))
+            .collect::<Vec<_>>();
+        for pointer in &pointers {
+            self.pressed_pointers.remove(pointer);
+        }
+        pointers
+    }
+
+    /// Releases leases whose bounded wall-clock timeout elapsed.
+    pub fn expire_pointers(&mut self, now: Instant) -> Vec<u8> {
+        let pointers = self
+            .pressed_pointers
+            .iter()
+            .filter_map(|(pointer, lease)| (lease.expires_at <= now).then_some(*pointer))
+            .collect::<Vec<_>>();
+        for pointer in &pointers {
+            self.pressed_pointers.remove(pointer);
+        }
+        pointers
+    }
+
+    #[must_use]
+    pub fn next_pointer_deadline(&self) -> Option<Instant> {
+        self.pressed_pointers
+            .values()
+            .map(|lease| lease.expires_at)
+            .min()
+    }
 }
 
-fn validate_pointer_sequence(commands: &[InputCommand]) -> Result<(), InputError> {
-    let mut down = BTreeSet::new();
+fn validate_pointer_sequence(
+    commands: &[InputCommand],
+    task: TaskToken,
+    active: &BTreeMap<u8, PointerLease>,
+) -> Result<(), InputError> {
+    let now = Instant::now();
+    let mut down = active
+        .iter()
+        .filter_map(|(pointer, lease)| (lease.expires_at > now).then_some((*pointer, lease.task)))
+        .collect::<BTreeMap<_, _>>();
     for command in commands {
         match command {
             InputCommand::Delay { milliseconds } if *milliseconds > 60_000 => {
                 return Err(InputError::DelayTooLong);
             }
-            InputCommand::PointerDown { pointer_id, .. } if !down.insert(*pointer_id) => {
-                return Err(InputError::InvalidPointerSequence);
-            }
-            InputCommand::PointerMove { pointer_id, .. } if !down.contains(pointer_id) => {
-                return Err(InputError::InvalidPointerSequence);
-            }
-            InputCommand::PointerUp { pointer_id } if !down.remove(pointer_id) => {
-                return Err(InputError::InvalidPointerSequence);
-            }
+            InputCommand::PointerDown { pointer_id, .. } => match down.get(pointer_id) {
+                None => {
+                    down.insert(*pointer_id, task);
+                }
+                Some(owner) if *owner == task => {
+                    return Err(InputError::InvalidPointerSequence);
+                }
+                Some(_) => return Err(InputError::PointerOwnedByAnotherTask),
+            },
+            InputCommand::PointerMove { pointer_id, .. } => match down.get(pointer_id) {
+                Some(owner) if *owner == task => {}
+                Some(_) => return Err(InputError::PointerOwnedByAnotherTask),
+                None => return Err(InputError::InvalidPointerSequence),
+            },
+            InputCommand::PointerUp { pointer_id } => match down.get(pointer_id) {
+                Some(owner) if *owner == task => {
+                    down.remove(pointer_id);
+                }
+                Some(_) => return Err(InputError::PointerOwnedByAnotherTask),
+                None => return Err(InputError::InvalidPointerSequence),
+            },
             _ => {}
         }
     }
-    if down.is_empty() {
-        Ok(())
-    } else {
-        Err(InputError::InvalidPointerSequence)
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use runtime_scheduler::{MonoTime, TaskGeneration, TaskId, TaskToken};
 
     use super::{
@@ -483,5 +573,75 @@ mod tests {
             [TransactionId(2)]
         );
         assert_eq!(arbiter.next(MonoTime::ZERO), Ok(InputDecision::Idle));
+    }
+
+    #[test]
+    fn pointer_lease_is_task_owned_across_transactions_and_expires() {
+        let mut arbiter = InputArbiter::new(InputArbiterConfig {
+            pointer_lease_timeout: Duration::from_millis(20),
+            ..InputArbiterConfig::default()
+        });
+        let down = InputTransaction {
+            id: TransactionId(20),
+            task: task(1),
+            expires_at: MonoTime::from_nanos(100),
+            commands: vec![InputCommand::PointerDown {
+                pointer_id: 0,
+                x: 1,
+                y: 2,
+            }],
+        };
+        arbiter.enqueue(down).expect("down is valid");
+        let InputDecision::Dispatch(down) = arbiter.next(MonoTime::ZERO).expect("dispatch") else {
+            panic!("down transaction expected");
+        };
+        arbiter
+            .note_dispatched(down.id, &down.commands[0])
+            .expect("down accepted");
+        arbiter
+            .complete(down.id)
+            .expect("down transaction completed");
+
+        let foreign_move = InputTransaction {
+            id: TransactionId(21),
+            task: task(2),
+            expires_at: MonoTime::from_nanos(100),
+            commands: vec![InputCommand::PointerMove {
+                pointer_id: 0,
+                x: 3,
+                y: 4,
+            }],
+        };
+        assert_eq!(
+            arbiter.enqueue(foreign_move),
+            Err(InputError::PointerOwnedByAnotherTask)
+        );
+
+        let same_task_move = InputTransaction {
+            id: TransactionId(22),
+            task: task(1),
+            expires_at: MonoTime::from_nanos(100),
+            commands: vec![InputCommand::PointerMove {
+                pointer_id: 0,
+                x: 3,
+                y: 4,
+            }],
+        };
+        arbiter
+            .enqueue(same_task_move)
+            .expect("owner may move pointer");
+
+        let expired = arbiter.expire_pointers(Instant::now() + Duration::from_secs(1));
+        assert_eq!(expired, [0]);
+        let late_up = InputTransaction {
+            id: TransactionId(23),
+            task: task(1),
+            expires_at: MonoTime::from_nanos(100),
+            commands: vec![InputCommand::PointerUp { pointer_id: 0 }],
+        };
+        assert_eq!(
+            arbiter.enqueue(late_up),
+            Err(InputError::InvalidPointerSequence)
+        );
     }
 }

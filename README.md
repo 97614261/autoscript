@@ -6,6 +6,12 @@
 
 ## 当前阶段
 
+2026-09-29增量状态优先见 [原生视觉与停止交付](docs/native-vision-stop-delivery.md)、[变量计算交付](docs/variable-calculation-delivery.md)、[循环对齐交付](docs/loop-alignment-delivery.md)和[紧凑变量列表](docs/variable-page-compact-delivery.md)；以下基础阶段记录不代表最新能力数量或设备验收结果。
+
+按键的系统悬浮选点、七种动作、统一插入位置与尚需设备验收项见[按键流程交付](docs/input-ui-workflow-audit.md)。
+
+函数库的共享紧凑页面、48 种积木和 42 个正式 API 文档见[函数库交付](docs/function-library-delivery.md)。
+
 R0 二十三批基础能力已落地并接入统一门禁：
 
 - Studio 与 Runner 是两个独立 Android 应用。
@@ -60,6 +66,16 @@ R0 二十三批基础能力已落地并接入统一门禁：
 - 登录、后台、免 Root、在线授权和热更新均未实现。
 
 ## 构建
+
+日常 Studio 打包并自动安装到 MuMu：
+
+```powershell
+.\build.cmd
+```
+
+构建成功后自动启动 MuMu 的 0 号实例，读取该实例的实际 ADB 端口，使用 `adb install -r -t` 覆盖安装并保留应用数据。构建或安装失败会返回非零退出码，不卸载应用，不安装到其他连接的设备。不会自动打开应用。
+
+`.\build.cmd -Verify` 同时跑 Studio 单元测试和 Lint；`.\build.cmd -VmIndex 1` 指定另一 MuMu 实例；`.\build.cmd -SkipBuild` 只安装已有 APK。自定义安装位置可传 `-MuMuManagerPath` 和 `-AdbPath`。原始 `gradlew assembleDebug` 仍只构建，用于 CI 或无需安装的场景。
 
 M26完整主机门禁与MuMu回归已脚本化；主机脚本会生成带SHA-256和逐步结果的独立产物目录，设备脚本默认只操作指定的`127.0.0.1:16384`：
 

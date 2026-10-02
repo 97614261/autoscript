@@ -85,7 +85,26 @@ internal object ImageToolCodeGen {
     data class PickedPoint(val x: Int, val y: Int, val rgb: Int)
 
     /** 生成结果：片段本体 + 给用户看的说明；[rejection] 非空表示被 [LuaSnippetGate] 拦下。 */
-    data class Snippet(val code: String, val summary: String, val rejection: String? = null)
+    data class Snippet(
+        val code: String,
+        val summary: String,
+        val rejection: String? = null,
+        /** Typed visual nodes, so multi-step gestures never need to be reverse-parsed from Lua. */
+        val flowBlocks: List<FlowBlockInsertion> = emptyList(),
+        /** Typed screenshot selection for visual Flow editing; never reverse-parse Lua text. */
+        val imageSelection: VisualSelection? = null,
+    )
+
+    data class VisualSelection(
+        val mode: ImageToolMode,
+        val roi: Roi?,
+        val points: List<PickedPoint>,
+        val tolerance: Int,
+        val frameWidth: Int,
+        val frameHeight: Int,
+    )
+
+    data class FlowBlockInsertion(val kind: String, val arguments: Map<String, Int> = emptyMap())
 
     /** `0xRRGGBB` 的六位大写十六进制，供文案与代码共用。 */
     fun formatRgb(rgb: Int): String = "0x%06X".format(rgb and 0xFFFFFF)
@@ -96,7 +115,7 @@ internal object ImageToolCodeGen {
         return gate(
             code = "Input.tap($x, $y)",
             summary = "点击设计坐标 ($x, $y)" + mappingNote(mapping, point.x, point.y),
-        )
+        ).copy(flowBlocks = listOf(FlowBlockInsertion("input.tap", mapOf("x" to x, "y" to y))))
     }
 
     /**
@@ -112,8 +131,83 @@ internal object ImageToolCodeGen {
         return gate(
             code = "Input.swipe($x1, $y1, $x2, $y2, $durationMs)",
             summary = "从 ($x1, $y1) 滑到 ($x2, $y2)，用时 ${durationMs}ms",
-        )
+        ).copy(flowBlocks = listOf(FlowBlockInsertion("input.swipe", mapOf("x1" to x1, "y1" to y1, "x2" to x2, "y2" to y2, "durationMs" to durationMs))))
     }
+
+    fun pointerDown(point: PickedPoint, mapping: DesignMapping): Snippet = pointerPoint("input.pointerdown", "按下", point, mapping)
+    fun pointerMove(point: PickedPoint, mapping: DesignMapping): Snippet = pointerPoint("input.pointermove", "移动触点", point, mapping)
+    private fun pointerPoint(kind: String, title: String, point: PickedPoint, mapping: DesignMapping): Snippet {
+        val (x, y) = mapping.toDesign(point.x, point.y)
+        val blocks = listOf(FlowBlockInsertion(kind, mapOf("x" to x, "y" to y)))
+        return gate(blocks.toLuaCode(), "$title ($x, $y) · 仅同一任务的单指").copy(flowBlocks = blocks)
+    }
+    fun pointerUp(): Snippet {
+        val blocks = listOf(FlowBlockInsertion("input.pointerup"))
+        return gate(blocks.toLuaCode(), "释放本任务的单指").copy(flowBlocks = blocks)
+    }
+
+    /** Tap-and-hold is emitted as a balanced pointer lease around an event-driven task sleep. */
+    fun longPress(point: PickedPoint, durationMs: Int, mapping: DesignMapping): Snippet {
+        require(durationMs in MIN_GESTURE_DURATION_MS..MAX_GESTURE_DURATION_MS) {
+            "长按时长需在 ${MIN_GESTURE_DURATION_MS}–${MAX_GESTURE_DURATION_MS} 毫秒之间"
+        }
+        val (x, y) = mapping.toDesign(point.x, point.y)
+        val blocks = listOf(
+            FlowBlockInsertion("input.pointerdown", mapOf("x" to x, "y" to y)),
+            FlowBlockInsertion("task.sleep", mapOf("milliseconds" to durationMs)),
+            FlowBlockInsertion("input.pointerup"),
+        )
+        return gate(
+            code = blocks.toLuaCode(),
+            summary = "在 ($x, $y) 按住 ${durationMs}ms 后弹起",
+        ).copy(flowBlocks = blocks)
+    }
+
+    /**
+     * Build a time-stepped drag from typed nodes. Moves are separated by at most 50ms sleeps;
+     * the requested duration is distributed exactly across the steps (up to 100 moves).
+     */
+    fun drag(start: PickedPoint, end: PickedPoint, durationMs: Int, mapping: DesignMapping): Snippet {
+        require(durationMs in MIN_GESTURE_DURATION_MS..MAX_GESTURE_DURATION_MS) {
+            "拖动时长需在 ${MIN_GESTURE_DURATION_MS}–${MAX_GESTURE_DURATION_MS} 毫秒之间"
+        }
+        val (x1, y1) = mapping.toDesign(start.x, start.y)
+        val (x2, y2) = mapping.toDesign(end.x, end.y)
+        val moveCount = (durationMs / DRAG_STEP_MS).coerceIn(2, MAX_DRAG_STEPS)
+        val blocks = buildList {
+            add(FlowBlockInsertion("input.pointerdown", mapOf("x" to x1, "y" to y1)))
+            var elapsed = 0
+            for (step in 1..moveCount) {
+                val nextElapsed = step * durationMs / moveCount
+                add(FlowBlockInsertion("task.sleep", mapOf("milliseconds" to (nextElapsed - elapsed))))
+                elapsed = nextElapsed
+                val fraction = step.toDouble() / moveCount
+                val x = (x1 + (x2 - x1) * fraction).roundToInt()
+                val y = (y1 + (y2 - y1) * fraction).roundToInt()
+                add(FlowBlockInsertion("input.pointermove", mapOf("x" to x, "y" to y)))
+            }
+            add(FlowBlockInsertion("input.pointerup"))
+        }
+        return gate(
+            code = blocks.toLuaCode(),
+            summary = "从 ($x1, $y1) 拖动到 ($x2, $y2)，用时至少 ${durationMs}ms",
+        ).copy(flowBlocks = blocks)
+    }
+
+    private fun List<FlowBlockInsertion>.toLuaCode(): String = joinToString("\n") { block ->
+        when (block.kind) {
+            "input.pointerdown" -> "Input.pointerDown(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
+            "input.pointermove" -> "Input.pointerMove(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
+            "input.pointerup" -> "Input.pointerUp()"
+            "task.sleep" -> "Task.sleep(${block.arguments.getValue("milliseconds")})"
+            else -> error("不支持的触摸动作：${block.kind}")
+        }
+    }
+
+    const val MIN_GESTURE_DURATION_MS = 100
+    const val MAX_GESTURE_DURATION_MS = 5_000
+    private const val DRAG_STEP_MS = 50
+    private const val MAX_DRAG_STEPS = 100
 
     /**
      * 取色：读一个点的颜色并与目标值比较。

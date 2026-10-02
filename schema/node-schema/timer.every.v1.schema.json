@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/timer.every/1/timer.every.schema.json",
+  "title": "timer.every node semantics",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "timer.every"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetFlowId",
+        "arguments",
+        "periodMs",
+        "resultVariable"
+      ],
+      "properties": {
+        "targetFlowId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "boolean",
+              "integer",
+              "number",
+              "string",
+              "null"
+            ]
+          }
+        },
+        "periodMs": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 60000
+        },
+        "resultVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@
     { "path": "always", "label": "无限循环", "editor": "boolean", "required": false, "defaultValue": "false" },
     { "path": "durationMs", "label": "限时(毫秒)", "editor": "integer", "required": false },
     { "path": "durationVariable", "label": "时长变量(可选)", "editor": "string", "required": false },
+    { "path": "durationUnit", "label": "时长变量单位", "editor": "enum", "required": false, "defaultValue": "milliseconds", "choices": ["milliseconds", "seconds", "minutes"] },
     { "path": "iterationVariable", "label": "循环次数变量(可选)", "editor": "string", "required": false },
     { "path": "elapsedVariable", "label": "循环时间变量(可选)", "editor": "string", "required": false }
   ],

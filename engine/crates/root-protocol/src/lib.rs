@@ -17,6 +17,7 @@ impl Capabilities {
     pub const WINDOW_BOUNDS: u64 = 1 << 2;
     pub const CAPTURE_RAW: u64 = 1 << 3;
     pub const INPUT_POINTER_SINGLE: u64 = 1 << 4;
+    pub const INPUT_PRIORITY_STOP: u64 = 1 << 5;
 
     #[must_use]
     pub const fn from_bits(bits: u64) -> Self {
@@ -32,6 +33,12 @@ impl Capabilities {
     pub const fn supports(self, capability: u64) -> bool {
         self.0 & capability == capability
     }
+}
+
+/// Domain-separated control channel key; packets cannot replay between input and stop sockets.
+#[must_use]
+pub fn priority_control_key(session_key: &[u8; 32]) -> [u8; 32] {
+    hmac_sha256(session_key, b"autoscript/root/priority-stop/v1")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

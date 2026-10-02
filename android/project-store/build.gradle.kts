@@ -17,6 +17,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":android:script-ui"))
     api(libs.gson)
     testImplementation(libs.junit4)
 }

@@ -8,6 +8,7 @@ import java.util.Base64
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import com.google.gson.JsonParser
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +37,27 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun designedInterfacePersistsWithCapabilitiesAndRejectsStaleOrMissingBindings() {
+        val created = store.createProject("脚本界面", ProjectSourceMode.VISUAL)
+        val model = com.autoscript.script.ui.ScriptUiDefinition(version = 2, fields = listOf(
+            com.autoscript.script.ui.UiField("input", "输入", "text", false, "", ui = com.autoscript.script.ui.UiPresentation()),
+        ))
+        val saved = store.updateRunnerUi(created.manifest.projectId, model.toJson(), null)
+        assertEquals(model.toJson(), newStore().openProject(created.manifest.projectId).manifest.runnerUi)
+        assertTrue("ui.control" in saved.manifest.capabilities)
+        assertTrue("core.task" in saved.manifest.capabilities)
+        assertTrue(saved.manifest.runtimeApi.substringAfter('.').toInt() >= 7)
+        assertThrows(ProjectManifestConflictException::class.java) {
+            store.updateRunnerUi(created.manifest.projectId, null, null)
+        }
+        val bad = model.copy(fields = model.fields.map { it.copy(ui = it.ui!!.copy(binding = "global:missing")) })
+        assertThrows(IllegalArgumentException::class.java) {
+            store.updateRunnerUi(created.manifest.projectId, bad.toJson(), model.toJson())
+        }
+        assertEquals(model.toJson(), store.openProject(created.manifest.projectId).manifest.runnerUi)
+    }
+
+    @Test
     fun createsLuaProjectAndPersistsAcrossStoreInstances() {
         val created = store.createProject("Lua 示例", ProjectSourceMode.LUA)
 
@@ -56,6 +78,39 @@ class ProjectStoreTest {
         val flow = File(created.directory, "visual/flows/main.jsonl")
         assertTrue(flow.isFile)
         assertTrue(flow.readText().contains("\"kind\":\"task.noop\""))
+    }
+
+    @Test
+    fun migratesLegacyPopupDpAndPercentSettingsToPixels() {
+        val created = store.createProject("旧弹窗样式", ProjectSourceMode.VISUAL)
+        val manifestFile = File(created.directory, "project.json")
+        val manifest = JsonParser.parseString(manifestFile.readText()).asJsonObject
+        manifest.getAsJsonObject("debugSettings").add("popupStyle", JsonParser.parseString(
+            """{"widthDp":260,"heightDp":72,"xPercent":50,"yPercent":40,"backgroundColor":"#B3000000","textColor":"#FFFFFFFF","fontSp":14,"cornerDp":8,"durationMs":3000,"textAlign":"center"}""",
+        ))
+        manifestFile.writeText(manifest.toString())
+
+        val reopened = newStore().openProject(created.manifest.projectId)
+        val style = reopened.manifest.debugSettings.popupStyle
+        assertTrue(style.widthPx >= 260)
+        assertTrue(style.heightPx >= 72)
+        assertTrue(style.fontPx >= 14)
+        assertEquals(3_000, style.durationMs)
+        assertEquals("#B3000000", style.backgroundColor)
+    }
+
+    @Test
+    fun savesSmallPopupDimensionsInPixels() {
+        val created = store.createProject("小弹窗", ProjectSourceMode.VISUAL)
+        val settings = created.manifest.debugSettings.copy(
+            popupStyle = created.manifest.debugSettings.popupStyle.copy(widthPx = 100, heightPx = 30),
+        )
+
+        store.updateDebugSettings(created.manifest.projectId, settings, created.manifest.debugSettings)
+
+        val reopened = newStore().openProject(created.manifest.projectId)
+        assertEquals(100, reopened.manifest.debugSettings.popupStyle.widthPx)
+        assertEquals(30, reopened.manifest.debugSettings.popupStyle.heightPx)
     }
 
     @Test
@@ -384,6 +439,36 @@ class ProjectStoreTest {
             withDictionary.manifest.resources.map { it.get("kind").asString },
         )
         assertTrue(File(created.directory, "dictionaries/main.asglyph").isFile)
+    }
+
+    @Test
+    fun importsScreenshotIntoChosenImageFolder() {
+        val created = store.createProject("截图文件夹", ProjectSourceMode.VISUAL)
+        val imported = store.importResource(
+            created.manifest.projectId, ProjectResourceKind.IMAGE, "按钮.png",
+            ByteArrayInputStream(PNG_1X1), emptySet(), imageDirectory = "界面/首页",
+        )
+        val path = imported.manifest.resources.single().get("path").asString
+        assertEquals("assets/images/界面/首页/按钮.png", path)
+        assertTrue(File(created.directory, path).isFile)
+        assertEquals(path, store.openProject(created.manifest.projectId).manifest.resources.single().get("path").asString)
+        val duplicate = store.importResource(
+            created.manifest.projectId, ProjectResourceKind.IMAGE, "按钮.png",
+            ByteArrayInputStream(PNG_1X1), setOf(path), imageDirectory = "界面/首页",
+        )
+        val duplicatePath = duplicate.manifest.resources.last().get("path").asString
+        assertEquals("assets/images/界面/首页/按钮-2.png", duplicatePath)
+        val archive = ByteArrayOutputStream().also {
+            store.exportProjectBackup(duplicate.manifest.projectId, it)
+        }.toByteArray()
+        val restored = store.importProjectBackup(ByteArrayInputStream(archive))
+        assertTrue(File(restored.directory, path).isFile)
+        assertTrue(File(restored.directory, duplicatePath).isFile)
+        assertEquals(listOf(path, duplicatePath), restored.manifest.resources.map { it.get("path").asString })
+        assertThrows(IllegalArgumentException::class.java) {
+            store.importResource(created.manifest.projectId, ProjectResourceKind.IMAGE, "bad.png",
+                ByteArrayInputStream(PNG_1X1), setOf(path, duplicatePath), imageDirectory = "../other")
+        }
     }
 
     @Test

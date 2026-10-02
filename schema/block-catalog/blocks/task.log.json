@@ -11,7 +11,8 @@
   "childBlocks": [],
   "properties": [
     { "path": "level", "label": "级别", "editor": "enum", "required": true, "defaultValue": "info", "choices": ["info", "warn", "error"] },
-    { "path": "message", "label": "内容", "editor": "string", "required": true, "defaultValue": "识别完成" }
+    { "path": "message", "label": "内容", "editor": "string", "required": true, "defaultValue": "识别完成" },
+    { "path": "valueVariable", "label": "变量值（可选）", "editor": "string", "required": false }
   ],
   "migrations": []
 }

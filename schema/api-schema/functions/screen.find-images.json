@@ -1,0 +1,19 @@
+{
+  "schemaVersion":1,"opcode":5107,"name":"Screen.findImages","since":"1.7",
+  "capability":"vision.template","execution":"async_task","cancelMode":"cooperative",
+  "sideEffect":"none","timeoutMs":5000,"resourceOwnership":"borrowed_frame",
+  "summary":"按给定顺序匹配1–64个已声明图片，共享比较预算，返回第一个匹配的模板标识、坐标与得分。",
+  "params":[
+    {"name":"frame","type":"integer","required":true,"summary":"缓存帧句柄。"},
+    {"name":"pathsJson","type":"string","required":true,"summary":"已声明模板路径的JSON字符串数组，最多64项和16384字节。"},
+    {"name":"tolerance","type":"integer","required":true,"summary":"通道容差0–255。"},
+    {"name":"similarityPermille","type":"integer","required":true,"summary":"相似度0–1000。"},
+    {"name":"left","type":"integer","required":true,"summary":"左边界。"},
+    {"name":"top","type":"integer","required":true,"summary":"上边界。"},
+    {"name":"right","type":"integer","required":true,"summary":"右边界，不包含。"},
+    {"name":"bottom","type":"integer","required":true,"summary":"下边界，不包含。"},
+    {"name":"direction","type":"integer","required":false,"summary":"0左上、1右上、2左下、3右下、4中心向外，默认0。"}
+  ],
+  "returns":{"type":"TemplateMatch","nullable":true,"summary":"x/y、path、scorePermille、width/height；没有匹配为nil。"},
+  "legacyAliases":[]
+}

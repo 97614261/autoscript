@@ -28,6 +28,8 @@ internal fun cropAndImportTemplate(
     source: Bitmap,
     roi: ImageToolCodeGen.Roi,
     context: Context,
+    imageDirectory: String = "",
+    imageName: String = "template-${System.currentTimeMillis()}.png",
 ): Pair<ProjectSnapshot, String> {
     val left = roi.left.coerceIn(0, source.width - 1)
     val top = roi.top.coerceIn(0, source.height - 1)
@@ -61,11 +63,12 @@ internal fun cropAndImportTemplate(
             store.importResource(
                 projectId = snapshot.manifest.projectId,
                 kind = ProjectResourceKind.IMAGE,
-                sourceName = "template-${System.currentTimeMillis()}.png",
+                sourceName = imageName,
                 source = input,
                 expectedResourcePaths = snapshot.manifest.resources
                     .mapNotNull { it.get("path")?.asString }
                     .toSet(),
+                imageDirectory = imageDirectory,
             )
         }
         val path = updated.manifest.resources.last().get("path").asString

@@ -1,28 +1,101 @@
 mod analyze;
 mod digest;
+#[cfg(test)]
+mod execution_tests;
+mod frozen_lua;
 mod model;
+#[cfg(test)]
+mod native_vision_tests;
 mod render;
 mod store;
+mod variable_expression;
+#[cfg(test)]
+mod vision_completion_tests;
 
 use analyze::prepare;
 use digest::{content_digest, flow_digest, generation_id, verify_record};
 use flow_ir::{ProjectManifest, ProjectSourceMode, SupportedNodeVersion};
 use render::{pretty_json, render_lua, render_source_map};
 
+pub use frozen_lua::{bundle_lua_project, popup_style_prefix};
 pub use model::{
     CommitError, CompileError, FlowSource, GenerationBundle, GenerationRecord, SourceMap,
     SourceMapEntry, VerificationError,
 };
 pub use store::{commit_generation, mark_generation_stale};
 
-pub const GENERATOR_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v8");
 pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
+    SupportedNodeVersion {
+        kind: "ui.get",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "ui.set",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "ui.command",
+        version: 1,
+    },
     SupportedNodeVersion {
         kind: "task.noop",
         version: 1,
     },
     SupportedNodeVersion {
+        kind: "task.comment",
+        version: 1,
+    },
+    SupportedNodeVersion {
         kind: "flow.call",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "task.spawn",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "task.cancel",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "timer.every",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "timer.cancel",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "control.break",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "control.label",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "control.goto",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.return",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.argument.set",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.argument.get",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.return.set",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.return.get",
         version: 1,
     },
     SupportedNodeVersion {
@@ -34,7 +107,27 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         version: 1,
     },
     SupportedNodeVersion {
+        kind: "task.prompt",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "task.runprompt",
+        version: 1,
+    },
+    SupportedNodeVersion {
         kind: "input.tap",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.pointerdown",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.pointermove",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.pointerup",
         version: 1,
     },
     SupportedNodeVersion {
@@ -58,7 +151,19 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         version: 1,
     },
     SupportedNodeVersion {
+        kind: "control.loopmetric",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "control.loopcheck",
+        version: 1,
+    },
+    SupportedNodeVersion {
         kind: "variable.set",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "variable.calculate",
         version: 1,
     },
     SupportedNodeVersion {
@@ -102,7 +207,19 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         version: 1,
     },
     SupportedNodeVersion {
+        kind: "vision.findimage",
+        version: 2,
+    },
+    SupportedNodeVersion {
         kind: "ocr.glyph",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "vision.findgray",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "ocr.alphanumeric",
         version: 1,
     },
     SupportedNodeVersion {
@@ -272,7 +389,7 @@ mod tests {
         assert_eq!(first, second);
         assert!(std::str::from_utf8(&first.main_lua)
             .expect("Lua UTF-8")
-            .contains(r#"__flows["child"]({["count"]=3})"#));
+            .contains(r#"__flows["child"]((function() local __payload={["count"]=3}"#));
         let source_map: SourceMap =
             serde_json::from_slice(&first.source_map_json).expect("source map");
         assert_eq!(source_map.entries.len(), 2);
@@ -286,6 +403,155 @@ mod tests {
             ),
             Ok(first.record)
         );
+    }
+
+    #[test]
+    fn jump_labels_and_return_compile_but_missing_labels_fail() {
+        let manifest = manifest();
+        let main = concat!(
+            r#"{"flowSchemaVersion":1,"nodeId":"jump","blockId":"block-main","parentId":null,"orderKey":"a0","kind":"control.goto","nodeVersion":1,"depth":0,"args":{"name":"done"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"mark","blockId":"block-main","parentId":null,"orderKey":"a1","kind":"control.label","nodeVersion":1,"depth":0,"args":{"name":"done"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"exit","blockId":"block-main","parentId":null,"orderKey":"a2","kind":"flow.return","nodeVersion":1,"depth":0,"args":{}}"#,
+            "\n"
+        );
+        let main_report = load_jsonl(
+            main.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "block-main",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let (_, child_report) = reports();
+        let sources = [
+            FlowSource {
+                flow_id: "main",
+                exact_bytes: main.as_bytes(),
+                report: &main_report,
+            },
+            FlowSource {
+                flow_id: "child",
+                exact_bytes: CHILD.as_bytes(),
+                report: &child_report,
+            },
+        ];
+        let output = compile_project(&manifest, &sources).expect("valid root-level jump");
+        let lua = String::from_utf8(output.main_lua).expect("Lua text");
+        assert!(lua.contains("goto __jump_done"));
+        assert!(lua.contains("::__jump_done::"));
+        assert!(lua.contains("do return __checked_return() end"));
+        let missing = main.replacen("\"name\":\"done\"", "\"name\":\"missing\"", 1);
+        let missing_report = load_jsonl(
+            missing.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "block-main",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let bad = [
+            FlowSource {
+                flow_id: "main",
+                exact_bytes: missing.as_bytes(),
+                report: &missing_report,
+            },
+            sources[1],
+        ];
+        assert!(compile_project(&manifest, &bad).is_err());
+        let outside_loop = main.replacen(
+            "\"kind\":\"control.goto\",\"nodeVersion\":1,\"depth\":0,\"args\":{\"name\":\"done\"}",
+            "\"kind\":\"control.break\",\"nodeVersion\":1,\"depth\":0,\"args\":{}",
+            1,
+        );
+        let break_report = load_jsonl(
+            outside_loop.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "block-main",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let bad_break = [
+            FlowSource {
+                flow_id: "main",
+                exact_bytes: outside_loop.as_bytes(),
+                report: &break_report,
+            },
+            sources[1],
+        ];
+        assert!(compile_project(&manifest, &bad_break).is_err());
+    }
+
+    #[test]
+    fn indexed_call_and_return_channels_compile_to_real_flow_state() {
+        let mut manifest = manifest();
+        manifest.capabilities.push("core.task".to_owned());
+        let main = concat!(
+            r#"{"flowSchemaVersion":1,"nodeId":"set","blockId":"block-main","parentId":null,"orderKey":"a0","kind":"flow.argument.set","nodeVersion":1,"depth":0,"args":{"index":1,"value":9}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"call","blockId":"block-main","parentId":null,"orderKey":"a1","kind":"flow.call","nodeVersion":1,"depth":0,"args":{"targetFlowId":"child","arguments":{"count":3}}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"get","blockId":"block-main","parentId":null,"orderKey":"a2","kind":"flow.return.get","nodeVersion":1,"depth":0,"args":{"index":1,"targetVariable":"answer"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"get2","blockId":"block-main","parentId":null,"orderKey":"a25","kind":"flow.return.get","nodeVersion":1,"depth":0,"args":{"index":2,"targetVariable":"answer2"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"sleep","blockId":"block-main","parentId":null,"orderKey":"a3","kind":"task.sleep","nodeVersion":1,"depth":0,"args":{"milliseconds":0,"millisecondsVariable":"answer"}}"#,
+            "\n"
+        );
+        let child = concat!(
+            r#"{"flowSchemaVersion":1,"nodeId":"read","blockId":"block-child","parentId":null,"orderKey":"a0","kind":"flow.argument.get","nodeVersion":1,"depth":0,"args":{"index":1,"targetVariable":"received"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"ret","blockId":"block-child","parentId":null,"orderKey":"a1","kind":"flow.return.set","nodeVersion":1,"depth":0,"args":{"index":1,"valueVariable":"received"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"ret2","blockId":"block-child","parentId":null,"orderKey":"a2","kind":"flow.return.set","nodeVersion":1,"depth":0,"args":{"index":2,"value":true}}"#,
+            "\n"
+        );
+        let main_report = load_jsonl(
+            main.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "block-main",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let child_report = load_jsonl(
+            child.as_bytes(),
+            LoadOptions {
+                flow_id: "child",
+                root_block_id: "block-child",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let sources = [
+            FlowSource {
+                flow_id: "main",
+                exact_bytes: main.as_bytes(),
+                report: &main_report,
+            },
+            FlowSource {
+                flow_id: "child",
+                exact_bytes: child.as_bytes(),
+                report: &child_report,
+            },
+        ];
+        let output = compile_project(&manifest, &sources).expect("call channels compile");
+        let lua = String::from_utf8(output.main_lua).expect("Lua text");
+        assert!(lua.contains("__call_args[1] = __channel_value(9)"));
+        assert!(lua.contains("__payload[__i]=__v"));
+        assert!(lua.contains("__vars[\"received\"] = __args[1]"));
+        assert!(lua.contains("__return_values[1] = __channel_value(__vars[\"received\"])"));
+        assert!(lua.contains("__vars[\"answer\"] = (__last_return_values or {})[1]"));
+        assert!(lua.contains("__return_values[2] = __channel_value(true)"));
+        assert!(lua.contains("__vars[\"answer2\"] = (__last_return_values or {})[2]"));
+        assert!(lua.contains("  return nil\nend"));
+        assert!(lua.contains("Task.sleep(__delay)"));
     }
 
     #[test]
@@ -391,7 +657,7 @@ mod tests {
     #[test]
     fn automation_nodes_compile_to_runtime_api_calls() {
         let manifest = parse_project_manifest(
-            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.5","projectId":"project-automation","name":"Automation","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"block-main","params":[],"returns":null}],"resources":[],"capabilities":["core.task","input.basic"],"design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
+            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.6","projectId":"project-automation","name":"Automation","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"block-main","params":[],"returns":null}],"resources":[],"capabilities":["core.task","input.basic"],"design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
         )
         .expect("valid automation manifest");
         let source = concat!(
@@ -403,7 +669,23 @@ mod tests {
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"key","blockId":"block-main","parentId":null,"orderKey":"d0","kind":"input.keyevent","nodeVersion":1,"depth":0,"args":{"keyCode":4}}"#,
             "\n",
-            r#"{"flowSchemaVersion":1,"nodeId":"log","blockId":"block-main","parentId":null,"orderKey":"e0","kind":"task.log","nodeVersion":1,"depth":0,"args":{"level":"warn","message":"input complete"}}"#,
+            r#"{"flowSchemaVersion":1,"nodeId":"pointer-down","blockId":"block-main","parentId":null,"orderKey":"e0","kind":"input.pointerdown","nodeVersion":1,"depth":0,"args":{"x":30,"y":40}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"hold","blockId":"block-main","parentId":null,"orderKey":"f1","kind":"task.sleep","nodeVersion":1,"depth":0,"args":{"milliseconds":450}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"pointer-move","blockId":"block-main","parentId":null,"orderKey":"f2","kind":"input.pointermove","nodeVersion":1,"depth":0,"args":{"x":50,"y":60}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"pointer-up","blockId":"block-main","parentId":null,"orderKey":"f3","kind":"input.pointerup","nodeVersion":1,"depth":0,"args":{}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"log","blockId":"block-main","parentId":null,"orderKey":"g0","kind":"task.log","nodeVersion":1,"depth":0,"args":{"level":"warn","message":"input complete"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"log-variable","blockId":"block-main","parentId":null,"orderKey":"h0","kind":"task.log","nodeVersion":1,"depth":0,"args":{"level":"info","message":"score","valueVariable":"score"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"prompt","blockId":"block-main","parentId":null,"orderKey":"i0","kind":"task.prompt","nodeVersion":1,"depth":0,"args":{"message":"正在执行","valueVariable":"status"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"run-prompt","blockId":"block-main","parentId":null,"orderKey":"i1","kind":"task.runprompt","nodeVersion":1,"depth":0,"args":{"message":"处理中","valueVariable":"status"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"comment","blockId":"block-main","parentId":null,"orderKey":"j0","kind":"task.comment","nodeVersion":1,"depth":0,"args":{"message":"下一步点击按钮"}}"#,
             "\n",
         );
         let report = load_jsonl(
@@ -429,7 +711,19 @@ mod tests {
         assert!(lua.contains("Input.tap(12,34)"));
         assert!(lua.contains("Input.swipe(1,2,3,4,300)"));
         assert!(lua.contains("Input.keyEvent(4)"));
+        assert!(lua.contains("Input.pointerDown(30,40)"));
+        assert!(lua.contains("Input.pointerMove(50,60)"));
+        assert!(lua.contains("Input.pointerUp()"));
+        let down = lua.find("Input.pointerDown(30,40)").unwrap();
+        let hold = lua.find("Task.sleep(450)").unwrap();
+        let movement = lua.find("Input.pointerMove(50,60)").unwrap();
+        let up = lua.find("Input.pointerUp()").unwrap();
+        assert!(down < hold && hold < movement && movement < up);
         assert!(lua.contains("Log.warn(\"input complete\")"));
+        assert!(lua.contains("Log.info(tostring(__vars[\"score\"]))"));
+        assert!(lua.contains("Prompt.toast(tostring(__vars[\"status\"]))"));
+        assert!(lua.contains("Prompt.show(tostring(__vars[\"status\"]))"));
+        assert!(lua.contains("-- 下一步点击按钮"));
     }
 
     #[test]
@@ -440,6 +734,8 @@ mod tests {
         .expect("valid gate manifest");
         let source = concat!(
             r#"{"flowSchemaVersion":1,"nodeId":"swipe","blockId":"block-main","parentId":null,"orderKey":"a0","kind":"input.swipe","nodeVersion":1,"depth":0,"args":{"x1":1,"y1":2,"x2":3,"y2":4,"durationMs":0}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"pointer","blockId":"block-main","parentId":null,"orderKey":"b0","kind":"input.pointerdown","nodeVersion":1,"depth":0,"args":{"x":10,"y":20}}"#,
             "\n",
         );
         let report = load_jsonl(
@@ -469,6 +765,11 @@ mod tests {
             error,
             CompileError::InvalidNodeArguments { node_id, .. } if node_id == "swipe"
         )));
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            CompileError::InvalidNodeArguments { node_id, reason }
+                if node_id == "pointer" && reason.contains("runtimeApi 1.6")
+        )));
     }
 
     #[test]
@@ -485,7 +786,14 @@ mod tests {
             .map(|node| (node.kind, node.version))
             .collect::<Vec<_>>();
         supported.sort_unstable();
+        supported.retain(|entry| !supported_node_is_older(entry));
         assert_eq!(catalog, supported);
+    }
+
+    fn supported_node_is_older(entry: &(&str, u32)) -> bool {
+        SUPPORTED_NODE_VERSIONS
+            .iter()
+            .any(|node| node.kind == entry.0 && node.version > entry.1)
     }
 
     #[test]
@@ -502,6 +810,8 @@ mod tests {
             r#"{"flowSchemaVersion":1,"nodeId":"repeat","blockId":"if-then","parentId":"if","orderKey":"a0","kind":"control.repeat","nodeVersion":1,"childBlocks":{"body":"repeat-body"},"depth":1,"args":{"times":2,"indexVariable":"index"}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"copy","blockId":"repeat-body","parentId":"repeat","orderKey":"a0","kind":"variable.copy","nodeVersion":1,"depth":2,"args":{"name":"result","sourceName":"score"}}"#,
+            "\n",
+            r#"{"flowSchemaVersion":1,"nodeId":"break","blockId":"repeat-body","parentId":"repeat","orderKey":"a1","kind":"control.break","nodeVersion":1,"depth":2,"args":{}}"#,
             "\n",
             r#"{"flowSchemaVersion":1,"nodeId":"fallback","blockId":"if-else","parentId":"if","orderKey":"a0","kind":"variable.set","nodeVersion":1,"depth":1,"args":{"name":"result","value":null}}"#,
             "\n",
@@ -537,6 +847,7 @@ mod tests {
             lua.contains(r#"__compare(__vars["score"],"greaterOrEqual", __vars["targetScore"])"#)
         );
         assert!(lua.contains("local __loop_times = 2"));
+        assert!(lua.contains("do break end"));
         let repeat = lua
             .find("for __index = 1, __loop_times do")
             .expect("repeat loop");
@@ -571,6 +882,7 @@ mod tests {
                 "if",
                 "repeat",
                 "copy",
+                "break",
                 "alternate",
                 "fallback",
                 "while",

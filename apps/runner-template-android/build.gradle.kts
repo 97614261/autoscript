@@ -90,6 +90,7 @@ if (embeddedReleaseDirectory != null) {
 }
 
 dependencies {
+    implementation(project(":android:script-ui"))
     implementation(project(":android:core-model"))
     implementation(project(":android:core-designsystem"))
     implementation(project(":android:runtime-api"))

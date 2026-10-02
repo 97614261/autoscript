@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.runprompt",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.runprompt/1/task.runprompt.schema.json",
+  "title": "运行提示",
+  "category": "task",
+  "summary": "向脚本使用者显示运行中的状态；不同于短时弹窗和开发日志。",
+  "searchTerms": ["run prompt", "运行提示", "运行状态", "进度"],
+  "requiredCapabilities": ["core.task"],
+  "childBlocks": [],
+  "properties": [
+    { "path": "message", "label": "提示内容", "editor": "string", "required": true, "defaultValue": "正在执行" },
+    { "path": "valueVariable", "label": "变量值（可选）", "editor": "string", "required": false }
+  ],
+  "migrations": []
+}

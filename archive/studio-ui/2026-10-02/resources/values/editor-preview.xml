@@ -1,0 +1,4 @@
+<resources>
+    <string name="editor_interface_preview_notice">%1$s\n预览值不会保存或传给脚本。</string>
+    <string name="editor_interface_preview_required_label">%1$s *</string>
+</resources>

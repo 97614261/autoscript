@@ -14,6 +14,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Binder
+import android.os.Looper
+import android.os.Process
 import android.os.ParcelFileDescriptor
 import android.os.RemoteCallbackList
 import android.os.RemoteException
@@ -24,7 +27,13 @@ import android.system.OsConstants
 import com.autoscript.engine.jni.NativeEngineBridge
 import com.autoscript.runtime.api.IRuntimeService
 import com.autoscript.runtime.api.IRuntimeStateListener
+import com.autoscript.runtime.api.IInputPointPickListener
+import com.autoscript.runtime.api.InputPointAction
+import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.runtime.api.RuntimeProtocol
+import com.autoscript.runtime.api.TemplateMatchReply
+import com.autoscript.runtime.api.RuntimeDebugReply
+import com.autoscript.runtime.api.RuntimeDebugValue
 import com.autoscript.runtime.api.ScriptValidationReply
 import com.autoscript.runtime.api.VisualCompileReply
 import java.io.ByteArrayOutputStream
@@ -46,9 +55,12 @@ class AutomationRuntimeService : Service() {
     private val stateListeners = RemoteCallbackList<IRuntimeStateListener>()
     private val lastNotifiedStateRef = AtomicInteger(UNPUBLISHED_STATE)
     private val lastNotifiedRootStateRef = AtomicInteger(UNPUBLISHED_STATE)
+    private val stepControlPending = AtomicBoolean(false)
     private val foregroundActive = AtomicBoolean(false)
     private val floatingControlEnabled = AtomicBoolean(true)
     private val captureOverlayEnabled = AtomicBoolean(false)
+    private val promptSessionActive = AtomicBoolean(false)
+    private val toastSessionActive = AtomicBoolean(false)
     /** The only Studio-specific context retained by Runner; it is an opaque validated ID. */
     private val lastProjectIdRef = AtomicReference<String?>(null)
     private val runtimeLogs = ArrayDeque<String>(MAX_RUNTIME_LOG_ENTRIES)
@@ -56,9 +68,22 @@ class AutomationRuntimeService : Service() {
     private val sessionRandom = SecureRandom()
     private lateinit var engineThread: HandlerThread
     private lateinit var engineHandler: Handler
+    private lateinit var scriptUiController: RuntimeScriptUiController
+    private val pendingScriptUiEvents = AtomicInteger()
     private lateinit var rootDaemonController: RootDaemonController
     private lateinit var nativeWakeListener: NativeWakeListener
     private lateinit var overlayController: RuntimeOverlayController
+    private lateinit var nativeVisionAdapter: NativeVisionAdapter
+    private val inputPickActive = AtomicBoolean(false)
+    private val inputPickHandler = Handler(Looper.getMainLooper())
+    private lateinit var inputPickOverlay: RuntimeInputPointOverlay
+    // Main-thread-only session state; the atomic flag bounds pending Binder starts to one.
+    private var inputPickSession: InputPickSession? = null
+    private data class InputPickSession(
+        val requestId: Long, val generation: Long, val projectId: String, val flowId: String,
+        val action: String, val features: Int, val listener: IInputPointPickListener,
+        val death: IBinder.DeathRecipient, val expiry: Runnable,
+    )
 
     private val pump = object : Runnable {
         override fun run() {
@@ -72,6 +97,7 @@ class AutomationRuntimeService : Service() {
             val now = SystemClock.elapsedRealtimeNanos()
             NativeEngineBridge.nativePump(handle, now)
             drainNativeScriptLogs(handle)
+            drainNativeScriptPrompts(handle)
             notifyRuntimeStateIfChanged()
             // Native wake and a scheduled deadline can enqueue the same singleton Runnable.
             // Drop stale copies before scheduling the next authoritative wake.
@@ -92,7 +118,82 @@ class AutomationRuntimeService : Service() {
     }
 
     private val binder = object : IRuntimeService.Stub() {
+        override fun beginInputPointPick(
+            requestId: Long, expectedGeneration: Long, projectId: String, flowId: String,
+            action: String, listener: IInputPointPickListener,
+        ): Int {
+            if (Binder.getCallingUid() != Process.myUid()) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            val selected = InputPointAction.fromWire(action) ?: return RuntimeProtocol.CONTROL_INVALID_STATE
+            val features = getInputFeatures(expectedGeneration)
+            if (requestId <= 0 || !isValidProjectId(projectId) || !isValidProjectId(flowId) ||
+                !selected.available(features) || currentRuntimeState() in setOf(RuntimeProtocol.STATE_RUNNING,
+                    RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING)
+            ) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (!overlayController.canShow()) return RuntimeProtocol.SURFACE_PERMISSION_DENIED
+            if (!inputPickActive.compareAndSet(false, true)) return RuntimeProtocol.CONTROL_INVALID_STATE
+            // Start while the requesting Activity is still visible; only then may Studio move behind the target app.
+            if (!ensureForegroundForRun()) {
+                inputPickActive.set(false)
+                return RuntimeProtocol.CONTROL_ENGINE_ERROR
+            }
+            inputPickHandler.post {
+                val death = IBinder.DeathRecipient { inputPickHandler.post { cancelInputPick(requestId, "编辑器已断开") } }
+                val expiry = Runnable { cancelInputPick(requestId, "选点超时，请重新选择") }
+                inputPickSession = InputPickSession(requestId, expectedGeneration, projectId, flowId, action, features, listener, death, expiry)
+                val ready = expectedGeneration == sessionGenerationRef.get() && selected.available(getInputFeatures(expectedGeneration)) &&
+                    currentRuntimeState() !in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING)
+                if (!ready || !runCatching { listener.asBinder().linkToDeath(death, 0); ensureForegroundForRun() }.getOrDefault(false)) {
+                    completeInputPick(InputPointPickReply(requestId, InputPointPickReply.FAILED, action, message = "选点会话无法启动"))
+                } else {
+                    captureOverlayEnabled.set(false)
+                    overlayController.hide()
+                    inputPickHandler.postDelayed(expiry, 120_000L)
+                    inputPickOverlay.show(requestId, selected, features)
+                }
+            }
+            return RuntimeProtocol.CONTROL_ACCEPTED
+        }
+
+        override fun cancelInputPointPick(requestId: Long, expectedGeneration: Long): Int {
+            if (Binder.getCallingUid() != Process.myUid()) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            inputPickHandler.post { cancelInputPick(requestId, "已取消选点") }
+            return RuntimeProtocol.CONTROL_ACCEPTED
+        }
+
         override fun getProtocolVersion(): Int = RuntimeProtocol.VERSION
+        override fun getInputFeatures(expectedGeneration: Long): Int =
+            if (expectedGeneration == sessionGenerationRef.get() && rootStateRef.get() == RootDaemonController.State.READY) {
+                NativeEngineBridge.nativeInputFeatures(nativeHandleRef.get())
+            } else 0
+
+        override fun testTemplate(
+            expectedGeneration: Long, frameFile: ParcelFileDescriptor, templateFile: ParcelFileDescriptor,
+            tolerance: Int, similarityPermille: Int,
+        ): TemplateMatchReply = frameFile.use { frameDescriptor -> templateFile.use { templateDescriptor ->
+            fun failure(status: Int) = TemplateMatchReply(status, -1, -1, 0)
+            if (expectedGeneration != sessionGenerationRef.get()) return failure(TemplateMatchReply.SESSION_MISMATCH)
+            if (tolerance !in 0..255 || similarityPermille !in 0..1000) return failure(TemplateMatchReply.INVALID_IMAGE)
+            if (frameDescriptor.statSize !in 1..MAX_PREVIEW_FILE_BYTES || templateDescriptor.statSize !in 1..MAX_PREVIEW_FILE_BYTES) return failure(TemplateMatchReply.INVALID_IMAGE)
+            if (currentRuntimeState() in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING) ||
+                !previewRecognitionBusy.compareAndSet(false, true)
+            ) return failure(TemplateMatchReply.BUSY)
+            try {
+                val frame = decodeTemplate(frameDescriptor)
+                val template = decodeTemplate(templateDescriptor)
+                val result = NativeEngineBridge.nativeTestTemplate(
+                    frame.width, frame.height, frame.rgba, template.width, template.height, template.rgba,
+                    tolerance, similarityPermille,
+                ) ?: return failure(TemplateMatchReply.INVALID_IMAGE)
+                if (result.size != 4 || expectedGeneration != sessionGenerationRef.get()) return failure(TemplateMatchReply.SESSION_MISMATCH)
+                TemplateMatchReply(result[0], result[1], result[2], result[3])
+            } catch (_: Exception) {
+                failure(TemplateMatchReply.INVALID_IMAGE)
+            } finally {
+                previewRecognitionBusy.set(false)
+            }
+        } }
 
         override fun getSessionGeneration(): Long = sessionGenerationRef.get()
 
@@ -163,6 +264,10 @@ class AutomationRuntimeService : Service() {
                     code = "PROJECT_DIRECTORY",
                     diagnostic = "项目目录无效或不存在",
                 )
+            if (!NativeEngineBridge.ensureVisualCompilerLoaded()) {
+                return visualCompileReply(RuntimeProtocol.VISUAL_COMPILE_ENGINE_ERROR,
+                    code = "COMPILER_UNAVAILABLE", diagnostic = "当前应用不包含 Studio 编译器")
+            }
             val encoded = NativeEngineBridge.nativeCompileVisualProject(directory.path)
                 ?: return visualCompileReply(
                     RuntimeProtocol.VISUAL_COMPILE_ENGINE_ERROR,
@@ -188,6 +293,10 @@ class AutomationRuntimeService : Service() {
                     code = "PROJECT_DIRECTORY",
                     diagnostic = "项目目录无效或不存在",
                 )
+            if (!NativeEngineBridge.ensureVisualCompilerLoaded()) {
+                return visualCompileReply(RuntimeProtocol.VISUAL_COMPILE_ENGINE_ERROR,
+                    code = "COMPILER_UNAVAILABLE", diagnostic = "当前应用不包含 Studio 编译器")
+            }
             if (!FLOW_ID.matches(flowId)) {
                 return visualCompileReply(
                     RuntimeProtocol.VISUAL_COMPILE_INVALID,
@@ -215,6 +324,7 @@ class AutomationRuntimeService : Service() {
         }
 
         override fun prepareProject(requestId: Long, expectedGeneration: Long): Int {
+            if (inputPickActive.get()) return RuntimeProtocol.PREPARE_BUSY
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.PREPARE_SESSION_MISMATCH
             }
@@ -234,6 +344,7 @@ class AutomationRuntimeService : Service() {
                     engineHandler.removeCallbacks(pump)
                     val displaySize = currentDisplaySize()
                     if (NativeEngineBridge.nativeReset(handle, displaySize.x, displaySize.y) == 0) {
+                        scriptUiController.clear()
                         coordinateSnapshotRef.incrementAndGet()
                         notifyRuntimeStateIfChanged()
                         RuntimeProtocol.PREPARE_ACCEPTED
@@ -244,6 +355,15 @@ class AutomationRuntimeService : Service() {
                 }
                 else -> RuntimeProtocol.PREPARE_ENGINE_ERROR
             }
+        }
+
+        override fun configureScriptUi(expectedGeneration: Long, projectId: String, definitionJson: String,
+            valuesJson: String, imagePaths: Array<out String>, imageFiles: Array<out String>): Int {
+            if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            if (currentRuntimeState() != RuntimeProtocol.STATE_IDLE) return RuntimeProtocol.CONTROL_INVALID_STATE
+            return if (runCatching { scriptUiController.prepare(definitionJson, valuesJson, imagePaths, imageFiles) &&
+                NativeEngineBridge.nativeConfigureUiValues(nativeHandleRef.get(), scriptUiController.initialValuesJson) == 0 }.getOrDefault(false))
+                RuntimeProtocol.CONTROL_ACCEPTED else RuntimeProtocol.CONTROL_ENGINE_ERROR
         }
 
         override fun registerTemplate(
@@ -314,6 +434,7 @@ class AutomationRuntimeService : Service() {
             scaleMode: Int,
             capabilities: Array<out String>,
         ): Int {
+            if (inputPickActive.get()) return RuntimeProtocol.START_BACKEND_NOT_READY
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.START_SESSION_MISMATCH
             }
@@ -349,6 +470,9 @@ class AutomationRuntimeService : Service() {
             if (!ensureForegroundForRun()) {
                 return RuntimeProtocol.START_FOREGROUND_UNAVAILABLE
             }
+            promptSessionActive.set(false)
+            toastSessionActive.set(false)
+            overlayController.resetRunPrompts()
             if (NativeEngineBridge.nativeStart(
                     handle,
                     generatedLuaModule,
@@ -358,7 +482,9 @@ class AutomationRuntimeService : Service() {
                 finishForegroundRun()
                 return RuntimeProtocol.START_INVALID_SCRIPT
             }
+            stepControlPending.set(false)
             lastProjectIdRef.set(projectId.takeIf(String::isNotEmpty))
+            scriptUiController.activateRuntime()
             synchronized(runtimeLogLock) { runtimeLogs.clear() }
             engineHandler.removeCallbacks(pump)
             engineHandler.post(pump)
@@ -371,6 +497,7 @@ class AutomationRuntimeService : Service() {
                 return RuntimeProtocol.STOP_SESSION_MISMATCH
             }
             engineHandler.removeCallbacks(pump)
+            stepControlPending.set(false)
             val handle = nativeHandleRef.get()
             if (handle != 0L) {
                 return if (stopNativeEngine()) {
@@ -411,6 +538,41 @@ class AutomationRuntimeService : Service() {
             }
         }
 
+        override fun requestStep(requestId: Long, expectedGeneration: Long): Int {
+            if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            if (currentRuntimeState() != RuntimeProtocol.STATE_PAUSED) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (!stepControlPending.compareAndSet(false, true)) return RuntimeProtocol.CONTROL_INVALID_STATE
+            val handle = nativeHandleRef.get()
+            if (handle == 0L || NativeEngineBridge.nativeStep(handle, SystemClock.elapsedRealtimeNanos()) != 0) {
+                stepControlPending.set(false)
+                return RuntimeProtocol.CONTROL_ENGINE_ERROR
+            }
+            engineHandler.removeCallbacks(pump)
+            engineHandler.post {
+                // Publish before pumping: short steps may return to PAUSED within the same pump.
+                notifyRuntimeStateIfChanged()
+                pump.run()
+            }
+            return RuntimeProtocol.CONTROL_ACCEPTED
+        }
+
+        override fun getDebugSnapshot(expectedGeneration: Long, projectId: String): RuntimeDebugReply {
+            if (expectedGeneration != sessionGenerationRef.get() || projectId != lastProjectIdRef.get()) return RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+            return runCatching {
+                val encoded = NativeEngineBridge.nativeDebugSnapshot(nativeHandleRef.get()) ?: return RuntimeDebugReply.unavailable()
+                require(encoded.length <= 192 * 1024)
+                val json = org.json.JSONObject(encoded)
+                val rows = json.getJSONArray("variables")
+                require(rows.length() <= 128)
+                val result = RuntimeDebugReply(RuntimeDebugReply.SUCCESS, json.getString("flowId"), json.getString("nodeId"),
+                    List(rows.length()) { index ->
+                        val row = rows.getJSONObject(index)
+                        RuntimeDebugValue(row.getString("scope"), row.getString("name"), row.getString("type"), row.getString("value"), row.optBoolean("truncated", false))
+                    })
+                if (expectedGeneration == sessionGenerationRef.get()) result else RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+            }.getOrElse { RuntimeDebugReply.unavailable() }
+        }
+
         override fun setFloatingControlEnabled(
             requestId: Long,
             expectedGeneration: Long,
@@ -439,6 +601,7 @@ class AutomationRuntimeService : Service() {
             projectId: String,
             enabled: Boolean,
         ): Int {
+            if (enabled && inputPickActive.get()) return RuntimeProtocol.CONTROL_INVALID_STATE
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.SURFACE_SESSION_MISMATCH
             }
@@ -514,13 +677,44 @@ class AutomationRuntimeService : Service() {
         createNotificationChannel()
         engineThread = HandlerThread("autoscript-engine-control").apply { start() }
         engineHandler = Handler(engineThread.looper)
+        scriptUiController = RuntimeScriptUiController(this,
+            onEvent = { token, id, event, value, dispatch ->
+                if (pendingScriptUiEvents.incrementAndGet() > 64) {
+                    pendingScriptUiEvents.decrementAndGet()
+                    requestScriptUiStop()
+                } else engineHandler.post {
+                try {
+                if (scriptUiController.accepts(token) && currentRuntimeState() in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED)) {
+                    val handle = nativeHandleRef.get()
+                    if (handle != 0L) {
+                        if (NativeEngineBridge.nativePushUiEvent(handle, id, event, value, dispatch) == 0) {
+                            engineHandler.removeCallbacks(pump); engineHandler.post(pump)
+                        } else {
+                            stopNativeEngine()
+                        }
+                    }
+                }
+                } finally { pendingScriptUiEvents.decrementAndGet() }
+            } },
+            onStop = { requestScriptUiStop() })
         overlayController = RuntimeOverlayController(
             this,
             onPause = { engineHandler.post { pauseNativeEngine() } },
             onResume = { engineHandler.post { resumeNativeEngine() } },
             onStop = { engineHandler.post { stopNativeEngine() } },
             onCapture = { engineHandler.post(::captureOverlayForStudio) },
+            onPromptClosed = { engineHandler.post {
+                promptSessionActive.set(false)
+                if (currentRuntimeState() !in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED,
+                        RuntimeProtocol.STATE_STOPPING)) finishForegroundRun()
+            } },
+            onToastExpired = { engineHandler.post {
+                toastSessionActive.set(false)
+                if (currentRuntimeState() !in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED,
+                        RuntimeProtocol.STATE_STOPPING)) finishForegroundRun()
+            } },
         )
+        inputPickOverlay = RuntimeInputPointOverlay(this, ::completeInputPick)
         val displaySize = currentDisplaySize()
         nativeHandleRef.set(NativeEngineBridge.nativeCreate(displaySize.x, displaySize.y))
         sessionGenerationRef.set(newSessionGeneration())
@@ -529,6 +723,11 @@ class AutomationRuntimeService : Service() {
         rootDaemonController = RootDaemonController(this, engineHandler, ::updateRootState)
         val handle = nativeHandleRef.get()
         if (handle != 0L) {
+            nativeVisionAdapter = NativeVisionAdapter(assets)
+            if (NativeEngineBridge.nativeSetVisionListener(handle, nativeVisionAdapter) != 0) {
+                updateRootState(RootDaemonController.State.FAILED)
+                return
+            }
             nativeWakeListener = NativeWakeListener(
                 engineHandler,
                 pump,
@@ -558,6 +757,8 @@ class AutomationRuntimeService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        scriptUiController.onConfigurationChanged()
+        inputPickHandler.post { inputPickSession?.let { cancelInputPick(it.requestId, "屏幕方向或尺寸变化，请重新选点") } }
         val displaySize = currentDisplaySize()
         val handle = nativeHandleRef.get()
         val snapshotId = coordinateSnapshotRef.incrementAndGet()
@@ -578,6 +779,10 @@ class AutomationRuntimeService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onDestroy() {
+        scriptUiController.clear()
+        inputPickSession?.let { cancelInputPick(it.requestId, "Runner会话结束") }
+        inputPickHandler.removeCallbacksAndMessages(null)
+        if (::inputPickOverlay.isInitialized) inputPickOverlay.hide()
         overlayController.hide()
         removeForegroundNotification()
         engineHandler.removeCallbacksAndMessages(null)
@@ -587,6 +792,7 @@ class AutomationRuntimeService : Service() {
             NativeEngineBridge.nativeStop(handle, SystemClock.elapsedRealtimeNanos())
             NativeEngineBridge.nativeDestroy(handle)
         }
+        if (::nativeVisionAdapter.isInitialized) nativeVisionAdapter.close()
         engineThread.quitSafely()
         stateListeners.kill()
         super.onDestroy()
@@ -607,6 +813,9 @@ class AutomationRuntimeService : Service() {
 
     private fun updateRootState(state: RootDaemonController.State) {
         rootStateRef.set(state)
+        if (state != RootDaemonController.State.READY) inputPickHandler.post {
+            inputPickSession?.let { cancelInputPick(it.requestId, "Root连接已断开，请重新选点") }
+        }
         notifyRuntimeStateIfChanged()
     }
 
@@ -614,7 +823,13 @@ class AutomationRuntimeService : Service() {
     private fun notifyRuntimeStateIfChanged() {
         val state = currentRuntimeState()
         val rootState = currentRootStateCode()
-        if (lastNotifiedStateRef.get() == state && lastNotifiedRootStateRef.get() == rootState) return
+        if (inputPickActive.get() && (rootState != RuntimeProtocol.ROOT_READY ||
+            state in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING))) {
+            inputPickHandler.post { inputPickSession?.let { cancelInputPick(it.requestId, "运行状态变化，选点已取消") } }
+        }
+        val stepPause = state == RuntimeProtocol.STATE_PAUSED && stepControlPending.getAndSet(false)
+        if (state in setOf(RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED, RuntimeProtocol.STATE_STOPPING)) stepControlPending.set(false)
+        if (!shouldPublishRuntimeState(state, rootState, lastNotifiedStateRef.get(), lastNotifiedRootStateRef.get(), stepPause)) return
         lastNotifiedStateRef.set(state)
         lastNotifiedRootStateRef.set(rootState)
         appendRuntimeLog(state, rootState)
@@ -672,7 +887,20 @@ class AutomationRuntimeService : Service() {
         return accepted
     }
 
+    /** Publish the native priority flag immediately, never queue Stop behind UI business events. */
+    private fun requestScriptUiStop() {
+        val generation = sessionGenerationRef.get()
+        val handle = nativeHandleRef.get()
+        scriptUiController.clear()
+        if (handle != 0L) NativeEngineBridge.nativeStop(handle, SystemClock.elapsedRealtimeNanos())
+        engineHandler.postAtFrontOfQueue {
+            if (generation == sessionGenerationRef.get()) stopNativeEngine()
+        }
+    }
+
     private fun stopNativeEngine(): Boolean {
+        scriptUiController.clear()
+        inputPickHandler.post { inputPickSession?.let { cancelInputPick(it.requestId, "运行已停止，选点已取消") } }
         engineHandler.removeCallbacks(pump)
         engineHandler.removeCallbacks(stopStateObserver)
         val handle = nativeHandleRef.get()
@@ -728,6 +956,13 @@ class AutomationRuntimeService : Service() {
 
     @Synchronized
     private fun finishForegroundRun() {
+        scriptUiController.clear()
+        if (inputPickActive.get()) { updateForegroundNotification(); return }
+        if ((promptSessionActive.get() || toastSessionActive.get()) && overlayController.canShow()) {
+            overlayController.finishWithRunPrompt()
+            updateForegroundNotification()
+            return
+        }
         if (!foregroundActive.getAndSet(false)) return
         if (captureOverlayEnabled.get()) {
             foregroundActive.set(true)
@@ -823,7 +1058,7 @@ class AutomationRuntimeService : Service() {
     }
 
     private fun appendRuntimeLog(state: Int, rootState: Int) {
-        val entry = "${SystemClock.elapsedRealtime()}ms · ${runtimeStateName(state)} · " +
+        val entry = "${SystemClock.elapsedRealtime()}ms · Runner状态 · ${runtimeStateName(state)} · " +
             "Root ${rootStateName(rootState)}"
         synchronized(runtimeLogLock) {
             while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
@@ -831,7 +1066,7 @@ class AutomationRuntimeService : Service() {
             if (state == RuntimeProtocol.STATE_FAILED) {
                 currentRuntimeDiagnostic()?.let { diagnostic ->
                     while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
-                    runtimeLogs.addLast("错误 · ${diagnostic.take(MAX_RUNTIME_LOG_LENGTH - 5)}")
+                    runtimeLogs.addLast("Runner诊断 · ${diagnostic.take(MAX_RUNTIME_LOG_LENGTH - 8)}")
                 }
             }
         }
@@ -846,8 +1081,37 @@ class AutomationRuntimeService : Service() {
             .forEach(::appendScriptRuntimeLog)
     }
 
+    private fun drainNativeScriptPrompts(handle: Long) {
+        val prompts = NativeEngineBridge.nativeDrainScriptPrompts(handle)
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .take(MAX_SCRIPT_PROMPT_BATCH)
+            .toList()
+        if (prompts.isEmpty()) return
+        prompts.forEach { payload ->
+            val event = runCatching { JSONObject(payload) }.getOrNull()
+            if (event?.optString("kind") == "ui") { scriptUiController.command(event); return@forEach }
+            val message = event?.optString("message") ?: payload
+            if (message.isBlank()) return@forEach
+            when (event?.optString("kind") ?: "window") {
+                "window" -> {
+                    if (!overlayController.acceptsRunPrompts()) return@forEach
+                    if (overlayController.canShow()) promptSessionActive.set(true)
+                    overlayController.showRunPrompt(message)
+                }
+                "toast" -> {
+                    val style = event?.optJSONObject("style")?.let(RuntimePopupStyle::parse)
+                        ?: return@forEach
+                    if (overlayController.canShow()) toastSessionActive.set(true)
+                    overlayController.showPopupToast(message, style)
+                }
+            }
+        }
+    }
+
     private fun appendScriptRuntimeLog(line: String) {
-        val entry = "${SystemClock.elapsedRealtime()}ms · ${line.take(MAX_RUNTIME_LOG_LENGTH - 16)}"
+        val entry = "${SystemClock.elapsedRealtime()}ms · 脚本调试日志 · ${line.take(MAX_RUNTIME_LOG_LENGTH - 24)}"
         synchronized(runtimeLogLock) {
             while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
             runtimeLogs.addLast(entry)
@@ -855,7 +1119,7 @@ class AutomationRuntimeService : Service() {
     }
 
     private fun appendPreviewRuntimeLog(message: String) {
-        val entry = "${SystemClock.elapsedRealtime()}ms · ${message.take(MAX_RUNTIME_LOG_LENGTH - 16)}"
+        val entry = "${SystemClock.elapsedRealtime()}ms · Runner诊断 · ${message.take(MAX_RUNTIME_LOG_LENGTH - 20)}"
         synchronized(runtimeLogLock) {
             while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
             runtimeLogs.addLast(entry)
@@ -907,6 +1171,8 @@ class AutomationRuntimeService : Service() {
         } while (generation == 0L)
         return generation
     }
+
+    private val previewRecognitionBusy = AtomicBoolean(false)
 
     private fun decodeTemplate(descriptor: ParcelFileDescriptor): DecodedTemplate {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1069,6 +1335,33 @@ class AutomationRuntimeService : Service() {
     private fun newCaptureToken(): String {
         val bytes = ByteArray(CAPTURE_TOKEN_BYTES).also(sessionRandom::nextBytes)
         return bytes.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun cancelInputPick(requestId: Long, message: String) {
+        val current = inputPickSession ?: return
+        if (requestId != current.requestId) return
+        completeInputPick(InputPointPickReply(requestId, InputPointPickReply.CANCELLED, current.action, message = message))
+    }
+
+    private fun completeInputPick(reply: InputPointPickReply) {
+        val current = inputPickSession ?: return
+        if (reply.requestId != current.requestId) return
+        inputPickSession = null
+        inputPickHandler.removeCallbacks(current.expiry)
+        runCatching { current.listener.asBinder().unlinkToDeath(current.death, 0) }
+        inputPickOverlay.hide()
+        inputPickActive.set(false)
+        val checked = if (reply.status == InputPointPickReply.SUCCESS &&
+            (current.generation != sessionGenerationRef.get() || !reply.validFor(current.requestId, binder.getInputFeatures(current.generation)))
+        ) reply.copy(status = InputPointPickReply.FAILED, message = "选点结果已失效，请重新选择") else reply
+        val delivered = runCatching { current.listener.onFinished(checked) }.isSuccess
+        if (delivered && checked.status == InputPointPickReply.SUCCESS) {
+            // Restore the existing editor Activity; the result travels only over the bound callback.
+            packageManager.getLaunchIntentForPackage(packageName)?.let { launch ->
+                runCatching { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+            }
+        }
+        finishForegroundRun()
     }
 
     private fun readLittleEndianInt(bytes: ByteArray, offset: Int): Int =
@@ -1254,6 +1547,7 @@ class AutomationRuntimeService : Service() {
         const val MAX_RUNTIME_LOG_ENTRIES = 200
         const val MAX_RUNTIME_LOG_LENGTH = 512
         const val MAX_SCRIPT_LOG_BATCH = 50
+        const val MAX_SCRIPT_PROMPT_BATCH = 64
         const val CAPTURE_HANDOFF_DIRECTORY = "capture-handoffs"
         const val CAPTURE_TOKEN_BYTES = 16
         val PROJECT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")

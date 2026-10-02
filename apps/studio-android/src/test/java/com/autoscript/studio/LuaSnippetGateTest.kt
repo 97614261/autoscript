@@ -5,14 +5,14 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class LuaSnippetGateTest {
-    private fun snippet(name: String): String = LegacyFunctionCatalog.luaGroups()
+    private fun snippet(name: String): String = FunctionCatalog.luaGroups()
         .flatMap { it.entries }
         .single { it.snippet.startsWith("$name(") }
         .snippet
 
     @Test
     fun `every catalog snippet passes`() {
-        LegacyFunctionCatalog.luaGroups().flatMap { it.entries }.forEach { entry ->
+        FunctionCatalog.luaGroups().flatMap { it.entries }.forEach { entry ->
             assertNull("${entry.title} 应当可插入", LuaSnippetGate.reject(entry.snippet))
         }
     }
@@ -25,6 +25,7 @@ class LuaSnippetGateTest {
         assertEquals("Input.swipe(0, 0, 100, 100, 300)\n", snippet("Input.swipe"))
         assertEquals("Log.info(\"message\")\n", snippet("Log.info"))
         assertNull(LuaSnippetGate.reject("System.elapsedRealtimeMillis()\n"))
+        assertNull(LuaSnippetGate.reject("Input.pointerDown(12, 34)\nInput.pointerMove(20, 40)\nInput.pointerUp()\n"))
     }
 
     @Test
@@ -35,7 +36,7 @@ class LuaSnippetGateTest {
 
     @Test
     fun `control flow templates are complete lua skeletons`() {
-        val entries = LegacyFunctionCatalog.luaGroups().flatMap { it.entries }.associateBy { it.title }
+        val entries = FunctionCatalog.luaGroups().flatMap { it.entries }.associateBy { it.title }
         assertEquals(
             "if condition then\n    -- 条件成立时执行\nend\n",
             entries.getValue("条件判断").snippet,

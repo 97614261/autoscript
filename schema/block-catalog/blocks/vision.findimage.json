@@ -1,17 +1,32 @@
 {
-  "schemaVersion": 1, "kind": "vision.findimage", "nodeVersion": 1,
-  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findimage/1/vision.findimage.schema.json",
+  "schemaVersion": 1, "kind": "vision.findimage", "nodeVersion": 2,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findimage/2/vision.findimage.schema.json",
   "title": "区域找图", "category": "vision", "summary": "加载项目模板图并在缓存帧区域内匹配。",
   "searchTerms": ["findimage", "template", "找图", "模板"],
   "requiredCapabilities": ["vision.template", "screen.capture"], "childBlocks": [],
   "properties": [
     { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
     { "path": "imagePath", "label": "模板图片", "editor": "resource", "resourceKind": "image", "required": true },
+    { "path": "imageDirectory", "label": "多模板文件夹", "editor": "string", "required": false },
+    { "path": "templateVariable", "label": "命中模板变量", "editor": "string", "required": false },
+    { "path": "scoreVariable", "label": "匹配得分变量", "editor": "string", "required": false },
+    { "path": "imageVariable", "label": "匹配区域图像", "editor": "string", "required": false },
+    { "path": "frequency", "label": "识别频次", "editor": "integer", "required": false, "defaultValue": "1" },
+    { "path": "autoCapture", "label": "自动截图", "editor": "boolean", "required": false, "defaultValue": "false" },
+    { "path": "successAction", "label": "找到后动作", "editor": "enum", "required": false, "defaultValue": "none", "choices": ["none", "tap", "hold", "tapWait", "pressRelease"] },
+    { "path": "offsetX", "label": "点击X偏移(px)", "editor": "integer", "required": false, "defaultValue": "0" },
+    { "path": "offsetY", "label": "点击Y偏移(px)", "editor": "integer", "required": false, "defaultValue": "0" },
+    { "path": "actionDurationMs", "label": "动作时长(ms)", "editor": "integer", "required": false, "defaultValue": "100" },
     { "path": "tolerance", "label": "像素容差", "editor": "integer", "required": true, "defaultValue": "0" },
     { "path": "similarityPermille", "label": "最低相似度(‰)", "editor": "integer", "required": true, "defaultValue": "900" },
     { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
+    { "path": "direction", "label": "搜索方向", "editor": "integer_enum", "required": false, "defaultValue": "0", "choices": ["0", "1", "2", "3", "4"] },
+    { "path": "leftVariable", "label": "左边界变量", "editor": "string", "required": false },
+    { "path": "topVariable", "label": "上边界变量", "editor": "string", "required": false },
+    { "path": "rightVariable", "label": "右边界变量", "editor": "string", "required": false },
+    { "path": "bottomVariable", "label": "下边界变量", "editor": "string", "required": false },
     { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "found" },
     { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "foundX" },
     { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "foundY" }
-  ], "migrations": []
+  ], "migrations": [{"fromVersion":1,"toVersion":2,"renameArguments":{}}]
 }

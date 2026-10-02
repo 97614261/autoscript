@@ -1,5 +1,7 @@
 //! Transport-independent state machine for the privileged `RootDaemon` endpoint.
 
+pub mod priority;
+
 use root_protocol::{
     Capabilities, Command, Frame, FrameKind, HandshakeError, PeerIdentity, ProtocolError,
     SecureChannel, StatusCode, PROTOCOL_VERSION,

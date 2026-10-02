@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.cancel",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.cancel/1/task.cancel.schema.json",
+  "title": "停止插件任务",
+  "category": "task",
+  "summary": "取消当前任务创建的任务/定时器，取消后自动清理资源与触点。",
+  "searchTerms": [
+    "线程",
+    "任务",
+    "定时器"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "idVariable",
+      "label": "ID变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "taskId"
+    }
+  ],
+  "migrations": []
+}

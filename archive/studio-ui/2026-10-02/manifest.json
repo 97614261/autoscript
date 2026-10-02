@@ -1,0 +1,386 @@
+{
+  "version": 1,
+  "date": "2026-10-02",
+  "scope": "Unused Studio UI declarations and resources only; not unused backend modules.",
+  "counts": {
+    "dialogs": 2,
+    "widgets": 14,
+    "constants": 5,
+    "drawableFiles": 27,
+    "valuesFiles": 1,
+    "strings": 2
+  },
+  "declarations": [
+    {
+      "symbol": "ProjectSettingsButton",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectSettingsDialog.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/ProjectSettingsDialog.kt.txt"
+    },
+    {
+      "symbol": "RecognitionPreviewDialog",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/VisualImageRecognitionDialog.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/VisualImageRecognitionDialog.kt.txt"
+    },
+    {
+      "symbol": "LegacyDialogTitle",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyScriptDock.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyScriptDock.kt.txt"
+    },
+    {
+      "symbol": "LegacyDialogRows",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyScriptDock.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyScriptDock.kt.txt"
+    },
+    {
+      "symbol": "LegacyValueBox",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyScriptDock.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyScriptDock.kt.txt"
+    },
+    {
+      "symbol": "LegacyDialogControl",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyScriptDock.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyScriptDock.kt.txt"
+    },
+    {
+      "symbol": "LuaWorkbenchHeader",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LuaWorkbenchAction",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LuaChromeBackground",
+      "kind": "constant",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LuaChromeDivider",
+      "kind": "constant",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LuaChromeText",
+      "kind": "constant",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LuaChromeMuted",
+      "kind": "constant",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LuaChromeUnsaved",
+      "kind": "constant",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt"
+    },
+    {
+      "symbol": "LegacyInputDialog",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyPromptDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyPromptDialogs.kt.txt"
+    },
+    {
+      "symbol": "DenseVariableSelector",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    },
+    {
+      "symbol": "DenseRuntimeMode",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    },
+    {
+      "symbol": "SectionCard",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    },
+    {
+      "symbol": "SettingSwitch",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    },
+    {
+      "symbol": "EntryEditField",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    },
+    {
+      "symbol": "CompactChoice",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    },
+    {
+      "symbol": "RadioLine",
+      "kind": "declaration",
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt"
+    }
+  ],
+  "files": [
+    {
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectSettingsDialog.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/ProjectSettingsDialog.kt.txt",
+      "kind": "fragment",
+      "sha256": "dde466859783b5fc248ba5803016adcb63c56dc4d805b09cbec11ed79876539a"
+    },
+    {
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/VisualImageRecognitionDialog.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/VisualImageRecognitionDialog.kt.txt",
+      "kind": "fragment",
+      "sha256": "94a476bf469dfc6020af038c395a027afff45f8bcdf75082fba8c4c937fa38aa"
+    },
+    {
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyScriptDock.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyScriptDock.kt.txt",
+      "kind": "fragment",
+      "sha256": "c40c68437cb614113c893a440f7bf059bfe8dfdfee94f8ae3dc94035e8e4a463"
+    },
+    {
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LuaEditorScreen.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LuaEditorScreen.kt.txt",
+      "kind": "fragment",
+      "sha256": "f5ce76a40f9c8918bbbe39d3ea68981768a0c00238462fcd796c530d39e523e7"
+    },
+    {
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/LegacyPromptDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/LegacyPromptDialogs.kt.txt",
+      "kind": "fragment",
+      "sha256": "21b98cc963a8c7d6d029ad935306ab02973b9248c2ce8e14c553b088cbae8482"
+    },
+    {
+      "source": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "archive": "archive/studio-ui/2026-10-02/fragments/EditorEntryDialogs.kt.txt",
+      "kind": "fragment",
+      "sha256": "06d530ac6b42666650f2d52922e4f37c6e857940180c5a2ad8e3519ae53fcef0"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_function_search_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_function_search_24.xml",
+      "kind": "drawable",
+      "sha256": "d133cde6802a6e8e6038f0fc664b4ff929a0a205df24545a04b085ac36eb177b"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_moon_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_moon_24.xml",
+      "kind": "drawable",
+      "sha256": "7a91346613a53955489f9f967b401a52a149ac4b7b9ee7038a11cacfa67af708"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_popup_minimize_20.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_popup_minimize_20.xml",
+      "kind": "drawable",
+      "sha256": "0ef7e8f0d4aed1afbcb54f5df12811cc557d64368b3bd886a492f6d5630ad345"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_popup_plugin_20.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_popup_plugin_20.xml",
+      "kind": "drawable",
+      "sha256": "af3d89bd3542631439fd9a8937d8686bb33b8c42814fe5c81a8bb11f03dd5f35"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_popup_power_20.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_popup_power_20.xml",
+      "kind": "drawable",
+      "sha256": "737faa145f93d9d3601c9f09630e4cd8043314adc40d1bc19a5d469ca181ad46"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_popup_settings_20.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_popup_settings_20.xml",
+      "kind": "drawable",
+      "sha256": "1e959a46c7e46dcc0b4f406ac8d602ee5406f83027818c22b2c8dd75311edefa"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/ic_add_20.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/ic_add_20.xml",
+      "kind": "drawable",
+      "sha256": "55e12f3d886cfbe874bb65b55f8761f5f35e50103dc80427eba6a1596df64349"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_adjust_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_adjust_24.xml",
+      "kind": "drawable",
+      "sha256": "6959ab0a23d6aea6e60a6e680a7b538cb4baf98cdf53e0b2d9deac0d49a53b20"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_align_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_align_24.xml",
+      "kind": "drawable",
+      "sha256": "f8ead34af485690f32ba8451a5bece4b9347f7703446ea43cde165d0a4916538"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_code_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_code_24.xml",
+      "kind": "drawable",
+      "sha256": "1647121b890d974922819b55a7cf816b17ca33058f4de38370c4ef82da9330d3"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_anchor.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_anchor.xml",
+      "kind": "drawable",
+      "sha256": "0b6567fa02b6fb943b6687c4862673fe99f8f2fc8380b1a605a7e02e559c1519"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_button.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_button.xml",
+      "kind": "drawable",
+      "sha256": "df82dfe8c078a82a83c2db43ccae321b9c7e30be32809aba7249f7cbb9f7f334"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_checkbox.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_checkbox.xml",
+      "kind": "drawable",
+      "sha256": "b4c0329f5270282f74f466febcec30d298287b9f81bbb0ce43cfb2bb2cb37536"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_container.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_container.xml",
+      "kind": "drawable",
+      "sha256": "8050b02e49dac0a948414aa70059c5b47a8223deb30b411bd7e5173fe29ea48e"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_input.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_input.xml",
+      "kind": "drawable",
+      "sha256": "dad8ead8cbb65b25fec4d3d6af43df89a494a98e2e981c9136bd4fcab6b353e3"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_label.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_label.xml",
+      "kind": "drawable",
+      "sha256": "3696cc6f9be877da0ad46d8481536a96cdabd91ed5d6b2a0ef7f0495d1e633d2"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_list.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_list.xml",
+      "kind": "drawable",
+      "sha256": "58694fc43a4c18dd30dd248a304533f28708c212be521fad05c5bf2b5fee0795"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_progress.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_progress.xml",
+      "kind": "drawable",
+      "sha256": "93c537150ff773ef2a3897ee1c61d05de736c36d211fb758109404a6f01ed5eb"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_radio.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_radio.xml",
+      "kind": "drawable",
+      "sha256": "2572a735c210fdad64befee29da7b4b24f34ce4600b62adfe95b98a448c24f9a"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_select.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_select.xml",
+      "kind": "drawable",
+      "sha256": "93f667c7e81212cfe488ded371ae630021e5b2ad2af91e30f395a57a0e4edea0"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_slider.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_slider.xml",
+      "kind": "drawable",
+      "sha256": "425467f6f36125f6f25d77043be36fd0c973ef395e8fa76fdf2a5d2922ee4646"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_control_textarea.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_control_textarea.xml",
+      "kind": "drawable",
+      "sha256": "72b4bf70d1ce452c9c94f646e82532d95d7d2dc130f92c1316bc5e123f889e08"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_copy_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_copy_24.xml",
+      "kind": "drawable",
+      "sha256": "e1871afb418be8e447df26390194622dc1a00b39eb3f4445ca6a5a0f489a8a12"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_multi_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_multi_24.xml",
+      "kind": "drawable",
+      "sha256": "f0480072131250036c0b68117a510994bd187df5f9e4f20531da31c73a233c89"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_page_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_page_24.xml",
+      "kind": "drawable",
+      "sha256": "30ed177f5ddbcb867ce6e8b66316ebc8a40ac3225188007ad60f1e6a536b8b6a"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/visual_preview_24.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/visual_preview_24.xml",
+      "kind": "drawable",
+      "sha256": "5cba6a1c99d3ed682b95b2ae24ef9442dfba03f5883734894bf127af43b8fcfa"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/drawable/editor_float_ball_logo.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/drawable/editor_float_ball_logo.xml",
+      "kind": "drawable",
+      "sha256": "8cc334cdda042b73023d31e62d14e3e0dbf35a231b9bcf6af05800668f5ea2fe"
+    },
+    {
+      "source": "apps/studio-android/src/main/res/values/editor-preview.xml",
+      "archive": "archive/studio-ui/2026-10-02/resources/values/editor-preview.xml",
+      "kind": "values",
+      "sha256": "a813f8f49392476e3d46c2e5f60627a26b391c71720231e06046406fc3f425c3"
+    }
+  ],
+  "renamedFiles": {
+    "LegacyScriptDock.kt": "EditorDock.kt",
+    "LegacySourceManagerDialog.kt": "PluginFileManagerDialog.kt",
+    "LegacyPromptDialogs.kt": "EditorPromptDialogs.kt",
+    "LegacyFunctionCatalog.kt": "FunctionCatalog.kt"
+  },
+  "renamedSymbols": {
+    "LegacyConsolePanel": "EditorConsolePanel",
+    "LegacyDialogTextButton": "EditorDialogTextButton",
+    "LegacyDockAction": "EditorDockAction",
+    "LegacyDockGreen": "EditorDockGreen",
+    "LegacyDockGreenDark": "EditorDockGreenDark",
+    "LegacyDockPanel": "EditorDockPanel",
+    "LegacyDockProgramCommand": "EditorProgramCommand",
+    "LegacyDockProgramNode": "EditorProgramNode",
+    "LegacyDockToolbarItem": "EditorDockToolbarItem",
+    "LegacyFunctionBlue": "FunctionLibraryBlue",
+    "LegacyFunctionCatalog": "FunctionCatalog",
+    "LegacyFunctionEntry": "FunctionLibraryEntry",
+    "LegacyFunctionGroup": "FunctionLibraryGroup",
+    "LegacyFunctionLibrary": "FunctionLibraryDialog",
+    "LegacyInsertPosition": "EditorInsertPosition",
+    "LegacyInsertPositionDialog": "EditorInsertPositionDialog",
+    "LegacyMorePopup": "EditorMorePopup",
+    "LegacyNodeEditDialog": "EditorNodeEditDialog",
+    "LegacyOptionDialog": "EditorOptionDialog",
+    "LegacyPluginAction": "PluginManagerAction",
+    "LegacyPluginButton": "PluginManagerButton",
+    "LegacyPluginManagerDialog": "PluginManagerDialog",
+    "LegacyProgramSearchDialog": "EditorProgramSearchDialog",
+    "LegacyProgramTreeRow": "EditorProgramTreeRow",
+    "LegacyPromptDialog": "EditorPromptDialog",
+    "LegacyScriptDock": "EditorDock",
+    "LegacySourceManagerDialog": "PluginFileManagerDialog",
+    "LegacyToolDialog": "EditorToolPanel",
+    "LegacyToolDialogScreen": "EditorToolPanelDialog",
+    "LegacyTreeNode": "EditorTreeNode",
+    "LegacyTreeNodesStateSaver": "EditorTreeNodesStateSaver"
+  }
+}

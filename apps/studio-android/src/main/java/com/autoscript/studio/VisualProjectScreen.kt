@@ -1,5 +1,7 @@
 package com.autoscript.studio
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,7 +11,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,30 +20,28 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,8 +60,10 @@ import com.autoscript.project.store.ProjectVariable
 import com.autoscript.project.store.ProjectVariableScope
 import com.autoscript.project.store.ProjectVariableType
 import com.autoscript.runtime.client.RuntimeClient
+import com.autoscript.runtime.client.ScreenshotPreviewResult
 import com.autoscript.runtime.client.VisualCompileDiagnostic
 import com.autoscript.runtime.client.VisualCompileResult
+import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.studio.generated.BlockCategory
 import com.autoscript.studio.generated.BlockContract
 import com.autoscript.studio.generated.BlockPropertyEditor
@@ -70,10 +71,15 @@ import com.autoscript.studio.generated.BlockResourceKind
 import com.google.gson.JsonParser
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.coroutines.coroutineContext
 
 @Composable
 internal fun VisualProjectScreen(
@@ -89,6 +95,15 @@ internal fun VisualProjectScreen(
     onExit: () -> Unit,
 ) {
     val projectId = snapshot.manifest.projectId
+    val stepState = rememberVisualStepState(projectId, runtimeState, runtimeClient)
+    val context = LocalContext.current
+    val currentInputSnapshot by rememberUpdatedState(snapshot)
+    val currentRuntimeState by rememberUpdatedState(runtimeState)
+    var inputBackendFeatures by remember { mutableIntStateOf(0) }
+    LaunchedEffect(runtimeState.rootState, runtimeState.sessionGeneration) {
+        inputBackendFeatures = 0
+        inputBackendFeatures = withContext(Dispatchers.IO) { runtimeClient.inputFeatures() }
+    }
     var selectedFlowId by remember(projectId) {
         mutableStateOf(
             initialFlowId?.takeIf { requested -> snapshot.manifest.flows.any { it.flowId == requested } }
@@ -109,30 +124,78 @@ internal fun VisualProjectScreen(
         }.toMutableMap()
     }
     var editorRevision by remember(projectId) { mutableIntStateOf(0) }
-    var showNewFlowDialog by remember(projectId) { mutableStateOf(false) }
+    var showDockProjectSettings by remember(projectId) { mutableStateOf(false) }
     var showVariableManager by remember(projectId) { mutableStateOf(false) }
-    var newFlowId by remember(projectId) { mutableStateOf("") }
+    var showRecognitionTest by remember(projectId) { mutableStateOf(false) }
+    var debugInspector by remember(projectId) { mutableStateOf<EditorToolPanel?>(null) }
+    var showImageLibrary by remember(projectId) { mutableStateOf(false) }
     var showBlockPicker by remember(projectId) { mutableStateOf(false) }
     var blockPickerAutoSave by remember(projectId) { mutableStateOf(false) }
     var blockQuery by remember(projectId) { mutableStateOf("") }
     var blockCategory by remember(projectId) { mutableStateOf<BlockCategory?>(null) }
     var insertionChildBlockName by remember(projectId) { mutableStateOf<String?>(null) }
     var pendingDockInsertHint by remember(projectId) { mutableStateOf<String?>(null) }
-    var dockClipboard by remember(projectId) { mutableStateOf<VisualSubtreeClipboard?>(null) }
+    var dockClipboard by remember(projectId) { mutableStateOf<List<VisualSubtreeClipboard>?>(null) }
     var pendingDockPaste by remember(projectId) { mutableStateOf(false) }
     var pendingDockIndentSlots by remember(projectId) { mutableStateOf<List<String>?>(null) }
     var pendingBlockConfiguration by remember(projectId) { mutableStateOf<VisualPendingBlockInsert?>(null) }
+    var pendingImageBlock by remember(projectId) { mutableStateOf<Pair<BlockContract, JsonObject>?>(null) }
+    var pendingRecognitionInsert by remember(projectId) { mutableStateOf<RecognitionInsertRequest?>(null) }
+    var recognitionCaptureActive by remember(projectId) { mutableStateOf(false) }
+    var recognitionCaptureSelection by remember(projectId) { mutableStateOf<ImageToolCodeGen.VisualSelection?>(null) }
+    var recognitionCaptureTemplatePath by remember(projectId) { mutableStateOf<String?>(null) }
     var editingCallNodeId by remember(projectId) { mutableStateOf<String?>(null) }
+    var reflectionPosition by remember(projectId) { mutableStateOf<EditorInsertPosition?>(null) }
+    var reflectionChildSlot by remember(projectId) { mutableStateOf<String?>(null) }
+    var showInterfacePreview by remember(projectId) { mutableStateOf(false) }
     var editingCallTargetId by remember(projectId) { mutableStateOf<String?>(null) }
     var propertyInputs by remember(projectId) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var callArgumentInputs by remember(projectId) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var callArgumentError by remember(projectId) { mutableStateOf<String?>(null) }
+    var showingInputPointPicker by remember(projectId) { mutableStateOf(false) }
+    var inputPointMode by remember(projectId) { mutableStateOf(ImageToolMode.TAP) }
+    var inputPointBitmap by remember(projectId) { mutableStateOf<Bitmap?>(null) }
+    var pendingTemplateRoi by remember(projectId) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
+    var inputPointCapturing by remember(projectId) { mutableStateOf(false) }
+    var inputPointMessage by remember(projectId) { mutableStateOf<String?>(null) }
+    var inputPointRequestId by remember(projectId) { mutableIntStateOf(0) }
+    var inputPointCaptureJob by remember(projectId) { mutableStateOf<Job?>(null) }
+    var inputPickTarget by remember(projectId) { mutableStateOf<InputPickTarget?>(null) }
+    var inputFloatingRequest by remember(projectId) { mutableStateOf<Long?>(null) }
+    var pendingInputInsertion by remember(projectId) { mutableStateOf<InputInsertionDraft?>(null) }
+    var inputPickOpenRequest by remember(projectId) { mutableIntStateOf(0) }
+    var imageToolRequest by remember(projectId) { mutableStateOf(false) }
+    var pickedImageRegion by remember(projectId) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
     val scope = rememberCoroutineScope()
     val sourceFiles = remember(store) { ProjectSourceFiles(store) }
     var sourceTree by remember(projectId) { mutableStateOf(SourceFileTree()) }
     var sourceBusy by remember(projectId) { mutableStateOf(false) }
     var sourceMessage by remember(projectId) { mutableStateOf<String?>(null) }
     val editor = requireNotNull(editors[selectedFlowId])
+    LaunchedEffect(stepState.position) {
+        stepState.position?.let { position ->
+            if (position.flowId in editors) selectedFlowId = position.flowId
+        }
+    }
+
+    DisposableEffect(projectId) {
+        onDispose {
+            inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
+            inputPointRequestId++
+            inputPointCaptureJob?.cancel()
+            inputPointBitmap?.recycle()
+        }
+    }
+
+    LaunchedEffect(selectedFlowId) {
+        editingCallNodeId = null
+        inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
+        inputFloatingRequest = null
+        if (inputPickTarget?.flowId != selectedFlowId) {
+            inputPickTarget = null
+            pendingInputInsertion = null
+        }
+    }
 
     LaunchedEffect(snapshot) {
         sourceTree = withContext(Dispatchers.IO) {
@@ -151,6 +214,15 @@ internal fun VisualProjectScreen(
     val canPauseResume = canStop
     val canEditProjectSettings = !runtimeBusy && !running && !stopping &&
         editors.values.none { it.isDirty }
+
+    if (showDockProjectSettings) {
+        ProjectSettingsDialog(
+            snapshot = snapshot,
+            store = store,
+            onSnapshotChanged = onSnapshotChanged,
+            onDismiss = { showDockProjectSettings = false },
+        )
+    }
 
     fun showCompileResult(result: VisualCompileResult): String? = when (result) {
         is VisualCompileResult.Success -> {
@@ -176,7 +248,7 @@ internal fun VisualProjectScreen(
         if (!state.isDirty) return true
         if (state.isReadOnly) {
             selectedFlowId = flowId
-            error = "Flow结构无效，当前只能只读查看"
+            error = "插件结构无效，当前只能只读查看"
             return false
         }
         val submitted = state.currentSource
@@ -199,13 +271,13 @@ internal fun VisualProjectScreen(
             }
         }.getOrElse { failure ->
             selectedFlowId = flowId
-            error = failure.message ?: "Flow保存失败"
+            error = failure.message ?: "插件保存失败"
             return false
         }
         state.markSaved(submitted)
         editorRevision++
         onSnapshotChanged(saved)
-        notice = if (state.isDirty) "已保存提交快照，仍有后续修改" else "Flow $flowId 已安全保存"
+        notice = if (state.isDirty) "已保存提交快照，仍有后续修改" else "插件 $flowId 已安全保存"
         return true
     }
 
@@ -245,58 +317,57 @@ internal fun VisualProjectScreen(
         }
     }
 
-    fun runProject() {
-        if (!canStartAction) return
+    fun runProject(singleStep: Boolean = false) {
+        if (action != null || !canStartAction) return
         if (runtimeState.phase != RuntimeConnectionPhase.CONNECTED) {
             error = "Runner尚未连接"
             return
         }
         action = VisualAction.STARTING
+        val runFlowId = selectedFlowId
+        val stepNodeId = if (singleStep) editor.selectedNodeId else null
+        if (singleStep && (stepNodeId == null || editor.isNodeDisabled(stepNodeId))) { action = null; error = "请选择可执行积木"; return }
         error = null
         notice = null
         scope.launch {
-            if (!saveAllIfNeeded()) {
-                action = null
-                return@launch
-            }
-            val compileResult = withContext(Dispatchers.IO) {
-                runtimeClient.compileVisualProject(projectId)
-            }
-            val generationId = showCompileResult(compileResult)
-            if (generationId == null) {
-                action = null
-                return@launch
-            }
-            val refreshed = runCatching {
-                withContext(Dispatchers.IO) { store.openProject(projectId) }
-            }.getOrElse { failure ->
-                error = failure.message ?: "重新读取项目失败"
-                action = null
-                return@launch
-            }
-            onSnapshotChanged(refreshed)
-            val plan = runCatching {
-                withContext(Dispatchers.IO) {
-                    RuntimeProjectPlan.fromVisualSnapshot(refreshed, generationId)
+            try {
+                if (!saveAllIfNeeded()) return@launch
+                val compileResult = withContext(Dispatchers.IO) {
+                    runtimeClient.compileVisualProject(projectId)
                 }
-            }.getOrElse { failure ->
-                error = failure.message ?: "生成物校验失败"
+                val generationId = showCompileResult(compileResult) ?: return@launch
+                val refreshed = withContext(Dispatchers.IO) { store.openProject(projectId) }
+                onSnapshotChanged(refreshed)
+                val plan = withContext(Dispatchers.IO) {
+                    RuntimeProjectPlan.fromVisualSnapshot(refreshed, generationId, runFlowId).let {
+                        if (singleStep) it.forSingleStep(runFlowId, stepNodeId) else it.forEditorRun(refreshed)
+                    }
+                }
+                val accepted = withContext(Dispatchers.IO) {
+                    runtimeClient.startProject(
+                        projectId = projectId,
+                        generatedLuaModule = plan.luaSource,
+                        resources = plan.resources,
+                        requiresPointerInput = plan.requiresPointerInput,
+                        capabilities = plan.capabilities,
+                        designWidth = plan.designWidth,
+                        designHeight = plan.designHeight,
+                        scaleMode = plan.scaleMode,
+                        scriptUiJson = null,
+                    )
+                }
+                if (accepted) {
+                    notice = if (singleStep) "已执行单步请求：前置步骤会执行，所选步骤后停在下一检查点；未到达所选步骤则结束" else "积木脚本已提交运行"
+                } else {
+                    error = currentRuntimeState.message ?: "Runner拒绝启动，请检查运行环境"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "项目启动失败"
+            } finally {
                 action = null
-                return@launch
             }
-            val started = withContext(Dispatchers.IO) {
-                runtimeClient.startProject(
-                    projectId = snapshot.manifest.projectId,
-                    generatedLuaModule = plan.luaSource,
-                    resources = plan.resources,
-                    capabilities = plan.capabilities,
-                    designWidth = plan.designWidth,
-                    designHeight = plan.designHeight,
-                    scaleMode = plan.scaleMode,
-                )
-            }
-            if (started) notice = "积木脚本已提交运行"
-            action = null
         }
     }
 
@@ -311,98 +382,21 @@ internal fun VisualProjectScreen(
         }
     }
 
-    fun pauseOrResumeProject() {
+    fun controlRunningProject(pause: Boolean) {
         if (!canPauseResume) return
-        val resume = runtimeState.engineState == RuntimeEngineState.PAUSED
         action = VisualAction.CONTROLLING
-        error = null
-        notice = null
         scope.launch {
-            val accepted = withContext(Dispatchers.IO) {
-                if (resume) runtimeClient.requestResume() else runtimeClient.requestPause()
-            }
-            if (!accepted) error = if (resume) "继续请求被拒绝" else "暂停请求被拒绝"
-            action = null
-        }
-    }
-
-    fun createFlow() {
-        val requestedId = newFlowId.trim()
-        if (requestedId.isEmpty() || runtimeBusy) return
-        showNewFlowDialog = false
-        action = VisualAction.CREATING_FLOW
-        error = null
-        scope.launch {
-            if (!saveAllIfNeeded()) {
-                action = null
-                return@launch
-            }
-            val created = runCatching {
-                withContext(Dispatchers.IO) {
-                    store.createFlow(
-                        projectId,
-                        requestedId,
-                        snapshot.manifest.flows.map(ProjectFlow::flowId).toSet(),
-                    )
+            try {
+                val accepted = withContext(Dispatchers.IO) {
+                    if (pause) runtimeClient.requestPause() else runtimeClient.requestResume()
                 }
-            }.getOrElse { failure ->
-                error = failure.message ?: "新建 Flow 失败"
+                if (!accepted) error = "运行控制被拒绝，请检查当前会话状态"
+            } finally {
                 action = null
-                return@launch
             }
-            val declaration = created.manifest.flows.first { it.flowId == requestedId }
-            editors[requestedId] = VisualEditorState.create(
-                created.flowSources.getValue(requestedId),
-                declaration.rootBlockId,
-            )
-            selectedFlowId = requestedId
-            newFlowId = ""
-            onSnapshotChanged(created)
-            notice = "Flow $requestedId 已创建"
-            action = null
         }
     }
 
-    fun deleteCurrentFlow() {
-        if (runtimeBusy || selectedFlowId == snapshot.manifest.entryFlowId || editors.values.any { it.isDirty }) return
-        action = VisualAction.DELETING_FLOW
-        error = null
-        scope.launch {
-            val deletedId = selectedFlowId
-            val deleted = runCatching {
-                withContext(Dispatchers.IO) {
-                    store.deleteFlow(
-                        projectId,
-                        deletedId,
-                        snapshot.manifest.flows.map(ProjectFlow::flowId).toSet(),
-                    )
-                }
-            }.getOrElse { failure ->
-                error = failure.message ?: "删除 Flow 失败"
-                action = null
-                return@launch
-            }
-            editors.remove(deletedId)
-            selectedFlowId = requireNotNull(deleted.manifest.entryFlowId)
-            onSnapshotChanged(deleted)
-            notice = "Flow $deletedId 已删除"
-            action = null
-        }
-    }
-
-    if (showNewFlowDialog) {
-        LegacyInputDialog(
-            title = "新建 Flow",
-            value = newFlowId,
-            onValueChange = { newFlowId = it },
-            hint = "Flow ID：字母或数字开头，可含 . _ -",
-            confirmLabel = "创建",
-            confirmEnabled = newFlowId.isNotBlank(),
-            maxLength = 64,
-            onDismiss = { showNewFlowDialog = false },
-            onConfirm = ::createFlow,
-        )
-    }
 
     if (showVariableManager) {
         VisualVariableManagerDialog(
@@ -412,10 +406,31 @@ internal fun VisualProjectScreen(
             onDismiss = { showVariableManager = false },
             onSave = { variables ->
                 scope.launch {
+                    if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
+                        error = "请停止运行后再修改变量"; return@launch
+                    }
                     runCatching {
                         withContext(Dispatchers.IO) { store.updateVariables(projectId, variables, snapshot.manifest.variables) }
                     }.onSuccess {
                         onSnapshotChanged(it); notice = "变量表已保存"; showVariableManager = false
+                    }.onFailure { error = it.message ?: "变量表保存失败" }
+                }
+            },
+            onSaveAndInsert = { variables, arguments ->
+                scope.launch {
+                    if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
+                        error = "请停止运行后再修改变量"; return@launch
+                    }
+                    runCatching {
+                        withContext(Dispatchers.IO) { store.updateVariables(projectId, variables, snapshot.manifest.variables) }
+                    }.onSuccess { updated ->
+                        onSnapshotChanged(updated)
+                        val contract = BlockCatalog.find("variable.calculate")
+                        if (contract != null && editor.insertBlock(contract, arguments) != null) {
+                            editorRevision++; showVariableManager = false
+                            pendingBlockConfiguration = null
+                            notice = "已加入变量计算"; saveCurrent()
+                        } else error = "变量表已保存，但无法把计算加入当前位置"
                     }.onFailure { error = it.message ?: "变量表保存失败" }
                 }
             },
@@ -425,8 +440,9 @@ internal fun VisualProjectScreen(
     fun insertDockBlock(
         hint: String,
         childSlot: String?,
-        position: LegacyInsertPosition = LegacyInsertPosition.BELOW,
+        position: EditorInsertPosition = EditorInsertPosition.BELOW,
     ) {
+        if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) { error = "请停止运行后再修改插件"; return }
         val command = hint.lineSequence().firstOrNull()?.trim().orEmpty()
         when (command) {
             "--@autoscript-control:elseIf" -> {
@@ -441,6 +457,8 @@ internal fun VisualProjectScreen(
                     requireNotNull(editor.nodeArguments(selected)),
                 )
                 editingCallNodeId = selected
+                reflectionPosition = null
+                reflectionChildSlot = null
                 notice = "已新增否则如果分支，请填写它的条件"
                 return
             }
@@ -456,44 +474,14 @@ internal fun VisualProjectScreen(
                 return
             }
         }
-        if (command.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX + "metric:")) {
-            val parts = command.removePrefix(LegacyFunctionCatalog.LOOP_HINT_PREFIX).split(':')
-            val metric = parts.getOrNull(1)
-            val variable = parts.getOrNull(2)
-            if (metric !in setOf("count", "elapsed") || variable.isNullOrBlank()) {
-                error = "循环参数无效"
-                return
-            }
-            val loopId = editor.nearestAncestorOfKind(kinds = setOf("control.repeat", "control.while"))
-            val oldArgs = loopId?.let(editor::nodeArguments)
-            if (loopId == null || oldArgs == null) {
-                error = "请先选中循环或循环体中的积木，再设置循环${if (metric == "count") "次数" else "时间"}变量"
-                return
-            }
-            val args = oldArgs.deepCopy().apply {
-                addProperty(
-                    when (metric) {
-                        "elapsed" -> "elapsedVariable"
-                        "count" -> if (editor.rows.firstOrNull { it.nodeId == loopId }?.kind == "control.repeat") "indexVariable" else "iterationVariable"
-                        else -> error("checked above")
-                    },
-                    variable,
-                )
-            }
-            if (!editor.updateArguments(loopId, args)) {
-                error = "无法更新循环参数"
-                return
-            }
-            editorRevision++
-            error = null
-            notice = "循环${if (metric == "count") "次数" else "时间"}将写入变量：$variable"
-            saveCurrent()
+        val capabilities = snapshot.manifest.capabilities.toSet()
+        if (hint.trimStart().startsWith(LOOP_CONFIG_HINT) && loopInsertionFromHint(hint) == null) {
+            error = "循环配置无效，未加入积木"
             return
         }
-        val capabilities = snapshot.manifest.capabilities.toSet()
         val query = legacyDockBlockQuery(hint)
         // 函数库直接给出积木 kind 时不做模糊搜索；能力不足要明确说明而不是静默落到选择器。
-        val direct = LegacyFunctionCatalog.blockKindOf(hint)?.let(BlockCatalog::find)
+        val direct = FunctionCatalog.blockKindOf(hint)?.let(BlockCatalog::find)
             ?.let { BlockSearchResult(it, it.requiredCapabilities - capabilities) }
         if (direct != null && !direct.isAvailable) {
             error = "${direct.contract.title}需要能力：${direct.missingCapabilities.joinToString()}"
@@ -503,22 +491,39 @@ internal fun VisualProjectScreen(
             ?: BlockCatalog.search(query, capabilities).filter(BlockSearchResult::isAvailable)
         if (matching.size == 1) {
             val contract = matching.single().contract
+            if (contract.kind in visualRecognitionKinds) {
+                pendingRecognitionInsert = RecognitionInsertRequest(contract,
+                    legacyDockBlockArguments(contract, hint, initialRecognitionArguments(contract, snapshot)), childSlot, position)
+                recognitionCaptureSelection = null
+                recognitionCaptureTemplatePath = null
+                return
+            }
+            val preferredFlowId = if (contract.kind == "flow.call") JumpPanelCode.callTargetId(hint) else null
             val args = initialBlockArguments(
                 contract,
                 snapshot.manifest.flows,
                 snapshot.manifest.resources,
                 selectedFlowId,
+                preferredFlowId = preferredFlowId,
             )
             if (args == null) {
-                error = "缺少${contract.title}所需的目标 Flow 或项目资源"
+                error = "缺少${contract.title}所需的目标插件或项目资源"
                 return
             }
             val migratedArgs = legacyDockBlockArguments(contract, hint, args)
-            if (contract.kind in setOf("variable.set", "variable.copy", "control.if") && position != LegacyInsertPosition.REPLACE) {
+            visualJumpInsertionError(contract.kind, migratedArgs, editor, childSlot, position)?.let {
+                error = it
+                return
+            }
+            if (contract.kind == "ui.get") {
                 pendingBlockConfiguration = VisualPendingBlockInsert(contract, migratedArgs, childSlot, position)
                 return
             }
-            if (position == LegacyInsertPosition.REPLACE) {
+            if (contract.kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.if") && position != EditorInsertPosition.REPLACE && variableCalculationArguments(hint) == null) {
+                pendingBlockConfiguration = VisualPendingBlockInsert(contract, migratedArgs, childSlot, position)
+                return
+            }
+            if (position == EditorInsertPosition.REPLACE) {
                 if (!editor.replaceSelectedBlock(contract, migratedArgs)) {
                     error = "无法修改当前选择行"
                 } else {
@@ -530,19 +535,25 @@ internal fun VisualProjectScreen(
                 return
             }
             val originalSelection = editor.selectedNodeId
-            if (position == LegacyInsertPosition.LIST_BOTTOM) {
+            if (position == EditorInsertPosition.LIST_BOTTOM) {
                 editor.selectedNodeId = editor.rows.lastOrNull { it.depth == 0 }?.nodeId
             }
             val inserted = editor.insertBlock(contract, migratedArgs, intoChildBlockName = childSlot)
-            if (inserted != null && position == LegacyInsertPosition.ABOVE && originalSelection != null) {
+            if (inserted != null && position == EditorInsertPosition.ABOVE && originalSelection != null) {
                 editor.moveSelected(-1)
             }
             if (inserted == null) {
-                error = "无法把${contract.title}加入当前位置"
+                error = if (contract.kind in positionLoopKinds) "${contract.title}只能加入循环体，请先选中循环体中的积木或选择循环体插入位置"
+                    else "无法把${contract.title}加入当前位置"
             } else {
                 editorRevision++
                 error = null
                 notice = "已加入：${contract.title}"
+                if (contract.kind == "flow.call") {
+                    reflectionPosition = null
+                    reflectionChildSlot = null
+                    editingCallNodeId = inserted
+                }
                 saveCurrent()
             }
             return
@@ -551,6 +562,214 @@ internal fun VisualProjectScreen(
         insertionChildBlockName = childSlot
         blockPickerAutoSave = true
         showBlockPicker = true
+    }
+
+    fun captureInputPointScreenshot(delayMillis: Long = 0L) {
+        if (inputPointCapturing) return
+        val requestId = inputPointRequestId + 1
+        inputPointRequestId = requestId
+        inputPointCapturing = true
+        inputPointMessage = "正在截图…"
+        inputPointCaptureJob?.cancel()
+        inputPointCaptureJob = scope.launch {
+            var decoded: Bitmap? = null
+            try {
+                // Even an immediate capture needs one composition frame for the dialog to disappear.
+                delay(delayMillis.coerceAtLeast(200L))
+                when (val result = withContext(Dispatchers.IO) { runtimeClient.capturePreview() }) {
+                    is ScreenshotPreviewResult.Success -> {
+                        decoded = try {
+                            withContext(Dispatchers.IO) { BitmapFactory.decodeFile(result.file.path) }
+                        } finally {
+                            result.file.delete()
+                        }
+                        coroutineContext.ensureActive()
+                        if (requestId == inputPointRequestId && showingInputPointPicker) {
+                            inputPointBitmap?.recycle()
+                            inputPointBitmap = decoded
+                            decoded = null
+                            inputPointMessage = inputPointBitmap?.let { "截图 ${it.width}×${it.height}，请在图上定位" }
+                                ?: "截图文件无法解码"
+                        }
+                    }
+                    is ScreenshotPreviewResult.Unavailable -> if (requestId == inputPointRequestId) {
+                        inputPointMessage = result.message
+                    }
+                }
+            } catch (_: CancellationException) {
+                // Closing or replacing the picker cancels the in-flight capture.
+            } catch (failure: Exception) {
+                if (requestId == inputPointRequestId) inputPointMessage = failure.message ?: "截图失败"
+            } finally {
+                decoded?.recycle()
+                if (requestId == inputPointRequestId) {
+                    inputPointCapturing = false
+                    inputPointCaptureJob = null
+                }
+            }
+        }
+    }
+
+    fun closeInputCanvas() {
+        showingInputPointPicker = false
+        inputPointRequestId++
+        inputPointCaptureJob?.cancel()
+        inputPointCaptureJob = null
+        inputPointCapturing = false
+        inputPointBitmap?.recycle()
+        inputPointBitmap = null
+    }
+
+    fun queueInputInsertion(snippet: ImageToolCodeGen.Snippet) {
+        val target = inputPickTarget ?: InputPickTarget(projectId, selectedFlowId, editor.currentSource, editor.selectedNodeId)
+        val draft = target.draft(snippet)
+        if (runtimeBusy || running || !draft.matches(projectId, selectedFlowId, editor)) {
+            error = "插件或内容已变化，请重新选择点位"
+            closeInputCanvas()
+            return
+        }
+        runCatching { prepareInputBlocks(snippet, snapshot.manifest.capabilities.toSet()) }.onFailure {
+            error = it.message ?: "输入动作无法加入"
+            inputPointMessage = error
+        }.onSuccess {
+            pendingInputInsertion = draft
+            closeInputCanvas()
+            inputPickOpenRequest++
+        }
+    }
+
+    fun openInputFloatingPicker(mode: ImageToolMode) {
+        if (runtimeBusy || running) { error = "请先停止运行"; return }
+        val target = InputPickTarget(projectId, selectedFlowId, editor.currentSource, editor.selectedNodeId)
+        inputPickTarget = target
+        val design = snapshot.manifest.design
+        inputFloatingRequest = runtimeClient.beginInputPointPick(projectId, selectedFlowId, inputPointAction(mode)) { result ->
+            inputFloatingRequest = null
+            if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
+            else if (inputPickTarget != target || currentInputSnapshot.manifest.design != design) error = "插件或设计分辨率已变化，请重新选点"
+            else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
+                .onSuccess(::queueInputInsertion).onFailure { error = it.message ?: "选点转换失败" }
+        }
+        if (inputFloatingRequest != null) context.inputPickerActivity()?.moveTaskToBack(true)
+        else error = "悬浮选点未启动，请检查悬浮窗权限和Root状态"
+    }
+
+    fun openInputPointPicker(mode: ImageToolMode, delayMillis: Long = 0L) {
+        inputPickTarget = InputPickTarget(projectId, selectedFlowId, editor.currentSource, editor.selectedNodeId)
+        if (mode == ImageToolMode.POINTER_UP) { queueInputInsertion(ImageToolCodeGen.pointerUp()); return }
+        imageToolRequest = false
+        inputPointRequestId++
+        inputPointCaptureJob?.cancel()
+        inputPointCaptureJob = null
+        inputPointCapturing = false
+        inputPointMode = mode
+        inputPointBitmap?.recycle()
+        inputPointBitmap = null
+        showingInputPointPicker = true
+        inputPointMessage = null
+        captureInputPointScreenshot(delayMillis)
+    }
+
+    fun openImageTools(delayMillis: Long) {
+        openInputPointPicker(ImageToolMode.CROP, delayMillis)
+        imageToolRequest = true
+    }
+
+    fun openImageToolMode(mode: ImageToolMode, delayMillis: Long) {
+        openInputPointPicker(mode, delayMillis)
+        imageToolRequest = true
+    }
+
+    fun confirmInputInsertion(draft: InputInsertionDraft, position: EditorInsertPosition, slot: String?) {
+        if (runtimeBusy || running || !draft.matches(projectId, selectedFlowId, editor)) {
+            error = "插件内容已变化，请重新选点"
+            pendingInputInsertion = null
+            return
+        }
+        val prepared = runCatching { prepareInputBlocks(draft.snippet, snapshot.manifest.capabilities.toSet()) }.getOrElse {
+            error = it.message ?: "输入动作不可用"
+            return
+        }
+        if (!editor.insertBlocks(prepared, position, draft.anchorNodeId, slot)) {
+            error = "无法在指定位置加入完整动作，未保留部分积木"
+            return
+        }
+        pendingInputInsertion = null
+        inputPickTarget = null
+        editorRevision++
+        closeInputCanvas()
+        notice = "已加入草稿，正在保存：${draft.snippet.summary}"
+        error = null
+        action = VisualAction.SAVING
+        scope.launch {
+            if (saveEditorIfNeeded(draft.flowId, editor)) notice = "已加入并保存：${draft.snippet.summary}"
+            else error = "动作已加入草稿，尚未保存；请用保存重试：${error.orEmpty()}"
+            action = null
+        }
+    }
+
+    fun emitInputPointSnippet(snippet: ImageToolCodeGen.Snippet) {
+        if (snippet.rejection != null) {
+            inputPointMessage = snippet.rejection
+            return
+        }
+        snippet.imageSelection?.let { selection ->
+            if (recognitionCaptureActive) {
+                recognitionCaptureSelection = selection
+                recognitionCaptureActive = false
+                showingInputPointPicker = false
+                inputPointRequestId++
+                inputPointCaptureJob?.cancel()
+                inputPointCaptureJob = null
+                inputPointCapturing = false
+                inputPointBitmap?.recycle()
+                inputPointBitmap = null
+                return
+            }
+            if (selection.mode == ImageToolMode.REGION) {
+                pickedImageRegion = selection.roi
+                inputPointMessage = "已选识别范围；返回图像面板选择识别积木"
+                notice = inputPointMessage
+                return
+            }
+            val draft = visualImageToolDraft(selection)
+            if (draft == null) {
+                inputPointMessage = "多点找色至少需要锚点和一个采样点"
+                return
+            }
+            val contract = BlockCatalog.find(draft.first)
+            val missing = contract?.requiredCapabilities.orEmpty() - snapshot.manifest.capabilities.toSet()
+            val initial = contract?.let {
+                initialBlockArguments(it, snapshot.manifest.flows, snapshot.manifest.resources, selectedFlowId)
+            }
+            if (contract == null || initial == null || missing.isNotEmpty()) {
+                inputPointMessage = if (missing.isNotEmpty()) "需要能力：${missing.joinToString()}" else "图像积木不可用"
+                return
+            }
+            pendingImageBlock = contract to initial.withImageToolValues(draft.second)
+            showingInputPointPicker = false
+            inputPointRequestId++
+            inputPointCaptureJob?.cancel()
+            inputPointCaptureJob = null
+            inputPointBitmap?.recycle()
+            inputPointBitmap = null
+            return
+        }
+        if (snippet.flowBlocks.isNotEmpty()) {
+            queueInputInsertion(snippet)
+            return
+        }
+        val kind = when {
+            snippet.code.trimStart().startsWith("Input.tap(") -> "input.tap"
+            snippet.code.trimStart().startsWith("Input.swipe(") -> "input.swipe"
+            else -> null
+        }
+        if (kind == null) {
+            inputPointMessage = "该输入动作无法映射到插件积木，未插入"
+            return
+        }
+        insertDockBlock("${FunctionCatalog.BLOCK_HINT_PREFIX}$kind\n${snippet.code}", null)
+        inputPointMessage = error ?: "已加入插件：${snippet.summary}"
     }
 
     fun finishDockMutation(changed: Boolean, message: String) {
@@ -570,59 +789,60 @@ internal fun VisualProjectScreen(
             return
         }
         finishDockMutation(
-            editor.pasteSubtree(clipboard, intoChildBlockName = childSlot) != null,
+            editor.pasteSelection(clipboard, childSlot),
             "已粘贴节点副本",
         )
     }
 
-    fun runDockCommand(command: LegacyDockProgramCommand) {
-        if (runtimeBusy || editor.isReadOnly) return
+    fun runDockCommand(command: EditorProgramCommand) {
+        if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) return
         when (command) {
-            LegacyDockProgramCommand.MOVE_UP -> finishDockMutation(editor.moveSelected(-1), "节点已上移")
-            LegacyDockProgramCommand.MOVE_DOWN -> finishDockMutation(editor.moveSelected(1), "节点已下移")
-            LegacyDockProgramCommand.OUTDENT -> finishDockMutation(editor.outdentSelected(), "节点已减少一级缩进")
-            LegacyDockProgramCommand.INDENT -> {
-                val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
+            EditorProgramCommand.MOVE_UP -> finishDockMutation(editor.moveSelection(-1), "节点已上移")
+            EditorProgramCommand.MOVE_DOWN -> finishDockMutation(editor.moveSelection(1), "节点已下移")
+            EditorProgramCommand.OUTDENT -> finishDockMutation(editor.outdentSelection(), "节点已减少一级缩进")
+            EditorProgramCommand.INDENT -> {
+                val selected = nodes.firstOrNull { it.nodeId == editor.selectedRoots().firstOrNull() }
                 val siblings = nodes.filter { it.blockId == selected?.blockId }.sortedBy { it.orderKey }
                 val previous = siblings.getOrNull(siblings.indexOfFirst { it.nodeId == selected?.nodeId } - 1)
                 val slots = previous?.nodeId?.let(editor::childBlockNames).orEmpty()
                 when (slots.size) {
                     0 -> error = "上一节点不是容器"
-                    1 -> finishDockMutation(editor.indentSelected(slots.single()), "节点已缩进")
+                    1 -> finishDockMutation(editor.indentSelection(slots.single()), "节点已缩进")
                     else -> pendingDockIndentSlots = slots
                 }
             }
-            LegacyDockProgramCommand.COPY -> {
-                dockClipboard = editor.copySelectedSubtree()
+            EditorProgramCommand.COPY -> {
+                dockClipboard = editor.copySelection().takeIf { it.isNotEmpty() }
                 if (dockClipboard == null) error = "请先选择节点" else {
                     error = null
                     notice = "已复制整棵子树"
                 }
             }
-            LegacyDockProgramCommand.CUT -> {
-                val copied = editor.copySelectedSubtree()
+            EditorProgramCommand.CUT -> {
+                val copied = editor.copySelection().takeIf { it.isNotEmpty() }
                 if (copied == null) error = "请先选择节点" else {
                     dockClipboard = copied
-                    finishDockMutation(editor.deleteSelected(), "已剪切整棵子树")
+                    finishDockMutation(editor.deleteSelection(), "已剪切整棵子树")
                 }
             }
-            LegacyDockProgramCommand.PASTE -> {
+            EditorProgramCommand.PASTE -> {
                 if (dockClipboard == null) error = "剪贴板为空" else {
                     val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
                     val slots = selected?.nodeId?.let(editor::childBlockNames).orEmpty()
                     if (selected != null && slots.isNotEmpty()) pendingDockPaste = true else pasteDockClipboard(null)
                 }
             }
-            LegacyDockProgramCommand.UNDO -> finishDockMutation(editor.undo(), "已撤销")
-            LegacyDockProgramCommand.REDO -> finishDockMutation(editor.redo(), "已重做")
-            LegacyDockProgramCommand.DATA_BACKFILL -> {
+            EditorProgramCommand.UNDO -> finishDockMutation(editor.undo(), "已撤销")
+            EditorProgramCommand.REDO -> finishDockMutation(editor.redo(), "已重做")
+            EditorProgramCommand.DATA_BACKFILL -> {
                 error = null
-                notice = "当前没有可回填的调试结果，未修改节点参数"
+                debugInspector = EditorToolPanel.DATA_BACKFILL
             }
-            LegacyDockProgramCommand.SEARCH,
-            LegacyDockProgramCommand.EXPAND_ALL,
-            LegacyDockProgramCommand.COLLAPSE_ALL
-            -> Unit // handled as view-only state by LegacyScriptDock
+            EditorProgramCommand.TOGGLE_DISABLED -> finishDockMutation(editor.toggleDisabledSelection(), "已更新积木执行状态")
+            EditorProgramCommand.SEARCH,
+            EditorProgramCommand.EXPAND_ALL,
+            EditorProgramCommand.COLLAPSE_ALL
+            -> Unit // handled as view-only state by EditorDock
         }
     }
 
@@ -711,18 +931,18 @@ internal fun VisualProjectScreen(
     }
 
     /** 旧版插件管理里需要宿主执行的动作：检错走 Rust 编译，未调用列出没被引用的源文件。 */
-    fun handlePluginAction(pluginAction: LegacyPluginAction) {
+    fun handlePluginAction(pluginAction: PluginManagerAction) {
         when (pluginAction) {
-            LegacyPluginAction.CHECK, LegacyPluginAction.CHECK_ALL -> compileOnly()
-            LegacyPluginAction.UNUSED -> {
+            PluginManagerAction.CHECK, PluginManagerAction.CHECK_ALL -> compileOnly()
+            PluginManagerAction.UNUSED -> {
                 val unused = sourceFiles.unreferencedFlows(snapshot)
                 notice = if (unused.isEmpty()) "所有源文件都被调用或是入口" else "未调用源文件：" + unused.joinToString("、") { it.displayName() }
             }
-            LegacyPluginAction.TEMPLATE -> notice = "存储为模版属于预留功能，尚未开放"
-            LegacyPluginAction.CREATE,
-            LegacyPluginAction.DELETE,
-            LegacyPluginAction.SAVE_AS,
-            LegacyPluginAction.GROUP,
+            PluginManagerAction.TEMPLATE -> notice = "存储为模版属于预留功能，尚未开放"
+            PluginManagerAction.CREATE,
+            PluginManagerAction.DELETE,
+            PluginManagerAction.SAVE_AS,
+            PluginManagerAction.GROUP,
             -> Unit // 面板已转到源文件管理
         }
     }
@@ -755,10 +975,16 @@ internal fun VisualProjectScreen(
         }
     }
 
+    pendingInputInsertion?.let { draft ->
+        InputInsertPositionDialog(draft, editor,
+            onDismiss = { pendingInputInsertion = null; inputPickTarget = null },
+            onConfirm = { position, slot -> confirmInputInsertion(draft, position, slot) })
+    }
+
     pendingDockInsertHint?.let { hint ->
         val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
         val childSlots = selectedRow?.nodeId?.let(editor::childBlockNames).orEmpty()
-        LegacyOptionDialog(
+        EditorOptionDialog(
             title = "选择插入位置",
             options = listOf<Pair<String?, String>>(null to "当前节点之后") +
                 childSlots.map { slot -> slot to "${childBlockLabel(slot)}内新增" },
@@ -771,13 +997,13 @@ internal fun VisualProjectScreen(
     }
 
     pendingDockIndentSlots?.let { slots ->
-        LegacyOptionDialog(
+        EditorOptionDialog(
             title = "选择缩进分支",
             options = slots.map { slot -> slot to childBlockLabel(slot) },
             onDismiss = { pendingDockIndentSlots = null },
             onConfirm = { slot ->
                 pendingDockIndentSlots = null
-                finishDockMutation(editor.indentSelected(slot), "节点已缩进到${childBlockLabel(slot)}")
+                finishDockMutation(editor.indentSelection(slot), "节点已缩进到${childBlockLabel(slot)}")
             },
         )
     }
@@ -785,7 +1011,7 @@ internal fun VisualProjectScreen(
     if (pendingDockPaste) {
         val selected = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
         val slots = selected?.nodeId?.let(editor::childBlockNames).orEmpty()
-        LegacyOptionDialog(
+        EditorOptionDialog(
             title = "选择粘贴位置",
             options = listOf<Pair<String?, String>>(null to "当前节点之后") +
                 slots.map { slot -> slot to "${childBlockLabel(slot)}内" },
@@ -798,10 +1024,28 @@ internal fun VisualProjectScreen(
     }
 
     pendingBlockConfiguration?.let { pending ->
-        VisualVariableConditionDialog(
+        if (pending.contract.kind == "ui.get") VisualUiParameterDialog(
+            pending.arguments, snapshot.manifest.runnerUi, snapshot.manifest.variables, selectedFlowId,
+            snapshot.manifest.flows, { showVariableManager = true }, { pendingBlockConfiguration = null },
+            onConfirm = confirm@{ configured ->
+                if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) return@confirm "请停止运行后再修改插件"
+                if (pending.position == EditorInsertPosition.LIST_BOTTOM) editor.selectedNodeId = editor.rows.lastOrNull { it.depth == 0 }?.nodeId
+                val accepted = if (pending.position == EditorInsertPosition.REPLACE) editor.replaceSelectedBlock(pending.contract, configured)
+                    else editor.insertBlock(pending.contract, configured, intoChildBlockName = pending.childSlot) != null
+                if (!accepted) return@confirm "无法把${pending.contract.title}加入当前位置"
+                if (pending.position == EditorInsertPosition.ABOVE) editor.moveSelected(-1)
+                editorRevision++; pendingBlockConfiguration = null; error = null
+                notice = "已加入：${pending.contract.title}"; saveCurrent()
+                null
+            }, confirmLabel = if (pending.position == EditorInsertPosition.REPLACE) "保存" else "加入",
+        ) else VisualVariableConditionDialog(
             contract = pending.contract,
             inputs = conditionPropertyTexts(pending.contract, pending.arguments),
             knownVariables = visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId),
+            projectVariables = snapshot.manifest.variables,
+            currentFlowId = selectedFlowId,
+            flows = snapshot.manifest.flows,
+            onManageVariables = { showVariableManager = true },
             onDismiss = { pendingBlockConfiguration = null },
             onConfirm = { inputs ->
                 val parsed = parseBlockArguments(
@@ -812,11 +1056,11 @@ internal fun VisualProjectScreen(
                     snapshot.manifest.resources,
                 )
                 val configured = parsed.first ?: return@VisualVariableConditionDialog parsed.second ?: "参数无效"
-                if (pending.position == LegacyInsertPosition.LIST_BOTTOM) {
+                if (pending.position == EditorInsertPosition.LIST_BOTTOM) {
                     editor.selectedNodeId = editor.rows.lastOrNull { it.depth == 0 }?.nodeId
                 }
                 val inserted = editor.insertBlock(pending.contract, configured, intoChildBlockName = pending.childSlot)
-                if (inserted != null && pending.position == LegacyInsertPosition.ABOVE) editor.moveSelected(-1)
+                if (inserted != null && pending.position == EditorInsertPosition.ABOVE) editor.moveSelected(-1)
                 if (inserted == null) return@VisualVariableConditionDialog "无法把${pending.contract.title}加入当前位置"
                 editorRevision++
                 pendingBlockConfiguration = null
@@ -828,34 +1072,158 @@ internal fun VisualProjectScreen(
         )
     }
 
-    // 顶栏“添加积木”与悬浮面板“函数”走同一个函数库弹窗（service_tk_functionui 版式），
-    // 不再用 Material 默认的 AlertDialog；能力不足的积木在库里直接禁用并标出缺什么。
+    debugInspector?.let { mode ->
+        VisualDebugInspector(mode, snapshot, selectedFlowId, editor, runtimeClient,
+            onDismiss = { debugInspector = null },
+            onBackfill = { nodeId, args ->
+                if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) "请停止运行后再回填" else {
+                    val original = editor.currentSource
+                    val root = snapshot.manifest.flows.first { it.flowId == selectedFlowId }.rootBlockId
+                    val candidate = VisualEditorState.create(original, root)
+                    if (!candidate.updateArguments(nodeId, args)) "节点已变化" else {
+                        when (val validation = withContext(Dispatchers.IO) {
+                            runtimeClient.validateVisualDraft(projectId, selectedFlowId, candidate.currentSource.toByteArray(Charsets.UTF_8))
+                        }) {
+                            is VisualCompileResult.Success -> {
+                                if (editor.currentSource != original) "编辑内容已变化，请重新选择" else {
+                                    editor.updateArguments(nodeId, args)
+                                    editorRevision++
+                                    saveCurrent()
+                                    null
+                                }
+                            }
+                            is VisualCompileResult.Invalid -> validation.diagnostic.message
+                            is VisualCompileResult.Unavailable -> validation.message
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    if (showRecognitionTest) {
+        ImageRecognitionTestDialog(snapshot, runtimeClient,
+            onDismiss = { showRecognitionTest = false },
+            onCapture = { showRecognitionTest = false; openImageTools(0L) },
+            onInsert = { arguments ->
+                val blocks = recognitionBlockSequence(arguments)
+                val missing = blocks.flatMap { it.first.requiredCapabilities }.toSet() - snapshot.manifest.capabilities.toSet()
+                if (missing.isNotEmpty()) error = "找图需要能力：${missing.joinToString()}"
+                else if (!runtimeBusy && editor.insertBlocks(blocks)) {
+                    showRecognitionTest = false
+                    editorRevision++
+                    saveCurrent()
+                }
+            },
+        )
+    }
+    if (showImageLibrary) {
+        Dialog(onDismissRequest = { showImageLibrary = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            ImageToolsScreen(snapshot, store, runtimeClient, runtimeState, onSnapshotChanged,
+                onBack = { showImageLibrary = false }, modifier = Modifier.fillMaxSize())
+        }
+    }
+
+    pendingImageBlock?.let { (contract, initialArgs) ->
+        VisualImageRecognitionDialog(
+            contract = contract,
+            arguments = initialArgs,
+            resources = snapshot.manifest.resources,
+            knownVariables = visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId),
+            snapshot = snapshot,
+            confirmLabel = "加入",
+            automaticCapture = true,
+            allowKindChange = true,
+            visible = !showingInputPointPicker,
+            captureSelection = recognitionCaptureSelection,
+            captureTemplatePath = recognitionCaptureTemplatePath,
+            onPickFromScreen = { mode ->
+                recognitionCaptureSelection = null
+                recognitionCaptureTemplatePath = null
+                recognitionCaptureActive = true
+                openImageToolMode(mode, 0L)
+            },
+            onDismiss = { pendingImageBlock = null; recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null },
+            onConfirm = { selectedContract, configured ->
+                recognitionCaptureSelection = null
+                recognitionCaptureTemplatePath = null
+                val capture = requireNotNull(BlockCatalog.find("screen.capture"))
+                val release = requireNotNull(BlockCatalog.find("screen.release"))
+                val frameVariable = configured.get("frameVariable")?.asString ?: "frame"
+                val captureArgs = JsonObject().apply { addProperty("resultVariable", frameVariable) }
+                val releaseArgs = JsonObject().apply { addProperty("frameVariable", frameVariable) }
+                val blocks = if (selectedContract.kind in setOf("vision.findimage", "vision.findgray", "ocr.alphanumeric")) {
+                    configured.addProperty("autoCapture", true)
+                    listOf(selectedContract to configured)
+                } else listOf(capture to captureArgs, selectedContract to configured, release to releaseArgs)
+                val missing = blocks.flatMap { it.first.requiredCapabilities }.toSet() - snapshot.manifest.capabilities.toSet()
+                if (missing.isNotEmpty()) error = "识别需要能力：${missing.joinToString()}"
+                else if (editor.insertBlocks(blocks)) {
+                    editorRevision++
+                    error = null
+                    notice = "已加入：截图 → ${selectedContract.title} → 释放截图"
+                    pendingImageBlock = null
+                    saveCurrent()
+                } else error = "无法把${selectedContract.title}加入当前位置"
+            },
+        )
+    }
+
+    pendingRecognitionInsert?.let { request ->
+        VisualImageRecognitionDialog(
+            request.contract, request.arguments, snapshot.manifest.resources,
+            visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId), snapshot,
+            confirmLabel = if (request.position == EditorInsertPosition.REPLACE) "确定" else "加入",
+            visible = !showingInputPointPicker, captureSelection = recognitionCaptureSelection,
+            captureTemplatePath = recognitionCaptureTemplatePath,
+            onPickFromScreen = { mode ->
+                recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null
+                recognitionCaptureActive = true; openImageToolMode(mode, 0L)
+            },
+            onDismiss = { pendingRecognitionInsert = null; recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null },
+            onConfirm = { _, configured ->
+                if (insertConfiguredRecognition(editor, request, configured)) {
+                    editorRevision++
+                    pendingRecognitionInsert = null
+                    recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null
+                    error = null
+                    saveCurrent()
+                } else error = "无法把${request.contract.title}加入当前位置"
+            },
+        )
+    }
+
+    // 顶栏和悬浮面板共用函数库；可直接加入或查看说明，能力不足仍可阅读但不能加入。
     if (showBlockPicker) {
         fun closePicker() {
             showBlockPicker = false
             blockPickerAutoSave = false
             insertionChildBlockName = null
         }
-        LegacyFunctionLibrary(
-            groups = LegacyFunctionCatalog.visualGroups(),
+        FunctionLibraryDialog(
+            groups = FunctionCatalog.visualGroups(),
             capabilities = snapshot.manifest.capabilities.toSet(),
             onDismiss = ::closePicker,
             onInsert = { hint ->
-                val contract = LegacyFunctionCatalog.blockKindOf(hint)?.let(BlockCatalog::find)
+                val contract = FunctionCatalog.blockKindOf(hint)?.let(BlockCatalog::find)
                 if (contract == null) {
                     error = "未找到对应积木"
                 } else {
-                    val args = initialBlockArguments(contract, snapshot.manifest.flows, snapshot.manifest.resources, selectedFlowId)
+                    val args = if (contract.kind in visualRecognitionKinds) initialRecognitionArguments(contract, snapshot)
+                        else initialBlockArguments(contract, snapshot.manifest.flows, snapshot.manifest.resources, selectedFlowId)
                     if (args == null) {
-                        error = "缺少积木所需的目标 Flow 或项目资源"
-                    } else if (contract.kind in setOf("variable.set", "variable.copy", "control.if")) {
+                        error = "缺少积木所需的目标插件或项目资源"
+                    } else if (contract.kind in visualRecognitionKinds) {
+                        pendingRecognitionInsert = RecognitionInsertRequest(contract, args, insertionChildBlockName)
+                        recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null
+                    } else if (contract.kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.if", "ui.get")) {
                         // The library is another insertion entry point: never silently add a
                         // placeholder `value == true` condition from here.
                         pendingBlockConfiguration = VisualPendingBlockInsert(
                             contract = contract,
                             arguments = args,
                             childSlot = insertionChildBlockName,
-                            position = LegacyInsertPosition.BELOW,
+                            position = EditorInsertPosition.BELOW,
                         )
                     } else {
                         val inserted = editor.insertBlock(contract, args, intoChildBlockName = insertionChildBlockName)
@@ -877,20 +1245,28 @@ internal fun VisualProjectScreen(
     editingCallNodeId?.let { nodeId ->
         val nodeKind = nodes.firstOrNull { it.nodeId == nodeId }?.kind
         val contract = nodeKind?.let(BlockCatalog::find)
-        val targets = snapshot.manifest.flows.filter { it.flowId != selectedFlowId }
-        val target = targets.firstOrNull { it.flowId == editingCallTargetId }
-        val isVariableOrCondition = contract?.kind in setOf("variable.set", "variable.copy", "control.if")
-        if (isVariableOrCondition && contract != null) {
+        val arguments = editor.nodeArguments(nodeId)
+        val originalArguments = remember(editor, nodeId) { arguments?.deepCopy() }
+        if (contract == null || arguments == null) {
+            LaunchedEffect(nodeId) { editingCallNodeId = null }
+        } else if (contract.kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.if")) {
             VisualVariableConditionDialog(
                 contract = contract,
                 inputs = propertyInputs,
                 knownVariables = visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId),
+                projectVariables = snapshot.manifest.variables,
+                currentFlowId = selectedFlowId,
+                flows = snapshot.manifest.flows,
+                onManageVariables = { showVariableManager = true },
                 onDismiss = { editingCallNodeId = null },
+                confirmLabel = if (reflectionPosition == null) "保存" else "加入",
                 onConfirm = { inputs ->
+                    val target = snapshot.manifest.flows.firstOrNull { it.flowId == editingCallTargetId }
                     val parsed = parseBlockArguments(contract, inputs, target, callArgumentInputs, snapshot.manifest.resources)
                     if (parsed.second != null) {
                         parsed.second
-                    } else if (editor.updateArguments(nodeId, requireNotNull(parsed.first))) {
+                    } else if (editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState) && applyReflectedArguments(editor, nodeId, contract, requireNotNull(parsed.first), reflectionPosition,
+                            reflectionChildSlot, originalArguments)) {
                         editorRevision++
                         editingCallNodeId = null
                         saveCurrent()
@@ -898,449 +1274,78 @@ internal fun VisualProjectScreen(
                     } else "无法保存积木参数"
                 },
             )
-        } else AlertDialog(
-            onDismissRequest = { editingCallNodeId = null },
-            title = { Text(contract?.let { "${it.title}参数" } ?: "积木参数") },
-            text = {
-                Column {
-                    contract?.properties.orEmpty().forEach { property ->
-                        when (property.editor) {
-                            BlockPropertyEditor.FLOW_REFERENCE -> {
-                                Text(property.label, style = MaterialTheme.typography.labelMedium)
-                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                                    targets.forEach { candidate ->
-                                        TextButton(
-                                            onClick = {
-                                                editingCallTargetId = candidate.flowId
-                                                propertyInputs = propertyInputs + (property.path to candidate.flowId)
-                                                callArgumentInputs = defaultFlowCallArgumentTexts(candidate)
-                                                callArgumentError = null
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                                        ) {
-                                            Text(if (candidate.flowId == editingCallTargetId) "● ${candidate.flowId}" else candidate.flowId)
-                                        }
-                                    }
-                                }
-                            }
-                            BlockPropertyEditor.FLOW_ARGUMENTS -> target?.params.orEmpty()
-                                .forEach { parameter ->
-                                    val name = parameter.get("name")?.asString ?: return@forEach
-                                    val type = parameter.get("type")?.asString.orEmpty()
-                                    OutlinedTextField(
-                                        value = callArgumentInputs[name].orEmpty(),
-                                        onValueChange = {
-                                            callArgumentInputs = callArgumentInputs + (name to it)
-                                        },
-                                        singleLine = true,
-                                        label = { Text("$name · $type") },
-                                    )
-                                }
-                            BlockPropertyEditor.BOOLEAN -> {
-                                Text(property.label, style = MaterialTheme.typography.labelMedium)
-                                Row {
-                                    listOf("true" to "是", "false" to "否").forEach { (value, label) ->
-                                        TextButton(
-                                            onClick = {
-                                                propertyInputs = propertyInputs + (property.path to value)
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                        ) {
-                                            Text(if (propertyInputs[property.path] == value) "● $label" else label)
-                                        }
-                                    }
-                                }
-                            }
-                            BlockPropertyEditor.ENUM,
-                            BlockPropertyEditor.INTEGER_ENUM -> {
-                                Text(property.label, style = MaterialTheme.typography.labelMedium)
-                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                                    property.choices.forEach { choice ->
-                                        TextButton(
-                                            onClick = {
-                                                propertyInputs = propertyInputs + (property.path to choice)
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                        ) {
-                                            Text(if (propertyInputs[property.path] == choice) "● $choice" else choice)
-                                        }
-                                    }
-                                }
-                            }
-                            BlockPropertyEditor.RESOURCE -> {
-                                val paths = resourcePaths(
-                                    snapshot.manifest.resources,
-                                    property.resourceKind,
-                                )
-                                Text(property.label, style = MaterialTheme.typography.labelMedium)
-                                if (paths.isEmpty()) {
-                                    Text("项目中没有对应资源", color = MaterialTheme.colorScheme.error)
-                                } else {
-                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                                        paths.forEach { path ->
-                                            TextButton(
-                                                onClick = {
-                                                    propertyInputs = propertyInputs + (property.path to path)
-                                                },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                            ) {
-                                                Text(if (propertyInputs[property.path] == path) "● $path" else path)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            else -> OutlinedTextField(
-                                value = propertyInputs[property.path].orEmpty(),
-                                onValueChange = {
-                                    propertyInputs = propertyInputs + (property.path to it)
-                                },
-                                singleLine = true,
-                                label = { Text(property.label) },
-                                supportingText = {
-                                    Text(property.editor.name.lowercase())
-                                },
-                            )
-                        }
+        } else {
+            VisualNodeArgumentsDialog(
+                contract = contract,
+                arguments = arguments,
+                flows = snapshot.manifest.flows,
+                currentFlowId = selectedFlowId,
+                resources = snapshot.manifest.resources,
+                knownLabels = nodes.filter { it.kind == "control.label" && !editor.isNodeDisabled(it.nodeId) }
+                    .mapNotNull { editor.nodeArguments(it.nodeId)?.get("name")?.asString },
+                confirmLabel = if (reflectionPosition == null) "保存" else "加入",
+                knownVariables = visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId),
+                onManageVariables = { showVariableManager = true },
+                imageProject = snapshot,
+                imageDialogVisible = !showingInputPointPicker,
+                imageCaptureSelection = recognitionCaptureSelection,
+                imageCaptureTemplatePath = recognitionCaptureTemplatePath,
+                onPickImageFromScreen = { mode ->
+                    recognitionCaptureSelection = null
+                    recognitionCaptureTemplatePath = null
+                    recognitionCaptureActive = true
+                    openImageToolMode(mode, 0L)
+                },
+                onDismiss = { editingCallNodeId = null; recognitionCaptureSelection = null; recognitionCaptureTemplatePath = null },
+                onConfirm = { configured ->
+                    recognitionCaptureSelection = null
+                    recognitionCaptureTemplatePath = null
+                    if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
+                        error = "请停止运行后再修改插件"
+                    } else if (reflectionPosition == null && editor.nodeArguments(nodeId) == configured) {
+                        editingCallNodeId = null
+                        error = null
+                    } else if (applyReflectedArguments(editor, nodeId, contract, configured, reflectionPosition,
+                            reflectionChildSlot, originalArguments)) {
+                        editorRevision++
+                        editingCallNodeId = null
+                        error = null
+                        saveCurrent()
+                    } else {
+                        error = "无法保存积木参数"
                     }
-                    if (contract?.properties.isNullOrEmpty()) {
-                        Text("这个积木没有可编辑参数")
-                    }
-                    callArgumentError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val selectedContract = contract ?: return@TextButton
-                        val parsed = parseBlockArguments(
-                            selectedContract,
-                            propertyInputs,
-                            target,
-                            callArgumentInputs,
-                            snapshot.manifest.resources,
-                        )
-                        if (parsed.second != null) {
-                            callArgumentError = parsed.second
-                        } else {
-                            if (editor.updateArguments(nodeId, requireNotNull(parsed.first))) {
-                                editorRevision++
-                                editingCallNodeId = null
-                                saveCurrent()
-                            }
-                        }
-                    },
-                ) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingCallNodeId = null }) { Text("取消") }
-            },
-        )
+                },
+            )
+        }
     }
 
     BackHandler(enabled = active, onBack = onExit)
+    error?.let { message ->
+        EditorPromptDialog(title = "编辑提示", text = message, onDismiss = { error = null },
+            onConfirm = { error = null }, cancelLabel = "关闭", confirmLabel = "知道了")
+    }
+    if (showInterfacePreview) ProjectInterfacePreview(snapshot.manifest.runnerUi, snapshot.directory) { showInterfacePreview = false }
 
     Box(modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp)) {
-        Surface(modifier = Modifier.fillMaxWidth(), color = AutoScriptPalette.VisualEditor.PanelBackground, tonalElevation = 0.dp) {
-            Column {
-                // 顶栏对齐 `tk_bjck`：40dp、返回图标 + 面包屑式标题；其余操作行保持原有按钮。
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(40.dp).background(AutoScriptPalette.VisualEditor.ToolbarBackground).padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            painterResource(R.drawable.visual_back_24),
-                            contentDescription = "返回",
-                            tint = AutoScriptPalette.VisualEditor.ToolbarIcon,
-                            modifier = Modifier.size(36.dp).clickable(onClick = onExit).padding(7.dp),
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "${snapshot.manifest.name} > ${snapshot.manifest.flows.firstOrNull { it.flowId == selectedFlowId }?.displayName() ?: selectedFlowId}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = AutoScriptPalette.VisualEditor.TextPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                "可视化积木 · ${snapshot.manifest.flows.size} Flow · ${nodes.size} 节点",
-                                fontSize = 8.sp,
-                                color = AutoScriptPalette.VisualEditor.TextSecondary,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ProjectSettingsButton(
-                            snapshot = snapshot,
-                            store = store,
-                            enabled = canEditProjectSettings,
-                            onSnapshotChanged = onSnapshotChanged,
-                        )
-                        TextButton(
-                            onClick = ::compileOnly,
-                            enabled = canStartAction,
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                        ) { Text(if (action == VisualAction.COMPILING) "编译中…" else "编译") }
-                    }
-                }
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(
-                        onClick = ::runProject,
-                        enabled = canStartAction,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text(if (action == VisualAction.STARTING) "启动中…" else "运行") }
-                    TextButton(
-                        onClick = ::pauseOrResumeProject,
-                        enabled = canPauseResume,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) {
-                        Text(if (runtimeState.engineState == RuntimeEngineState.PAUSED) "继续" else "暂停")
-                    }
-                    TextButton(
-                        onClick = ::stopProject,
-                        enabled = canStop,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("停止") }
-                    TextButton(
-                        onClick = {
-                            insertionChildBlockName = null
-                            showBlockPicker = true
-                        },
-                        enabled = !runtimeBusy && !editor.isReadOnly,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("新增积木") }
-                    val callTargets = snapshot.manifest.flows.filter { it.flowId != selectedFlowId }
-                    TextButton(
-                        onClick = {
-                            editor.deleteSelected()
-                            editorRevision++
-                        },
-                        enabled = !runtimeBusy && !editor.isReadOnly && editor.selectedNodeId != null,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("删除") }
-                    TextButton(
-                        onClick = {
-                            editor.moveSelected(-1)
-                            editorRevision++
-                        },
-                        enabled = !runtimeBusy && !editor.isReadOnly && editor.selectedNodeId != null,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("上移") }
-                    TextButton(
-                        onClick = {
-                            editor.moveSelected(1)
-                            editorRevision++
-                        },
-                        enabled = !runtimeBusy && !editor.isReadOnly && editor.selectedNodeId != null,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("下移") }
-                    val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
-                    val selectedContract = selectedRow?.kind?.let(BlockCatalog::find)
-                    val selectedChildBlocks = selectedRow?.nodeId?.let(editor::childBlockNames).orEmpty()
-                    if (selectedContract?.kind == "control.if") {
-                        TextButton(
-                            onClick = { if (editor.addElseIfBranch()) editorRevision++ },
-                            enabled = !runtimeBusy && !editor.isReadOnly,
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                        ) { Text("＋否则如果") }
-                        TextButton(
-                            onClick = { if (editor.removeLastElseIfBranch()) editorRevision++ },
-                            enabled = !runtimeBusy && !editor.isReadOnly && editor.elseIfBranchCount(selectedRow.nodeId) > 0,
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                        ) { Text("－否则如果") }
-                    }
-                    selectedChildBlocks.forEach { childBlockName ->
-                        TextButton(
-                            onClick = {
-                                insertionChildBlockName = childBlockName
-                                showBlockPicker = true
-                            },
-                            enabled = !runtimeBusy && !editor.isReadOnly,
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                        ) { Text("${childBlockLabel(childBlockName)}内新增") }
-                    }
-                    TextButton(
-                        onClick = {
-                            val selectedId = editor.selectedNodeId ?: return@TextButton
-                            val contract = selectedContract ?: return@TextButton
-                            val args = editor.nodeArguments(selectedId) ?: JsonObject()
-                            val currentTarget = args.get("targetFlowId")?.asString
-                            val target = callTargets.firstOrNull { it.flowId == currentTarget }
-                                ?: callTargets.firstOrNull()
-                            editingCallNodeId = selectedId
-                            editingCallTargetId = target?.flowId
-                            propertyInputs = conditionPropertyTexts(contract, args)
-                            val existing = args.getAsJsonObject("arguments")
-                            callArgumentInputs = target?.let { flowCallArgumentTexts(it, existing) }.orEmpty()
-                            callArgumentError = null
-                        },
-                        enabled = !runtimeBusy &&
-                            selectedContract?.properties?.isNotEmpty() == true &&
-                            (!selectedContract.properties.any {
-                                it.editor == BlockPropertyEditor.FLOW_REFERENCE
-                            } || callTargets.isNotEmpty()),
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("参数") }
-                    TextButton(
-                        onClick = {
-                            editor.undo()
-                            editorRevision++
-                        },
-                        enabled = !runtimeBusy && editor.canUndo,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("撤销") }
-                    TextButton(
-                        onClick = {
-                            editor.redo()
-                            editorRevision++
-                        },
-                        enabled = !runtimeBusy && editor.canRedo,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text("重做") }
-                    TextButton(
-                        onClick = ::saveCurrent,
-                        enabled = !runtimeBusy && editor.isDirty && !editor.isReadOnly,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    ) { Text(if (action == VisualAction.SAVING) "保存中…" else "保存") }
-                }
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    snapshot.manifest.flows.forEach { flow ->
-                        TextButton(
-                            onClick = {
-                                selectedFlowId = flow.flowId
-                                error = null
-                                diagnostic = null
-                            },
-                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-                        ) {
-                            Text(
-                                if (flow.flowId == selectedFlowId) "● ${flow.displayName()}" else flow.displayName(),
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
-                    }
-                    TextButton(
-                        onClick = { showVariableManager = true },
-                        enabled = !runtimeBusy,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-                    ) { Text("变量") }
-                    TextButton(
-                        onClick = { showNewFlowDialog = true },
-                        enabled = !runtimeBusy,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-                    ) { Text("＋Flow") }
-                    TextButton(
-                        onClick = ::deleteCurrentFlow,
-                        enabled = !runtimeBusy &&
-                            selectedFlowId != snapshot.manifest.entryFlowId &&
-                            editors.values.none { it.isDirty },
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-                    ) { Text("删Flow") }
-                }
-            }
-        }
-
-        error?.let {
-            Text(
-                it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
-            )
-        }
-        if (error == null) {
-            runtimeState.message?.let { message ->
-                Text(
-                    message,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
-                )
-            }
-        }
-        notice?.let {
-            Text(
-                it,
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
-            )
-        }
-        Text(
-            "Runner ${runtimeState.engineState} · ${if (editor.isReadOnly) "只读：结构损坏" else if (editor.isDirty) "未保存" else "已保存"} · 结构按 blockId/parentId/orderKey 投影",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
-        )
-
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(vertical = 3.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items(nodes, key = VisualNodeRow::nodeId) { node ->
-                val selected = diagnostic?.nodeId == node.nodeId || editor.selectedNodeId == node.nodeId
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = (node.depth.coerceAtMost(8) * 12).dp)
-                        .clickable {
-                            editor.selectedNodeId = node.nodeId
-                            editorRevision++
-                        }
-                        .then(
-                            if (selected) Modifier.border(1.dp, MaterialTheme.colorScheme.error)
-                            else Modifier,
-                        ),
-                ) {
-                    Column(Modifier.padding(horizontal = 9.dp, vertical = 6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                buildString {
-                                    node.childSlot?.let { append(childBlockLabel(it)).append(" · ") }
-                                    append(BlockCatalog.find(node.kind)?.title ?: node.kind)
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                            Text(
-                                node.orderKey,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text(
-                            "${node.kind} · node ${node.nodeId} · block ${node.blockId}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-    }
         val projectFiles = remember(snapshot) { projectFileCatalog(snapshot) }
-        LegacyScriptDock(
+        EditorDock(
             projectName = snapshot.manifest.name,
-            onRun = ::runProject,
-            running = canStop,
+            initiallyExpanded = true,
+            onClose = onExit,
+            onRun = { runProject() },
+            running = running,
+            paused = runtimeState.engineState == RuntimeEngineState.PAUSED,
+            resumeEnabled = canPauseResume && !stepState.pending && !stepState.loading,
+            onPause = { controlRunningProject(pause = true) },
+            onResume = {
+                if (stepState.position == null) controlRunningProject(pause = false)
+                else if (stepState.begin(continueRun = true)) scope.launch {
+                    if (!withContext(Dispatchers.IO) { runtimeClient.resumeDebugProject(projectId, runtimeState.sessionGeneration) }) {
+                        stepState.rejected(); error = "无法继续：当前项目的会话或暂停状态已变化"
+                    }
+                }
+            },
+            runEnabled = if (running) canStop else canStartAction,
             onStop = ::stopProject,
             consoleLines = consoleLines,
             sourceName = snapshot.manifest.flows.firstOrNull { it.flowId == selectedFlowId }?.displayName() ?: selectedFlowId,
@@ -1350,7 +1355,15 @@ internal fun VisualProjectScreen(
             sourceMessage = sourceMessage,
             onSourceAction = ::handleSourceAction,
             onManageVariables = { showVariableManager = true },
+            onOpenSettings = {
+                if (canEditProjectSettings) showDockProjectSettings = true
+                else notice = "请先保存插件并停止运行，再打开项目设置"
+            },
             availableVariables = visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId),
+            availableLabels = editor.rows.filter { it.kind == "control.label" && it.depth == 0 }
+                .mapNotNull { row -> editor.nodeArguments(row.nodeId)?.get("name")?.asString }.distinct(),
+            projectVariables = snapshot.manifest.variables,
+            projectFlows = snapshot.manifest.flows,
             debugSettings = snapshot.manifest.debugSettings,
             onSaveDebugSettings = { settings ->
                 scope.launch {
@@ -1385,9 +1398,43 @@ internal fun VisualProjectScreen(
             onDeleteProjectFiles = ::deleteProjectFiles,
             onPluginAction = ::handlePluginAction,
             capabilities = snapshot.manifest.capabilities.toSet(),
+            onOpenInputPointPicker = { mode -> openInputPointPicker(mode) },
+            onOpenInputFloatingPicker = ::openInputFloatingPicker,
+            inputPickOpenRequest = inputPickOpenRequest,
+            inputBackendFeatures = inputBackendFeatures,
+            onOpenImageTools = ::openImageTools,
+            onOpenImageLibrary = { showImageLibrary = true },
+            onTestRecognition = { showRecognitionTest = true },
+            onOpenDebugTool = { debugInspector = it },
+            onOpenImageToolMode = ::openImageToolMode,
+            onCreateImageBlock = { kind ->
+                val contract = BlockCatalog.find(kind)
+                val capture = BlockCatalog.find("screen.capture")
+                val release = BlockCatalog.find("screen.release")
+                val missing = listOfNotNull(contract, capture, release).flatMap { it.requiredCapabilities }
+                    .toSet() - snapshot.manifest.capabilities.toSet()
+                when {
+                    contract == null || capture == null || release == null -> error = "缺少图像积木契约：$kind"
+                    missing.isNotEmpty() -> error = "${contract.title}需要能力：${missing.joinToString()}"
+                    else -> {
+                        val args = initialRecognitionArguments(contract, snapshot)
+                        run {
+                            pickedImageRegion?.takeIf { args.has("region") }?.let { roi ->
+                                args.add("region", JsonObject().apply {
+                                    addProperty("left", roi.left); addProperty("top", roi.top)
+                                    addProperty("right", roi.right); addProperty("bottom", roi.bottom)
+                                })
+                            }
+                            pendingImageBlock = contract to args
+                            recognitionCaptureSelection = null
+                            recognitionCaptureTemplatePath = null
+                        }
+                    }
+                }
+            },
             programNodes = nodes.map { node ->
                 val contract = BlockCatalog.find(node.kind)
-                LegacyDockProgramNode(
+                EditorProgramNode(
                     nodeId = node.nodeId,
                     label = buildString {
                         node.childSlot?.let { append('[').append(childBlockLabel(it)).append("] ") }
@@ -1396,21 +1443,52 @@ internal fun VisualProjectScreen(
                     kind = node.kind,
                     depth = node.depth,
                     childSlots = editor.childBlockNames(node.nodeId),
+                    disabled = editor.isNodeDisabled(node.nodeId, inherited = false),
                 )
             },
             programSelectedNodeId = editor.selectedNodeId,
-            editingEnabled = !runtimeBusy && !editor.isReadOnly,
+            programCurrentNodeId = stepState.position?.takeIf { it.flowId == selectedFlowId }?.nodeId,
+            executionStatus = when {
+                error != null -> error
+                stepState.pending -> stepState.pendingMessage
+                runtimeState.engineState == RuntimeEngineState.PAUSED && stepState.loading -> "已暂停 · 正在读取执行位置…"
+                runtimeState.engineState == RuntimeEngineState.PAUSED && stepState.position != null -> "已暂停 · 黄色 ▶ 为下一步，点击单步执行；点运行继续"
+                editor.isReadOnly -> "插件结构无效，只读查看"
+                else -> notice ?: runtimeState.message
+            },
+            programSelectedNodeIds = editor.selectedNodeIds,
+            onProgramNodeSelectionToggled = { nodeId -> editor.toggleSelection(nodeId); editorRevision++ },
+            editingEnabled = editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState),
+            programSource = editor.currentSource,
+            onReplaceProgramText = { query, replacement, selectedOnly ->
+                if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) "请停止运行后再替换"
+                else {
+                    val count = editor.replaceDisplayText(query, replacement, selectedOnly)
+                    if (count == 0) "没有可替换的文字，或替换结果超过长度限制"
+                    else { finishDockMutation(true, "已替换 $count 个积木的文字"); null }
+                }
+            },
+            onShowInterface = { showInterfacePreview = true },
+            stepEnabled = !stepState.pending && !stepState.loading &&
+                (runtimeState.engineState != RuntimeEngineState.PAUSED || stepState.position != null) &&
+                editorCanStep(runtimeBusy, runtimeState.phase == RuntimeConnectionPhase.CONNECTED, runtimeState.engineState,
+                    editor.selectedNodeId?.let { !editor.isNodeDisabled(it) } == true),
             onProgramNodeSelected = { nodeId ->
                 editor.selectedNodeId = nodeId
                 editorRevision++
             },
             onProgramNodeDeleted = {
-                if (!runtimeBusy && !editor.isReadOnly && editor.deleteSelected()) {
+                if (editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState) && editor.deleteSelection()) {
                     editorRevision++
+                    error = null
+                    notice = "已删除选中节点及其子树"
                     saveCurrent()
-                }
+                } else error = "无法删除当前节点"
             },
             onProgramNodeEdited = {
+                if (editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
+                reflectionPosition = null
+                reflectionChildSlot = null
                 val selectedId = editor.selectedNodeId
                 val selectedRow = nodes.firstOrNull { it.nodeId == selectedId }
                 val contract = selectedRow?.kind?.let(BlockCatalog::find)
@@ -1426,20 +1504,63 @@ internal fun VisualProjectScreen(
                         flowCallArgumentTexts(it, args.getAsJsonObject("arguments"))
                     }.orEmpty()
                     callArgumentError = null
+                } else notice = "当前节点没有可修改的参数"
+                }
+            },
+            onProgramNodeReflected = { selectedId, position, slot ->
+                val selectedContract = nodes.firstOrNull { it.nodeId == selectedId }?.kind?.let(BlockCatalog::find)
+                if (editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState) && selectedContract != null) {
+                    reflectionPosition = position.takeUnless { it == EditorInsertPosition.REPLACE }
+                    reflectionChildSlot = slot
+                    val args = requireNotNull(editor.nodeArguments(selectedId))
+                    editingCallTargetId = args.get("targetFlowId")?.takeIf { it.isJsonPrimitive }?.asString
+                    callArgumentInputs = snapshot.manifest.flows.firstOrNull { it.flowId == editingCallTargetId }
+                        ?.let { flowCallArgumentTexts(it, args.getAsJsonObject("arguments")) }.orEmpty()
+                    propertyInputs = conditionPropertyTexts(selectedContract, requireNotNull(editor.nodeArguments(selectedId)))
+                    editingCallNodeId = selectedId
+                }
+            },
+            onProgramNodeAnnotated = {
+                val contract = BlockCatalog.find("task.comment")
+                val selectedId = editor.selectedNodeId
+                if (contract == null || selectedId == null) {
+                    error = "请先选择要注释的节点"
+                } else {
+                    pendingBlockConfiguration = VisualPendingBlockInsert(
+                        contract = contract,
+                        arguments = requireNotNull(initialBlockArguments(
+                            contract, snapshot.manifest.flows, snapshot.manifest.resources, selectedFlowId,
+                        )),
+                        childSlot = null,
+                        position = EditorInsertPosition.BELOW,
+                    )
                 }
             },
             onProgramCommand = ::runDockCommand,
-            onStep = { notice = "单步运行需要 Runtime 调试协议，当前版本未开放，未执行脚本" },
+            canUndoProgram = editor.canUndo,
+            canRedoProgram = editor.canRedo,
+            hasProgramClipboard = dockClipboard != null,
+            onStep = {
+                if (runtimeState.engineState == RuntimeEngineState.PAUSED) {
+                    if (stepState.begin()) scope.launch {
+                        if (!withContext(Dispatchers.IO) { runtimeClient.requestStep(projectId, runtimeState.sessionGeneration) }) {
+                            stepState.rejected(); error = "无法单步：当前项目的会话或暂停状态已变化"
+                        }
+                    }
+                } else if (editorCanStep(runtimeBusy, runtimeState.phase == RuntimeConnectionPhase.CONNECTED, runtimeState.engineState,
+                        editor.selectedNodeId?.let { !editor.isNodeDisabled(it) } == true)) runProject(singleStep = true)
+                else notice = "请先暂停或停止脚本，再执行单步"
+            },
             onInsertPositioned = { legacyHint, position ->
                 val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
                 val childSlots = selectedRow?.nodeId?.let(editor::childBlockNames).orEmpty()
                 when {
-                    position == LegacyInsertPosition.INSIDE && childSlots.isEmpty() -> error = "当前选择行不能加入内部"
-                    position == LegacyInsertPosition.INSIDE -> insertDockBlock(legacyHint, childSlots.first(), position)
+                    position == EditorInsertPosition.INSIDE && childSlots.isEmpty() -> error = "当前选择行不能加入内部"
+                    position == EditorInsertPosition.INSIDE -> insertDockBlock(legacyHint, childSlots.first(), position)
                     else -> insertDockBlock(legacyHint, null, position)
                 }
             },
-            onInsert = { legacyHint ->
+        onInsert = { legacyHint ->
                 val selectedRow = nodes.firstOrNull { it.nodeId == editor.selectedNodeId }
                 val childSlots = selectedRow?.nodeId?.let(editor::childBlockNames).orEmpty()
                 when {
@@ -1451,6 +1572,81 @@ internal fun VisualProjectScreen(
                 notice = "请选择要加入的积木和插入位置"
             },
         )
+        if (showingInputPointPicker) {
+            ImageToolWindow(
+                pointerInputSupported = inputBackendFeatures and 2 != 0,
+                bitmap = inputPointBitmap,
+                designWidth = snapshot.manifest.design.width,
+                designHeight = snapshot.manifest.design.height,
+                scaleMode = snapshot.manifest.design.scaleMode,
+                initialMode = inputPointMode,
+                capturing = inputPointCapturing,
+                message = inputPointMessage,
+                onCapture = { captureInputPointScreenshot() },
+                onEmit = ::emitInputPointSnippet,
+                onCropToTemplate = { roi ->
+                    if (!imageToolRequest || inputPointBitmap == null) inputPointMessage = "请先从图像入口截图"
+                    else pendingTemplateRoi = roi
+                },
+                onClose = {
+                    showingInputPointPicker = false
+                    recognitionCaptureActive = false
+                    pendingTemplateRoi = null
+                    inputPointRequestId++
+                    inputPointCaptureJob?.cancel()
+                    inputPointCaptureJob = null
+                    inputPointCapturing = false
+                    inputPointBitmap?.recycle()
+                    inputPointBitmap = null
+                },
+                modifier = Modifier.zIndex(2f),
+            )
+        }
+        pendingTemplateRoi?.let { roi ->
+            ImageTemplateSaveDialog(
+                imagePaths = snapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
+                onDismiss = { pendingTemplateRoi = null },
+                onSave = { folder, name ->
+                    pendingTemplateRoi = null
+                    val source = inputPointBitmap
+                    if (!imageToolRequest || source == null) {
+                        inputPointMessage = "请先从图像入口截图"
+                    } else {
+                        val sourceCopy = runCatching {
+                            source.copy(source.config ?: Bitmap.Config.ARGB_8888, false)
+                        }.getOrNull()
+                        if (sourceCopy == null) {
+                            inputPointMessage = "无法准备模板图片"
+                        } else {
+                            inputPointMessage = "正在保存模板…"
+                            scope.launch {
+                                try {
+                                    val (updated, path) = withContext(Dispatchers.IO) {
+                                        try { cropAndImportTemplate(store, snapshot, sourceCopy, roi, context, folder, name) }
+                                        finally { sourceCopy.recycle() }
+                                    }
+                                    onSnapshotChanged(updated)
+                                    inputPointMessage = "模板已保存：$path"
+                                    notice = inputPointMessage
+                                    if (recognitionCaptureActive) {
+                                        recognitionCaptureTemplatePath = path
+                                        recognitionCaptureActive = false
+                                        showingInputPointPicker = false
+                                        inputPointRequestId++
+                                        inputPointCaptureJob?.cancel()
+                                        inputPointCaptureJob = null
+                                        inputPointBitmap?.recycle()
+                                        inputPointBitmap = null
+                                    }
+                                } catch (failure: Exception) {
+                                    inputPointMessage = failure.message ?: "保存模板失败"
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -1546,8 +1742,8 @@ internal fun childBlockLabel(name: String): String = when (name) {
 internal fun legacyDockBlockQuery(snippet: String): String {
     val line = snippet.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
     return when {
-        line.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX + "repeat:") -> "重复次数"
-        line.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX) -> "条件循环"
+        line.startsWith(FunctionCatalog.LOOP_HINT_PREFIX + "repeat:") -> "重复次数"
+        line.startsWith(FunctionCatalog.LOOP_HINT_PREFIX) -> "条件循环"
         line.contains("Onnx", ignoreCase = true) -> "ONNX OCR"
         line.contains("findImage", ignoreCase = true) -> "区域找图"
         line.contains("findColor", ignoreCase = true) -> "区域找色"
@@ -1555,17 +1751,53 @@ internal fun legacyDockBlockQuery(snippet: String): String {
         line.startsWith("if ") -> "如果"
         line.startsWith("while ") || line.startsWith("repeat") -> "条件循环"
         line.startsWith("for ") -> "重复次数"
+        line == "break" -> "跳出循环"
+        line == "return" -> "返回上层"
+        line.startsWith("::") && line.endsWith("::") -> "放置标记"
+        line.startsWith("goto ") -> "跳转标记"
         line.contains("Input.tap", ignoreCase = true) -> "点击"
         line.contains("Input.swipe", ignoreCase = true) -> "滑动"
         line.contains("sleep", ignoreCase = true) -> "等待"
-        // 调试面板输出的是标准 Lua `Log.*` 调用；在可视化项目中它必须落成
-        // `task.log` 积木，不能按未知 Lua 片段处理。
+        // 运行提示、短时弹窗和开发日志分开落成对应的积木。
+        line.contains("Prompt.show", ignoreCase = true) -> "运行提示"
+        line.contains("Prompt.toast", ignoreCase = true) -> "弹出提示"
         line.contains("Log.", ignoreCase = true) -> "输出日志"
+        line.startsWith("--") -> "注释"
         line.contains("Capture.", ignoreCase = true) -> "截图"
         line.contains("Runtime.setParameter", ignoreCase = true) -> "设置变量"
         line.contains("Runtime.getParameter", ignoreCase = true) -> "读取变量"
         else -> line.substringBefore('(').substringBefore('\n').trim()
     }
+}
+
+/** Shared pre-insert checks for the full and floating visual editors. */
+internal fun visualJumpInsertionError(
+    kind: String,
+    arguments: JsonObject,
+    editor: VisualEditorState,
+    childSlot: String?,
+    position: EditorInsertPosition,
+): String? {
+    val selected = editor.rows.firstOrNull { it.nodeId == editor.selectedNodeId }
+    if (kind == "control.break") {
+        val insideLoop = childSlot == "body" && selected?.kind in setOf("control.repeat", "control.while") ||
+            selected?.depth?.let { it > 0 } == true &&
+            editor.nearestAncestorOfKind(kinds = setOf("control.repeat", "control.while")) != null
+        if (position == EditorInsertPosition.LIST_BOTTOM || !insideLoop) return "跳出循环只能加入循环体"
+    }
+    if (kind !in setOf("control.label", "control.goto")) return null
+    if (childSlot != null || (position != EditorInsertPosition.LIST_BOTTOM && selected?.depth?.let { it > 0 } == true)) {
+        return "标记和跳转只能加入插件的根层级"
+    }
+    val name = arguments.get("name")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+    if (!JumpPanelCode.validName(name)) return "标记名无效"
+    val matchingLabels = editor.rows.filter { row ->
+        row.kind == "control.label" && editor.nodeArguments(row.nodeId)?.get("name")?.asString == name &&
+            !(position == EditorInsertPosition.REPLACE && row.nodeId == editor.selectedNodeId)
+    }
+    if (kind == "control.label" && matchingLabels.isNotEmpty()) return "当前插件已有同名标记：$name"
+    if (kind == "control.goto" && matchingLabels.isEmpty()) return "请先在当前插件放置标记：$name"
+    return null
 }
 
 internal fun legacyDockProgramLabel(
@@ -1592,6 +1824,24 @@ internal fun legacyDockBlockArguments(
     snippet: String,
     defaults: JsonObject,
 ): JsonObject = defaults.deepCopy().apply {
+    if (contract.kind in setOf("task.runprompt", "task.prompt", "task.log", "task.comment",
+            "flow.call", "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
+        snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + contract.kind + "\n")) {
+        val encoded = snippet.lineSequence().drop(1).firstOrNull().orEmpty()
+        val payload = runCatching { com.google.gson.JsonParser.parseString(encoded).asJsonObject }.getOrNull()
+        if (payload != null) {
+            if (contract.kind in setOf("flow.argument.set", "flow.return.set")) {
+                if (payload.has("valueVariable")) remove("value") else remove("valueVariable")
+            }
+            payload.entrySet().forEach { (key, value) -> add(key, value.deepCopy()) }
+            return@apply
+        }
+    }
+    loopInsertionFromHint(snippet)?.takeIf { it.kind == contract.kind }?.let { insertion ->
+        keySet().toList().forEach(::remove)
+        insertion.arguments.entrySet().forEach { (key, value) -> add(key, value.deepCopy()) }
+        return@apply
+    }
     val callArguments = legacyLuaCallArguments(snippet)
     fun integer(index: Int): Long? = callArguments.getOrNull(index)?.trim()?.toLongOrNull()
     fun decimal(index: Int): Double? = callArguments.getOrNull(index)?.trim()?.toDoubleOrNull()
@@ -1599,6 +1849,28 @@ internal fun legacyDockBlockArguments(
     fun quoted(index: Int): String? = callArguments.getOrNull(index)?.trim()?.let(::legacyLuaString)
 
     when (contract.kind) {
+        "variable.calculate" -> variableCalculationArguments(snippet)?.let {
+            addProperty("name", it["name"].asString)
+            addProperty("expression", it["expression"].asString)
+        }
+        "flow.argument.set", "flow.return.set" -> {
+            val parts = snippet.lineSequence().drop(1).firstOrNull().orEmpty().split('|', limit = 2)
+            parts.getOrNull(0)?.toIntOrNull()?.let { addProperty("index", it) }
+            val source = parts.getOrNull(1).orEmpty()
+            if (source.startsWith("variable:")) {
+                remove("value")
+                addProperty("valueVariable", source.removePrefix("variable:"))
+            } else if (source.startsWith("value:")) {
+                remove("valueVariable")
+                add("value", parseScalar(source.removePrefix("value:"))
+                    ?: com.google.gson.JsonPrimitive(source.removePrefix("value:")))
+            }
+        }
+        "flow.argument.get", "flow.return.get" -> {
+            val parts = snippet.lineSequence().drop(1).firstOrNull().orEmpty().split('|', limit = 2)
+            parts.getOrNull(0)?.toIntOrNull()?.let { addProperty("index", it) }
+            parts.getOrNull(1)?.let { addProperty("targetVariable", it) }
+        }
         "input.tap" -> {
             integer(0)?.let { addProperty("x", it) }
             integer(1)?.let { addProperty("y", it) }
@@ -1610,16 +1882,49 @@ internal fun legacyDockBlockArguments(
             integer(3)?.let { addProperty("y2", it) }
             integer(4)?.takeIf { it in 1..5_000 }?.let { addProperty("durationMs", it) }
         }
-        "task.sleep" -> integer(0)?.takeIf { it >= 0 }?.let { addProperty("milliseconds", it) }
+        "task.sleep" -> {
+            val marker = snippet.lineSequence().drop(1).firstOrNull()?.trim().orEmpty()
+            if (marker.startsWith("variable:")) {
+                addProperty("milliseconds", 0)
+                addProperty("millisecondsVariable", marker.removePrefix("variable:"))
+            } else {
+                remove("millisecondsVariable")
+                integer(0)?.takeIf { it >= 0 }?.let { addProperty("milliseconds", it) }
+            }
+        }
+        "control.label" -> snippet.trim().removeSurrounding("::")
+            .takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
+            ?.let { addProperty("name", it) }
+        "control.goto" -> snippet.trim().removePrefix("goto ")
+            .takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
+            ?.let { addProperty("name", it) }
         "task.log" -> {
             Regex("Log\\.(info|warn|error)", RegexOption.IGNORE_CASE)
                 .find(snippet)?.groupValues?.getOrNull(1)?.lowercase()?.let { addProperty("level", it) }
-            quoted(0)?.let { addProperty("message", it) }
+            val variable = Regex("__vars\\s*\\[\\s*[\\\"']([A-Za-z_][A-Za-z0-9_]*)[\\\"']\\s*]")
+                .find(snippet)?.groupValues?.getOrNull(1)
+            if (variable != null) {
+                addProperty("valueVariable", variable)
+                addProperty("message", variable)
+            } else {
+                quoted(0)?.let { addProperty("message", it) }
+            }
         }
+        "task.prompt", "task.runprompt" -> {
+            val variable = Regex("__vars\\s*\\[\\s*[\\\"']([A-Za-z_][A-Za-z0-9_]*)[\\\"']\\s*]")
+                .find(snippet)?.groupValues?.getOrNull(1)
+            if (variable != null) {
+                addProperty("valueVariable", variable)
+                addProperty("message", variable)
+            } else {
+                quoted(0)?.let { addProperty("message", it) }
+            }
+        }
+        "task.comment" -> addProperty("message", snippet.trim().removePrefix("--").trim().take(2048))
         "control.repeat" -> {
             val marker = snippet.lineSequence().firstOrNull()?.trim().orEmpty()
-            if (marker.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX + "repeat:")) {
-                val value = marker.removePrefix(LegacyFunctionCatalog.LOOP_HINT_PREFIX + "repeat:")
+            if (marker.startsWith(FunctionCatalog.LOOP_HINT_PREFIX + "repeat:")) {
+                val value = marker.removePrefix(FunctionCatalog.LOOP_HINT_PREFIX + "repeat:")
                 when {
                     value.startsWith("fixed:") -> value.removePrefix("fixed:").toLongOrNull()
                         ?.takeIf { it in 0..1_000_000 }?.let { addProperty("times", it) }
@@ -1637,16 +1942,16 @@ internal fun legacyDockBlockArguments(
         }
         "control.if", "control.while" -> {
             val marker = snippet.lineSequence().firstOrNull()?.trim().orEmpty()
-            if (contract.kind == "control.while" && marker.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX)) {
+            if (contract.kind == "control.while" && marker.startsWith(FunctionCatalog.LOOP_HINT_PREFIX)) {
                 addProperty("always", true)
                 addProperty("variable", "loopEnabled")
                 addProperty("operator", "equals")
                 addProperty("value", true)
                 when {
-                    marker.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX + "timed:fixed:") -> marker
+                    marker.startsWith(FunctionCatalog.LOOP_HINT_PREFIX + "timed:fixed:") -> marker
                         .substringAfterLast(':').toLongOrNull()?.takeIf { it in 1..86_400_000 }
                         ?.let { addProperty("durationMs", it) }
-                    marker.startsWith(LegacyFunctionCatalog.LOOP_HINT_PREFIX + "timed:variable:") -> marker
+                    marker.startsWith(FunctionCatalog.LOOP_HINT_PREFIX + "timed:variable:") -> marker
                         .substringAfterLast(':').takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
                         ?.let { addProperty("durationVariable", it) }
                 }
@@ -1735,19 +2040,17 @@ private fun formatDiagnostic(diagnostic: VisualCompileDiagnostic): String = buil
 
 private enum class VisualAction {
     SAVING,
-    CREATING_FLOW,
-    DELETING_FLOW,
     COMPILING,
     STARTING,
-    CONTROLLING,
     STOPPING,
+    CONTROLLING,
 }
 
 private data class VisualPendingBlockInsert(
     val contract: BlockContract,
     val arguments: JsonObject,
     val childSlot: String?,
-    val position: LegacyInsertPosition,
+    val position: EditorInsertPosition,
 )
 
 internal fun defaultFlowCallArguments(flow: ProjectFlow): JsonObject = JsonObject().apply {
@@ -1768,8 +2071,11 @@ internal fun initialBlockArguments(
     flows: List<ProjectFlow>,
     resources: List<JsonObject>,
     currentFlowId: String,
+    allowMissingResources: Boolean = false,
+    preferredFlowId: String? = null,
 ): JsonObject? {
-    val target = flows.firstOrNull { it.flowId != currentFlowId }
+    val target = if (preferredFlowId == null) flows.firstOrNull { it.flowId != currentFlowId }
+        else flows.firstOrNull { it.flowId == preferredFlowId && it.flowId != currentFlowId }
     val arguments = JsonObject()
     contract.properties.forEach { property ->
         if (!property.required) return@forEach
@@ -1797,7 +2103,7 @@ internal fun initialBlockArguments(
             }
             BlockPropertyEditor.RESOURCE -> arguments.addProperty(
                 property.path,
-                resourcePaths(resources, property.resourceKind).firstOrNull() ?: return null,
+                resourcePaths(resources, property.resourceKind).firstOrNull() ?: if (allowMissingResources) "" else return null,
             )
             BlockPropertyEditor.SCALAR -> arguments.add(
                 property.path,
@@ -1848,11 +2154,15 @@ internal fun initialBlockArguments(
             }
         }
     }
+    if (contract.kind in setOf("flow.argument.set", "flow.return.set") &&
+        !arguments.has("value") && !arguments.has("valueVariable")) {
+        arguments.addProperty("value", 0)
+    }
     return arguments
 }
 
 /** Variables that are already meaningful in this Flow, offered by the variable/condition editor. */
-private fun visualKnownVariables(
+internal fun visualKnownVariables(
     editor: VisualEditorState,
     declared: List<ProjectVariable>,
     currentFlowId: String,
@@ -1862,7 +2172,7 @@ private fun visualKnownVariables(
     editor.rows.forEach { row ->
         val args = editor.nodeArguments(row.nodeId) ?: return@forEach
         when (row.kind) {
-            "variable.set" -> args.get("name")?.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
+            "variable.set", "variable.calculate" -> args.get("name")?.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
             "variable.copy" -> listOf("sourceName", "name").forEach { key ->
                 args.get(key)?.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
             }
@@ -1873,137 +2183,6 @@ private fun visualKnownVariables(
     }
 }.filter { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }.sorted()
 
-@Composable
-internal fun VisualVariableManagerDialog(
-    variables: List<ProjectVariable>,
-    currentFlowId: String,
-    flows: List<ProjectFlow>,
-    onDismiss: () -> Unit,
-    onSave: (List<ProjectVariable>) -> Unit,
-    allowFlowScope: Boolean = true,
-) {
-    var draft by remember(variables) { mutableStateOf(variables) }
-    var name by remember { mutableStateOf("") }
-    var scope by remember { mutableStateOf(if (allowFlowScope) ProjectVariableScope.FLOW else ProjectVariableScope.GLOBAL) }
-    var type by remember { mutableStateOf(ProjectVariableType.INTEGER) }
-    var editing by remember { mutableStateOf<ProjectVariable?>(null) }
-    var validationMessage by remember { mutableStateOf<String?>(null) }
-    val visibleVariables = draft.filter { variable ->
-        variable.scope == scope && (scope == ProjectVariableScope.GLOBAL || variable.flowId == currentFlowId)
-    }
-
-    fun resetEditor() {
-        name = ""
-        type = ProjectVariableType.INTEGER
-        editing = null
-        validationMessage = null
-    }
-
-    fun saveDraftVariable() {
-        val normalized = name.trim()
-        if (!normalized.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}"))) {
-            validationMessage = "变量名需以字母或下划线开头，只能包含字母、数字和下划线"
-            return
-        }
-        val flowId = if (scope == ProjectVariableScope.FLOW) currentFlowId else null
-        val replacement = ProjectVariable(normalized, scope, flowId, type)
-        if (draft.any { it != editing && it.scope == replacement.scope && it.flowId == replacement.flowId && it.name == replacement.name }) {
-            validationMessage = "同一作用域内已存在变量：$normalized"
-            return
-        }
-        draft = editing?.let { old -> draft.map { if (it == old) replacement else it } } ?: draft + replacement
-        resetEditor()
-    }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth(.92f).heightIn(max = 560.dp).widthIn(max = 540.dp), color = androidx.compose.ui.graphics.Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 10.dp) {
-            Column {
-                Text("变量管理", color = AutoScriptPalette.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().padding(14.dp))
-                HorizontalDivider(color = AutoScriptPalette.Divider)
-                Row(Modifier.heightIn(min = 360.dp, max = 460.dp)) {
-                    // 易编的变量选择页用左列切换作用域。Flow 在这里就是当前正在编辑的流程，
-                    // 因而“局部变量”不会错误地泄漏到其它 Flow。
-                    Column(Modifier.weight(.27f).fillMaxSize().border(1.dp, AutoScriptPalette.Divider)) {
-                        if (allowFlowScope) {
-                            VariableScopeTab("局部变量", scope == ProjectVariableScope.FLOW) {
-                                scope = ProjectVariableScope.FLOW
-                                resetEditor()
-                            }
-                        }
-                        VariableScopeTab("全局变量", scope == ProjectVariableScope.GLOBAL) {
-                            scope = ProjectVariableScope.GLOBAL
-                            resetEditor()
-                        }
-                    }
-                    Column(Modifier.weight(.73f).fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            if (editing == null) "添加${if (scope == ProjectVariableScope.GLOBAL) "全局" else "局部"}变量" else "编辑变量",
-                            color = AutoScriptPalette.Accent,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        if (scope == ProjectVariableScope.FLOW) {
-                            Text("当前 Flow：$currentFlowId", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
-                        }
-                        OutlinedTextField(name, { name = it; validationMessage = null }, label = { Text("变量名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Row(Modifier.fillMaxWidth()) {
-                            ProjectVariableType.entries.forEach { candidate ->
-                                Text(
-                                    projectVariableTypeLabel(candidate),
-                                    color = if (type == candidate) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary,
-                                    fontSize = 10.sp,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.weight(1f).border(1.dp, if (type == candidate) AutoScriptPalette.Accent else AutoScriptPalette.Divider, RoundedCornerShape(2.dp)).clickable { type = candidate }.padding(vertical = 7.dp),
-                                )
-                            }
-                        }
-                        validationMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 10.sp) }
-                        Text(if (editing == null) "＋ 添加变量" else "保存修改", color = AutoScriptPalette.Accent, fontSize = 12.sp, modifier = Modifier.clickable { saveDraftVariable() }.padding(vertical = 4.dp))
-                        if (editing != null) Text("取消编辑", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.clickable { resetEditor() })
-                        HorizontalDivider(color = AutoScriptPalette.Divider)
-                        if (visibleVariables.isEmpty()) {
-                            Text("暂无${if (scope == ProjectVariableScope.GLOBAL) "全局" else "局部"}变量", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(vertical = 10.dp))
-                        }
-                        visibleVariables.forEach { variable ->
-                            Row(Modifier.fillMaxWidth().border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).clickable {
-                                editing = variable
-                                name = variable.name
-                                type = variable.type
-                                validationMessage = null
-                            }.padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("${projectVariableTypeLabel(variable.type)} · ${variable.name}", fontSize = 11.sp, modifier = Modifier.weight(1f))
-                                Text("删除", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, modifier = Modifier.clickable {
-                                    draft = draft - variable
-                                    if (editing == variable) resetEditor()
-                                }.padding(4.dp))
-                            }
-                        }
-                    }
-                }
-                HorizontalDivider(color = AutoScriptPalette.Divider)
-                Row(Modifier.fillMaxWidth().height(42.dp)) { Text("取消", textAlign = TextAlign.Center, modifier = Modifier.weight(1f).fillMaxSize().clickable(onClick = onDismiss).wrapContentSize(Alignment.Center)); Text("确定", color = AutoScriptPalette.Accent, textAlign = TextAlign.Center, modifier = Modifier.weight(1f).fillMaxSize().clickable { onSave(draft) }.wrapContentSize(Alignment.Center)) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun VariableScopeTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        color = if (selected) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary,
-        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        fontSize = 13.sp,
-        modifier = Modifier.fillMaxWidth().background(if (selected) AutoScriptPalette.Accent.copy(alpha = .08f) else androidx.compose.ui.graphics.Color.Transparent).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 13.dp),
-    )
-}
-
-private fun projectVariableTypeLabel(type: ProjectVariableType): String = when (type) {
-    ProjectVariableType.INTEGER -> "整数"
-    ProjectVariableType.NUMBER -> "浮点"
-    ProjectVariableType.STRING -> "字符"
-    ProjectVariableType.IMAGE -> "图像"
-}
 
 /**
  * A real editor for the first two visual language building blocks.  It deliberately writes the
@@ -2015,9 +2194,23 @@ private fun VisualVariableConditionDialog(
     contract: BlockContract,
     inputs: Map<String, String>,
     knownVariables: List<String>,
+    projectVariables: List<ProjectVariable> = emptyList(),
+    currentFlowId: String = "",
+    flows: List<ProjectFlow> = emptyList(),
+    onManageVariables: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: (Map<String, String>) -> String?,
+    confirmLabel: String = "确定",
 ) {
+    if (contract.kind == "variable.calculate") {
+        VisualVariableCalculationDialog(JsonObject().apply {
+            addProperty("name", inputs["name"].orEmpty())
+            addProperty("expression", inputs["expression"].orEmpty())
+        }, projectVariables, currentFlowId, flows, onDismiss,
+            onConfirm = { configured -> onConfirm(configured.entrySet().associate { it.key to it.value.asString }) },
+            onManageVariables = onManageVariables, confirmLabel = confirmLabel)
+        return
+    }
     var values by remember(contract.kind, inputs) { mutableStateOf(inputs) }
     var elseIfBranches by remember(contract.kind, inputs) {
         mutableStateOf(parseElseIfDrafts(inputs["elseIf"]))
@@ -2026,6 +2219,10 @@ private fun VisualVariableConditionDialog(
     val title = when (contract.kind) {
         "control.if" -> "如果"
         "variable.set" -> "设置变量"
+        "task.log" -> "输出日志"
+        "task.prompt" -> "弹出提示"
+        "task.runprompt" -> "运行提示"
+        "task.comment" -> "注释"
         else -> "读取变量"
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -2102,6 +2299,55 @@ private fun VisualVariableConditionDialog(
                             VisualVariableField("变量名", values["name"].orEmpty(), knownVariables) { values = values + ("name" to it) }
                             OutlinedTextField(value = values["value"].orEmpty(), onValueChange = { values = values + ("value" to it) }, label = { Text("值（字符串请用双引号）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         }
+                        "task.log" -> {
+                            Text("日志级别", color = AutoScriptPalette.Accent, fontSize = 11.sp)
+                            Row(Modifier.fillMaxWidth()) {
+                                listOf("info" to "信息", "warn" to "警告", "error" to "错误").forEach { (level, label) ->
+                                    val selected = values["level"] == level
+                                    Text(
+                                        label,
+                                        color = if (selected) androidx.compose.ui.graphics.Color.White else AutoScriptPalette.TextPrimary,
+                                        fontSize = 10.sp,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp)
+                                            .background(if (selected) AutoScriptPalette.Accent else androidx.compose.ui.graphics.Color(0xFFF1F4F8), RoundedCornerShape(3.dp))
+                                            .clickable { values = values + ("level" to level) }
+                                            .padding(vertical = 7.dp),
+                                    )
+                                }
+                            }
+                            OutlinedTextField(
+                                value = values["message"].orEmpty(),
+                                onValueChange = { values = values + ("message" to it) },
+                                label = { Text("日志内容") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            VisualVariableField("变量值（可选，优先输出）", values["valueVariable"].orEmpty(), knownVariables) {
+                                values = values + ("valueVariable" to it)
+                            }
+                        }
+                        "task.prompt", "task.runprompt" -> {
+                            OutlinedTextField(
+                                value = values["message"].orEmpty(),
+                                onValueChange = { values = values + ("message" to it) },
+                                label = { Text("提示内容") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            VisualVariableField("变量值（可选，优先提示）", values["valueVariable"].orEmpty(), knownVariables) {
+                                values = values + ("valueVariable" to it)
+                            }
+                        }
+                        "task.comment" -> {
+                            OutlinedTextField(
+                                value = values["message"].orEmpty(),
+                                onValueChange = { values = values + ("message" to it) },
+                                label = { Text("注释内容") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                         else -> {
                             VisualVariableField("来源变量", values["sourceName"].orEmpty(), knownVariables) { values = values + ("sourceName" to it) }
                             VisualVariableField("目标变量", values["name"].orEmpty(), knownVariables) { values = values + ("name" to it) }
@@ -2112,7 +2358,7 @@ private fun VisualVariableConditionDialog(
                 HorizontalDivider(color = AutoScriptPalette.Divider)
                 Row(Modifier.fillMaxWidth().height(40.dp)) {
                     Text("取消", textAlign = TextAlign.Center, color = AutoScriptPalette.TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable(onClick = onDismiss).wrapContentSize(Alignment.Center))
-                    Text("确定", textAlign = TextAlign.Center, color = AutoScriptPalette.Accent, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable {
+                    Text(confirmLabel, textAlign = TextAlign.Center, color = AutoScriptPalette.Accent, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable {
                         val complete = if (contract.kind == "control.if") values + ("elseIf" to serializeElseIfDrafts(elseIfBranches)) else values
                         validationError = onConfirm(complete)
                     }.wrapContentSize(Alignment.Center))
@@ -2174,9 +2420,54 @@ internal fun VisualNodeArgumentsDialog(
     flows: List<ProjectFlow>,
     currentFlowId: String,
     resources: List<JsonObject>,
+    knownVariables: List<String> = emptyList(),
+    imageProject: ProjectSnapshot? = null,
+    imageDialogVisible: Boolean = true,
+    imageCaptureSelection: ImageToolCodeGen.VisualSelection? = null,
+    imageCaptureTemplatePath: String? = null,
+    onPickImageFromScreen: ((ImageToolMode) -> Unit)? = null,
+    onManageVariables: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: (JsonObject) -> Unit,
+    confirmLabel: String = "保存",
+    knownLabels: List<String> = emptyList(),
 ) {
+    if (contract.kind == "ui.get" && imageProject != null) {
+        VisualUiParameterDialog(arguments, imageProject.manifest.runnerUi, imageProject.manifest.variables, currentFlowId,
+            flows, onManageVariables, onDismiss, { onConfirm(it); null }, confirmLabel)
+        return
+    }
+    if (contract.kind.startsWith("input.")) {
+        CompactInputArgumentsDialog(contract, arguments, onDismiss, onConfirm, confirmLabel)
+        return
+    }
+    if (contract.kind in setOf("variable.set", "variable.copy", "control.if")) {
+        VisualVariableConditionDialog(contract, conditionPropertyTexts(contract, arguments), knownVariables,
+            imageProject?.manifest?.variables.orEmpty(), currentFlowId, flows, onManageVariables, onDismiss,
+            onConfirm = { configured ->
+                val parsed = parseBlockArguments(contract, configured, null, emptyMap(), resources)
+                if (parsed.first == null) parsed.second else { onConfirm(requireNotNull(parsed.first)); null }
+            }, confirmLabel = confirmLabel)
+        return
+    }
+    if (ConfiguredEntryArgumentsDialog(contract, arguments, imageProject?.manifest?.variables.orEmpty(), flows,
+            currentFlowId, knownVariables, imageProject?.manifest?.debugSettings ?: com.autoscript.project.store.ProjectDebugSettings(),
+            onManageVariables, onDismiss, onConfirm, confirmLabel, knownLabels)) return
+    if (contract.kind == "variable.calculate") {
+        VisualVariableCalculationDialog(arguments, imageProject?.manifest?.variables.orEmpty(), currentFlowId, flows,
+            onDismiss, onConfirm = { onConfirm(it); null }, onManageVariables = onManageVariables, confirmLabel = confirmLabel)
+        return
+    }
+    if (contract.kind in visualRecognitionKinds) {
+        VisualImageRecognitionDialog(
+            contract, arguments, resources, knownVariables, imageProject,
+            visible = imageDialogVisible, captureSelection = imageCaptureSelection,
+            captureTemplatePath = imageCaptureTemplatePath, onPickFromScreen = onPickImageFromScreen,
+            confirmLabel = confirmLabel,
+            onDismiss = onDismiss, onConfirm = { _, configured -> onConfirm(configured) },
+        )
+        return
+    }
     val targets = flows.filter { it.flowId != currentFlowId }
     var targetFlowId by remember(contract.kind, arguments) {
         mutableStateOf(arguments.get("targetFlowId")?.takeIf { it.isJsonPrimitive }?.asString ?: targets.firstOrNull()?.flowId)
@@ -2188,58 +2479,122 @@ internal fun VisualNodeArgumentsDialog(
     }
     var validationError by remember(contract.kind, arguments) { mutableStateOf<String?>(null) }
     val target = targets.firstOrNull { it.flowId == targetFlowId }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("${contract.title}参数") },
-        text = {
-            Column(Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState())) {
-                contract.properties.forEach { property ->
-                    when (property.editor) {
-                        BlockPropertyEditor.FLOW_REFERENCE -> {
-                            Text(property.label, style = MaterialTheme.typography.labelMedium)
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                                targets.forEach { candidate ->
-                                    TextButton(onClick = {
-                                        targetFlowId = candidate.flowId
-                                        inputs = inputs + (property.path to candidate.flowId)
-                                        flowInputs = defaultFlowCallArgumentTexts(candidate)
-                                    }) { Text(if (candidate.flowId == targetFlowId) "● ${candidate.flowId}" else candidate.flowId) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.92f).widthIn(max = 520.dp),
+            color = androidx.compose.ui.graphics.Color.White,
+            shape = RoundedCornerShape(3.dp),
+            shadowElevation = 10.dp,
+        ) {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth().height(40.dp).padding(start = 14.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(contract.title, color = AutoScriptPalette.Accent, fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("×", color = AutoScriptPalette.TextSecondary, fontSize = 22.sp,
+                        modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 8.dp))
+                }
+                HorizontalDivider(color = AutoScriptPalette.Divider)
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    contract.properties.forEach { property ->
+                        when (property.editor) {
+                            BlockPropertyEditor.FLOW_REFERENCE -> {
+                                Text(property.label, color = AutoScriptPalette.Accent, fontSize = 11.sp)
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                                    targets.forEach { candidate ->
+                                        TextButton(onClick = {
+                                            targetFlowId = candidate.flowId
+                                            inputs = inputs + (property.path to candidate.flowId)
+                                            flowInputs = defaultFlowCallArgumentTexts(candidate)
+                                            validationError = null
+                                        }) { Text(if (candidate.flowId == targetFlowId) "● ${candidate.flowId}" else candidate.flowId) }
+                                    }
                                 }
                             }
-                        }
-                        BlockPropertyEditor.FLOW_ARGUMENTS -> {
-                            target?.params.orEmpty().forEach { parameter ->
-                                val name = parameter.get("name")?.asString.orEmpty()
-                                OutlinedTextField(
-                                    value = flowInputs[name].orEmpty(),
-                                    onValueChange = { flowInputs = flowInputs + (name to it) },
-                                    label = { Text("调用参数 $name") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                            BlockPropertyEditor.FLOW_ARGUMENTS -> {
+                                target?.params.orEmpty().forEach { parameter ->
+                                    val name = parameter.get("name")?.asString.orEmpty()
+                                    OutlinedTextField(
+                                        value = flowInputs[name].orEmpty(),
+                                        onValueChange = { flowInputs = flowInputs + (name to it) },
+                                        label = { Text("调用参数 $name") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             }
+                            BlockPropertyEditor.RESOURCE -> {
+                                Text(property.label, color = AutoScriptPalette.Accent, fontSize = 11.sp)
+                                val choices = resourcePaths(resources, property.resourceKind)
+                                if (choices.isEmpty()) Text("项目中没有可选资源", color = MaterialTheme.colorScheme.error)
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                                    choices.forEach { path ->
+                                        TextButton(onClick = { inputs = inputs + (property.path to path) }) {
+                                            Text(if (inputs[property.path] == path) "● $path" else path)
+                                        }
+                                    }
+                                }
+                            }
+                            BlockPropertyEditor.BOOLEAN,
+                            BlockPropertyEditor.ENUM,
+                            BlockPropertyEditor.INTEGER_ENUM -> {
+                                Text(property.label, color = AutoScriptPalette.Accent, fontSize = 11.sp)
+                                val choices = if (property.editor == BlockPropertyEditor.BOOLEAN) listOf("true", "false") else property.choices
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                                    choices.forEach { choice ->
+                                        TextButton(onClick = { inputs = inputs + (property.path to choice) }) {
+                                            Text(if (inputs[property.path] == choice) "● $choice" else choice)
+                                        }
+                                    }
+                                }
+                            }
+                            BlockPropertyEditor.STRING -> if (property.path.endsWith("Variable")) {
+                                VisualVariableField(property.label, inputs[property.path].orEmpty(), knownVariables) {
+                                    inputs = inputs + (property.path to it)
+                                }
+                            } else OutlinedTextField(
+                                value = inputs[property.path].orEmpty(),
+                                onValueChange = { inputs = inputs + (property.path to it) },
+                                label = { Text(property.label) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            else -> OutlinedTextField(
+                                value = inputs[property.path].orEmpty(),
+                                onValueChange = { inputs = inputs + (property.path to it) },
+                                label = { Text(property.label) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
-                        else -> OutlinedTextField(
-                            value = inputs[property.path].orEmpty(),
-                            onValueChange = { inputs = inputs + (property.path to it) },
-                            label = { Text(property.label) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                     }
+                    if (contract.properties.isEmpty()) {
+                        Text("这个积木没有可编辑参数", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp)
+                    }
+                    validationError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                 }
-                validationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                HorizontalDivider(color = AutoScriptPalette.Divider)
+                Row(Modifier.fillMaxWidth().height(40.dp)) {
+                    Text("取消", textAlign = TextAlign.Center, color = AutoScriptPalette.TextPrimary,
+                        fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize()
+                            .clickable(onClick = onDismiss).wrapContentSize(Alignment.Center))
+                    Box(Modifier.size(width = 1.dp, height = 40.dp).background(AutoScriptPalette.Divider))
+                    Text(confirmLabel, textAlign = TextAlign.Center, color = AutoScriptPalette.Accent,
+                        fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize()
+                            .clickable {
+                                val parsed = parseBlockArguments(contract, inputs, target, flowInputs, resources)
+                                if (parsed.first == null) validationError = parsed.second ?: "参数无效"
+                                else onConfirm(requireNotNull(parsed.first))
+                            }.wrapContentSize(Alignment.Center))
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val parsed = parseBlockArguments(contract, inputs, target, flowInputs, resources)
-                if (parsed.first == null) validationError = parsed.second ?: "参数无效"
-                else onConfirm(requireNotNull(parsed.first))
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+        }
+    }
 }
 
 private fun defaultFlowCallArgumentTexts(flow: ProjectFlow): Map<String, String> =
@@ -2253,7 +2608,7 @@ private fun flowCallArgumentTexts(flow: ProjectFlow, arguments: JsonObject?): Ma
         }.orEmpty()
     }
 
-private fun blockPropertyTexts(
+internal fun blockPropertyTexts(
     contract: BlockContract,
     arguments: JsonObject,
 ): Map<String, String> = contract.properties
@@ -2261,7 +2616,7 @@ private fun blockPropertyTexts(
     .associate { property ->
         val value = arguments.get(property.path)
         property.path to when {
-            value == null || value.isJsonNull -> ""
+            value == null || value.isJsonNull -> property.defaultValue.orEmpty()
             property.editor == BlockPropertyEditor.POINT -> formatPoint(value.asJsonObject)
             property.editor == BlockPropertyEditor.RECT -> formatRect(value.asJsonObject)
             property.editor == BlockPropertyEditor.COLOR -> formatColor(value.asInt)
@@ -2384,11 +2739,11 @@ internal fun parseBlockArguments(
                 arguments.addProperty(property.path, text)
             }
             BlockPropertyEditor.FLOW_REFERENCE -> {
-                val target = targetFlow ?: return null to "请选择目标 Flow"
+                val target = targetFlow ?: return null to "请选择目标插件"
                 arguments.addProperty(property.path, target.flowId)
             }
             BlockPropertyEditor.FLOW_ARGUMENTS -> {
-                val target = targetFlow ?: return null to "请选择目标 Flow"
+                val target = targetFlow ?: return null to "请选择目标插件"
                 val parsed = parseFlowCallArguments(target, flowInputs)
                 if (parsed.second != null) return null to parsed.second
                 arguments.add(property.path, requireNotNull(parsed.first))
@@ -2404,6 +2759,29 @@ internal fun parseBlockArguments(
                     branch.asJsonObject.get("value") == null
             }) return null to "否则如果分支参数无效"
         if (branches.size() > 0) arguments.add("elseIf", branches)
+    }
+    if (contract.kind == "task.comment" && arguments.get("message")?.asString.isNullOrBlank()) {
+        return null to "注释内容不能为空"
+    }
+    if (contract.kind.startsWith("vision.") || contract.kind.startsWith("ocr.")) {
+        val bounds = mapOf(
+            "tolerance" to (0..255),
+            "anchorTolerance" to (0..255),
+            "similarityPermille" to (0..1000),
+            "limit" to (1..256),
+            "spaceGapColumns" to (0..65535),
+        )
+        bounds.forEach { (name, allowed) ->
+            arguments.get(name)?.let { value ->
+                if (value.asInt !in allowed) return null to "$name 必须在 ${allowed.first}..${allowed.last} 之间"
+            }
+        }
+        arguments.getAsJsonObject("region")?.let { region ->
+            if (region.get("right").asInt <= region.get("left").asInt ||
+                region.get("bottom").asInt <= region.get("top").asInt) {
+                return null to "识别区域的右/下坐标必须大于左/上坐标"
+            }
+        }
     }
     return arguments to null
 }

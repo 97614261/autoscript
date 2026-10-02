@@ -32,6 +32,24 @@ val generateBlockCatalog by tasks.registering(Exec::class) {
     )
 }
 
+val generatedFunctionFile = generatedBlockRoot.map {
+    it.file("com/autoscript/studio/generated/GeneratedFunctionDocumentation.kt")
+}
+val generateFunctionDocumentation by tasks.registering(Exec::class) {
+    dependsOn(":android:runtime-api:buildApiCodegen")
+    workingDir(rootProject.projectDir)
+    inputs.dir(rootProject.file("schema/api-schema/functions"))
+    inputs.file(generatorExecutable)
+    outputs.file(generatedFunctionFile)
+    doFirst { generatedFunctionFile.get().asFile.parentFile.mkdirs() }
+    commandLine(
+        generatorExecutable.asFile.absolutePath,
+        "studio-functions-kotlin",
+        rootProject.projectDir.absolutePath,
+        generatedFunctionFile.get().asFile.absolutePath,
+    )
+}
+
 android {
     namespace = "com.autoscript.studio"
     compileSdk = 36
@@ -55,9 +73,10 @@ android {
     sourceSets.getByName("main").java.srcDir(generatedBlockRoot)
 }
 
-tasks.named("preBuild").configure { dependsOn(generateBlockCatalog) }
+tasks.named("preBuild").configure { dependsOn(generateBlockCatalog, generateFunctionDocumentation) }
 
 dependencies {
+    implementation(project(":android:script-ui"))
     implementation(project(":android:core-model"))
     implementation(project(":android:core-designsystem"))
     implementation(project(":android:auth-api"))
@@ -65,6 +84,7 @@ dependencies {
     implementation(project(":android:runtime-client"))
     implementation(project(":android:runtime-api"))
     implementation(project(":android:runtime-service"))
+    implementation(project(":android:studio-compiler"))
     implementation(project(":android:project-store"))
 
     implementation(libs.androidx.core.ktx)
