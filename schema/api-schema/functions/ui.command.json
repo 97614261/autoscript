@@ -4,12 +4,12 @@
   "name": "UI.command",
   "since": "1.7",
   "capability": "ui.control",
-  "execution": "rust_sync",
-  "cancelMode": "none",
+  "execution": "host_sync",
+  "cancelMode": "cooperative",
   "sideEffect": "ui_prompt",
-  "timeoutMs": null,
+  "timeoutMs": 3000,
   "resourceOwnership": "none",
-  "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。",
+  "summary": "白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。",
   "params": [
     {
       "name": "id",
@@ -31,9 +31,9 @@
     }
   ],
   "returns": {
-    "type": "void",
-    "nullable": false,
-    "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。"
+    "type": "string",
+    "nullable": true,
+    "summary": "get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。"
   },
   "legacyAliases": []
 }

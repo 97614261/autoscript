@@ -130,6 +130,12 @@ private fun StudioApp(
         runtimeState = it
         console.record(it)
     }
+    val openSoftwarePermissions = rememberSoftwarePermissionsLauncher(runtimeClient)
+    var environmentInputFeatures by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(runtimeEnvironmentVisible, runtimeState.phase, runtimeState.rootState, runtimeState.sessionGeneration) {
+        environmentInputFeatures = null
+        if (runtimeEnvironmentVisible) environmentInputFeatures = withContext(Dispatchers.IO) { runtimeClient.inputFeatures() }
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
     val projectStore = remember(context) {
         ProjectStore(File(context.applicationContext.filesDir, "projects"))
@@ -187,6 +193,8 @@ private fun StudioApp(
                     onBack = { runtimeEnvironmentVisible = false },
                     onRefresh = runtimeClient::refresh,
                     onShowDebug = { runtimeDebugMessage = it },
+                    onOpenPermissions = openSoftwarePermissions,
+                    inputFeatures = environmentInputFeatures,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else when (navigation.destination) {
@@ -211,6 +219,7 @@ private fun StudioApp(
                     )
                 } ?: ProfilePage(
                     onOpenRuntimeEnvironment = { runtimeEnvironmentVisible = true },
+                    onOpenPermissions = openSoftwarePermissions,
                     onOpenSubpage = { profileSubpage = it },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -679,6 +688,7 @@ private fun rememberRuntimeClient(onState: (RuntimeConnectionState) -> Unit): Ru
 @Composable
 private fun ProfilePage(
     onOpenRuntimeEnvironment: () -> Unit,
+    onOpenPermissions: () -> Unit,
     onOpenSubpage: (ProfileSubpage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -729,6 +739,8 @@ private fun ProfilePage(
             ) {
                 Column {
                     ProfileFeatureRow(R.drawable.ic_memory_24, "运行环境", null, onOpenRuntimeEnvironment)
+                    ProfileDivider()
+                    ProfileFeatureRow(R.drawable.editor_settings_24, "软件权限", "授权入口与实时运行状态", onOpenPermissions)
                     ProfileDivider()
                     ProfileFeatureRow(R.drawable.ic_group_24, "社区与反馈", "本地版暂未配置外部群组", {})
                     ProfileDivider()

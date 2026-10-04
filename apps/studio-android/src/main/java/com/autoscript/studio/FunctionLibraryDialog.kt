@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +59,8 @@ internal fun FunctionLibraryDialog(
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val activeCategory = category?.takeIf { label -> groups.any { it.label == label } }
     val matched = remember(groups, query, activeCategory) { FunctionCatalog.search(groups, query, activeCategory) }
+    // Search/category changes start at the first result. Opening/closing details keeps this instance.
+    val resultScroll = remember(activeCategory, query) { LazyListState() }
     val selected = groups.flatMap { it.entries }.firstOrNull { it.libraryKey() == selectedKey }
     val screenHeight = LocalConfiguration.current.screenHeightDp
     val panelHeight = functionLibraryHeightDp(screenHeight, matched.size).dp
@@ -119,6 +122,7 @@ internal fun FunctionLibraryDialog(
                         } else {
                             LazyColumn(
                                 Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+                                state = resultScroll,
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(matched, key = { (_, entry) -> entry.libraryKey() }) { (_, entry) ->

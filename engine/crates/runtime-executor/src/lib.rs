@@ -24,6 +24,10 @@ use runtime_scheduler::{
 };
 use script_api::{ApiContract, CancelMode, API_CONTRACTS};
 
+mod data_runtime;
+mod template_results;
+mod ui_runtime;
+
 const HOST_MARKER: &[u8] = b"__AUTOSCRIPT_HOST_V1";
 const OP_LOG_WRITE: u32 = 1_100;
 const OP_PROMPT_SHOW: u32 = 1_101;
@@ -53,6 +57,8 @@ const OP_SCREEN_FIND_MULTI_COLOR: u32 = 5_104;
 const OP_SCREEN_COUNT_COLOR: u32 = 5_105;
 const OP_SCREEN_FIND_ALL_COLOR: u32 = 5_106;
 const OP_SCREEN_FIND_IMAGES: u32 = 5_107;
+const OP_SCREEN_FIND_ALL_IMAGES: u32 = 5_114;
+const OP_SCREEN_MATCH_VALUE: u32 = 5_115;
 const OP_LEGACY_DUO_DIAN_ZHAO_SE: u32 = 5_110;
 const OP_LEGACY_DUO_DIAN_BI_SE: u32 = 5_111;
 const OP_LEGACY_GET_RECT_COLOR_NUM: u32 = 5_112;
@@ -952,6 +958,24 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             return Ok(());
         }
         match opcode {
+            14000..=14006 => {
+                self.resume_inputs.insert(
+                    task,
+                    data_runtime::resume(data_runtime::execute(opcode, &values[2..])),
+                );
+                self.scheduler.yield_budget(task)?;
+                Ok(())
+            }
+            14100..=14103 => {
+                if let Err(message) = data_runtime::validate_file_request(opcode, &values[2..]) {
+                    self.resume_inputs
+                        .insert(task, data_runtime::resume(Err(message)));
+                    self.scheduler.yield_budget(task)?;
+                    Ok(())
+                } else {
+                    self.dispatch_host(task, opcode, values[2..].to_vec())
+                }
+            }
             1200..=1203 => self.apply_ui(task, opcode, &values[2..]),
             5108 | 6101 => self.dispatch_host(task, opcode, values[2..].to_vec()),
             OP_LOG_WRITE => self.apply_log(task, &values[2..]),
@@ -979,6 +1003,8 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             | OP_SCREEN_FIND_COLOR
             | OP_SCREEN_FIND_IMAGE
             | OP_SCREEN_FIND_IMAGES
+            | OP_SCREEN_FIND_ALL_IMAGES
+            | OP_SCREEN_MATCH_VALUE
             | OP_SCREEN_CROP
             | OP_SCREEN_GET_COLOR
             | OP_SCREEN_COMPARE_COLOR
@@ -1159,6 +1185,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             OP_SCREEN_FIND_COLOR => self.find_color(task, args),
             OP_SCREEN_FIND_IMAGE => self.find_image(task, args),
             OP_SCREEN_FIND_IMAGES => self.find_images(task, args),
+            OP_SCREEN_FIND_ALL_IMAGES => self.find_all_images(task, args),
+            OP_SCREEN_MATCH_VALUE => template_results::value(args)
+                .map(|value| LuaInput::Values(vec![LuaScalar::Boolean(true), value])),
             OP_SCREEN_CROP => self.crop_frame(task, args),
             OP_SCREEN_GET_COLOR => self.get_color(task, args),
             OP_SCREEN_COMPARE_COLOR => self.compare_color(task, args),
@@ -1386,6 +1415,70 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 ])
             },
         ))
+    }
+
+    fn find_all_images(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let [LuaScalar::Integer(frame), LuaScalar::Bytes(paths_json), tail @ ..] = args else {
+            return Err("findAllImages expects frame and JSON paths".into());
+        };
+        if paths_json.len() > 16_384 {
+            return Err("template paths exceed byte budget".into());
+        }
+        let paths: Vec<String> =
+            serde_json::from_slice(paths_json).map_err(|_| "invalid template paths JSON")?;
+        if paths.iter().any(|p| p.len() > 256) {
+            return Err("template path exceeds budget".into());
+        }
+        let [tolerance, similarity, left, top, right, bottom, direction, limit] =
+            integer_args::<8>(tail)?;
+        let started = Instant::now();
+        let control = self.scheduler.handle();
+        let (matches, truncated) = self
+            .frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .find_all_named_templates(
+                task,
+                decode_frame_handle(*frame)?,
+                self.scheduler.resources(),
+                &paths,
+                TemplateOptions {
+                    search: SearchOptions {
+                        order: decode_search_direction(direction)?,
+                        ..search_options(left, top, right, bottom)?
+                    },
+                    tolerance: decode_tolerance(tolerance)?,
+                    minimum_match_permille: u16::try_from(similarity)
+                        .map_err(|_| "invalid similarity")?,
+                    ignore_transparent_template_pixels: true,
+                },
+                usize::try_from(limit).map_err(|_| "invalid result limit")?,
+                &mut || {
+                    control.cancellation_requested(task)
+                        || started.elapsed() >= Duration::from_secs(5)
+                },
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        let result = template_results::MatchResults {
+            version: 1,
+            count: matches.len(),
+            truncated,
+            matches: matches
+                .into_iter()
+                .map(|m| template_results::MatchItem {
+                    x: m.matched.origin.x,
+                    y: m.matched.origin.y,
+                    width: m.width,
+                    height: m.height,
+                    score_permille: m.matched.matched_permille,
+                    path: m.path,
+                })
+                .collect(),
+        };
+        Ok(LuaInput::Values(vec![
+            LuaScalar::Boolean(true),
+            LuaScalar::Bytes(result.encode()?),
+        ]))
     }
 
     fn crop_frame(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
@@ -1946,6 +2039,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                     string(1)?
                 };
                 let value = string(if opcode == 1202 { 1 } else { 2 })?;
+                if opcode == 1203 && ui_runtime::host_operation(&operation, &value).map_err(fail)? {
+                    return self.dispatch_host(task, opcode, args.to_vec());
+                }
                 if !matches!(
                     operation.as_str(),
                     "value"
@@ -2139,7 +2235,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         } else {
             None
         };
-        let (timeout, cancel_mode) = if opcode == OP_SCREEN_CAPTURE_SERIES_FRAME {
+        let (timeout, cancel_mode) = if opcode == 1203 {
+            (Duration::from_secs(3), CancelMode::Cooperative)
+        } else if opcode == OP_SCREEN_CAPTURE_SERIES_FRAME {
             (Duration::from_secs(3), CancelMode::Cooperative)
         } else {
             let contract = contract(opcode).ok_or(ExecutorError::MissingContract(opcode))?;
@@ -2774,6 +2872,40 @@ fn points_input(points: &[PixelPoint]) -> Result<LuaInput, String> {
 
 fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, ExecutorError> {
     match result {
+        HostResult::Success(payload) if matches!(opcode, 14100 | 14102) => {
+            if payload.len() > data_runtime::MAX_DATA_BYTES || std::str::from_utf8(payload).is_err()
+            {
+                return Err(ExecutorError::InvalidYield(
+                    "invalid project file response".into(),
+                ));
+            }
+            Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Bytes(payload.clone()),
+            ]))
+        }
+        HostResult::Success(payload) if matches!(opcode, 14101 | 14103) => {
+            if !payload.is_empty() {
+                return Err(ExecutorError::InvalidYield(
+                    "void file response must be empty".into(),
+                ));
+            }
+            Ok(LuaInput::Boolean(true))
+        }
+        HostResult::Success(payload) if opcode == 1203 => {
+            if payload.len() > ui_runtime::MAX_UI_PROPERTY_BYTES
+                || payload.contains(&0)
+                || std::str::from_utf8(payload).is_err()
+            {
+                return Err(ExecutorError::InvalidYield(
+                    "invalid UI property response".into(),
+                ));
+            }
+            Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Bytes(payload.clone()),
+            ]))
+        }
         HostResult::Success(payload) if opcode == 1200 => Ok(LuaInput::Values(vec![
             LuaScalar::Boolean(true),
             LuaScalar::Bytes(payload.clone()),
@@ -3434,6 +3566,61 @@ mod tests {
         assert_eq!(report.next, SchedulerPoll::Stopped);
         assert_eq!(executor.task_state(task), Some(TaskState::Cancelled));
         assert_eq!(executor.backend().cancelled().len(), 1);
+    }
+
+    #[test]
+    fn repeated_pause_resume_cancel_and_failure_retry_release_owned_frames() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(1, 1));
+        let capture = runtime
+            .frame_pool()
+            .lock()
+            .unwrap()
+            .publish_capture(
+                FrameMetadata {
+                    width: 1,
+                    height: 1,
+                    row_stride: 4,
+                    pixel_stride: 4,
+                    format: FrameFormat::Rgba8888,
+                    rotation: Rotation::Degrees0,
+                    timestamp_nanos: 1,
+                    snapshot_id: 1,
+                },
+                &[10, 20, 30, 255],
+            )
+            .unwrap();
+        for _ in 0..20 {
+            let code = format!("return function() local f=Screen.cache({}); Task.sleep(1000000); error('must be cancelled') end", capture.0);
+            let task = runtime
+                .start_entry_chunk(code.as_bytes(), "public-cancel-retry")
+                .unwrap();
+            runtime.drive().unwrap();
+            assert_eq!(runtime.resources().resource_count(), 1);
+            runtime.pause().unwrap();
+            clock.advance(Duration::from_millis(10));
+            runtime.drive().unwrap();
+            assert_eq!(runtime.task_state(task), Some(TaskState::Running));
+            runtime.resume().unwrap();
+            runtime.handle().request_cancel(task).unwrap();
+            runtime.drive().unwrap();
+            assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+            assert_eq!(runtime.resources().resource_count(), 0);
+            let failed = runtime
+                .start_entry_chunk(
+                    b"return function() error('public expected failure') end",
+                    "public-failure",
+                )
+                .unwrap();
+            runtime.drive().unwrap();
+            assert_eq!(runtime.task_state(failed), Some(TaskState::Failed));
+            let retry = runtime
+                .start_entry_chunk(b"return function() end", "public-retry")
+                .unwrap();
+            runtime.drive().unwrap();
+            assert_eq!(runtime.task_state(retry), Some(TaskState::Completed));
+            assert_eq!(runtime.resources().resource_count(), 0);
+        }
     }
 
     #[test]
@@ -4224,7 +4411,7 @@ mod tests {
         let task = executor
             .start_entry_chunk(
                 format!(
-                    r"return function()
+                    r#"return function()
             local f=Screen.cache({}); local t=Screen.loadImage('assets/images/same.png')
             local expected={{{{0,0}},{{2,0}},{{0,2}},{{2,2}},{{1,1}}}}
             for direction=0,4 do
@@ -4232,8 +4419,17 @@ mod tests {
                 assert(p.x==expected[direction+1][1] and p.y==expected[direction+1][2])
             end
             local old=Screen.findImage(f,t,0,1000,0,0,3,3); assert(old.x==0 and old.y==0)
+            local r=Screen.findAllImages(f,'["assets/images/same.png"]',0,1000,0,0,3,3,0,2)
+            assert(Screen.matchValue(r,0,'count')=='2' and Screen.matchValue(r,0,'truncated')=='1')
+            assert(Screen.matchValue(r,2,'x')=='1' and Screen.matchValue(r,2,'y')=='0')
+            assert(Screen.matchValue(r,1,'width')=='1' and Screen.matchValue(r,1,'height')=='1')
+            assert(Screen.matchValue(r,1,'scorePermille')=='1000')
+            assert(Data.text(Screen.matchValue(r,1,'path'))=='assets/images/same.png')
+            local full=Screen.findAllImages(f,'["assets/images/same.png"]',0,1000,0,0,3,3,0,9)
+            assert(Screen.matchValue(full,0,'count')=='9' and Screen.matchValue(full,0,'truncated')=='0')
+            assert(not pcall(Screen.matchValue,r,3,'x'))
             Screen.release(t); Screen.release(f)
-        end",
+        end"#,
                     capture.0
                 )
                 .as_bytes(),

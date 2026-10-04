@@ -45,10 +45,11 @@ function UI.getValue(id) end
 ---@param value string value
 function UI.setValue(id, value) end
 
----白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。
+---白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。
 ---@param id string id
 ---@param operation string operation
 ---@param value string value
+---@return string value get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。
 function UI.command(id, operation, value) end
 
 System = System or {}
@@ -299,6 +300,27 @@ function Legacy.getRectColorNum(frame, left, top, width, height, parameters) end
 ---@return integer value 0xRRGGBB整数颜色。
 function Legacy.getRgbColor(red, green, blue) end
 
+---有界多模板多位置识别：按模板优先级和方向枚举，包含重叠位置，共享比较预算。count为保留数量，truncated明确标记额外匹配。非旧Native等价声明。
+---@param frame integer 借用缓存帧。
+---@param pathsJson string 1–64个已声明模板路径的JSON数组，最多16384字节。
+---@param tolerance integer 0–255通道容差。
+---@param similarityPermille integer 0–1000最低相似度。
+---@param left integer 左边界。
+---@param top integer 上边界。
+---@param right integer 右边界不含。
+---@param bottom integer 下边界不含。
+---@param direction integer 0左上、1右上、2左下、3右下、4中心向外。
+---@param limit integer 最大保留数量1–64。
+---@return string value 版本1的有界JSON结果集合，最大64KiB；无匹配为count=0/matches=[]。
+function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit) end
+
+---读取有界找图结果的白名单属性；返回JSON标量编码，不求值代码。
+---@param result string 多图结果JSON，最多64KiB。
+---@param index integer count/truncated必须0，逐项属性从1开始，越界报错。
+---@param field string count/truncated/x/y/width/height/scorePermille/path；truncated为1或0。
+---@return string value 数字使用int转换，路径用Data.text解码；未知字段拒绝。
+function Screen.matchValue(result, index, field) end
+
 ---按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。
 ---@param maxFrames integer 1至120的最大帧数，仍受会话字节预算限制。
 ---@param durationMs integer 1至60000毫秒的最长持续时间。
@@ -341,4 +363,67 @@ function Ocr.glyph(frame, dictionary, foregroundRgb, tolerance, similarityPermil
 ---@param minimumConfidencePermille integer 最低逐字置信度0–1000，默认500。
 ---@return AlphanumericResult value text与averageScorePermille，无可信字符为空文本。
 function Ocr.alphanumeric(frame, left, top, right, bottom, minimumConfidencePermille) end
+
+Data = Data or {}
+
+---JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+---@param json string 有界 JSON 集合或对象文本。
+---@return integer value 当前容器的项数。
+function Data.length(json) end
+
+---返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。
+---@param json string 有界 JSON 集合或对象文本。
+---@param key string 对象键或从 1 开始的数组索引文本。
+---@return string value 返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。
+function Data.get(json, key) end
+
+---JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+---@param json string 有界 JSON 集合或对象文本。
+---@param key string 对象键或已存在的数组索引文本。
+---@param valueJson string JSON primitive 编码；拒绝集合或对象。
+---@return string value JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+function Data.set(json, key, valueJson) end
+
+---JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+---@param json string 有界 JSON 集合或对象文本。
+---@param key string 对象键或数组索引文本。
+---@return string value JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+function Data.remove(json, key) end
+
+---JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+---@param json string 有界 JSON 数组文本。
+---@param valueJson string JSON primitive 编码；拒绝集合或对象。
+---@return string value JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+function Data.append(json, valueJson) end
+
+---JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+---@param json string 有界 JSON 集合或对象文本。
+---@return string value JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
+function Data.keys(json) end
+
+---严格解码 JSON string，不接受数字、布尔、null、集合或对象。
+---@param valueJson string JSON string 编码。
+---@return string value 严格解码 JSON string，不接受数字、布尔、null、集合或对象。
+function Data.text(valueJson) end
+
+Files = Files or {}
+
+---项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。
+---@param path string 仅项目私有 data 内相对文件路径。
+---@return string value 项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。
+function Files.read(path) end
+
+---项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。
+---@param path string 仅项目私有 data 内相对文件路径。
+---@param text string 最多 64 KiB 的 UTF-8 文本。
+function Files.write(path, text) end
+
+---项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。
+---@param path string 项目私有 data 内相对目录路径；根目录填空字符串。
+---@return string value 项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。
+function Files.list(path) end
+
+---仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。
+---@param path string 仅项目私有 data 内相对文件路径；移入有界回收区。
+function Files.remove(path) end
 

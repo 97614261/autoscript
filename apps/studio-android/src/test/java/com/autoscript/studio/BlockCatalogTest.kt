@@ -14,7 +14,7 @@ import org.junit.Test
 class BlockCatalogTest {
     @Test
     fun generatedCatalogIsUniqueSearchableAndBoundToNodeSchemas() {
-        assertEquals(52, BlockCatalog.all.size)
+        assertEquals(70, BlockCatalog.all.size)
         assertEquals(BlockCatalog.all.size, BlockCatalog.all.map { it.kind }.distinct().size)
         assertTrue(BlockCatalog.all.all { it.nodeSchemaId.startsWith("https://autoscript.local/schema/node/") })
         assertTrue(BlockCatalog.search("调用 flow", emptySet()).any { it.contract.kind == "flow.call" })
@@ -45,7 +45,7 @@ class BlockCatalogTest {
             BlockCatalog.find("task.log")?.requiredCapabilities,
         )
         assertEquals(
-            setOf("control.if", "control.repeat", "control.while", "control.break", "control.label", "control.goto", "control.loopmetric", "control.loopcheck"),
+            setOf("control.if", "control.repeat", "control.while", "control.cycle", "control.break", "control.continue", "control.label", "control.goto", "control.loopmetric", "control.loopcheck"),
             BlockCatalog.search("", emptySet(), BlockCategory.CONTROL)
                 .map { it.contract.kind }
                 .toSet(),
@@ -65,6 +65,8 @@ class BlockCatalogTest {
                 "vision.countcolor",
                 "vision.findallcolor",
                 "vision.findimage",
+                "vision.findallimages",
+                "vision.result",
                 "vision.findgray",
                 "legacy.duodianzhaose",
                 "legacy.duodianbise",

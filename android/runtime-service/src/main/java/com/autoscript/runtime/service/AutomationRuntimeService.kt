@@ -32,6 +32,8 @@ import com.autoscript.runtime.api.InputPointAction
 import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.runtime.api.RuntimeProtocol
 import com.autoscript.runtime.api.TemplateMatchReply
+import com.autoscript.runtime.api.RecognitionPreviewReply
+import com.autoscript.runtime.api.RecordingReply
 import com.autoscript.runtime.api.RuntimeDebugReply
 import com.autoscript.runtime.api.RuntimeDebugValue
 import com.autoscript.runtime.api.ScriptValidationReply
@@ -63,6 +65,8 @@ class AutomationRuntimeService : Service() {
     private val toastSessionActive = AtomicBoolean(false)
     /** The only Studio-specific context retained by Runner; it is an opaque validated ID. */
     private val lastProjectIdRef = AtomicReference<String?>(null)
+    private val debugSession = RuntimeDebugSession()
+    private val debugReadPending = AtomicBoolean(false)
     private val runtimeLogs = ArrayDeque<String>(MAX_RUNTIME_LOG_ENTRIES)
     private val runtimeLogLock = Any()
     private val sessionRandom = SecureRandom()
@@ -74,9 +78,14 @@ class AutomationRuntimeService : Service() {
     private lateinit var nativeWakeListener: NativeWakeListener
     private lateinit var overlayController: RuntimeOverlayController
     private lateinit var nativeVisionAdapter: NativeVisionAdapter
+    private lateinit var nativeScriptUiAdapter: NativeScriptUiAdapter
+    private lateinit var nativeDataFileAdapter: NativeDataFileAdapter
+    private val projectStartLock = Any()
     private val inputPickActive = AtomicBoolean(false)
     private val inputPickHandler = Handler(Looper.getMainLooper())
     private lateinit var inputPickOverlay: RuntimeInputPointOverlay
+    private lateinit var inputRecording: RuntimeInputRecordingController
+    private val recordingStarting = AtomicBoolean(false)
     // Main-thread-only session state; the atomic flag bounds pending Binder starts to one.
     private var inputPickSession: InputPickSession? = null
     private data class InputPickSession(
@@ -118,10 +127,57 @@ class AutomationRuntimeService : Service() {
     }
 
     private val binder = object : IRuntimeService.Stub() {
+        override fun startInputRecording(requestId: Long, expectedGeneration: Long, recordingId: Long,
+            projectId: String, flowId: String, maxDurationMs: Int, eventBudget: Int): RecordingReply {
+            fun failure(status: Int) = RecordingReply(recordingId,expectedGeneration,status)
+            if (Binder.getCallingUid() != Process.myUid() || requestId <= 0 || recordingId <= 0 ||
+                expectedGeneration != sessionGenerationRef.get()) return failure(RecordingReply.SESSION_MISMATCH)
+            if (!recordingProjectAllowed(projectId,flowId)) return failure(RecordingReply.INVALID_EVENT)
+            if (!recordingStarting.compareAndSet(false,true)) return failure(RecordingReply.BUSY)
+            try {
+                val allowed = synchronized(projectStartLock) { !inputPickActive.get() && !inputRecording.busy &&
+                    currentRuntimeState() !in setOf(RuntimeProtocol.STATE_RUNNING,RuntimeProtocol.STATE_PAUSED,RuntimeProtocol.STATE_STOPPING) }
+                if (!allowed) return failure(RecordingReply.BUSY)
+                if (rootStateRef.get() != RootDaemonController.State.READY || getInputFeatures(expectedGeneration) and 4 == 0)
+                    return failure(RecordingReply.UNSUPPORTED_DEVICE)
+                if (!overlayController.canShow() || !ensureForegroundForRun()) return failure(RecordingReply.ENGINE_ERROR)
+                captureOverlayEnabled.set(false); overlayController.hide()
+                val size = currentDisplaySize()
+                @Suppress("DEPRECATION") val rotation = getSystemService(WindowManager::class.java).defaultDisplay.rotation
+                val reply = inputRecording.start(recordingId,expectedGeneration,size.x,size.y,rotation,maxDurationMs,eventBudget)
+                if (reply.status != RecordingReply.SUCCESS) engineHandler.post(::finishForegroundRun)
+                return reply
+            } finally { recordingStarting.set(false) }
+        }
+        override fun finishInputRecording(requestId: Long, expectedGeneration: Long, recordingId: Long): RecordingReply {
+            if (Binder.getCallingUid() != Process.myUid() || requestId <= 0 || recordingId <= 0 || expectedGeneration != sessionGenerationRef.get())
+                return RecordingReply(recordingId,expectedGeneration,RecordingReply.SESSION_MISMATCH)
+            return inputRecording.finish(recordingId,expectedGeneration)
+        }
+        override fun cancelInputRecording(requestId: Long, expectedGeneration: Long, recordingId: Long): Int {
+            if (Binder.getCallingUid() != Process.myUid() || requestId <= 0 || recordingId <= 0) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            return if (inputRecording.cancel(recordingId,expectedGeneration)) RuntimeProtocol.CONTROL_ACCEPTED else RuntimeProtocol.CONTROL_INVALID_STATE
+        }
+        override fun testRecognitionPreview(requestId: Long, expectedGeneration: Long, operation: Int,
+            frameFile: ParcelFileDescriptor, assetFile: ParcelFileDescriptor?, options: IntArray): RecognitionPreviewReply {
+            if (Binder.getCallingUid() != Process.myUid() || options.size != RecognitionPreviewReply.OPTIONS_SIZE) {
+                frameFile.close(); assetFile?.close()
+                return RecognitionPreviewReply(requestId, expectedGeneration, RecognitionPreviewReply.INVALID_INPUT, operation)
+            }
+            return recognitionPreview.test(requestId, expectedGeneration, operation, frameFile, assetFile, options.copyOf())
+        }
+        override fun cancelRecognitionPreview(requestId: Long, expectedGeneration: Long): Int {
+            if (Binder.getCallingUid() != Process.myUid() || requestId <= 0) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
+            recognitionPreview.cancel(requestId, expectedGeneration)
+            return RuntimeProtocol.CONTROL_ACCEPTED
+        }
         override fun beginInputPointPick(
             requestId: Long, expectedGeneration: Long, projectId: String, flowId: String,
             action: String, listener: IInputPointPickListener,
         ): Int {
+            if (inputRecording.busy || recordingStarting.get()) return RuntimeProtocol.CONTROL_INVALID_STATE
             if (Binder.getCallingUid() != Process.myUid()) return RuntimeProtocol.CONTROL_INVALID_STATE
             if (expectedGeneration != sessionGenerationRef.get()) return RuntimeProtocol.CONTROL_SESSION_MISMATCH
             val selected = InputPointAction.fromWire(action) ?: return RuntimeProtocol.CONTROL_INVALID_STATE
@@ -323,8 +379,8 @@ class AutomationRuntimeService : Service() {
             return parseVisualCompileReply(encoded)
         }
 
-        override fun prepareProject(requestId: Long, expectedGeneration: Long): Int {
-            if (inputPickActive.get()) return RuntimeProtocol.PREPARE_BUSY
+        override fun prepareProject(requestId: Long, expectedGeneration: Long): Int = synchronized(projectStartLock) {
+            if (inputPickActive.get() || inputRecording.busy || recordingStarting.get()) return RuntimeProtocol.PREPARE_BUSY
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.PREPARE_SESSION_MISMATCH
             }
@@ -342,6 +398,8 @@ class AutomationRuntimeService : Service() {
                 RuntimeProtocol.STATE_FAILED,
                 -> {
                     engineHandler.removeCallbacks(pump)
+                    debugSession.clear()
+                    if (::nativeDataFileAdapter.isInitialized) nativeDataFileAdapter.clear()
                     val displaySize = currentDisplaySize()
                     if (NativeEngineBridge.nativeReset(handle, displaySize.x, displaySize.y) == 0) {
                         scriptUiController.clear()
@@ -433,8 +491,8 @@ class AutomationRuntimeService : Service() {
             designHeight: Int,
             scaleMode: Int,
             capabilities: Array<out String>,
-        ): Int {
-            if (inputPickActive.get()) return RuntimeProtocol.START_BACKEND_NOT_READY
+        ): Int = synchronized(projectStartLock) {
+            if (inputPickActive.get() || inputRecording.busy || recordingStarting.get()) return RuntimeProtocol.START_BACKEND_NOT_READY
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.START_SESSION_MISMATCH
             }
@@ -456,6 +514,7 @@ class AutomationRuntimeService : Service() {
             }
             val handle = nativeHandleRef.get()
             if (handle == 0L) return RuntimeProtocol.START_INVALID_SCRIPT
+            if (currentRuntimeState() != RuntimeProtocol.STATE_IDLE) return RuntimeProtocol.START_INVALID_PROJECT
             val snapshotId = coordinateSnapshotRef.incrementAndGet()
             if (NativeEngineBridge.nativeConfigureProject(
                     handle,
@@ -470,6 +529,11 @@ class AutomationRuntimeService : Service() {
             if (!ensureForegroundForRun()) {
                 return RuntimeProtocol.START_FOREGROUND_UNAVAILABLE
             }
+            if (!::nativeDataFileAdapter.isInitialized ||
+                !nativeDataFileAdapter.configure(projectId, "storage.data" in capabilities)) {
+                finishForegroundRun()
+                return RuntimeProtocol.START_INVALID_PROJECT
+            }
             promptSessionActive.set(false)
             toastSessionActive.set(false)
             overlayController.resetRunPrompts()
@@ -479,11 +543,13 @@ class AutomationRuntimeService : Service() {
                     capabilities.toList().toTypedArray(),
                 ) != 0
             ) {
+                nativeDataFileAdapter.clear()
                 finishForegroundRun()
                 return RuntimeProtocol.START_INVALID_SCRIPT
             }
             stepControlPending.set(false)
             lastProjectIdRef.set(projectId.takeIf(String::isNotEmpty))
+            debugSession.started(expectedGeneration, handle, projectId)
             scriptUiController.activateRuntime()
             synchronized(runtimeLogLock) { runtimeLogs.clear() }
             engineHandler.removeCallbacks(pump)
@@ -557,20 +623,24 @@ class AutomationRuntimeService : Service() {
         }
 
         override fun getDebugSnapshot(expectedGeneration: Long, projectId: String): RuntimeDebugReply {
-            if (expectedGeneration != sessionGenerationRef.get() || projectId != lastProjectIdRef.get()) return RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
-            return runCatching {
-                val encoded = NativeEngineBridge.nativeDebugSnapshot(nativeHandleRef.get()) ?: return RuntimeDebugReply.unavailable()
-                require(encoded.length <= 192 * 1024)
+            val handle = nativeHandleRef.get()
+            val ticket = debugSession.ticket(expectedGeneration, handle, projectId)
+                ?: return RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+            if (!isValidProjectId(projectId) || expectedGeneration != sessionGenerationRef.get()) return RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+            if (!debugReadPending.compareAndSet(false, true)) return RuntimeDebugReply.unavailable(RuntimeDebugReply.BUSY)
+            return try { runCatching {
+                val encoded = NativeEngineBridge.nativeDebugSnapshot(handle) ?: return RuntimeDebugReply.unavailable()
+                require(encoded.toByteArray(Charsets.UTF_8).size <= 192 * 1024)
                 val json = org.json.JSONObject(encoded)
                 val rows = json.getJSONArray("variables")
                 require(rows.length() <= 128)
                 val result = RuntimeDebugReply(RuntimeDebugReply.SUCCESS, json.getString("flowId"), json.getString("nodeId"),
                     List(rows.length()) { index ->
                         val row = rows.getJSONObject(index)
-                        RuntimeDebugValue(row.getString("scope"), row.getString("name"), row.getString("type"), row.getString("value"), row.optBoolean("truncated", false))
-                    })
-                if (expectedGeneration == sessionGenerationRef.get()) result else RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
-            }.getOrElse { RuntimeDebugReply.unavailable() }
+                        RuntimeDebugValue(row.getString("scope"), row.getString("name"), row.getString("type"), row.getString("value"), row.optBoolean("truncated", false), row.optString("declaredType", ""))
+                    }, json.getInt("runtimeState"), expectedGeneration, ticket.revision, json.optBoolean("variablesTruncated", false))
+                if (debugSession.accepts(ticket, sessionGenerationRef.get(), nativeHandleRef.get())) result else RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+            }.getOrElse { RuntimeDebugReply.unavailable() } } finally { debugReadPending.set(false) }
         }
 
         override fun setFloatingControlEnabled(
@@ -601,7 +671,7 @@ class AutomationRuntimeService : Service() {
             projectId: String,
             enabled: Boolean,
         ): Int {
-            if (enabled && inputPickActive.get()) return RuntimeProtocol.CONTROL_INVALID_STATE
+            if (enabled && (inputPickActive.get() || inputRecording.busy || recordingStarting.get())) return RuntimeProtocol.CONTROL_INVALID_STATE
             if (expectedGeneration != sessionGenerationRef.get()) {
                 return RuntimeProtocol.SURFACE_SESSION_MISMATCH
             }
@@ -715,6 +785,10 @@ class AutomationRuntimeService : Service() {
             } },
         )
         inputPickOverlay = RuntimeInputPointOverlay(this, ::completeInputPick)
+        inputRecording = RuntimeInputRecordingController(this,nativeHandleRef::get,sessionGenerationRef::get,
+            ready = { rootStateRef.get() == RootDaemonController.State.READY && !inputPickActive.get() &&
+                currentRuntimeState() !in setOf(RuntimeProtocol.STATE_RUNNING,RuntimeProtocol.STATE_PAUSED,RuntimeProtocol.STATE_STOPPING) },
+            onFinished = { engineHandler.post(::finishForegroundRun) })
         val displaySize = currentDisplaySize()
         nativeHandleRef.set(NativeEngineBridge.nativeCreate(displaySize.x, displaySize.y))
         sessionGenerationRef.set(newSessionGeneration())
@@ -723,6 +797,26 @@ class AutomationRuntimeService : Service() {
         rootDaemonController = RootDaemonController(this, engineHandler, ::updateRootState)
         val handle = nativeHandleRef.get()
         if (handle != 0L) {
+            nativeDataFileAdapter = NativeDataFileAdapter(filesDir)
+            if (NativeEngineBridge.nativeSetDataFileListener(handle, nativeDataFileAdapter) != 0) {
+                nativeDataFileAdapter.close()
+                updateRootState(RootDaemonController.State.FAILED)
+                return
+            }
+            nativeScriptUiAdapter = NativeScriptUiAdapter(
+                post = { engineHandler.post(it) },
+                currentToken = scriptUiController::currentToken,
+                beforeRequest = { token ->
+                    check(nativeHandleRef.get() == handle && scriptUiController.accepts(token))
+                    // Enqueue legacy writes before a property request so an immediate read sees them.
+                    drainNativeScriptPrompts(handle)
+                },
+                submit = scriptUiController::requestProperty,
+            )
+            if (NativeEngineBridge.nativeSetScriptUiListener(handle, nativeScriptUiAdapter) != 0) {
+                updateRootState(RootDaemonController.State.FAILED)
+                return
+            }
             nativeVisionAdapter = NativeVisionAdapter(assets)
             if (NativeEngineBridge.nativeSetVisionListener(handle, nativeVisionAdapter) != 0) {
                 updateRootState(RootDaemonController.State.FAILED)
@@ -757,6 +851,7 @@ class AutomationRuntimeService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        inputRecording.abort(RecordingReply.INVALID_EVENT)
         scriptUiController.onConfigurationChanged()
         inputPickHandler.post { inputPickSession?.let { cancelInputPick(it.requestId, "屏幕方向或尺寸变化，请重新选点") } }
         val displaySize = currentDisplaySize()
@@ -779,6 +874,10 @@ class AutomationRuntimeService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onDestroy() {
+        if (::inputRecording.isInitialized) inputRecording.close()
+        if (::nativeDataFileAdapter.isInitialized) nativeDataFileAdapter.close()
+        recognitionPreview.close()
+        debugSession.clear()
         scriptUiController.clear()
         inputPickSession?.let { cancelInputPick(it.requestId, "Runner会话结束") }
         inputPickHandler.removeCallbacksAndMessages(null)
@@ -813,6 +912,7 @@ class AutomationRuntimeService : Service() {
 
     private fun updateRootState(state: RootDaemonController.State) {
         rootStateRef.set(state)
+        if (state != RootDaemonController.State.READY && ::inputRecording.isInitialized) inputRecording.abort()
         if (state != RootDaemonController.State.READY) inputPickHandler.post {
             inputPickSession?.let { cancelInputPick(it.requestId, "Root连接已断开，请重新选点") }
         }
@@ -899,6 +999,8 @@ class AutomationRuntimeService : Service() {
     }
 
     private fun stopNativeEngine(): Boolean {
+        if (::inputRecording.isInitialized) inputRecording.abort(RecordingReply.CANCELLED)
+        if (::nativeDataFileAdapter.isInitialized) nativeDataFileAdapter.clear()
         scriptUiController.clear()
         inputPickHandler.post { inputPickSession?.let { cancelInputPick(it.requestId, "运行已停止，选点已取消") } }
         engineHandler.removeCallbacks(pump)
@@ -957,7 +1059,7 @@ class AutomationRuntimeService : Service() {
     @Synchronized
     private fun finishForegroundRun() {
         scriptUiController.clear()
-        if (inputPickActive.get()) { updateForegroundNotification(); return }
+        if (inputPickActive.get() || inputRecording.busy || recordingStarting.get()) { updateForegroundNotification(); return }
         if ((promptSessionActive.get() || toastSessionActive.get()) && overlayController.canShow()) {
             overlayController.finishWithRunPrompt()
             updateForegroundNotification()
@@ -1173,6 +1275,8 @@ class AutomationRuntimeService : Service() {
     }
 
     private val previewRecognitionBusy = AtomicBoolean(false)
+    private val recognitionPreview by lazy { RuntimeRecognitionPreview(assets, previewRecognitionBusy,
+        generation = sessionGenerationRef::get, runtimeState = ::currentRuntimeState) }
 
     private fun decodeTemplate(descriptor: ParcelFileDescriptor): DecodedTemplate {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1439,6 +1543,19 @@ class AutomationRuntimeService : Service() {
             directory.takeIf { it.parentFile == root && it.isDirectory }
         }.getOrNull()
     }
+
+    /** project.json is the only permission source; recording never silently adds a capability. */
+    private fun recordingProjectAllowed(projectId: String, flowId: String): Boolean = runCatching {
+        val directory = resolveProjectDirectory(projectId) ?: return false
+        if (!FLOW_ID.matches(flowId)) return false
+        val manifest = File(directory,"project.json")
+        if (!manifest.isFile || manifest.length() !in 1..1_048_576) return false
+        val json = JSONObject(manifest.readText(Charsets.UTF_8))
+        val capabilities = json.optJSONArray("capabilities") ?: return false
+        val hasInput = (0 until capabilities.length()).any { capabilities.optString(it) == "input.basic" }
+        val flows = json.optJSONArray("flows") ?: return false
+        hasInput && (0 until flows.length()).any { flows.optJSONObject(it)?.optString("flowId") == flowId }
+    }.getOrDefault(false)
 
     private fun parseVisualCompileReply(encoded: String): VisualCompileReply = runCatching {
         val json = JSONObject(encoded)

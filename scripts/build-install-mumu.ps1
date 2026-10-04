@@ -6,6 +6,8 @@ param(
     [string]$AdbPath = "",
     [ValidateRange(10, 600)]
     [int]$StartupTimeoutSeconds = 120,
+    [ValidateRange(10, 600)]
+    [int]$InstallTimeoutSeconds = 180,
     [switch]$Verify,
     [switch]$SkipBuild
 )
@@ -24,25 +26,62 @@ function Resolve-BuildTool {
     throw "$Name was not found. Pass an explicit tool path."
 }
 
+function Invoke-BoundedCli {
+    param([string]$Executable, [string[]]$Arguments, [ValidateRange(1,600)][int]$TimeoutSeconds = 10)
+    $info = [System.Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Executable
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    if ($info.PSObject.Properties['ArgumentList']) {
+        foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    } else {
+        # Windows CommandLineToArgvW quoting for Windows PowerShell 5.1.
+        $info.Arguments = ($Arguments | ForEach-Object {
+            $escaped = [regex]::Replace($_, '(\\*)"', '$1$1\"')
+            '"' + [regex]::Replace($escaped, '(\\+)$', '$1$1') + '"'
+        }) -join ' '
+    }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw "Could not start $Executable" }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            # Only the process started by this call, never adb server/emulator or other sessions.
+            try { $process.Kill() } catch { }
+            $process.WaitForExit(1000) | Out-Null
+            throw "$Executable timed out after $TimeoutSeconds seconds; installation is not confirmed. No app data was cleared."
+        }
+        if (-not $stdout.Wait(1000) -or -not $stderr.Wait(1000)) { throw "$Executable output did not close in time" }
+        $text = ($stdout.Result + [Environment]::NewLine + $stderr.Result).Trim()
+        if ($text.Length -gt 65536) { throw "$Executable output exceeded the diagnostic limit" }
+        if ($process.ExitCode -ne 0) { throw "$Executable failed ($($process.ExitCode)): $text" }
+        return $text
+    } finally {
+        $process.Dispose()
+    }
+}
+
 function Invoke-CheckedCli {
-    param([string]$Executable, [string[]]$Arguments)
-    $output = & $Executable @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
-    $text = ($output | Out-String).Trim()
-    if ($exitCode -ne 0) { throw "$Executable failed ($exitCode): $text" }
-    return $text
+    param([string]$Executable, [string[]]$Arguments, [int]$TimeoutSeconds = 10)
+    Invoke-BoundedCli $Executable $Arguments $TimeoutSeconds
 }
 
 function Invoke-ProjectBuild {
     param([string]$ProjectRoot, [bool]$RunChecks)
     $tasks = @()
     if ($RunChecks) {
-        $tasks += @(':apps:studio-android:testDebugUnitTest', ':apps:studio-android:lintDebug')
+        $tasks += @(':apps:studio-android:testDebugUnitTest', ':android:script-ui:testDebugUnitTest',
+            ':android:project-store:testDebugUnitTest', ':android:runtime-client:testDebugUnitTest',
+            ':android:runtime-service:testDebugUnitTest', ':apps:studio-android:lintDebug')
     }
     $tasks += ':apps:studio-android:assembleDebug'
     Push-Location -LiteralPath $ProjectRoot
     try {
-        & (Join-Path $ProjectRoot 'gradlew.bat') @tasks --console=plain
+        & (Join-Path $ProjectRoot 'gradlew.bat') @tasks '-Pautoscript.abiProfile=development' --console=plain
         if ($LASTEXITCODE -ne 0) { throw "Build failed. MuMu installation was not attempted." }
     } finally {
         Pop-Location
@@ -93,7 +132,8 @@ function Install-StudioToMuMu {
         Start-Sleep -Seconds 2
     }
     Write-Host "Installing Studio to MuMu instance $Index ($serial)..."
-    $installed = Invoke-CheckedCli $Adb @('-s', $serial, 'install', '-r', '-t', $Apk)
+    # Large dual-ABI APKs use an explicit push/package-manager transaction.
+    $installed = Invoke-CheckedCli $Adb @('-s', $serial, 'install', '--no-streaming', '-r', '-t', $Apk) $InstallTimeoutSeconds
     if ($installed -notmatch '(?m)^Success\r?$') { throw "APK installation did not succeed: $installed" }
     Write-Host "Installed successfully. Existing app data is retained."
     Write-Host "APK: $Apk"

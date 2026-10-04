@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/data.keys/1/data.keys.schema.json",
+  "title": "集合 / 对象键列表",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "data.keys"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "json",
+        "resultVariable"
+      ],
+      "properties": {
+        "json": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "jsonVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

@@ -59,7 +59,7 @@ internal fun loopInsertionFromHint(hint: String): LoopInsertion? = runCatching {
     val json = JsonParser.parseString(line.removePrefix(LOOP_CONFIG_HINT)).asJsonObject
     require(json.keySet() == setOf("kind", "args"))
     val kind = json["kind"].asString
-    require(kind in positionLoopKinds + setOf("control.repeat", "control.while", "task.sleep"))
+    require(kind in positionLoopKinds + setOf("control.repeat", "control.while", "control.cycle", "task.sleep"))
     LoopInsertion(kind, json.getAsJsonObject("args").deepCopy())
 }.getOrNull()
 
@@ -68,6 +68,7 @@ internal data class LoopDraft(
     val count: String = "3", val time: String = "3", val unit: LoopTimeUnit = LoopTimeUnit.SECONDS,
     val countVariable: String = "", val timeVariable: String = "", val countOutput: String = "", val elapsedOutput: String = "",
     val elapsedUnit: LoopTimeUnit = LoopTimeUnit.SECONDS, val maxIterations: String = "10000",
+    val cancellable: Boolean = true, val yieldMs: String = "1",
     val delay: String = "100", val delayVariable: String = "", val checkCount: String = "3", val checkTime: String = "3",
     val checkCountVariable: String = "", val checkTimeVariable: String = "", val checkUnit: LoopTimeUnit = LoopTimeUnit.SECONDS,
 )
@@ -78,7 +79,7 @@ internal fun loopDraftFromArguments(kind: String, args: JsonObject): LoopDraft {
     return LoopDraft(
         mode = when (kind) {
             "control.repeat" -> LoopMode.REPEAT
-            "control.while" -> if (args.has("durationMs") || args.has("durationVariable")) LoopMode.TIMED else LoopMode.FOREVER
+            "control.while", "control.cycle" -> if (args.has("durationMs") || args.has("durationVariable")) LoopMode.TIMED else LoopMode.FOREVER
             "control.loopmetric" -> if (text("metric") == "elapsed") LoopMode.ELAPSED else LoopMode.COUNT
             "control.loopcheck" -> if (text("metric") == "elapsed") LoopMode.CHECK_TIME else LoopMode.CHECK_COUNT
             else -> LoopMode.WAIT
@@ -88,6 +89,7 @@ internal fun loopDraftFromArguments(kind: String, args: JsonObject): LoopDraft {
         time = text("durationMs", "3"), timeVariable = text("durationVariable"), unit = if (args.has("durationVariable")) unit("durationUnit") else LoopTimeUnit.MILLISECONDS,
         countOutput = text("name"), elapsedOutput = text("name"), elapsedUnit = unit("unit"),
         maxIterations = text("maxIterations", "10000"), delay = text("milliseconds", "100"), delayVariable = text("millisecondsVariable"),
+        cancellable = kind != "control.while", yieldMs = text("yieldMs", "1"),
         checkCount = text("limit", "3"), checkTime = text("limit", "3"), checkCountVariable = text("limitVariable"),
         checkTimeVariable = text("limitVariable"), checkUnit = unit("unit"),
     )
@@ -95,7 +97,7 @@ internal fun loopDraftFromArguments(kind: String, args: JsonObject): LoopDraft {
 
 internal fun loopModeKind(mode: LoopMode): String = when (mode) {
     LoopMode.REPEAT -> "control.repeat"
-    LoopMode.FOREVER, LoopMode.TIMED -> "control.while"
+    LoopMode.FOREVER, LoopMode.TIMED -> "control.cycle"
     LoopMode.COUNT, LoopMode.ELAPSED -> "control.loopmetric"
     LoopMode.CHECK_COUNT, LoopMode.CHECK_TIME -> "control.loopcheck"
     LoopMode.WAIT -> "task.sleep"
@@ -129,14 +131,17 @@ internal fun buildLoopInsertion(draft: LoopDraft, variables: List<CalculationVar
             "control.repeat"
         }
         LoopMode.TIMED, LoopMode.FOREVER -> {
-            args.addProperty("variable", "loopEnabled"); args.addProperty("operator", "equals"); args.addProperty("value", true)
-            args.addProperty("always", true); args.addProperty("maxIterations", whole(draft.maxIterations, 1, 1000000))
+            if (draft.cancellable) args.addProperty("yieldMs", whole(draft.yieldMs, 1, 1000))
+            else {
+                args.addProperty("variable", "loopEnabled"); args.addProperty("operator", "equals"); args.addProperty("value", true)
+                args.addProperty("always", true); args.addProperty("maxIterations", whole(draft.maxIterations, 1, 1000000))
+            }
             if (draft.mode == LoopMode.TIMED) {
                 if (draft.variableMode) {
                     args.addProperty("durationVariable", variable(draft.timeVariable, numbers)); args.addProperty("durationUnit", draft.unit.key)
                 } else args.addProperty("durationMs", duration(draft.time, draft.unit))
             }
-            "control.while"
+            if (draft.cancellable) "control.cycle" else "control.while"
         }
         LoopMode.COUNT, LoopMode.ELAPSED -> {
             val elapsed = draft.mode == LoopMode.ELAPSED
@@ -216,10 +221,12 @@ internal fun VisualLoopDialog(
                         if (draft.mode == LoopMode.ELAPSED) LoopUnits("读取单位", draft.elapsedUnit) { draft = draft.copy(elapsedUnit = it, elapsedOutput = "") }
                         if (draft.mode in setOf(LoopMode.FOREVER, LoopMode.TIMED)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("安全次数上限", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                                LoopInput(draft.maxIterations, { draft = draft.copy(maxIterations = it); error = null }, Modifier.width(110.dp))
+                                Text(if (draft.cancellable) "每轮让步(毫秒)" else "旧节点安全次数上限", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                                LoopInput(if (draft.cancellable) draft.yieldMs else draft.maxIterations, {
+                                    draft = if (draft.cancellable) draft.copy(yieldMs = it) else draft.copy(maxIterations = it); error = null
+                                }, Modifier.width(110.dp))
                             }
-                            Text("达到上限会停止并报错；不会取消任务的停止/资源保护。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
+                            Text(if (draft.cancellable) "无次数上限；让步1～1000毫秒，停止、限时、跳出或会话资源保护可结束。" else "保留旧节点次数保护；新加入的无限／限时循环使用可取消让步，不自动更改旧行为。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
                         }
                         if (draft.mode in setOf(LoopMode.COUNT, LoopMode.ELAPSED)) Text("加入循环体：执行到这一行读取最近循环，不新增循环。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
                         LoopButton(if (more) "收起更多循环操作 ▴" else "更多循环操作 ▾", { more = !more }, Modifier.fillMaxWidth().height(30.dp))

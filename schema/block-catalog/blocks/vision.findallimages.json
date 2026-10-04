@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "kind": "vision.findallimages",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findallimages/1/vision.findallimages.schema.json",
+  "title": "多结果找图 · 成功/失败",
+  "category": "vision",
+  "summary": "保留1–64个位置及模板信息；结果为字符型JSON集合。模板按列表优先级，包含重叠位置。找到执行success，否则failure；错误或取消中止。",
+  "searchTerms": [
+    "图像",
+    "多结果",
+    "全部找图",
+    "结果集合",
+    "成功失败"
+  ],
+  "requiredCapabilities": [
+    "vision.template",
+    "screen.capture"
+  ],
+  "childBlocks": [
+    "success",
+    "failure"
+  ],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "帧变量（图像型；自动截图时不使用）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "frame"
+    },
+    {
+      "path": "autoCapture",
+      "label": "自动截图",
+      "editor": "boolean",
+      "required": true,
+      "defaultValue": "true"
+    },
+    {
+      "path": "imagePaths",
+      "label": "模板（按选择顺序优先）",
+      "editor": "resource_list",
+      "required": true,
+      "defaultValue": "[]",
+      "resourceKind": "image"
+    },
+    {
+      "path": "tolerance",
+      "label": "像素容差",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "similarityPermille",
+      "label": "最低相似度‰",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "900"
+    },
+    {
+      "path": "region",
+      "label": "区域 L/T/R/B（屏幕像素）",
+      "editor": "rect",
+      "required": true,
+      "defaultValue": "0,0,720,1280"
+    },
+    {
+      "path": "direction",
+      "label": "方向：0左上/1右上/2左下/3右下/4中心",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "limit",
+      "label": "最大保留结果数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "16"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果集合变量（字符型）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "matches"
+    },
+    {
+      "path": "successAction",
+      "label": "找到后动作",
+      "editor": "enum",
+      "required": false,
+      "defaultValue": "none",
+      "choices": [
+        "none",
+        "tap",
+        "hold",
+        "tapWait",
+        "pressRelease"
+      ]
+    },
+    {
+      "path": "allMatches",
+      "label": "作用于所有保留结果",
+      "editor": "boolean",
+      "required": false,
+      "defaultValue": "false"
+    },
+    {
+      "path": "offsetX",
+      "label": "X偏移(px)",
+      "editor": "integer",
+      "required": false,
+      "defaultValue": "0"
+    },
+    {
+      "path": "offsetY",
+      "label": "Y偏移(px)",
+      "editor": "integer",
+      "required": false,
+      "defaultValue": "0"
+    },
+    {
+      "path": "actionDurationMs",
+      "label": "动作停顿/按下时长(ms)",
+      "editor": "integer",
+      "required": false,
+      "defaultValue": "100"
+    },
+    {
+      "path": "beforeWaitMs",
+      "label": "识别前等待(ms)",
+      "editor": "integer",
+      "required": false,
+      "defaultValue": "0"
+    },
+    {
+      "path": "afterWaitMs",
+      "label": "识别与动作后等待(ms)",
+      "editor": "integer",
+      "required": false,
+      "defaultValue": "0"
+    }
+  ],
+  "migrations": []
+}

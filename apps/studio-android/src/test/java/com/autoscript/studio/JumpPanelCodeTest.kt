@@ -74,7 +74,35 @@ class JumpPanelCodeTest {
         val missing = JsonObject().apply { addProperty("name", "missing") }
         assertEquals("请先在当前插件放置标记：missing",
             visualJumpInsertionError("control.goto", missing, editor, null, EditorInsertPosition.BELOW))
-        assertEquals("跳出循环只能加入循环体",
+        assertEquals("跳出/结束本次循环只能加入循环体",
             visualJumpInsertionError("control.break", JsonObject(), editor, null, EditorInsertPosition.LIST_BOTTOM))
+    }
+
+    @Test
+    fun branchCallsKeepTypedArgumentsAndBothChildAreasWhenModified() {
+        var id = 0
+        val editor = VisualEditorState.create("", "root") { "branch-${++id}" }
+        val contract = requireNotNull(BlockCatalog.find("flow.call.branch"))
+        val hint = requireNotNull(JumpPanelCode.callSnippet("worker", branches = true))
+        assertEquals("flow.call.branch", FunctionCatalog.blockKindOf(hint))
+        assertEquals("worker", JumpPanelCode.callTargetId(hint))
+        val defaults = JsonObject().apply {
+            addProperty("targetFlowId", "worker")
+            add("arguments", JsonObject().apply { addProperty("count", 5) })
+        }
+        val args = legacyDockBlockArguments(contract, hint, defaults)
+        assertEquals(5, args.getAsJsonObject("arguments")["count"].asInt)
+        val inserted = requireNotNull(editor.insertBlock(contract, args))
+        assertEquals(setOf("success", "failure"), editor.childBlockNames(inserted).toSet())
+        assertTrue(editor.updateFlowCall(inserted, "next", JsonObject().apply { addProperty("count", 9) }))
+        assertEquals("next", editor.flowCallTarget(inserted))
+        assertEquals(9, editor.flowCallArguments(inserted)!!["count"].asInt)
+        assertEquals(setOf("success", "failure"), editor.childBlockNames(inserted).toSet())
+        for (success in listOf(true, false)) {
+            val status = requireNotNull(BlockCatalog.find("flow.status.return"))
+            val updated = legacyDockBlockArguments(status, JumpPanelCode.statusSnippet(success), JsonObject())
+            assertEquals(success, updated["success"].asBoolean)
+        }
+        assertNotNull(visualJumpInsertionError("control.continue", JsonObject(), editor, null, EditorInsertPosition.LIST_BOTTOM))
     }
 }

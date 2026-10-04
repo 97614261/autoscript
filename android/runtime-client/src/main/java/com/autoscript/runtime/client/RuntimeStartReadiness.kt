@@ -14,6 +14,7 @@ internal fun runtimeStartReadiness(state: RuntimeConnectionState, generation: Lo
     state.phase != RuntimeConnectionPhase.CONNECTED || state.sessionGeneration != generation -> RuntimeStartReadiness.REJECTED
     state.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING) -> RuntimeStartReadiness.REJECTED
     state.rootState == RuntimeRootState.FAILED -> RuntimeStartReadiness.REJECTED
+    state.engineState == RuntimeEngineState.UNKNOWN -> RuntimeStartReadiness.WAITING
     state.rootState == RuntimeRootState.READY -> RuntimeStartReadiness.READY
     else -> RuntimeStartReadiness.WAITING
 }

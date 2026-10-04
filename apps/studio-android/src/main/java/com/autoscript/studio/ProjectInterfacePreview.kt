@@ -1,6 +1,5 @@
 package com.autoscript.studio
 
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -23,7 +22,7 @@ internal fun scriptUiImage(root: File?, path: String): File? {
 
 @Composable
 internal fun ProjectInterfacePreview(definition: JsonObject?, directory: File? = null, onDismiss: () -> Unit) {
-    if (definition == null) AlertDialog(onDismissRequest = onDismiss, text = { Text("尚未设计脚本界面") }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+    if (definition == null) StudioConfirmDialog(onDismissRequest = onDismiss, text = { Text("尚未设计脚本界面") }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
     else ScriptInterfaceDialog(definition, directory, "preview", preview = true, onDismiss = onDismiss, onConfirm = {})
 }
 

@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -20,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.script.ui.UiPage
+import com.autoscript.script.ui.MAX_SCRIPT_UI_CONTROLS
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,11 +28,16 @@ import java.util.UUID
 @Composable
 internal fun RunnerUiDesignerScreen(snapshot: ProjectSnapshot, store: ProjectStore, onSnapshotChanged: (ProjectSnapshot) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    DisposableEffect(context) {
-        val activity = context as? Activity
-        val previous = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        onDispose { if (previous != null) activity.requestedOrientation = previous }
+    val activity = remember(context) { context.inputPickerActivity() }
+    val screenOrientation = remember(activity) {
+        activity?.let {
+            TemporaryScreenOrientation({ it.requestedOrientation }, { direction -> it.requestedOrientation = direction },
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+        }
+    }
+    DisposableEffect(screenOrientation) {
+        screenOrientation?.acquire()
+        onDispose { screenOrientation?.release() }
     }
     var draft by remember(snapshot.manifest.projectId) { mutableStateOf(runnerUiDesignerDraft(snapshot.manifest.runnerUi)) }
     var saved by remember { mutableStateOf(draft) }
@@ -59,7 +64,8 @@ internal fun RunnerUiDesignerScreen(snapshot: ProjectSnapshot, store: ProjectSto
         if (draft != next) { undo = (undo + draft).takeLast(100); redo = emptyList(); draft = next; message = null }
     }
     fun attempt(action: () -> RunnerUiDesignerDraft) { runCatching(action).onSuccess(::commit).onFailure { message = it.message } }
-    fun exit() { if (draft != saved) confirmExit = true else onBack() }
+    fun leave() { screenOrientation?.release(); onBack() }
+    fun exit() { if (draft != saved) confirmExit = true else leave() }
     fun select(id: String) {
         selection = if (multi) if (id in selection) selection - id else selection + id else setOf(id)
         if (!focusedCanvas) inspectorVisible = true
@@ -73,7 +79,7 @@ internal fun RunnerUiDesignerScreen(snapshot: ProjectSnapshot, store: ProjectSto
     fun duplicate() {
         val ids = selection.toMutableSet()
         repeat(draft.fields.size) { draft.fields.filter { it.ui.parentId in ids }.forEach { ids.add(it.id) } }
-        if (draft.fields.size + ids.size > 128) { message = "控件数量超过128"; return }
+        if (draft.fields.size + ids.size > MAX_SCRIPT_UI_CONTROLS) { message = "控件数量超过${MAX_SCRIPT_UI_CONTROLS}"; return }
         val names = ids.associateWith { "copy_${UUID.randomUUID().toString().replace("-", "").take(16)}" }
         val copies = draft.fields.filter { it.id in ids }.map { f ->
             val offset = if (f.ui.parentId in ids) 0 else 16
@@ -170,5 +176,5 @@ internal fun RunnerUiDesignerScreen(snapshot: ProjectSnapshot, store: ProjectSto
         val json = runCatching { draft.toRunnerUiJson() }.getOrNull()
         if (json == null) { preview = false; message = "请先修正控件属性" } else ProjectInterfacePreview(json, snapshot.directory) { preview = false }
     }
-    if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("有未保存修改") }, text = { Text("退出会丢弃本次未保存的界面修改。") }, confirmButton = { TextButton(onClick = onBack) { Text("丢弃并退出") } }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("继续编辑") } })
+    if (confirmExit) StudioConfirmDialog(onDismissRequest = { confirmExit = false }, title = { Text("有未保存修改") }, text = { Text("退出会丢弃本次未保存的界面修改。") }, confirmButton = { TextButton(onClick = ::leave) { Text("丢弃并退出") } }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("继续编辑") } })
 }

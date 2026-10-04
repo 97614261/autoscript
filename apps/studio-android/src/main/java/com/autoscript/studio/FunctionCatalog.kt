@@ -63,10 +63,11 @@ internal object FunctionCatalog {
             when {
                 block.kind.startsWith("ui.") -> "界面"
                 block.kind.startsWith("input.") -> "按键"
+                block.kind.startsWith("files.") -> "文件"
                 block.kind == "control.if" -> "判断"
-                block.kind in setOf("control.repeat", "control.while", "control.loopmetric", "control.loopcheck") -> "循环"
+                block.kind in setOf("control.repeat", "control.while", "control.cycle", "control.loopmetric", "control.loopcheck") -> "循环"
                 block.kind.startsWith("control.") -> "跳转"
-                block.kind in setOf("task.log", "task.prompt", "task.runprompt", "task.comment") -> "调试"
+                block.kind in setOf("task.log", "task.prompt", "task.runprompt", "task.message", "task.comment") -> "调试"
                 else -> categoryLabel(block.category)
             }
         }
@@ -104,13 +105,24 @@ internal object FunctionCatalog {
                         },
                         notes = buildList {
                             if (block.childBlocks.isNotEmpty()) add("包含子积木区：${block.childBlocks.joinToString(" / ") { libraryChildBlockLabel(it) }}。加入后可在子区继续编排。")
+                            if (block.kind == "control.cycle") add("每轮让步1～1000毫秒，默认1毫秒；无次数上限，但停止、会话超时和资源保护仍生效。循环指标和continue作用于最近循环；限时在让步后再次检查。")
+                            if (block.kind == "control.if") add("单比较或开启复合条件（与/或/非）。最多64项、8层、8192字节；与/或短路，主条件只求值一次。否则如果同样支持复合条件；只执行第一个成立分支，均不成立才执行否则。旧v1单比较无损升级；复合条件要求runtimeApi≥1.7。")
+                            if (block.kind == "task.message") add("调试→运行输出→表达式。示例：\"进度：\" .. text(count)。仅解析计算白名单，结果须为字符；1～1024字节，最多128项、16层，结果不超过2048字节；未知变量和函数会阻断编译。弹出提示按项目样式自动消失，运行提示与开发日志分开。")
+                            if (block.kind in setOf("flow.call.branch", "flow.status.return")) add("运行状态与返回参数独立。自然结束/返回上层在智构视为成功；显式返回失败才进入失败区。异常和取消中止，不执行失败分支；不代表旧工程默认状态已经等价。")
                             if (block.properties.any { it.editor.name == "FLOW_REFERENCE" }) add("目标插件需先创建；调用参数与目标插件的参数声明对应。")
                             if (block.properties.any { it.resourceKind != null }) add("图片或字库需先加入项目资源；不能使用任意外部路径。")
-                            if (block.kind in setOf("control.break", "control.loopmetric", "control.loopcheck")) add("只能在循环体内使用，作用于最近一层循环。")
+                            if (block.kind in setOf("control.break", "control.continue", "control.loopmetric", "control.loopcheck")) add("只能在循环体内使用，作用于最近一层循环。")
                             if (block.kind in setOf("control.goto", "control.label")) add("标记与跳转位于当前插件根层级，不能跨越插件。")
                             if (block.kind.startsWith("input.pointer")) add("单指触点需由同一任务按下、移动、弹起；依赖 Root 单指输入能力。")
                             if (block.kind == "ui.get") add("读取用户在已设计页面填写的参数；按控件 ID 定位，不受当前页限制。结果是字符串：复选框为 true/false，整数可用计算积木 int/float 转换。启动配置 RunnerConfig 与运行中的当前值不同；此积木读当前值。")
-                            if (block.kind.startsWith("vision.") || block.kind.startsWith("ocr.")) add("帧变量保存不可变图像句柄；先截图缓存，再在该帧上识别。请按对应配置面板的坐标说明设置区域，右/下边界不包含。")
+                            if (block.kind == "ui.command") add("get:属性读取真实值到字符变量，写操作不接收结果。尺寸是设计像素；颜色#AARRGGBB；数字和布尔结果用计算积木转换。")
+                            if (block.kind.startsWith("data.")) add("集合/对象保存在字符变量中的JSON文本；索引从1开始。最多64KiB、16层、1024项；写操作返回新JSON，需要接收后才更新变量。标量字符串用解码JSON字符串读取。")
+                            if (block.kind.startsWith("files.")) add("仅访问当前项目独立的私有data目录，不是插件或图片目录。需明确启用storage.data能力。单文件最多64KiB；写入创建父目录，删除进入私有回收区，不能访问绝对路径或上级目录。")
+                            if (block.kind == "variable.calculate") add("可在同一计算面板选择字符/字节处理与整数运算。len/sub/find 按字符、起点1、未找到0；byteLen(字符)返回UTF-8字节数，byteFind(字符,查找串,起点)起点0、未找到−1；byteSub(字符,起点,长度)起点0、末尾截短，切断中文编码会报错。idiv(整,整)向零整除，irem(整,整)余数与被除数同号；除零与64位溢出报错。字符串最多4096字节。例如 byteLen(\"中文\")=6、idiv(-7,3)=-2、irem(-7,3)=-1。这些是计算表达式函数，不是独立Lua全局API。")
+                            if ((block.kind.startsWith("vision.") && block.kind != "vision.result") || block.kind.startsWith("ocr.")) add("帧变量保存不可变图像句柄；先截图缓存，再在该帧上识别。请按对应配置面板的坐标说明设置区域，右/下边界不包含。")
+                            if (block.kind == "vision.findallimages") add("保留1–64个结果，包括重叠；按模板选择顺序及现代搜索方向排序。结果存入字符变量，成功/失败区互斥。上限是保留数，不是找到总数；读取truncated判断是否还有结果。像素预算跨模板共享，超预算/取消/超时中止，不当作未找到。")
+                            if (block.kind == "vision.findallimages") add("找到后动作默认为首项；全结果模式只对保留项执行。按下不弹起禁止全结果模式。按下后定时弹起/点击停顿1–5000ms，识别前后等待0–60000ms且可取消。动作发生前已释放临时帧；输入需input.basic，等待需core.task；异常/停止不进入结果分支。")
+                            if (block.kind == "vision.result") add("读取多图结果字符变量：count/truncated用序号0；具体匹配用序号1～count。path接收字符变量；x/y/width/height/scorePermille/count/truncated接收整数变量。truncated为1/0。字段白名单，不是任意JSON执行。")
                             if (block.properties.any { it.path == "autoCapture" }) add("启用自动截图后，无需手动准备帧变量；临时截图使用后自动释放。")
                         }.joinToString("\n"),
                         keywords = block.searchTerms,
@@ -136,7 +148,7 @@ internal object FunctionCatalog {
         }
     }
 
-    private val GROUP_ORDER = listOf("插件", "变量", "按键", "屏幕", "图像", "文字", "判断", "循环", "跳转", "界面", "任务", "调试", "其它", "旧版兼容")
+    private val GROUP_ORDER = listOf("插件", "变量", "文件", "按键", "屏幕", "图像", "文字", "判断", "循环", "跳转", "界面", "任务", "调试", "其它", "旧版兼容")
     private val OUTPUT_VARIABLE_PATHS = setOf("resultVariable", "foundVariable", "xVariable", "yVariable", "countVariable",
         "textVariable", "coverageVariable", "scoreVariable", "templateVariable", "imageVariable", "targetVariable",
         "indexVariable", "iterationVariable", "elapsedVariable")
@@ -202,6 +214,11 @@ internal object FunctionCatalog {
     )
 
     private val titles = mapOf(
+        "Data.length" to "集合 / 对象长度", "Data.get" to "取集合 / 对象标量",
+        "Data.set" to "设置集合 / 对象标量", "Data.remove" to "删除集合 / 对象项",
+        "Data.append" to "追加集合标量", "Data.keys" to "列举集合 / 对象键", "Data.text" to "解码 JSON 字符串",
+        "Files.read" to "读取项目数据文件", "Files.write" to "写入项目数据文件",
+        "Files.list" to "列举项目数据文件", "Files.remove" to "删除项目数据文件",
         "UI.waitEvent" to "等待界面事件", "UI.getValue" to "读取页面参数", "UI.setValue" to "设置控件值", "UI.command" to "界面操作",
         "Task.sleep" to "等待", "Task.spawn" to "启动子任务", "Task.cancel" to "取消子任务",
         "Timer.every" to "启动定时器", "Timer.cancel" to "取消定时器",
@@ -212,7 +229,7 @@ internal object FunctionCatalog {
         "Screen.captureSeries" to "连续截图", "Screen.loadImage" to "载入图片", "Screen.crop" to "裁剪帧",
         "Screen.getColor" to "取点颜色", "Screen.compareColor" to "单点比色", "Screen.findColor" to "区域找色",
         "Screen.findAllColor" to "全部找色", "Screen.countColor" to "颜色计数", "Screen.findMultiColor" to "多点找色",
-        "Screen.findImage" to "区域找图", "Screen.findImages" to "多模板找图", "Screen.findGray" to "灰度找图",
+        "Screen.findImage" to "区域找图", "Screen.findImages" to "多模板找图", "Screen.findAllImages" to "多结果找图", "Screen.matchValue" to "读取匹配结果", "Screen.findGray" to "灰度找图",
         "Ocr.loadDictionary" to "载入字库", "Ocr.releaseDictionary" to "释放字库", "Ocr.glyph" to "字库识字",
         "Ocr.alphanumeric" to "字母数字识别", "Prompt.show" to "运行提示", "Prompt.toast" to "弹出提示",
         "Log.write" to "写入日志", "Legacy.duoDianZhaoSe" to "旧版多点找色", "Legacy.duoDianBiSe" to "旧版多点比色",
@@ -222,6 +239,8 @@ internal object FunctionCatalog {
     )
 
     private fun luaGroup(name: String): String = when (name.substringBefore('.')) {
+        "Data" -> "变量"
+        "Files" -> "文件"
         "Input" -> "按键"
         "Task", "Timer" -> "任务"
         "Screen" -> if (name in setOf("Screen.capture", "Screen.cache", "Screen.release", "Screen.captureSeries", "Screen.loadImage", "Screen.crop")) "屏幕" else "图像"
@@ -233,6 +252,10 @@ internal object FunctionCatalog {
     }
 
     private fun luaDefault(api: String, name: String): String = when (name) {
+        "json" -> "\"[]\""
+        "key" -> "\"1\""
+        "valueJson" -> if (api == "Data.text") "'\"text\"'" else "\"1\""
+        "text" -> "\"text\""
         "id" -> if (api.startsWith("UI.")) "\"control1\"" else name
         "operation" -> "\"visible\""
         "value" -> if (api.startsWith("UI.")) "\"true\"" else name
@@ -250,8 +273,15 @@ internal object FunctionCatalog {
         "maxFrames", "spaceGapColumns" -> "1"
         "targetFps" -> "10"
         "allowPartial" -> "false"
-        "path" -> if (api == "Ocr.loadDictionary") "\"dictionaries/example.asglyph\"" else "\"assets/images/template.png\""
+        "path" -> when {
+            api == "Files.list" -> "\"\""
+            api.startsWith("Files.") -> "\"state/value.txt\""
+            api == "Ocr.loadDictionary" -> "\"dictionaries/example.asglyph\""
+            else -> "\"assets/images/template.png\""
+        }
         "pathsJson" -> "'[\"assets/images/template.png\"]'"
+        "index" -> if (api == "Screen.matchValue") "0" else name
+        "field" -> if (api == "Screen.matchValue") "\"count\"" else name
         "samples" -> "{{x = 10, y = 0, rgb = 0xFFFFFF, tolerance = 0}}"
         "callback" -> "function()\n    -- 在这里添加任务内容\n    Task.sleep(100)\nend"
         else -> name // Explicit prerequisites are explained next to the example, never disguised as literals.
@@ -267,6 +297,7 @@ internal object FunctionCatalog {
                 "Screen.cache" -> "frame"
                 "Screen.crop" -> "cropped"
                 "Screen.loadImage" -> "template"
+                "Screen.findAllImages" -> "matchesJson"
                 "Ocr.loadDictionary" -> "dictionary"
                 "Task.spawn" -> "task"
                 "Timer.every" -> "timer"
@@ -276,7 +307,12 @@ internal object FunctionCatalog {
             val prerequisites = doc.parameters.filter { it.required && luaDefault(doc.name, it.name) == it.name }.map { it.name }
             val notes = buildList {
                 if (prerequisites.isNotEmpty()) add("示例需已有变量：${prerequisites.joinToString("、")}。先采集并缓存帧；模板/字库先加载，任务/定时器 ID 先创建。")
-                if (doc.parameters.any { it.name in setOf("path", "pathsJson") }) add("示例资源路径必须替换为项目已声明的实际文件。")
+                if (doc.parameters.any { it.name in setOf("path", "pathsJson") } && !doc.name.startsWith("Files.")) add("示例资源路径必须替换为项目已声明的实际文件。")
+                if (doc.name.startsWith("Data.")) add("使用字符变量保存JSON文本；数组索引从1开始。变更返回新的JSON，不修改原值；Data.get返回JSON标量文本，JSON字符串用Data.text解码。")
+                if (doc.name == "Screen.findAllImages") add("返回字符JSON集合，不是图像帧。limit最多64；模板按列表优先级，可能有重叠命中。truncated只表示还有匹配，不表示实际总数。借用帧由调用者释放。")
+                if (doc.name == "Screen.matchValue") add("result填已有的多图结果JSON；index=0读取count或truncated，逐项属性从1开始。数字JSON用tonumber，path用Data.text；不执行JSON中的代码。")
+                if (doc.name == "UI.command") add("固定属性支持fontBold/textUnderline、borderColor/borderWidthPx/cornerPx及get:读取。布尔仅true/false，边框宽0–32、圆角0–512设计像素；隐藏页面更新仍保留。")
+                if (doc.name.startsWith("Files.")) add("仅当前项目私有data目录；需storage.data能力。文件读取前先写入，列表返回JSON文本；不允许绝对路径、上级目录或任意外部文件。")
                 if (doc.parameters.any { it.name == "right" }) add("区域为半开矩形，右/下边界不包含；示例区域 0,0,100,100 需按实际图像修改。")
                 if (doc.name.startsWith("Input.")) add("需 Root 输入服务；tap/pointerDown 使用设计坐标，带 Screen 后缀的调用使用原始屏幕像素。")
                 if (doc.name in setOf("Input.pointerDown", "Input.pointerDownScreen", "Input.pointerMove", "Input.pointerUp")) add("按下、移动、弹起需同一任务持有单指触点；使用完应弹起，任务退出或租约超时也会清理。")
@@ -325,6 +361,7 @@ internal fun functionValueType(type: String): String = when (type.lowercase(Loca
     "rect" -> "区域"
     "color" -> "颜色"
     "resource" -> "资源"
+    "resource_list" -> "模板列表"
     "flow_reference" -> "插件"
     "flow_arguments" -> "调用参数"
     else -> type
@@ -334,6 +371,8 @@ private fun libraryChildBlockLabel(name: String): String = when (name) {
     "body" -> "主体"
     "then" -> "条件成立"
     "else" -> "否则"
+    "success" -> "运行成功"
+    "failure" -> "运行失败"
     else -> name
 }
 

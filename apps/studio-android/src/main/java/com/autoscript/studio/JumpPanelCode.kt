@@ -25,16 +25,18 @@ internal object JumpPanelCode {
         return value
     }
 
-    fun callSnippet(targetFlowId: String): String? = targetFlowId.takeIf(String::isNotBlank)?.let {
-        hint("flow.call", JsonObject().apply { addProperty("targetFlowId", it) })
+    fun callSnippet(targetFlowId: String, branches: Boolean = false): String? = targetFlowId.takeIf(String::isNotBlank)?.let {
+        hint(if (branches) "flow.call.branch" else "flow.call", JsonObject().apply { addProperty("targetFlowId", it) })
     }
 
     fun callTargetId(snippet: String): String? {
-        if (!snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + "flow.call\n")) return null
+        if (listOf("flow.call", "flow.call.branch").none { snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + it + "\n") }) return null
         return snippet.lineSequence().drop(1).firstOrNull()?.let { encoded ->
             runCatching { JsonParser.parseString(encoded).asJsonObject.get("targetFlowId")?.asString }.getOrNull()
         }
     }
+
+    fun statusSnippet(success: Boolean): String = hint("flow.status.return", JsonObject().apply { addProperty("success", success) })
 
     fun setSnippet(kind: String, index: Int, text: String, variable: String?): String? {
         if (kind !in channelKinds || index !in 1..99) return null

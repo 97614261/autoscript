@@ -12,6 +12,7 @@ val sdkDirectory = file(requireNotNull(localProperties.getProperty("sdk.dir")))
 val ndkDirectory = sdkDirectory.resolve("ndk/30.0.14904198")
 val llvmBin = ndkDirectory.resolve("toolchains/llvm/prebuilt/windows-x86_64/bin")
 val rootDaemonLibraries = layout.buildDirectory.dir("generated/rootDaemon/jniLibs")
+val daemonUnstripped = layout.buildDirectory.dir("generated/rootDaemon/unstripped")
 
 data class RootDaemonTarget(
     val rustTarget: String,
@@ -41,14 +42,15 @@ val rootDaemonTargets = listOf(
     ),
 )
 
-val syncRootDaemons = rootDaemonTargets.mapIndexed { index, target ->
+val selectedDaemonTargets = rootDaemonTargets.filter { it.abi in (rootProject.extra["autoscript.abis"] as List<*>) }
+val syncRootDaemons = selectedDaemonTargets.mapIndexed { index, target ->
     val taskSuffix = target.abi.replace("-", "_").replaceFirstChar(Char::uppercase)
     val cargoOutput = rootProject.layout.projectDirectory.file(
         "target/${target.rustTarget}/debug/root-daemon",
     )
     val buildTask = tasks.register<Exec>("buildRootDaemon$taskSuffix") {
         if (index > 0) {
-            val previous = rootDaemonTargets[index - 1].abi
+            val previous = selectedDaemonTargets[index - 1].abi
                 .replace("-", "_")
                 .replaceFirstChar(Char::uppercase)
             dependsOn("buildRootDaemon$previous")
@@ -64,19 +66,31 @@ val syncRootDaemons = rootDaemonTargets.mapIndexed { index, target ->
         inputs.files(rootProject.file("Cargo.toml"), rootProject.file("Cargo.lock"))
         outputs.file(cargoOutput)
     }
-    tasks.register<Copy>("syncRootDaemon$taskSuffix") {
+    val copyTask = tasks.register<Copy>("syncRootDaemon$taskSuffix") {
         dependsOn(buildTask)
         from(cargoOutput)
-        into(rootDaemonLibraries.map { it.dir(target.abi) })
+        into(daemonUnstripped.map { it.dir(target.abi) })
         rename { "libautoscript_root_daemon.so" }
+    }
+    tasks.register<Exec>("stripRootDaemon$taskSuffix") {
+        dependsOn(copyTask)
+        val input = daemonUnstripped.get().file("${target.abi}/libautoscript_root_daemon.so").asFile
+        val output = rootDaemonLibraries.get().file("${target.abi}/libautoscript_root_daemon.so").asFile
+        inputs.file(input); inputs.file(llvmBin.resolve("llvm-strip.exe"))
+        outputs.file(output)
+        doFirst { output.parentFile.mkdirs() }
+        commandLine(llvmBin.resolve("llvm-strip.exe").absolutePath, "--strip-debug", "-o", output.absolutePath, input.absolutePath)
     }
 }
 
 android {
     namespace = "com.autoscript.runtime.service"
     compileSdk = 36
+    ndkVersion = "30.0.14904198"
     defaultConfig {
         minSdk = 24
+        testApplicationId = "com.autoscript.vision.acceptance"
+        testInstrumentationRunner = "com.autoscript.runtime.service.VisionAcceptanceInstrumentation"
         consumerProguardFiles("consumer-rules.pro")
     }
     compileOptions {

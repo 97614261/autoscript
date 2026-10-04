@@ -3,6 +3,8 @@ package com.autoscript.studio
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +39,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +76,10 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 private const val MAX_TEMPLATE_EDGE = 4_096
 private const val MAX_TEMPLATE_PIXELS = 4_194_304L
@@ -80,7 +87,7 @@ private const val MAX_TEMPLATE_PIXELS = 4_194_304L
 /**
  * `activity_apk_build.xml` + `page_apk_update.xml` + `page_apk_build_log.xml`：64dp 头、36dp Tab、
  * 四个分区（应用外观 / 安装信息 / 代码与资源保护 / 随包插件）、固定底部“开始打包 APK”。
- * R0 没有本机打包链，按钮只把原因写进日志页，不伪造进度或结果。
+ * 使用独立Runner模板与设备私有密钥构建真实APK；固定模板属性在界面明确锁定。
  */
 @Composable
 internal fun ProjectPackageScreen(
@@ -88,13 +95,22 @@ internal fun ProjectPackageScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    BackHandler(onBack = onBack)
+    val context = LocalContext.current
     val projectId = snapshot.manifest.projectId
+    val controller = remember(context) { DevicePackagingController(context) }
+    val scope = rememberCoroutineScope()
+    var packagingJob by remember(projectId) { mutableStateOf<Job?>(null) }
+    var busy by remember(projectId) { mutableStateOf(false) }
+    var exporting by remember(projectId) { mutableStateOf(false) }
+    var result by remember(projectId) { mutableStateOf<DeviceApkPackageResult?>(null) }
+    var exportFile by remember(projectId) { mutableStateOf<File?>(null) }
+    fun leave() { controller.cancel(); packagingJob?.cancel(); onBack() }
+    BackHandler(onBack = ::leave)
+    DisposableEffect(controller) { onDispose { controller.cancel() } }
     var selectedTab by remember(projectId) { mutableIntStateOf(0) }
-    var appName by remember(projectId) { mutableStateOf(snapshot.manifest.name) }
-    var packageName by remember(projectId) { mutableStateOf(suggestedApplicationId(snapshot.manifest.name, projectId)) }
-    var outputPath by remember(projectId) { mutableStateOf("/sdcard/${snapshot.manifest.name}.apk") }
-    var convertSue by remember(projectId) { mutableStateOf(true) }
+    val appName = DevicePackagingController.DISPLAY_NAME
+    val packageName = DevicePackagingController.APPLICATION_ID
+    val outputPath = result?.file?.name ?: "生成后选择导出位置"
     var notice by remember(projectId) { mutableStateOf<String?>(null) }
     var logs by remember(projectId) { mutableStateOf<List<String>>(emptyList()) }
     val tabs = listOf("打包", "更新", "日志输出")
@@ -103,7 +119,39 @@ internal fun ProjectPackageScreen(
 
     fun appendLog(vararg lines: String) {
         val stamp = timestamp.format(Date())
-        logs = logs + lines.map { "[$stamp] $it" }
+        logs = (logs + lines.map { "[$stamp] $it" }).takeLast(100)
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")) { uri ->
+        val file = exportFile
+        if (uri == null || file == null) { exporting = false; exportFile = null }
+        else scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val coroutine = currentCoroutineContext()
+                    val deadline = System.nanoTime() + 120_000_000_000L
+                    FileInputStream(file).use { input -> requireNotNull(context.contentResolver.openOutputStream(uri, "w")).use { output ->
+                        val buffer = ByteArray(65_536)
+                        while (true) {
+                            coroutine.ensureActive(); check(System.nanoTime() < deadline) { "APK 导出超时" }
+                            val count = input.read(buffer); if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                        output.flush()
+                    } }
+                }
+                notice = "已导出 APK，可从系统文件管理器安装"
+                appendLog("已导出已验签的 Runner APK")
+            } catch (error: Exception) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                    // CreateDocument creates a new document; only remove this failed export, never the private APK.
+                    runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                }
+                if (error is CancellationException) throw error
+                notice = "APK 导出未完成，请重新选择位置"
+                appendLog("导出失败；私有目录中的完整 APK 已保留")
+            } finally { exporting = false; exportFile = null }
+        }
     }
 
     Column(modifier = modifier.fillMaxSize().background(AutoScriptPalette.PageBackground)) {
@@ -115,7 +163,7 @@ internal fun ProjectPackageScreen(
                 painterResource(R.drawable.package_back_20),
                 contentDescription = "返回",
                 tint = Color.Unspecified,
-                modifier = Modifier.size(42.dp).clickable(onClick = onBack).padding(11.dp),
+                modifier = Modifier.size(42.dp).clickable(onClick = ::leave).padding(11.dp),
             )
             Text(
                 "打包应用",
@@ -168,12 +216,12 @@ internal fun ProjectPackageScreen(
                                         .border(1.dp, Color(0xFFC7D8FF), RoundedCornerShape(12.dp)),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    Icon(painterResource(R.drawable.nav_workspace_24), contentDescription = "应用图标预览", tint = AutoScriptPalette.Accent, modifier = Modifier.size(24.dp))
+                                    Icon(painterResource(android.R.drawable.sym_def_app_icon), contentDescription = "Runner 模板默认图标", tint = Color.Unspecified, modifier = Modifier.size(24.dp))
                                 }
                             }
                             Column(Modifier.weight(1f).padding(start = 13.dp)) {
                                 Text("桌面图标", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary)
-                                Text("使用 AutoScript 默认图标", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                                Text("独立 Runner 模板默认图标 · 固定", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                             }
                             // 参考 bt_apk_reset_icon 是 36dp 高 + gravity=center，只有左右内边距。
                             // 原来用 padding(vertical = 11.dp) 去“居中”，实际是把内容框压到 36-22=14dp，
@@ -192,50 +240,53 @@ internal fun ProjectPackageScreen(
                         Row(
                             Modifier.fillMaxWidth().padding(top = 12.dp).height(42.dp)
                                 .background(AutoScriptPalette.AccentSoft, RoundedCornerShape(10.dp))
-                                .clickable { notice = "自定义图标在本机打包能力开放后启用" },
+                                .clickable(enabled = false) {},
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(painterResource(R.drawable.package_folder_open_20), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(18.dp))
-                            Text("从文件管理器选择图片", color = AutoScriptPalette.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 7.dp))
+                            Text("自定义图标暂未开放", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 7.dp))
                         }
                     }
                 }
                 item { PackageSectionTitle("安装信息") }
                 item {
                     PackageCard {
-                        PackageInput("应用名称", appName, "显示在桌面上的名称") { appName = it.take(64) }
+                        PackageInput("桌面名称（模板固定）", appName, "", enabled = false) {}
+                        Text("脚本项目：${snapshot.manifest.name}", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
                         Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("应用包名", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.weight(1f))
                             Text(
-                                "历史包名",
+                                "模板固定",
                                 fontSize = 10.sp,
                                 color = AutoScriptPalette.Accent,
                                 maxLines = 1,
                                 softWrap = false,
-                                modifier = Modifier.height(28.dp).clickable { notice = "暂无历史包名" }
+                                modifier = Modifier.height(28.dp)
                                     .padding(horizontal = 9.dp).wrapContentHeight(),
                             )
                         }
-                        PackageInput(null, packageName, "例如 com.example.app") { packageName = it.take(128) }
-                        Text("输出路径", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(top = 12.dp))
-                        PackageInput(null, outputPath, "例如 /sdcard/应用名.apk") { outputPath = it.take(256) }
+                        PackageInput(null, packageName, "", enabled = false) {}
+                        Text("版本 ${DevicePackagingController.VERSION_NAME} · versionCode ${DevicePackagingController.VERSION_CODE}（固定）", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
+                        Text("输出文件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(top = 12.dp))
+                        PackageInput(null, outputPath, "", enabled = false) {}
+                        Text("APK 使用设备私有密钥；同包名脚本通过系统更新安装。", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
                     }
                 }
                 item { PackageSectionTitle("代码与资源保护") }
                 item {
                     PackageCard(horizontalOnly = true) {
                         Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("项目保护", modifier = Modifier.weight(1f).padding(end = 12.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary)
-                            Text("已开启", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4169C1))
+                            Text("混淆 / 资源加密", modifier = Modifier.weight(1f).padding(end = 12.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary)
+                            Text("未开放", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextSecondary)
                         }
                         Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0D14203A)))
                         Row(
-                            Modifier.fillMaxWidth().height(52.dp).clickable { convertSue = !convertSue },
+                            Modifier.fillMaxWidth().height(52.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(".sue 文件转 Lua 片段", modifier = Modifier.weight(1f).padding(end = 12.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary)
-                            IosSwitch(checked = convertSue, enabled = true) { convertSue = it }
+                            Text("插件编译为冻结 Lua", modifier = Modifier.weight(1f).padding(end = 12.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary)
+                            IosSwitch(checked = true, enabled = false) {}
                         }
                     }
                 }
@@ -243,15 +294,15 @@ internal fun ProjectPackageScreen(
                 item {
                     PackageCard(padding = PaddingValues(start = 14.dp, top = 12.dp, end = 14.dp, bottom = 12.dp)) {
                         Row(
-                            Modifier.fillMaxWidth().height(32.dp).clickable { notice = "插件运行时属于后续阶段，当前不可选" },
+                            Modifier.fillMaxWidth().height(32.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(painterResource(R.drawable.package_java_plugin_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
-                            Text("选择插件", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary, modifier = Modifier.weight(1f).padding(start = 9.dp))
-                            Text("未选择  ›", color = AutoScriptPalette.Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Android 扩展插件 APK", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.TextPrimary, modifier = Modifier.weight(1f).padding(start = 9.dp))
+                            Text("未开放", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                         Text(
-                            "未勾选插件，打包应用不会携带插件 APK",
+                            "只携带本项目冻结脚本与资源；外部扩展插件 APK 未开放。",
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
                             color = AutoScriptPalette.TextSecondary,
@@ -273,22 +324,65 @@ internal fun ProjectPackageScreen(
         Surface(color = Color.White) {
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 10.dp, end = 14.dp, bottom = 12.dp)) {
                 Text(
-                    "开始打包 APK",
+                    if (busy) "取消打包" else "开始打包 APK",
                     color = AutoScriptPalette.AccentDark,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1f).height(44.dp)
                         .background(Color(0xFFDCE7FF), RoundedCornerShape(12.dp))
-                        .clickable {
-                            appendLog(
-                                "开始打包：$appName（$packageName）→ $outputPath",
-                                "本机打包未开放：当前阶段没有设备端 APK 构建链。",
-                                "请在主机运行 cargo run -p release-packager -- prepare <项目目录> <输出目录> $packageName 1 1.0.0，再用 Gradle 注入 autoscript.releaseDir 构建 Runner。",
-                            )
-                            selectedTab = 2
+                        .clickable(enabled = !exporting) {
+                            if (busy) { controller.cancel(); packagingJob?.cancel(); notice = "正在取消打包并清理暂存文件" }
+                            else {
+                                busy = true; selectedTab = 2; notice = null
+                                appendLog("开始设备打包：${snapshot.manifest.name} → $packageName")
+                                packagingJob = scope.launch {
+                                    try {
+                                        val packaged = controller.build(snapshot) { line -> scope.launch { appendLog(line) } }
+                                        result = packaged
+                                        notice = "APK 构建完成并已验签；点击导出选择保存位置"
+                                        appendLog("构建成功：${packaged.file.name}", "设备签名证书 SHA-256：${packaged.certificateSha256}")
+                                        packaged.upgradeWarning?.let { notice = it; appendLog(it) }
+                                    } catch (_: CancellationException) {
+                                        notice = "已取消打包"; appendLog("打包已取消，暂存输出已清理")
+                                    } catch (error: Exception) {
+                                        notice = error.message ?: "APK 构建失败"
+                                        appendLog("构建失败：${notice}")
+                                    } catch (_: LinkageError) {
+                                        notice = "发布引擎未能加载，请重新安装完整 Studio"; appendLog(requireNotNull(notice))
+                                    } finally { busy = false; packagingJob = null }
+                                }
+                            }
                         }
                         .padding(top = 14.dp),
+                )
+                if (result != null && !busy) Text(
+                    if (exporting) "导出中…" else "导出 APK", color = AutoScriptPalette.AccentDark, fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(start = 8.dp).height(44.dp).weight(1f)
+                        .background(Color(0xFFDCE7FF), RoundedCornerShape(12.dp)).clickable(enabled = !exporting) {
+                            exportFile = result?.file; exporting = true
+                            exportLauncher.launch("${snapshot.manifest.name.replace(Regex("[\\\\/:*?\"<>|]"), "_")}.apk")
+                        }.wrapContentHeight(),
+                )
+                if (result != null && !busy) Text(
+                    "分享 APK", color = AutoScriptPalette.AccentDark, fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(start = 8.dp).height(44.dp).weight(1f)
+                        .background(Color(0xFFDCE7FF), RoundedCornerShape(12.dp)).clickable(enabled = !exporting) {
+                            try {
+                                val file = requireNotNull(result).file
+                                require(file.isFile && file.canonicalPath.startsWith(File(context.filesDir, "packages").canonicalPath + File.separator))
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.packages", file)
+                                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "application/vnd.android.package-archive"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    clipData = android.content.ClipData.newUri(context.contentResolver, "Runner APK", uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(intent, "分享已验签 Runner APK"))
+                            } catch (_: Exception) { notice = "无法打开分享菜单；已生成的 APK 仍可导出" }
+                        }.wrapContentHeight(),
                 )
             }
         }
@@ -324,12 +418,13 @@ private fun PackageCard(
 
 /** `bg_apk_input`：46dp 浅灰底圆角输入框，13sp。 */
 @Composable
-private fun PackageInput(label: String?, value: String, hint: String, onValueChange: (String) -> Unit) {
+private fun PackageInput(label: String?, value: String, hint: String, enabled: Boolean = true, onValueChange: (String) -> Unit) {
     label?.let { Text(it, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary) }
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
+        enabled = enabled,
         textStyle = TextStyle(fontSize = 13.sp, color = AutoScriptPalette.TextPrimary),
         modifier = Modifier.fillMaxWidth().padding(top = if (label != null) 6.dp else 4.dp).height(46.dp)
             .background(AutoScriptPalette.PageBackground, RoundedCornerShape(11.dp))
@@ -483,6 +578,8 @@ internal fun ImageToolsScreen(
     var previewPending by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
     var previewSaving by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
     var choosingScreenshotFolder by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
+    var browsingFolders by remember(snapshot.manifest.projectId) { mutableStateOf(false) }
+    var currentImageFolder by remember(snapshot.manifest.projectId) { mutableStateOf("") }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val context = LocalContext.current
     val latestPreviewBitmap by rememberUpdatedState(previewBitmap)
@@ -492,6 +589,7 @@ internal fun ImageToolsScreen(
     val images = snapshot.manifest.resources.mapNotNull { resource ->
         resource.takeIf { it.get("kind")?.asString == "image" }?.get("path")?.asString
     }
+    val visibleImages = images.filter { it.removePrefix("assets/images/").substringBeforeLast('/', "") == currentImageFolder }
     val rootStatus = when (runtimeState.rootState) {
         RuntimeRootState.READY -> "Root 已就绪"
         RuntimeRootState.STARTING -> "Root 正在连接"
@@ -501,6 +599,8 @@ internal fun ImageToolsScreen(
     }
     Column(modifier.fillMaxSize().background(AutoScriptPalette.PageBackground)) {
         UtilityLightHeader("图片与标注", "项目图片 ${images.size} 张", onBack) {
+            Text("文件夹", color = AutoScriptPalette.Accent, fontSize = 11.sp,
+                modifier = Modifier.clickable { browsingFolders = true }.padding(horizontal = 6.dp, vertical = 6.dp))
             Text(
                 "导入",
                 color = AutoScriptPalette.Accent,
@@ -510,7 +610,7 @@ internal fun ImageToolsScreen(
             )
         }
         Text(
-            "截图、区域标注、取色和模板裁剪共用此工作区。截图只在你主动点击后经 Runtime 的 Root 通道执行。",
+            "当前位置：${currentImageFolder.ifEmpty { "图片根目录" }} · ${visibleImages.size} 张。文件夹可选择位置或新建；截图仅在主动点击后执行。",
             modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 10.dp),
             fontSize = 11.sp,
             color = AutoScriptPalette.TextSecondary,
@@ -605,14 +705,14 @@ internal fun ImageToolsScreen(
                     }
                 }
             }
-            if (images.isEmpty()) {
+            if (visibleImages.isEmpty()) {
                 item {
                     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
-                        Text("暂无图片，点右上角“导入”从项目设置添加。", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(18.dp))
+                        Text("当前文件夹暂无图片，点右上角“导入”，或截图后保存到这里。", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(18.dp))
                     }
                 }
             }
-            items(images, key = { it }) { path ->
+            items(visibleImages, key = { it }) { path ->
                 Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White) {
                     Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(34.dp).background(AutoScriptPalette.AccentSoft, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
@@ -627,9 +727,18 @@ internal fun ImageToolsScreen(
             }
         }
     }
+    if (browsingFolders) ImageTemplateSaveDialog(
+        imagePaths = images, store = store, projectId = snapshot.manifest.projectId, folderOnly = true,
+        initialFolder = currentImageFolder,
+        onDismiss = { browsingFolders = false },
+        onSave = { folder, _ -> currentImageFolder = folder; browsingFolders = false },
+    )
     if (choosingScreenshotFolder) {
         ImageTemplateSaveDialog(
+            store = store,
+            projectId = snapshot.manifest.projectId,
             imagePaths = images,
+            initialFolder = currentImageFolder,
             defaultName = "screen-${System.currentTimeMillis()}.png",
             onDismiss = { choosingScreenshotFolder = false },
             onSave = { folder, name ->

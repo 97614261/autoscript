@@ -98,6 +98,176 @@ fn runtime() -> mlua::Lua {
     lua
 }
 
+#[test]
+fn compound_conditions_short_circuit_and_execute_one_branch() {
+    let mut project = manifest(json!([]), json!([]));
+    project.runtime_api = "1.7".into();
+    let compare = |v: &str, op: &str, value: Value| json!({"type":"compare","variable":v,"operator":op,"value":value});
+    for (tree, expected) in [
+        (
+            json!({"type":"any","conditions":[compare("x","equals",json!(1)),compare("undefined","lessThan",json!(2))]}),
+            "yes",
+        ),
+        (
+            json!({"type":"all","conditions":[compare("x","equals",json!(0)),compare("undefined","lessThan",json!(2))]}),
+            "alternate",
+        ),
+        (
+            json!({"type":"not","condition":compare("x","equals",json!(1))}),
+            "alternate",
+        ),
+    ] {
+        let mut conditional = node(
+            "control.if",
+            json!({"variable":"x","operator":"equals","value":1,"condition":tree,"elseIf":[{"variable":"x","operator":"equals","value":1,"condition":{"type":"not","condition":compare("x","equals",json!(0))}}]}),
+        );
+        conditional["nodeVersion"] = json!(2);
+        conditional["childBlocks"] = json!({"then":"yes","elseIf0":"alternate","else":"no"});
+        let branch = |block: &str, msg: &str| {
+            let mut v = node("task.log", json!({"level":"info","message":msg}));
+            v["blockId"] = json!(block);
+            v["parentId"] = json!("main-1");
+            v["depth"] = json!(1);
+            v
+        };
+        let bundle = sources(
+            &project,
+            &[
+                node("variable.set", json!({"name":"x","value":1})),
+                conditional,
+                branch("yes", "yes"),
+                branch("alternate", "alternate"),
+                branch("no", "no"),
+            ],
+            &[],
+        );
+        let lua = runtime();
+        let instrumented = std::str::from_utf8(&bundle.main_lua).unwrap().replace(
+            "local function __compare(left, operator, right)",
+            "comparisonCalls=0\nlocal function __compare(left, operator, right) comparisonCalls=comparisonCalls+1",
+        );
+        lua.load(&instrumented)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(())
+            .unwrap();
+        let logs = lua
+            .globals()
+            .get::<mlua::Table>("logs")
+            .unwrap()
+            .sequence_values::<String>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(logs, [expected]);
+        assert_eq!(
+            lua.globals().get::<i32>("comparisonCalls").unwrap(),
+            if expected == "yes" { 1 } else { 2 }
+        );
+        assert!(std::str::from_utf8(&bundle.main_lua)
+            .unwrap()
+            .contains("local __condition ="));
+    }
+}
+
+#[test]
+fn dynamic_messages_evaluate_typed_values_once_and_keep_channels_separate() {
+    let project = manifest(
+        json!([
+            {"name":"count","scope":"flow","flowId":"main","type":"integer"},
+            {"name":"title","scope":"global","type":"string"}
+        ]),
+        json!([]),
+    );
+    let bundle = sources(
+        &project,
+        &[
+            node("variable.set", json!({"name":"count","value":7})),
+            node("variable.set", json!({"name":"title","value":"进度："})),
+            node(
+                "task.message",
+                json!({"channel":"popup","expression":"title .. text(count)"}),
+            ),
+            node(
+                "task.message",
+                json!({"channel":"output","expression":"upper(\"ready\") .. \"\\n中文\""}),
+            ),
+            node(
+                "task.message",
+                json!({"channel":"console","expression":"\"count=\" .. text(count + 1)"}),
+            ),
+        ],
+        &[],
+    );
+    let lua = runtime();
+    lua.load("events={}; Prompt={toast=function(s) table.insert(events,'popup:'..s) end,show=function(s) table.insert(events,'output:'..s) end}; Log.info=function(s) table.insert(events,'console:'..s) end").exec().unwrap();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    let events = lua
+        .globals()
+        .get::<mlua::Table>("events")
+        .unwrap()
+        .sequence_values::<String>()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        events,
+        ["popup:进度：7", "output:READY\n中文", "console:count=8"]
+    );
+    assert!(!std::str::from_utf8(&bundle.main_lua)
+        .unwrap()
+        .contains("__vars[\"count\"] = 8"));
+}
+
+#[test]
+fn dynamic_message_limits_are_checked_before_the_host_is_called() {
+    let project = manifest(
+        json!([{ "name":"title","scope":"global","type":"string" }]),
+        json!([]),
+    );
+    let bundle = sources(
+        &project,
+        &[node(
+            "task.message",
+            json!({"channel":"popup","expression":"title"}),
+        )],
+        &[],
+    );
+    for (value, allowed) in [
+        ("x".repeat(2048).into_bytes(), true),
+        ("x".repeat(2049).into_bytes(), false),
+        (("中".repeat(682) + "ab").into_bytes(), true),
+        ("中".repeat(683).into_bytes(), false),
+        (vec![0xff], false),
+    ] {
+        let lua = runtime();
+        lua.globals()
+            .set("value", lua.create_string(&value).unwrap())
+            .unwrap();
+        // Synthetic dynamic value injected after declarations, retaining the
+        // generated type and result guards. No external script is executed.
+        let source = std::str::from_utf8(&bundle.main_lua).unwrap().replace(
+            "local __call_args = {}",
+            "__globals.title=value; local __call_args = {}",
+        );
+        lua.load("sent=0; Prompt={toast=function(s) sent=sent+1 end}")
+            .exec()
+            .unwrap();
+        let result = lua
+            .load(source)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(());
+        assert_eq!(result.is_ok(), allowed);
+        assert_eq!(
+            lua.globals().get::<u32>("sent").unwrap(),
+            u32::from(allowed)
+        );
+    }
+}
+
 fn log(name: &str) -> Value {
     node(
         "task.log",
@@ -158,6 +328,193 @@ fn calculations_run_with_types_scopes_and_conversion() {
         .unwrap();
     let logs: Vec<String> = lua.globals().get("logs").unwrap();
     assert_eq!(logs, ["12", "2.4", "计数=12", "-9", "\0\u{8}\u{c}中文"]);
+}
+
+#[test]
+fn unicode_string_operations_execute_with_literal_search_and_limits() {
+    let manifest = manifest(
+        json!([
+            {"name":"label","scope":"global","type":"string"},
+            {"name":"count","scope":"global","type":"integer"}
+        ]),
+        json!([]),
+    );
+    let bundle = sources(
+        &manifest,
+        &[
+            node(
+                "variable.calculate",
+                json!({"name":"label","expression":"trim(\" 中文A.%  \" )"}),
+            ),
+            node(
+                "variable.calculate",
+                json!({"name":"count","expression":"len(label)"}),
+            ),
+            log("count"),
+            node(
+                "variable.calculate",
+                json!({"name":"count","expression":"find(label,\".%\")"}),
+            ),
+            log("count"),
+            node(
+                "variable.calculate",
+                json!({"name":"label","expression":"replace(label,\".%\",\"结束\")"}),
+            ),
+            log("label"),
+            node(
+                "variable.calculate",
+                json!({"name":"label","expression":"sub(label,2,2)"}),
+            ),
+            log("label"),
+            node(
+                "variable.calculate",
+                json!({"name":"label","expression":"lower(upper(label))"}),
+            ),
+            log("label"),
+        ],
+        &[],
+    );
+    let lua = runtime();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    let logs: Vec<String> = lua.globals().get("logs").unwrap();
+    assert_eq!(logs, ["5", "4", "中文A结束", "文A", "文a"]);
+}
+
+#[test]
+fn native_byte_operations_preserve_existing_character_semantics() {
+    let manifest = manifest(
+        json!([
+            {"name":"label","scope":"global","type":"string"},
+            {"name":"count","scope":"global","type":"integer"}
+        ]),
+        json!([]),
+    );
+    let cases = [
+        ("count", "byteLen(\"中文A\")"),
+        ("count", "len(\"中文A\")"),
+        ("count", "byteFind(\"中文A.%\",\".%\",0)"),
+        ("count", "find(\"中文A.%\",\".%\")"),
+        ("count", "byteFind(\"abcabc\",\"abc\",1)"),
+        ("count", "byteFind(\"abc\",\"d\",0)"),
+        ("count", "byteFind(\"abc\",\"\",3)"),
+        ("count", "byteFind(\"abc\",\"\",4)"),
+        ("label", "byteSub(\"中文A\",3,3)"),
+        ("label", "byteSub(\"中文A\",6,100)"),
+        ("label", "byteSub(\"中文A\",7,0)"),
+        ("label", "byteSub(\"中\",1,0)"),
+        ("count", "byteLen(\"\\u0000中文\")"),
+        ("count", "byteFind(\"a\\u0000b\",\"\\u0000\",0)"),
+    ];
+    let nodes = cases
+        .iter()
+        .flat_map(|(target, expression)| {
+            [
+                node(
+                    "variable.calculate",
+                    json!({"name":target,"expression":expression}),
+                ),
+                log(target),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let bundle = sources(&manifest, &nodes, &[]);
+    let lua = runtime();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    let logs: Vec<String> = lua.globals().get("logs").unwrap();
+    assert_eq!(
+        logs,
+        ["7", "3", "7", "4", "3", "-1", "3", "-1", "文", "A", "", "", "7", "1"]
+    );
+}
+
+#[test]
+fn native_integer_division_is_exact_and_truncates_toward_zero() {
+    let manifest = manifest(
+        json!([{"name":"count","scope":"global","type":"integer"}]),
+        json!([]),
+    );
+    let pairs = [
+        (-7_i64, 3_i64),
+        (7, -3),
+        (-7, -3),
+        (7, 3),
+        (0, -3),
+        (i64::MAX, 3),
+        (i64::MIN, 3),
+        (i64::MIN, 1),
+        (i64::MIN, -2),
+        (1, i64::MIN),
+        (-1, i64::MIN),
+        (i64::MIN, i64::MAX),
+        (i64::MIN, i64::MIN),
+    ];
+    let mut nodes = Vec::new();
+    let mut expected = Vec::new();
+    for (a, b) in pairs {
+        for (function, result) in [("idiv", a / b), ("irem", a % b)] {
+            nodes.push(node(
+                "variable.calculate",
+                json!({"name":"count","expression":format!("{function}({a},{b})")}),
+            ));
+            nodes.push(log("count"));
+            expected.push(result.to_string());
+        }
+    }
+    let bundle = sources(&manifest, &nodes, &[]);
+    let lua = runtime();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    let logs: Vec<String> = lua.globals().get("logs").unwrap();
+    assert_eq!(logs, expected);
+}
+
+#[test]
+fn native_calculation_runtime_rejects_bad_bounds_and_split_utf8() {
+    let manifest = manifest(
+        json!([
+            {"name":"label","scope":"global","type":"string"},
+            {"name":"count","scope":"global","type":"integer"}
+        ]),
+        json!([]),
+    );
+    for (target, expression, message) in [
+        ("label", "byteSub(\"中\",1,1)", "切断UTF-8"),
+        ("label", "byteSub(\"abc\",4,1)", "字节截取起点"),
+        ("label", "byteSub(\"abc\",0,4097)", "字节截取起点"),
+        ("count", "byteFind(\"abc\",\"a\",-1)", "字节查找起点"),
+        ("count", "byteFind(\"abc\",\"a\",4097)", "字节查找起点"),
+        ("count", "idiv(1,0)", "除以零"),
+        ("count", "irem(1,0)", "除以零"),
+        ("count", "idiv(-9223372036854775808,-1)", "溢出"),
+        ("count", "irem(-9223372036854775808,-1)", "溢出"),
+    ] {
+        let bundle = sources(
+            &manifest,
+            &[node(
+                "variable.calculate",
+                json!({"name":target,"expression":expression}),
+            )],
+            &[],
+        );
+        let error = runtime()
+            .load(&bundle.main_lua)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(())
+            .unwrap_err();
+        assert!(error.to_string().contains(message), "{expression}: {error}");
+    }
 }
 
 #[test]
@@ -394,6 +751,118 @@ fn interface_read_write_blocks_compile_to_real_api() {
 }
 
 #[test]
+fn interface_property_results_are_assigned_without_changing_legacy_writes() {
+    let mut manifest = manifest(
+        json!([{"name":"value","scope":"global","type":"string"}]),
+        json!([]),
+    );
+    manifest.runtime_api = "1.7".into();
+    manifest.capabilities.push("ui.control".into());
+    manifest.runner_ui = Some(serde_json::from_value(json!({"fields":[{"id":"name","label":"Name","kind":"text","required":false,"initialValue":"","options":[]}]})).unwrap());
+    let bundle = sources(
+        &manifest,
+        &[
+            node(
+                "ui.command",
+                json!({"controlId":"name","operation":"alignment","value":"center"}),
+            ),
+            node(
+                "ui.command",
+                json!({"controlId":"name","operation":"get:alignment","value":"","resultVariable":"value"}),
+            ),
+            log("value"),
+        ],
+        &[],
+    );
+    let lua = runtime();
+    lua.load("UI={command=function(id,op,v) assert(id=='name'); if op=='alignment' then assert(v=='center'); alignment=v else assert(op=='get:alignment' and v==''); return alignment end end}").exec().unwrap();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    assert_eq!(loop_logs(&lua), ["center"]);
+    for (operation, value) in [
+        ("fontBold", "true"),
+        ("textUnderline", "false"),
+        ("borderColor", "#80123456"),
+        ("borderWidthPx", "32"),
+        ("cornerPx", "512"),
+    ] {
+        let bundle = sources(
+            &manifest,
+            &[
+                node(
+                    "ui.command",
+                    json!({"controlId":"name","operation":operation,"value":value}),
+                ),
+                node(
+                    "ui.command",
+                    json!({"controlId":"name","operation":format!("get:{operation}"),"value":"","resultVariable":"value"}),
+                ),
+                log("value"),
+            ],
+            &[],
+        );
+        let lua = runtime();
+        lua.globals().set("operation", operation).unwrap();
+        lua.load("UI={command=function(id,op,v) assert(id=='name'); if op==operation then saved=v else assert(op=='get:'..operation and v==''); return saved end end}").exec().unwrap();
+        lua.load(&bundle.main_lua)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(())
+            .unwrap();
+        assert_eq!(loop_logs(&lua), [value]);
+    }
+}
+
+#[test]
+fn data_and_private_file_blocks_render_literal_and_typed_variable_operands() {
+    let mut manifest = manifest(
+        json!([
+            {"name":"data","scope":"global","type":"string"},
+            {"name":"count","scope":"global","type":"integer"}
+        ]),
+        json!([]),
+    );
+    manifest.runtime_api = "1.7".into();
+    manifest.capabilities.push("storage.data".into());
+    let bundle = sources(
+        &manifest,
+        &[
+            node("variable.set", json!({"name":"data","value":"[]"})),
+            node(
+                "data.append",
+                json!({"json":"[]","jsonVariable":"data","valueJson":"1","resultVariable":"data"}),
+            ),
+            node(
+                "data.length",
+                json!({"json":"[]","jsonVariable":"data","resultVariable":"count"}),
+            ),
+            node(
+                "files.write",
+                json!({"path":"state/value.json","text":"","textVariable":"data"}),
+            ),
+            node(
+                "files.read",
+                json!({"path":"state/value.json","resultVariable":"data"}),
+            ),
+            log("count"),
+            log("data"),
+        ],
+        &[],
+    );
+    let lua = runtime();
+    lua.load("Data={append=function(j,v) assert(j=='[]' and v=='1'); return '[1]' end,length=function(j) assert(j=='[1]'); return 1 end}; Files={write=function(p,t) assert(p=='state/value.json'); saved=t end,read=function(p) assert(p=='state/value.json'); return saved end}").exec().unwrap();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    assert_eq!(loop_logs(&lua), ["1", "[1]"]);
+}
+
+#[test]
 fn disabled_container_skips_invalid_arguments_and_children_without_deleting_them() {
     let mut owner = loop_node(
         "owner",
@@ -570,6 +1039,272 @@ fn loop_logs(lua: &mlua::Lua) -> Vec<String> {
         .sequence_values::<String>()
         .map(Result::unwrap)
         .collect()
+}
+
+#[test]
+fn cancellable_cycle_passes_old_iteration_cap_and_reads_nearest_metrics() {
+    let project = manifest(
+        json!([{"name":"n","scope":"flow","flowId":"main","type":"integer"}]),
+        json!([]),
+    );
+    let main = [
+        loop_node(
+            "loop",
+            None,
+            "block-main",
+            0,
+            "control.cycle",
+            json!({"yieldMs":1}),
+            Some("body"),
+        ),
+        loop_node(
+            "metric",
+            Some("loop"),
+            "body",
+            1,
+            "control.loopmetric",
+            json!({"metric":"count","name":"n"}),
+            None,
+        ),
+        loop_node(
+            "check",
+            Some("loop"),
+            "body",
+            1,
+            "control.loopcheck",
+            json!({"metric":"count","limit":10005}),
+            None,
+        ),
+        log("n"),
+    ];
+    let bundle = sources(&project, &main, &[]);
+    let lua = loop_runtime();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    assert_eq!(loop_logs(&lua), ["10005"]);
+    assert_eq!(lua.globals().get::<u64>("clock").unwrap(), 10005);
+    assert!(!std::str::from_utf8(&bundle.main_lua)
+        .unwrap()
+        .contains("iteration limit exceeded"));
+}
+
+#[test]
+fn cycle_continue_keeps_cancellable_yield_and_cancel_does_not_run_more_body() {
+    let project = manifest(json!([]), json!([]));
+    let main = [
+        loop_node(
+            "loop",
+            None,
+            "block-main",
+            0,
+            "control.cycle",
+            json!({"yieldMs":1}),
+            Some("body"),
+        ),
+        loop_node(
+            "log",
+            Some("loop"),
+            "body",
+            1,
+            "task.log",
+            json!({"level":"info","message":"body"}),
+            None,
+        ),
+        loop_node(
+            "continue",
+            Some("loop"),
+            "body",
+            1,
+            "control.continue",
+            json!({}),
+            None,
+        ),
+        // Creates locals after the continue. The generated jump must leave their
+        // scope rather than jump into it, and this body must remain unreachable.
+        loop_node(
+            "unreachable_repeat",
+            Some("loop"),
+            "body",
+            1,
+            "control.repeat",
+            json!({"times":2}),
+            Some("unreachable_body"),
+        ),
+        loop_node(
+            "unreachable_log",
+            Some("unreachable_repeat"),
+            "unreachable_body",
+            2,
+            "task.log",
+            json!({"level":"info","message":"must not run"}),
+            None,
+        ),
+    ];
+    let bundle = sources(&project, &main, &[]);
+    let lua = loop_runtime();
+    lua.load("Task.sleep=function(ms) coroutine.yield(ms); if cancelled then error('cancelled',0) end end").exec().unwrap();
+    let thread = lua
+        .create_thread(lua.load(&bundle.main_lua).eval::<mlua::Function>().unwrap())
+        .unwrap();
+    assert_eq!(thread.resume::<u32>(()).unwrap(), 1);
+    assert!(loop_logs(&lua).is_empty());
+    for _ in 0..3 {
+        assert_eq!(thread.resume::<u32>(()).unwrap(), 1);
+    }
+    assert_eq!(loop_logs(&lua).len(), 3);
+    lua.globals().set("cancelled", true).unwrap();
+    assert!(thread
+        .resume::<()>(())
+        .unwrap_err()
+        .to_string()
+        .contains("cancelled"));
+    assert_eq!(loop_logs(&lua).len(), 3);
+}
+
+#[test]
+fn timed_cycle_rechecks_deadline_after_yield_and_uses_numeric_variable_seconds() {
+    let project = manifest(
+        json!([{"name":"duration","scope":"flow","flowId":"main","type":"number"}]),
+        json!([]),
+    );
+    for args in [
+        json!({"yieldMs":2,"durationMs":6}),
+        json!({"yieldMs":2,"durationVariable":"duration","durationUnit":"seconds"}),
+    ] {
+        let main = [
+            node("variable.set", json!({"name":"duration","value":0.006})),
+            loop_node(
+                "loop",
+                None,
+                "block-main",
+                0,
+                "control.cycle",
+                args,
+                Some("body"),
+            ),
+            loop_node(
+                "log",
+                Some("loop"),
+                "body",
+                1,
+                "task.log",
+                json!({"level":"info","message":"body"}),
+                None,
+            ),
+        ];
+        let bundle = sources(&project, &main, &[]);
+        let lua = loop_runtime();
+        lua.load(&bundle.main_lua)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(())
+            .unwrap();
+        assert_eq!(loop_logs(&lua), ["body", "body"]);
+        assert_eq!(lua.globals().get::<u64>("clock").unwrap(), 6);
+    }
+}
+
+#[test]
+fn plugin_status_selects_exactly_one_branch_without_overwriting_return_parameters() {
+    let project = manifest(
+        json!([
+            {"name":"answer","scope":"flow","flowId":"main","type":"integer"},
+            {"name":"text","scope":"flow","flowId":"main","type":"string"},
+            {"name":"__status","scope":"flow","flowId":"child","type":"string"}
+        ]),
+        json!([]),
+    );
+    let mut call = node(
+        "flow.call.branch",
+        json!({"targetFlowId":"child","arguments":{}}),
+    );
+    call["nodeId"] = json!("call");
+    call["childBlocks"] = json!({"success":"ok","failure":"bad"});
+    let main = [
+        call,
+        loop_node(
+            "ok",
+            Some("call"),
+            "ok",
+            1,
+            "task.log",
+            json!({"level":"info","message":"success"}),
+            None,
+        ),
+        loop_node(
+            "bad",
+            Some("call"),
+            "bad",
+            1,
+            "task.log",
+            json!({"level":"info","message":"failure"}),
+            None,
+        ),
+        node(
+            "flow.return.get",
+            json!({"index":1,"targetVariable":"answer"}),
+        ),
+        log("answer"),
+        node(
+            "flow.return.get",
+            json!({"index":2,"targetVariable":"text"}),
+        ),
+        log("text"),
+    ];
+    for success in [Some(true), Some(false), None] {
+        let mut child = vec![
+            node("flow.return.set", json!({"index":1,"value":42})),
+            node("variable.set", json!({"name":"__status","value":"payload"})),
+            node(
+                "flow.return.set",
+                json!({"index":2,"valueVariable":"__status"}),
+            ),
+        ];
+        if let Some(value) = success {
+            child.push(node("flow.status.return", json!({"success":value})));
+            child.push(node(
+                "task.log",
+                json!({"level":"info","message":"unreachable"}),
+            ));
+        }
+        let bundle = sources(&project, &main, &child);
+        let lua = runtime();
+        lua.load(&bundle.main_lua)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(())
+            .unwrap();
+        assert_eq!(
+            loop_logs(&lua),
+            [
+                if success == Some(false) {
+                    "failure"
+                } else {
+                    "success"
+                },
+                "42",
+                "payload"
+            ]
+        );
+    }
+    let child = [node("task.sleep", json!({"milliseconds":1}))];
+    let bundle = sources(&project, &main, &child);
+    let lua = runtime();
+    lua.load("Task={sleep=function() error('host failure',0) end}")
+        .exec()
+        .unwrap();
+    assert!(lua
+        .load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap_err()
+        .to_string()
+        .contains("host failure"));
+    assert!(loop_logs(&lua).is_empty());
 }
 
 #[test]
@@ -1124,6 +1859,48 @@ fn compiled_debugger_checkpoints_suspend_before_nodes_and_resume_without_extra_w
     thread.resume::<()>(()).unwrap();
     let logs: mlua::Table = lua.globals().get("logs").unwrap();
     assert_eq!(logs.get::<String>(1).unwrap(), "12");
+}
+
+#[test]
+fn compiled_checkpoints_keep_the_current_interface_bound_local_context() {
+    let mut project = manifest(
+        json!([{"name":"username","scope":"flow","flowId":"main","type":"string"}]),
+        json!([]),
+    );
+    project.runtime_api = "1.7".into();
+    project.capabilities.push("ui.control".into());
+    project.runner_ui = Some(serde_json::from_value(json!({"description":null,"version":2,
+        "pages":[{"id":"main","title":"Main","width":720,"height":960,"background":"#FFFFFFFF"}],
+        "fields":[{"id":"name","label":"Name","kind":"text","required":false,"initialValue":"initial","minimum":null,"maximum":null,"options":[],
+            "ui":{"control":"INPUT","pageId":"main","x":20,"y":20,"width":320,"height":72,"fontPx":28,"textColor":"#FF202938","background":"#FFFFFFFF","alignment":"center","visible":true,"enabled":true,"binding":"flow:main:username","events":{}}}]})).unwrap());
+    let bundle = sources(
+        &project,
+        &[node("task.noop", json!({})), log("username")],
+        &[],
+    );
+    let lua = runtime();
+    lua.load("__ui_debug_skip_events=true; __ui_initial_locals={main={username='start'}}; __autoscript_debug_capture=true; __autoscript_debug_step=true").exec().unwrap();
+    let entry: mlua::Function = lua.load(&bundle.main_lua).eval().unwrap();
+    let thread = lua.create_thread(entry).unwrap();
+    assert_eq!(
+        thread.resume::<String>(()).unwrap(),
+        "__AUTOSCRIPT_DEBUG_CHECKPOINT_V1"
+    );
+    lua.load("__ui_initial_locals.main.username='changed'")
+        .exec()
+        .unwrap();
+    assert_eq!(
+        thread.resume::<String>(()).unwrap(),
+        "__AUTOSCRIPT_DEBUG_CHECKPOINT_V1"
+    );
+    let snapshot: mlua::Table = lua.globals().get("__autoscript_debug_snapshot").unwrap();
+    let locals: mlua::Table = snapshot.raw_get("locals").unwrap();
+    let overrides: mlua::Table = snapshot.raw_get("localOverrides").unwrap();
+    assert_eq!(locals.raw_get::<String>("username").unwrap(), "start");
+    assert_eq!(overrides.raw_get::<String>("username").unwrap(), "changed");
+    lua.globals().set("__autoscript_debug_step", false).unwrap();
+    thread.resume::<()>(()).unwrap();
+    assert_eq!(loop_logs(&lua), ["changed"]);
 }
 
 #[test]

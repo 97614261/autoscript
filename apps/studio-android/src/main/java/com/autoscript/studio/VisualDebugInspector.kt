@@ -31,7 +31,7 @@ internal fun backfillFields(contract: BlockContract?) = contract?.properties.orE
 }
 
 internal fun backfillArguments(arguments: JsonObject, field: BlockPropertyContract, value: RuntimeDebugValue): JsonObject {
-    require(!value.truncated && value.type != "nil") { "空值或截断值不能回填" }
+    require(!value.truncated && value.type !in setOf("nil", "unsupported")) { "空值、截断值或不支持的类型不能回填" }
     val scalar = when (value.type) {
         "integer" -> JsonPrimitive(value.value.toLong())
         "number" -> JsonPrimitive(value.value.toDouble().also { require(it.isFinite()) })
@@ -61,7 +61,9 @@ internal fun visualVariableWarnings(editor: VisualEditorState, snapshot: Project
     val warnings = linkedSetOf<String>()
     val writes = setOf("resultVariable", "foundVariable", "xVariable", "yVariable", "indexVariable", "elapsedVariable", "countVariable")
     val assignments = mutableMapOf<String, MutableSet<String>>()
-    val initial = snapshot.manifest.variables.filter { (it.flowId == null || it.flowId == flowId) && it.type != com.autoscript.project.store.ProjectVariableType.IMAGE }.map { it.name }.toSet() +
+    val initial = snapshot.manifest.variables.filter { (it.flowId == null || it.flowId == flowId) && it.type in setOf(
+        com.autoscript.project.store.ProjectVariableType.INTEGER, com.autoscript.project.store.ProjectVariableType.NUMBER,
+        com.autoscript.project.store.ProjectVariableType.STRING) }.map { it.name }.toSet() +
         snapshot.manifest.flows.firstOrNull { it.flowId == flowId }?.params.orEmpty().filter { it.get("required")?.asBoolean == true }.mapNotNull { it.get("name")?.asString }
     val rows = editor.rows
     val rowsById = rows.associateBy { it.nodeId }
@@ -115,6 +117,14 @@ internal fun VisualDebugInspector(
     onDismiss: () -> Unit,
     onBackfill: suspend (String, JsonObject) -> String?,
 ) {
+    if (mode == EditorToolPanel.VARIABLE_CHECK) {
+        VariableCheckDialog(snapshot, flowId, editor, runtimeClient, onDismiss)
+        return
+    }
+    if (mode == EditorToolPanel.RUNTIME_VARIABLES) {
+        RuntimeVariableInspectorDialog(snapshot, flowId, runtimeClient, onDismiss)
+        return
+    }
     var result by remember { mutableStateOf(RuntimeDebugReply.unavailable()) }
     var message by remember { mutableStateOf("点击刷新读取当前运行会话的变量。数据不会写入普通日志。") }
     var busy by remember { mutableStateOf(false) }
@@ -125,6 +135,12 @@ internal fun VisualDebugInspector(
     val target = editor.rows.firstOrNull { it.nodeId == targetId }
     val fields = backfillFields(target?.kind?.let(BlockCatalog::find))
     val check = mode == EditorToolPanel.VARIABLE_CHECK
+    val runtime by runtimeClient.runtimeStates.collectAsState()
+    LaunchedEffect(runtime.sessionGeneration, runtime.stateRevision, runtime.engineState) {
+        result = RuntimeDebugReply.unavailable()
+        selected = null
+        message = "点击刷新读取当前运行会话的变量。数据不会写入普通日志。"
+    }
     Dialog(onDismissRequest = { if (!busy) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 580.dp).fillMaxHeight(.72f), color = androidx.compose.ui.graphics.Color.White) {
             Column {
@@ -154,9 +170,14 @@ internal fun VisualDebugInspector(
                         Button(enabled = !busy, onClick = {
                             busy = true
                             selected = null
+                            val generation = runtime.sessionGeneration
+                            val revision = runtime.stateRevision
                             scope.launch {
-                                result = withContext(Dispatchers.IO) { runtimeClient.debugSnapshot(snapshot.manifest.projectId) }
-                                message = if (result.status == RuntimeDebugReply.SUCCESS) "插件 ${result.flowId} · 节点 ${result.nodeId}（最近检查点，最多128项）" else "没有可用快照，请运行或单步执行本项目。"
+                                val reply = withContext(Dispatchers.IO) { runtimeClient.debugSnapshot(snapshot.manifest.projectId, generation) }
+                                if (runtimeClient.runtimeStates.value.stateRevision == revision && runtimeClient.runtimeStates.value.sessionGeneration == generation) {
+                                    result = reply
+                                    message = runtimeDebugSummary(reply) + if (reply.status == RuntimeDebugReply.SUCCESS) " · 插件 ${reply.flowId} · 节点 ${reply.nodeId}" else ""
+                                }
                                 busy = false
                             }
                         }) { Text(if (busy) "读取中…" else "刷新变量") }

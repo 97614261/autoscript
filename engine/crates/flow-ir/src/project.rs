@@ -541,7 +541,7 @@ fn validate_debug_settings(settings: &ProjectDebugSettings) -> Result<(), Projec
 }
 
 fn validate_variables(manifest: &ProjectManifest) -> Result<(), ProjectManifestError> {
-    if manifest.variables.len() > 256 {
+    if manifest.variables.len() > 512 {
         return Err(ProjectManifestError::InvalidVariable(
             "too many variables".to_owned(),
         ));
@@ -596,13 +596,13 @@ pub fn validate_runner_ui(runner_ui: Option<&RunnerUi>) -> Result<(), ProjectMan
     if runner_ui.fields.is_empty()
         || runner_ui.fields.len()
             > if runner_ui.version == Some(2) {
-                128
+                256
             } else {
                 32
             }
     {
         return Err(ProjectManifestError::InvalidRunnerUi(
-            "runnerUi must contain 1..32 fields".to_owned(),
+            "runnerUi v1 must contain 1..32 fields; v2 must contain 1..256".to_owned(),
         ));
     }
     if runner_ui
@@ -1204,6 +1204,33 @@ mod tests {
         assert!(matches!(
             parse_project_manifest(duplicate.as_bytes()),
             Err(ProjectManifestError::DuplicateVariable(name)) if name == "total"
+        ));
+    }
+
+    #[test]
+    fn variable_count_has_a_shared_512_entry_limit() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&manifest("visual/flows/main.jsonl", "main")).unwrap();
+        let variables = (0..512).map(|index| serde_json::json!({
+            "name": format!("v{index}"), "scope": "global", "flowId": null, "type": "integer"
+        })).collect::<Vec<_>>();
+        value["variables"] = serde_json::json!(variables);
+        assert_eq!(
+            parse_project_manifest(&serde_json::to_vec(&value).unwrap())
+                .unwrap()
+                .variables
+                .len(),
+            512
+        );
+        value["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name": "overflow", "scope": "global", "flowId": null, "type": "integer"
+            }));
+        assert!(matches!(
+            parse_project_manifest(&serde_json::to_vec(&value).unwrap()),
+            Err(ProjectManifestError::InvalidVariable(_))
         ));
     }
 

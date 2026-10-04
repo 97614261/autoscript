@@ -1,6 +1,9 @@
 //! Narrow JNI boundary backed by generation-checked opaque handles.
 
+mod debug_snapshot;
+mod input_recording;
 mod input_runtime;
+mod ocr_preview;
 mod template_preview;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -24,6 +27,8 @@ use jni::sys::{jboolean, jbyteArray, jint, jlong, jobjectArray, jstring};
 use jni::{JNIEnv, JavaVM};
 use lua_runtime::LuaScalar;
 use runtime_executor::{ExternalHostEvent, ExternalHostQueue, HostRequest};
+mod native_data_files;
+mod native_script_ui;
 mod native_vision;
 use runtime_scheduler::{
     HostCompletion, HostResult, MonoTime, RequestId, SchedulerEvent, SchedulerHandle,
@@ -33,6 +38,69 @@ use runtime_scheduler::{
 use runtime_scheduler::{ResourceId, ResourceKind};
 
 const STATE_IDLE: i32 = 1;
+/// Offline dictionary OCR; array bounds are checked before native copies.
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeTestGlyph(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+    width: jint,
+    height: jint,
+    frame: JByteArray<'_>,
+    dictionary: JByteArray<'_>,
+    options: jni::objects::JIntArray<'_>,
+) -> jstring {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if request_id <= 0
+            || !(1..=4096).contains(&width)
+            || !(1..=4096).contains(&height)
+            || i64::from(width) * i64::from(height) > 4_194_304
+            || env.get_array_length(&frame).map_err(|e| e.to_string())? != width * height * 4
+            || !(1..=8_388_608).contains(
+                &env.get_array_length(&dictionary)
+                    .map_err(|e| e.to_string())?,
+            )
+            || env.get_array_length(&options).map_err(|e| e.to_string())? != 8
+        {
+            return Err("invalid OCR preview".to_owned());
+        }
+        let pixels = env.convert_byte_array(frame).map_err(|e| e.to_string())?;
+        let dictionary = env
+            .convert_byte_array(dictionary)
+            .map_err(|e| e.to_string())?;
+        let mut args = [0; 8];
+        env.get_int_array_region(options, 0, &mut args)
+            .map_err(|e| e.to_string())?;
+        let reply = ocr_preview::recognize(
+            request_id,
+            template_preview::image(
+                u32::try_from(width).map_err(|e| e.to_string())?,
+                u32::try_from(height).map_err(|e| e.to_string())?,
+                &pixels,
+            ),
+            &dictionary,
+            &args,
+        );
+        let json = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
+        env.new_string(json)
+            .map(jni::objects::JString::into_raw)
+            .map_err(|e| e.to_string())
+    }));
+    result
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeCancelRecognitionPreview(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| ocr_preview::cancel(request_id)));
+}
+
 /// Explicit, low-frequency file preview. Validate arrays before allocating native copies.
 #[no_mangle]
 pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeTestTemplate(
@@ -305,6 +373,10 @@ enum RootControl {
     },
     InputFeatures {
         response: SyncSender<u32>,
+    },
+    BeginRecording {
+        config: root_protocol::recording::RecordingConfig,
+        response: SyncSender<i32>,
     },
     Shutdown,
 }
@@ -938,6 +1010,8 @@ fn input_runtime_result(result: Result<(), InputRuntimeError>) -> RootDispatch {
 #[derive(Debug)]
 struct NativeSession {
     vision: Arc<native_vision::VisionHub>,
+    script_ui: Arc<native_script_ui::ScriptUiHub>,
+    data_files: Arc<native_data_files::DataFileHub>,
     commands: SyncSender<SessionCommand>,
     state: Arc<AtomicI32>,
     next_wake: Arc<AtomicI64>,
@@ -953,7 +1027,23 @@ struct NativeSession {
     root_worker: Mutex<Option<JoinHandle<()>>>,
     root_attached: Arc<AtomicBool>,
     input_stop_requested: Arc<AtomicBool>,
+    recording: Arc<input_recording::RecordingControl>,
     wake_callback: Arc<Mutex<Option<WakeCallback>>>,
+}
+
+#[derive(Debug)]
+struct HostCancellationHub(
+    Arc<native_vision::VisionHub>,
+    Arc<native_script_ui::ScriptUiHub>,
+    Arc<native_data_files::DataFileHub>,
+);
+
+impl runtime_executor::HostCancelListener for HostCancellationHub {
+    fn cancel(&self, request: RequestId, task: TaskToken) {
+        runtime_executor::HostCancelListener::cancel(self.0.as_ref(), request, task);
+        runtime_executor::HostCancelListener::cancel(self.1.as_ref(), request, task);
+        runtime_executor::HostCancelListener::cancel(self.2.as_ref(), request, task);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1000,6 +1090,8 @@ impl WakeCallback {
 #[derive(Clone)]
 struct RootWorkerContext {
     vision: Arc<native_vision::VisionHub>,
+    script_ui: Arc<native_script_ui::ScriptUiHub>,
+    data_files: Arc<native_data_files::DataFileHub>,
     host_queue: ExternalHostQueue,
     display_width: Arc<AtomicU32>,
     display_height: Arc<AtomicU32>,
@@ -1011,6 +1103,7 @@ struct RootWorkerContext {
     attached: Arc<AtomicBool>,
     input_config: InputArbiterConfig,
     input_stop_requested: Arc<AtomicBool>,
+    recording: Arc<input_recording::RecordingControl>,
 }
 
 fn spawn_root_worker(
@@ -1029,7 +1122,13 @@ impl NativeSession {
         let (commands, receiver) = mpsc::sync_channel(32);
         let host_queue = ExternalHostQueue::new(HOST_QUEUE_CAPACITY, HOST_CANCELLATION_CAPACITY)?;
         let vision = Arc::new(native_vision::VisionHub::default());
-        host_queue.set_cancel_listener(vision.clone());
+        let script_ui = Arc::new(native_script_ui::ScriptUiHub::default());
+        let data_files = Arc::new(native_data_files::DataFileHub::default());
+        host_queue.set_cancel_listener(Arc::new(HostCancellationHub(
+            vision.clone(),
+            script_ui.clone(),
+            data_files.clone(),
+        )));
         let engine_config = EngineSessionConfig::default();
         let frames = Arc::new(Mutex::new(FramePool::new(engine_config.frames)));
         let session_host_queue = host_queue.clone();
@@ -1047,10 +1146,13 @@ impl NativeSession {
         let (root_control, root_receiver) = mpsc::sync_channel(4);
         let root_attached = Arc::new(AtomicBool::new(false));
         let input_stop_requested = Arc::new(AtomicBool::new(false));
+        let recording = Arc::new(input_recording::RecordingControl::default());
         let root_worker = spawn_root_worker(
             root_receiver,
             RootWorkerContext {
                 vision: vision.clone(),
+                script_ui: script_ui.clone(),
+                data_files: data_files.clone(),
                 host_queue: host_queue.clone(),
                 display_width: Arc::clone(&display_width),
                 display_height: Arc::clone(&display_height),
@@ -1062,6 +1164,7 @@ impl NativeSession {
                 attached: Arc::clone(&root_attached),
                 input_config: engine_config.input,
                 input_stop_requested: Arc::clone(&input_stop_requested),
+                recording: recording.clone(),
             },
         )?;
         let state = Arc::new(AtomicI32::new(STATE_IDLE));
@@ -1134,6 +1237,8 @@ impl NativeSession {
         };
         Ok(Arc::new(Self {
             vision,
+            script_ui,
+            data_files,
             commands,
             state,
             next_wake,
@@ -1149,6 +1254,7 @@ impl NativeSession {
             root_worker: Mutex::new(Some(root_worker)),
             root_attached,
             input_stop_requested,
+            recording,
             wake_callback,
         }))
     }
@@ -1158,8 +1264,14 @@ impl NativeSession {
         build: impl FnOnce(SyncSender<Result<(), String>>) -> SessionCommand,
     ) -> Result<(), String> {
         let (response_tx, response_rx) = mpsc::sync_channel(1);
+        let command = build(response_tx);
+        let _recording_fence = if matches!(&command, SessionCommand::Start { .. }) {
+            Some(self.recording.reserve_run()?)
+        } else {
+            None
+        };
         self.commands
-            .try_send(build(response_tx))
+            .try_send(command)
             .map_err(|error| format!("engine command queue rejected request: {error}"))?;
         response_rx
             .recv_timeout(COMMAND_TIMEOUT)
@@ -1173,7 +1285,10 @@ impl NativeSession {
         self.stop_boot_nanos.store(boot_nanos, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
         self.input_stop_requested.store(true, Ordering::Release);
+        self.recording.stop();
         self.vision.stop();
+        self.script_ui.stop();
+        self.data_files.stop();
         self.stop_handle
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1292,6 +1407,9 @@ impl NativeSession {
     }
 
     fn reset(&self, width: u32, height: u32) -> Result<(), String> {
+        if self.recording.active() {
+            return Err("RECORDING_BUSY".into());
+        }
         if self.shutdown_requested.load(Ordering::Acquire) {
             return Err("SESSION_CLOSED".to_owned());
         }
@@ -1403,15 +1521,7 @@ impl NativeSession {
         if !self.root_attached.load(Ordering::Acquire) {
             return 0;
         }
-        let (response, receiver) = mpsc::sync_channel(1);
-        if self
-            .root_control
-            .try_send(RootControl::InputFeatures { response })
-            .is_err()
-        {
-            return 0;
-        }
-        receiver.recv_timeout(COMMAND_TIMEOUT).unwrap_or(0)
+        query_input_features(&self.root_control, &self.host_queue)
     }
 
     fn capture_preview(&self) -> Result<Vec<u8>, String> {
@@ -1528,8 +1638,11 @@ impl NativeSession {
     }
 
     fn shutdown(&self) {
+        self.recording.stop();
         self.input_stop_requested.store(true, Ordering::Release);
         self.vision.stop();
+        self.script_ui.stop();
+        self.data_files.stop();
         self.stop_boot_nanos.store(0, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
         *self
@@ -1561,6 +1674,7 @@ impl NativeSession {
         if let Some(worker) = worker {
             let _ = worker.join();
         }
+        self.data_files.clear();
     }
 }
 
@@ -1810,19 +1924,9 @@ fn handle_session_command(
             let _ = response.send(engine.seed_ui_values(values).map_err(|e| format!("{e:?}")));
         }
         SessionCommand::DebugSnapshot { response } => {
-            let snapshot = engine.debug_snapshot().map(|snapshot| {
-                let variables = snapshot.variables.into_iter().map(|(scope, name, scalar, truncated)| {
-                    let (kind, value) = match scalar {
-                        LuaScalar::Nil => ("nil", String::new()),
-                        LuaScalar::Boolean(value) => ("boolean", value.to_string()),
-                        LuaScalar::Integer(value) => ("integer", value.to_string()),
-                        LuaScalar::Number(value) => ("number", value.to_string()),
-                        LuaScalar::Bytes(value) => ("string", String::from_utf8_lossy(&value).into_owned()),
-                    };
-                    serde_json::json!({"scope":scope,"name":name,"type":kind,"value":value,"truncated":truncated})
-                }).collect::<Vec<_>>();
-                serde_json::json!({"flowId":snapshot.flow_id,"nodeId":snapshot.node_id,"variables":variables}).to_string()
-            });
+            let snapshot = engine
+                .debug_snapshot()
+                .map(|snapshot| debug_snapshot::encode(snapshot, engine.state()));
             let _ = response.send(snapshot);
         }
         SessionCommand::ControlWake => {}
@@ -1971,6 +2075,20 @@ fn register_dictionary_command(
         .map_err(|error| format!("{error:?}"))
 }
 
+fn query_input_features(control: &SyncSender<RootControl>, host_queue: &ExternalHostQueue) -> u32 {
+    let (response, receiver) = mpsc::sync_channel(1);
+    if control
+        .try_send(RootControl::InputFeatures { response })
+        .is_err()
+    {
+        return 0;
+    }
+    // The idle worker waits for host events, not the separate lifecycle channel.
+    // Wake it after enqueueing, just like attach and capture_preview do.
+    host_queue.interrupt();
+    receiver.recv_timeout(COMMAND_TIMEOUT).unwrap_or(0)
+}
+
 fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContext) {
     let mut client = None;
     let mut input = InputRuntime::new(context.input_config);
@@ -2021,6 +2139,7 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 continue;
             }
             Ok(RootControl::Disconnect { response }) => {
+                context.recording.detach();
                 if let Some(mut connected) = client.take() {
                     let mut backend = platform_root::InputBackend::new(&mut connected);
                     let clean = input.stop(&mut backend).is_ok();
@@ -2078,7 +2197,36 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                 let _ = response.send(client.as_ref().map_or(0, platform_root::input_features));
                 continue;
             }
+            Ok(RootControl::BeginRecording { config, response }) => {
+                if context.recording.token.load(Ordering::Acquire) != config.token {
+                    let _ = response.send(9);
+                    continue;
+                }
+                #[cfg(target_os = "android")]
+                let status = match client
+                    .as_mut()
+                    .expect("attached client")
+                    .begin_recording(config)
+                {
+                    Ok(()) => 0,
+                    Err(
+                        root_client::ClientError::UnsupportedCapability
+                        | root_client::ClientError::Remote(
+                            root_protocol::StatusCode::BackendUnavailable,
+                        ),
+                    ) => 1,
+                    Err(_) => 11,
+                };
+                #[cfg(not(target_os = "android"))]
+                let status = {
+                    let _ = config;
+                    1
+                };
+                let _ = response.send(status);
+                continue;
+            }
             Ok(RootControl::Shutdown) => {
+                context.recording.detach();
                 if let Some(mut connected) = client.take() {
                     let _ = platform_root::shutdown(&mut connected);
                 }
@@ -2123,7 +2271,17 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
                     .coordinates
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let dispatch = if request.native_vision.is_some() {
+                let dispatch = if (14100..=14103).contains(&request.opcode) {
+                    RootDispatch {
+                        result: context.data_files.dispatch(&request, context),
+                        connection_lost: false,
+                    }
+                } else if request.opcode == 1203 {
+                    RootDispatch {
+                        result: context.script_ui.dispatch(&request, context),
+                        connection_lost: false,
+                    }
+                } else if request.native_vision.is_some() {
                     RootDispatch {
                         result: context.vision.dispatch(&request, context),
                         connection_lost: false,
@@ -2305,6 +2463,7 @@ fn wait_for_root_client(
                     #[cfg(target_os = "android")]
                     {
                         context.vision.attach_root(&client);
+                        context.recording.attach(client.priority_stop());
                         if let Some(stop) = client.priority_stop() {
                             let wake = context.wake_callback.clone();
                             stop.set_listener(Arc::new(move || {
@@ -2342,12 +2501,16 @@ fn wait_for_root_client(
             RootControl::InputFeatures { response } => {
                 let _ = response.send(0);
             }
+            RootControl::BeginRecording { response, .. } => {
+                let _ = response.send(1);
+            }
             RootControl::Shutdown => return None,
         }
     }
 }
 
 fn notify_root_disconnected(context: &RootWorkerContext) {
+    context.recording.detach();
     context.vision.detach_root(false);
     context.attached.store(false, Ordering::Release);
     let callback = context
@@ -2545,6 +2708,34 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeS
             .map_err(|error| error.to_string())?;
         get_session(handle)?.set_wake_callback(WakeCallback { vm, listener });
         Ok::<(), String>(())
+    }));
+    finish_jni(&result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeSetScriptUiListener(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    listener: JObject<'_>,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        get_session(handle)?.script_ui.set(&env, listener)
+    }));
+    finish_jni(&result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeSetDataFileListener(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    listener: JObject<'_>,
+) -> jint {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
+        get_session(handle)?.data_files.set(&env, listener)
     }));
     finish_jni(&result)
 }
@@ -3064,6 +3255,42 @@ mod tests {
         create_session, destroy_session, get_session, SessionCommand, STATE_FAILED, STATE_IDLE,
         STATE_STOPPED, STATE_STOPPING,
     };
+
+    #[test]
+    fn input_features_wake_an_idle_worker_without_script_requests() {
+        use super::{query_input_features, ExternalHostEvent, ExternalHostQueue, RootControl};
+        use std::sync::mpsc;
+        use std::thread;
+
+        for _ in 0..20 {
+            let queue = ExternalHostQueue::new(1, 1).expect("bounded host queue");
+            let (control, requests) = mpsc::sync_channel(1);
+            let parked_queue = queue.clone();
+            let worker = thread::spawn(move || {
+                // Bounded even when regressing: a missing wake returns no capabilities.
+                if matches!(
+                    parked_queue.wait_next_timeout(Duration::from_secs(1)),
+                    Some(ExternalHostEvent::Interrupted)
+                ) {
+                    if let Ok(RootControl::InputFeatures { response }) = requests.try_recv() {
+                        response.send(7).expect("query is still waiting");
+                    }
+                }
+            });
+            assert_eq!(query_input_features(&control, &queue), 7);
+            worker.join().expect("idle worker");
+        }
+    }
+
+    #[test]
+    fn unavailable_input_control_does_not_advertise_root_capabilities() {
+        use super::{query_input_features, ExternalHostQueue};
+        use std::sync::mpsc;
+        let queue = ExternalHostQueue::new(1, 1).expect("bounded host queue");
+        let (control, requests) = mpsc::sync_channel(1);
+        drop(requests);
+        assert_eq!(query_input_features(&control, &queue), 0);
+    }
 
     #[test]
     fn generation_checked_handle_rejects_use_after_destroy() {

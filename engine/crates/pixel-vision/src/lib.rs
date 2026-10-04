@@ -745,6 +745,67 @@ pub fn find_prepared_template_controlled(
     result
 }
 
+/// Collects matching origins in search order with a shared budget and cancellation.
+/// The extra slot (maximum 65) lets callers detect truncation of a 64-item result.
+/// # Errors
+/// Rejects invalid limits/geometry/options, cancellation and exhausted budgets.
+pub fn find_prepared_templates_controlled(
+    image: ImageView<'_>,
+    template: &PreparedTemplate,
+    options: TemplateOptions,
+    limit: usize,
+    remaining: &mut u64,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<Vec<TemplateMatch>, VisionError> {
+    let initial = (*remaining).min(options.search.max_pixel_comparisons);
+    let mut budget = ComparisonBudget {
+        remaining: initial,
+        checkpoint: Some(cancelled),
+        next_check: initial,
+    };
+    let result = (|| {
+        if !(1..=65).contains(&limit) {
+            return Err(VisionError::InvalidResultLimit);
+        }
+        validate_search(image, options.search)?;
+        if template.width == 0 || template.height == 0 {
+            return Err(VisionError::EmptyTemplate);
+        }
+        if options.minimum_match_permille > 1000 {
+            return Err(VisionError::InvalidSimilarity);
+        }
+        if template.width > options.search.roi.width()
+            || template.height > options.search.roi.height()
+        {
+            return Err(VisionError::TemplateOutsideRoi);
+        }
+        let candidates = SearchOptions {
+            roi: PixelRect {
+                right: options.search.roi.right - template.width + 1,
+                bottom: options.search.roi.bottom - template.height + 1,
+                ..options.search.roi
+            },
+            ..options.search
+        };
+        let mut matches = Vec::new();
+        for origin in SearchPoints::new(candidates) {
+            let score = compare_template(image, template, origin, options, &mut budget)?;
+            if score >= options.minimum_match_permille {
+                matches.push(TemplateMatch {
+                    origin,
+                    matched_permille: score,
+                });
+                if matches.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(matches)
+    })();
+    *remaining = remaining.saturating_sub(initial - budget.remaining);
+    result
+}
+
 fn search_prepared_template(
     image: ImageView<'_>,
     template: &PreparedTemplate,
@@ -1079,6 +1140,88 @@ impl ComparisonBudget<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn public_multi_fixture_preserves_offset_order_limits_budget_and_cancel() {
+        let mut pixels = vec![255; 10 * 6 * 4];
+        let patch = [
+            12, 12, 12, 255, 38, 38, 38, 255, 57, 57, 57, 255, 94, 94, 94, 255,
+        ];
+        for (left, top) in [(3, 2), (7, 3)] {
+            for y in 0..2 {
+                let offset = ((top + y) * 10 + left) * 4;
+                pixels[offset..offset + 8].copy_from_slice(&patch[y * 8..y * 8 + 8]);
+            }
+        }
+        let template = super::PreparedTemplate::prepare(image(&patch, 2, 2)).unwrap();
+        let config = super::TemplateOptions {
+            search: super::SearchOptions {
+                roi: super::PixelRect {
+                    left: 2,
+                    top: 1,
+                    right: 10,
+                    bottom: 6,
+                },
+                ..options(10, 6)
+            },
+            tolerance: super::ColorTolerance::EXACT,
+            minimum_match_permille: 1000,
+            ignore_transparent_template_pixels: true,
+        };
+        for limit in [1, 2, 65] {
+            let mut budget = 1000;
+            let found = super::find_prepared_templates_controlled(
+                image(&pixels, 10, 6),
+                &template,
+                config,
+                limit,
+                &mut budget,
+                &mut || false,
+            )
+            .unwrap();
+            assert_eq!(found.len(), limit.min(2));
+            assert_eq!(found[0].origin, super::PixelPoint { x: 3, y: 2 });
+            if found.len() > 1 {
+                assert_eq!(found[1].origin, super::PixelPoint { x: 7, y: 3 });
+            }
+            assert!(budget < 1000);
+        }
+        for limit in [0, 66] {
+            assert_eq!(
+                super::find_prepared_templates_controlled(
+                    image(&pixels, 10, 6),
+                    &template,
+                    config,
+                    limit,
+                    &mut 1000,
+                    &mut || false
+                ),
+                Err(super::VisionError::InvalidResultLimit)
+            );
+        }
+        assert_eq!(
+            super::find_prepared_templates_controlled(
+                image(&pixels, 10, 6),
+                &template,
+                config,
+                2,
+                &mut 1000,
+                &mut || true
+            ),
+            Err(super::VisionError::Cancelled)
+        );
+        assert_eq!(
+            super::find_prepared_templates_controlled(
+                image(&pixels, 10, 6),
+                &template,
+                config,
+                2,
+                &mut 0,
+                &mut || false
+            ),
+            Err(super::VisionError::ComparisonBudgetExceeded)
+        );
+    }
+
     use super::{
         compare_color, compare_fixed_pattern, count_color, find_all_colors, find_color,
         find_pattern, find_template, get_color, Color, ColorTolerance, FixedPatternSample,

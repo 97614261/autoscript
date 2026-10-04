@@ -634,12 +634,13 @@ class VisualProjectStateTest {
         val editor = VisualEditorState.create(source, "block-root")
         val contract = requireNotNull(BlockCatalog.find("control.if"))
         val args = JsonObject()
+        val migratedSource = editor.currentSource
         assertFalse(applyReflectedArguments(editor, "owner", contract, args, EditorInsertPosition.INSIDE))
-        assertEquals(source, editor.currentSource)
+        assertEquals(migratedSource, editor.currentSource)
         assertTrue(applyReflectedArguments(editor, "owner", contract, args, EditorInsertPosition.INSIDE, "else"))
         assertEquals("else", editor.rows.last().childSlot)
         assertTrue(editor.undo())
-        assertEquals(source, editor.currentSource)
+        assertEquals(migratedSource, editor.currentSource)
     }
 
     @Test

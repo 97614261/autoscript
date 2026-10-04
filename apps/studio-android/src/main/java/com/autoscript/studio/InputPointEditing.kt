@@ -56,7 +56,7 @@ internal fun inputPointSnippet(reply: InputPointPickReply, designWidth: Int, des
 internal fun prepareInputBlocks(snippet: ImageToolCodeGen.Snippet, capabilities: Set<String>): List<Pair<BlockContract, JsonObject>> {
     require(snippet.rejection == null) { snippet.rejection.orEmpty() }
     require(snippet.flowBlocks.size in 1..256) { "输入动作积木数量无效" }
-    val supported = setOf("input.tap", "input.swipe", "input.pointerdown", "input.pointermove", "input.pointerup", "task.sleep")
+    val supported = setOf("input.tap", "input.swipe", "input.keyevent", "input.pointerdown", "input.pointermove", "input.pointerup", "task.sleep")
     return snippet.flowBlocks.map { block ->
         require(block.kind in supported) { "不是受支持的输入积木" }
         val contract = requireNotNull(BlockCatalog.find(block.kind)) { "缺少正式积木：${block.kind}" }

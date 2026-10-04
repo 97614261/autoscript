@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14006,
+  "name": "Data.text",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "严格解码 JSON string，不接受数字、布尔、null、集合或对象。",
+  "params": [
+    {
+      "name": "valueJson",
+      "type": "string",
+      "required": true,
+      "summary": "JSON string 编码。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "严格解码 JSON string，不接受数字、布尔、null、集合或对象。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14102,
+  "name": "Files.list",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "项目私有 data 内相对目录路径；根目录填空字符串。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。"
+  },
+  "legacyAliases": []
+}

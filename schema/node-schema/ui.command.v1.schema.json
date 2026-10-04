@@ -39,7 +39,12 @@
             "page",
             "show",
             "hide",
-            "minimize"
+            "minimize",
+            "x", "y", "width", "height", "fontPx", "textColor", "background", "alignment",
+            "fontBold", "textUnderline", "borderColor", "borderWidthPx", "cornerPx",
+            "get:fontBold", "get:textUnderline", "get:borderColor", "get:borderWidthPx", "get:cornerPx",
+            "get:x", "get:y", "get:width", "get:height", "get:fontPx", "get:textColor", "get:background", "get:alignment",
+            "get:value", "get:text", "get:visible", "get:enabled", "get:items", "get:progress"
           ]
         },
         "value": {
@@ -50,6 +55,9 @@
           "type": "string",
           "maxLength": 64,
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "resultVariable": {
+          "type": "string", "maxLength": 64, "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         }
       }
     }

@@ -9,6 +9,13 @@ import org.junit.Test
 class RuntimeScriptUiStartupTest {
     private val source = File("src/main/java/com/autoscript/runtime/service/RuntimeScriptUiController.kt").readText()
 
+    @Test fun delayedClearOnlyAppliesToItsOwnGeneration() {
+        val clear = source.substringAfter("fun clear()").substringBefore("fun prepare(")
+        assertTrue(clear.contains("val token = epoch.incrementAndGet()"))
+        assertTrue(clear.contains("if (accepts(token))"))
+        assertTrue(clear.indexOf("if (accepts(token))") < clear.indexOf("removeWindows()"))
+    }
+
     @Test fun startupActivatesWithoutAddingAnotherWindow() {
         val activation = source.substringAfter("fun activateRuntime()").substringBefore("fun command(")
         assertTrue(activation.contains("active = true"))

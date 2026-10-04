@@ -6,6 +6,8 @@ import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
+const val MAX_SCRIPT_UI_CONTROLS = 256
+
 enum class UiControl(val label: String, val valueKind: String) {
     INPUT("单行文本", "text"), TEXTAREA("多行文本", "text"), LABEL("标签", "text"),
     BUTTON("按钮", "text"), IMAGE("图片", "text"), CONTAINER("容器", "text"), NAVIGATION("分页导航", "text"),
@@ -19,6 +21,8 @@ data class UiPresentation(
     val fontPx: Int = 28, val textColor: String = "#FF202938", val background: String = "#FFFFFFFF",
     val alignment: String = "center", val visible: Boolean = true, val enabled: Boolean = true,
     val binding: String? = null, val events: Map<String, String> = emptyMap(),
+    val fontBold: Boolean = false, val textUnderline: Boolean = false,
+    val borderColor: String = "#00000000", val borderWidthPx: Int = 0, val cornerPx: Int = 6,
 )
 data class UiField(
     val id: String, val label: String, val kind: String, val required: Boolean,
@@ -44,7 +48,7 @@ data class ScriptUiDefinition(val description: String? = null, val fields: List<
         f.id to value
     }
     fun validate() {
-        require(version in 1..2 && fields.size in 1..128 && (version == 2 || fields.size <= 32)) { "界面版本或控件数量无效" }
+        require(version in 1..2 && fields.size in 1..MAX_SCRIPT_UI_CONTROLS && (version == 2 || fields.size <= 32)) { "界面版本或控件数量无效" }
         require(description == null || description.length <= 512 && description.none(Char::isISOControl)) { "界面说明无效" }
         require(pages.size in 1..16 && pages.map { it.id }.distinct().size == pages.size) { "页面无效或重复" }
         pages.forEach { require(ID.matches(it.id) && it.title.length in 1..64 && it.width in 100..4096 && it.height in 100..8192 && COLOR.matches(it.background)) { "页面属性无效" } }
@@ -67,6 +71,7 @@ data class ScriptUiDefinition(val description: String? = null, val fields: List<
                 require(version == 2 && p.pageId in pages.map { it.id }) { "控件页面不存在" }
                 require(p.x in 0..4096 && p.y in 0..8192 && p.width in 20..4096 && p.height in 20..8192 && p.fontPx in 8..160) { "控件尺寸无效" }
                 require(COLOR.matches(p.textColor) && COLOR.matches(p.background) && p.alignment in setOf("left", "center", "right")) { "样式无效" }
+                require(COLOR.matches(p.borderColor) && p.borderWidthPx in 0..32 && p.cornerPx in 0..512) { "边框或圆角无效" }
                 require(p.binding == null || p.binding!!.length <= 196 && BINDING.matches(p.binding!!)) { "绑定格式无效" }
                 require(p.events.keys.all { it in setOf("click", "longClick", "change", "selection") } && p.events.values.all { actionValid(it, pages) }) { "事件无效" }
                 var parent = p.parentId; val seen = mutableSetOf(f.id)
@@ -115,9 +120,12 @@ data class ScriptUiDefinition(val description: String? = null, val fields: List<
                 val initial = when (kind) { "integer" -> f.number("initialValue").toString(); "boolean" -> f.boolean("initialValue").toString(); else -> f.string("initialValue") }
                 val style = f.get("ui")?.takeUnless { it.isJsonNull }?.asJsonObject?.let { p ->
                     val keys = setOf("control", "pageId", "parentId", "x", "y", "width", "height", "fontPx", "textColor", "background", "alignment", "visible", "enabled", "binding", "events")
-                    require(p.keySet().all { it in keys } && (keys - setOf("parentId", "binding")).all(p::has)) { "布局字段不完整或未知" }
+                    val optionalStyles = setOf("fontBold", "textUnderline", "borderColor", "borderWidthPx", "cornerPx")
+                    require(p.keySet().all { it in keys + optionalStyles } && (keys - setOf("parentId", "binding")).all(p::has)) { "布局字段不完整或未知" }
                     val events = p.getAsJsonObject("events").keySet().associateWith { p.getAsJsonObject("events").string(it) }
-                    UiPresentation(p.string("control"), p.string("pageId"), p.nullableString("parentId"), p.int("x"), p.int("y"), p.int("width"), p.int("height"), p.int("fontPx"), p.string("textColor"), p.string("background"), p.string("alignment"), p.boolean("visible"), p.boolean("enabled"), p.nullableString("binding"), events)
+                    UiPresentation(p.string("control"), p.string("pageId"), p.nullableString("parentId"), p.int("x"), p.int("y"), p.int("width"), p.int("height"), p.int("fontPx"), p.string("textColor"), p.string("background"), p.string("alignment"), p.boolean("visible"), p.boolean("enabled"), p.nullableString("binding"), events,
+                        if (p.has("fontBold")) p.boolean("fontBold") else false, if (p.has("textUnderline")) p.boolean("textUnderline") else false,
+                        if (p.has("borderColor")) p.string("borderColor") else "#00000000", if (p.has("borderWidthPx")) p.int("borderWidthPx") else 0, if (p.has("cornerPx")) p.int("cornerPx") else 6)
                 }
                 UiField(f.string("id"), f.string("label"), kind, f.boolean("required"), initial, f.nullableNumber("minimum"), f.nullableNumber("maximum"),
                     f.getAsJsonArray("options").map { require(it.isJsonPrimitive && it.asJsonPrimitive.isString); it.asString }, style)

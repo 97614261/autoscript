@@ -10,6 +10,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualImageRecognitionDialogTest {
+    @Test fun nativeResultTypesRespectLocalShadowingAndDoNotAutoGrantInput() {
+        val global = com.autoscript.project.store.ProjectVariableScope.GLOBAL
+        val local = com.autoscript.project.store.ProjectVariableScope.FLOW
+        val string = com.autoscript.project.store.ProjectVariableType.STRING
+        val integer = com.autoscript.project.store.ProjectVariableType.INTEGER
+        val snapshot = ProjectSnapshot(File("."), ProjectManifestDocument(projectId = "public-test", name = "test",
+            sourceMode = ProjectSourceMode.VISUAL, capabilities = listOf("core.task", "screen.capture", "vision.template"),
+            variables = listOf(
+                com.autoscript.project.store.ProjectVariable("matches", global, type = string),
+                com.autoscript.project.store.ProjectVariable("count", local, "main", integer),
+                com.autoscript.project.store.ProjectVariable("matches", local, "other", integer),
+            )), luaSource = null, flowSources = emptyMap())
+        val contract = requireNotNull(BlockCatalog.find("vision.result"))
+        val args = JsonParser.parseString("""{"sourceVariable":"matches","index":0,"field":"count","targetVariable":"count"}""").asJsonObject
+        assertNull(recognitionProjectError(contract, args, snapshot, "main"))
+        assertNotNull(recognitionProjectError(contract, args, snapshot, "other"))
+        assertNotNull(recognitionProjectError(contract, args.deepCopy().apply { addProperty("field", "path") }, snapshot, "main"))
+        assertNull(parseRecognitionArguments(contract, blockPropertyTexts(contract, args) + ("index" to "1"), emptyList()).first)
+        val all = requireNotNull(BlockCatalog.find("vision.findallimages"))
+        val outputs = JsonObject().apply { addProperty("resultVariable", "matches"); addProperty("autoCapture", true) }
+        assertNull(recognitionProjectError(all, outputs, snapshot, "main"))
+        assertNotNull(recognitionProjectError(all, outputs.deepCopy().apply { addProperty("successAction", "tap") }, snapshot, "main"))
+        assertNotNull(recognitionProjectError(all, outputs.deepCopy().apply { addProperty("autoCapture", false); addProperty("frameVariable", "count") }, snapshot, "main"))
+        assertNotNull(recognitionProjectError(all, outputs.deepCopy().apply { addProperty("resultVariable", "undeclared") }, snapshot, "main"))
+        // Existing pixel matching may still declare its outputs implicitly.
+        assertNull(recognitionProjectError(requireNotNull(BlockCatalog.find("vision.findimage")), arguments(), snapshot, "main"))
+    }
     @Test fun nativeKindsUseSharedCompactEditorAndOcrDoesNotNeedTemplateResource() {
         val ocr=requireNotNull(BlockCatalog.find("ocr.alphanumeric"))
         val args=requireNotNull(initialBlockArguments(ocr,emptyList(),emptyList(),"",allowMissingResources=true))
@@ -167,7 +194,7 @@ class VisualImageRecognitionDialogTest {
 
     @Test
     fun allRecognitionContractsAreRealAndRejectVariableOverwrite() {
-        assertEquals(10, visualRecognitionKinds.distinct().size)
+        assertEquals(11, visualRecognitionKinds.distinct().size)
         visualRecognitionKinds.forEach { kind ->
             val contract = requireNotNull(BlockCatalog.find(kind))
             assertTrue(contract.properties.any { it.path == "frameVariable" })

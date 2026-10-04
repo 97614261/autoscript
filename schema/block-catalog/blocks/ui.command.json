@@ -5,7 +5,7 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/ui.command/1/ui.command.schema.json",
   "title": "界面操作",
   "category": "task",
-  "summary": "更新文字、显示、启用、选项、进度或切页，也可恢复或最小化界面。",
+  "summary": "更新控件内容、位置、尺寸、字体、颜色与对齐；get:属性读取真实值到字符变量。尺寸使用设计像素。",
   "searchTerms": [
     "界面",
     "ui",
@@ -38,12 +38,17 @@
         "page",
         "show",
         "hide",
-        "minimize"
+        "minimize",
+        "x", "y", "width", "height", "fontPx", "textColor", "background", "alignment",
+        "fontBold", "textUnderline", "borderColor", "borderWidthPx", "cornerPx",
+        "get:fontBold", "get:textUnderline", "get:borderColor", "get:borderWidthPx", "get:cornerPx",
+        "get:x", "get:y", "get:width", "get:height", "get:fontPx", "get:textColor", "get:background", "get:alignment",
+        "get:value", "get:text", "get:visible", "get:enabled", "get:items", "get:progress"
       ]
     },
     {
       "path": "value",
-      "label": "值（选项用换行分隔）",
+      "label": "值（读取时留空；颜色#AARRGGBB；选项换行）",
       "editor": "string",
       "required": true,
       "defaultValue": "true"
@@ -53,6 +58,9 @@
       "label": "来源变量（可选）",
       "editor": "string",
       "required": false
+    },
+    {
+      "path": "resultVariable", "label": "读取结果变量（字符）", "editor": "string", "required": false
     }
   ],
   "migrations": []

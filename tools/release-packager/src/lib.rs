@@ -93,6 +93,7 @@ pub enum ReleaseError {
     InvalidRelease(String),
     ResourceLimit(String),
     OutputExists(PathBuf),
+    Cancelled,
 }
 
 impl fmt::Display for ReleaseError {
@@ -124,6 +125,20 @@ pub fn prepare_project(
     output_directory: &Path,
     options: &PrepareOptions,
 ) -> Result<ReleaseManifest, ReleaseError> {
+    prepare_project_with_checkpoint(project_directory, output_directory, options, || Ok(()))
+}
+
+/// Prepares the same immutable release with cancellation/deadline checks between bounded phases.
+///
+/// # Errors
+/// Returns ordinary preparation errors or the checkpoint's cancellation/deadline error.
+pub fn prepare_project_with_checkpoint(
+    project_directory: &Path,
+    output_directory: &Path,
+    options: &PrepareOptions,
+    checkpoint: impl Fn() -> Result<(), ReleaseError>,
+) -> Result<ReleaseManifest, ReleaseError> {
+    checkpoint()?;
     validate_options(options)?;
     if output_directory.exists() {
         return Err(ReleaseError::OutputExists(output_directory.to_path_buf()));
@@ -143,6 +158,7 @@ pub fn prepare_project(
         )));
     }
     let compiled = compile_or_load_lua(&project_root, &project)?;
+    checkpoint()?;
     let lua_artifact = ReleaseArtifact {
         path: LUA_BUNDLE_PATH.to_owned(),
         sha256: sha256(&compiled.lua),
@@ -162,7 +178,8 @@ pub fn prepare_project(
                 .map_or(0, |artifact| artifact.size),
         )
         .ok_or_else(|| resource_limit("release size overflow"))?;
-    let resource_payloads = collect_resource_payloads(&project_root, &project, base_size)?;
+    let resource_payloads =
+        collect_resource_payloads(&project_root, &project, base_size, &checkpoint)?;
 
     let design = ReleaseDesign {
         width: project.design.width,
@@ -200,6 +217,7 @@ pub fn prepare_project(
         &compiled.lua,
         compiled.source_map.as_deref(),
         &resource_payloads,
+        &checkpoint,
     )?;
     Ok(release)
 }
@@ -208,6 +226,7 @@ fn collect_resource_payloads(
     project_root: &Path,
     project: &ProjectManifest,
     lua_size: u64,
+    checkpoint: &impl Fn() -> Result<(), ReleaseError>,
 ) -> Result<Vec<(ReleaseResource, Vec<u8>)>, ReleaseError> {
     if project.resources.len() > MAX_RESOURCES {
         return Err(resource_limit("more than 256 project resources"));
@@ -215,6 +234,7 @@ fn collect_resource_payloads(
     let mut payloads = Vec::with_capacity(project.resources.len());
     let mut total_bytes = lua_size;
     for declaration in &project.resources {
+        checkpoint()?;
         let maximum = resource_limit_for(declaration.kind);
         let bytes = read_bounded(
             &contained_file(project_root, &declaration.path)?,
@@ -251,6 +271,7 @@ fn persist_release(
     lua: &[u8],
     source_map: Option<&[u8]>,
     resource_payloads: &[(ReleaseResource, Vec<u8>)],
+    checkpoint: &impl Fn() -> Result<(), ReleaseError>,
 ) -> Result<(), ReleaseError> {
     let parent = output_directory.parent().ok_or_else(|| {
         ReleaseError::InvalidOption("output directory must have a parent".to_owned())
@@ -270,11 +291,13 @@ fn persist_release(
     }
     fs::create_dir(&staging).map_err(|error| io_error(&error))?;
     let result = (|| {
+        checkpoint()?;
         write_synced(&staging.join(LUA_BUNDLE_PATH), lua)?;
         if let Some(source_map) = source_map {
             write_synced(&staging.join(SOURCE_MAP_BUNDLE_PATH), source_map)?;
         }
         for (resource, bytes) in resource_payloads {
+            checkpoint()?;
             write_synced(&staging.join(&resource.bundle_path), bytes)?;
         }
         let mut manifest = serde_json::to_vec_pretty(release)
@@ -282,6 +305,7 @@ fn persist_release(
         manifest.push(b'\n');
         write_synced(&staging.join(MANIFEST_PATH), &manifest)?;
         verify_bundle(&staging)?;
+        checkpoint()?;
         fs::rename(&staging, output_directory).map_err(|error| io_error(&error))
     })();
     if result.is_err() {
@@ -988,7 +1012,8 @@ fn resource_limit(message: impl Into<String>) -> ReleaseError {
 #[cfg(test)]
 mod tests {
     use super::{
-        prepare_project, runtime_api_compatible, verify_bundle, PrepareOptions, ReleaseError,
+        prepare_project, prepare_project_with_checkpoint, runtime_api_compatible, verify_bundle,
+        PrepareOptions, ReleaseError,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1266,5 +1291,38 @@ mod tests {
             Err(ReleaseError::InvalidOption(_))
         ));
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn cancellation_before_commit_cleans_staging_and_preserves_existing_release() {
+        let root = temporary_root("cancel");
+        let project = root.join("project");
+        fs::create_dir(&project).unwrap();
+        write_lua_project(&project);
+        let existing = root.join("existing");
+        let original = prepare_project(&project, &existing, &options()).unwrap();
+        let output = root.join("cancelled");
+        let checks = std::cell::Cell::new(0);
+        assert!(matches!(
+            prepare_project_with_checkpoint(&project, &output, &options(), || {
+                checks.set(checks.get() + 1);
+                // No resources: fourth checkpoint is after verified staging, before rename.
+                if checks.get() == 4 {
+                    Err(ReleaseError::Cancelled)
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(ReleaseError::Cancelled)
+        ));
+        assert_eq!(checks.get(), 4);
+        assert!(!output.exists());
+        assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".release-")));
+        assert_eq!(verify_bundle(&existing).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
     }
 }

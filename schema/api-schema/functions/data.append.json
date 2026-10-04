@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14004,
+  "name": "Data.append",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+  "params": [
+    {
+      "name": "json",
+      "type": "string",
+      "required": true,
+      "summary": "有界 JSON 数组文本。"
+    },
+    {
+      "name": "valueJson",
+      "type": "string",
+      "required": true,
+      "summary": "JSON primitive 编码；拒绝集合或对象。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。"
+  },
+  "legacyAliases": []
+}

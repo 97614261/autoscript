@@ -5,6 +5,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualInputActionDialogTest {
+    @Test fun loadingIsNotReportedAsMissingRoot() {
+        assertEquals("正在读取 Root 输入能力", inputActionUnavailableReason(VisualInputAction.TAP, true, null))
+        assertEquals("Root 输入未就绪", inputActionUnavailableReason(VisualInputAction.TAP, true, 0))
+    }
+
     @Test fun unknownOrUnavailableBackendDoesNotEnableFakeActions() {
         VisualInputAction.entries.forEach { action ->
             assertNotNull(inputActionUnavailableReason(action, true, null))

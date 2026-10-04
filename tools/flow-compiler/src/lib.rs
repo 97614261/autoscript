@@ -1,13 +1,24 @@
 mod analyze;
+mod compound_condition;
+#[cfg(test)]
+mod data_completion_tests;
+mod data_operations;
 mod digest;
 #[cfg(test)]
 mod execution_tests;
+
+#[cfg(test)]
+mod cycle_contract_tests;
 mod frozen_lua;
 mod model;
 #[cfg(test)]
 mod native_vision_tests;
+#[cfg(test)]
+mod native_workflow_tests;
 mod render;
 mod store;
+#[cfg(test)]
+mod template_result_tests;
 mod variable_expression;
 #[cfg(test)]
 mod vision_completion_tests;
@@ -24,8 +35,80 @@ pub use model::{
 };
 pub use store::{commit_generation, mark_generation_stale};
 
-pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v8");
+pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v12");
 pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
+    SupportedNodeVersion {
+        kind: "control.if",
+        version: 2,
+    },
+    SupportedNodeVersion {
+        kind: "vision.findallimages",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "vision.result",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "control.continue",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "control.cycle",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.call.branch",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "flow.status.return",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.length",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.get",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.set",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.remove",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.append",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.keys",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.text",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "files.read",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "files.write",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "files.list",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "files.remove",
+        version: 1,
+    },
     SupportedNodeVersion {
         kind: "ui.get",
         version: 1,
@@ -108,6 +191,10 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
     },
     SupportedNodeVersion {
         kind: "task.prompt",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "task.message",
         version: 1,
     },
     SupportedNodeVersion {
@@ -842,7 +929,7 @@ mod tests {
         .expect("nested control Flow compiles");
         let lua = std::str::from_utf8(&bundle.main_lua).expect("generated Lua UTF-8");
         let set = lua.find("__vars[\"score\"] = 7").expect("set variable");
-        let conditional = lua.find("if __compare").expect("if statement");
+        let conditional = lua.find("if __condition then").expect("if statement");
         assert!(
             lua.contains(r#"__compare(__vars["score"],"greaterOrEqual", __vars["targetScore"])"#)
         );

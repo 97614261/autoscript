@@ -20,6 +20,18 @@ import org.junit.Before
 import org.junit.Test
 
 class ProjectStoreTest {
+    @Test fun optionalSourceAndVariableListsUseSchemaDefaultsWithoutDroppingData() {
+        val created = store.createProject("公开格式默认值", ProjectSourceMode.VISUAL)
+        val file = File(created.directory, "project.json")
+        val manifest = JsonParser.parseString(file.readText()).asJsonObject
+        listOf("luaFiles", "luaDirectories", "variables").forEach(manifest::remove)
+        file.writeText(manifest.toString())
+        val reopened = store.openProject(created.manifest.projectId)
+        assertTrue(reopened.manifest.luaFiles.isEmpty())
+        assertTrue(reopened.manifest.luaDirectories.isEmpty())
+        assertTrue(reopened.manifest.variables.isEmpty())
+        assertEquals(created.flowSources, reopened.flowSources)
+    }
     private lateinit var root: File
     private var now = 1_000L
     private var idCounter = 0
@@ -40,7 +52,7 @@ class ProjectStoreTest {
     fun designedInterfacePersistsWithCapabilitiesAndRejectsStaleOrMissingBindings() {
         val created = store.createProject("脚本界面", ProjectSourceMode.VISUAL)
         val model = com.autoscript.script.ui.ScriptUiDefinition(version = 2, fields = listOf(
-            com.autoscript.script.ui.UiField("input", "输入", "text", false, "", ui = com.autoscript.script.ui.UiPresentation()),
+            com.autoscript.script.ui.UiField("input", "输入", "text", false, "", ui = com.autoscript.script.ui.UiPresentation(fontBold = true, textUnderline = true, borderColor = "#80aBcD12", borderWidthPx = 3, cornerPx = 20)),
         ))
         val saved = store.updateRunnerUi(created.manifest.projectId, model.toJson(), null)
         assertEquals(model.toJson(), newStore().openProject(created.manifest.projectId).manifest.runnerUi)
@@ -55,6 +67,53 @@ class ProjectStoreTest {
             store.updateRunnerUi(created.manifest.projectId, bad.toJson(), model.toJson())
         }
         assertEquals(model.toJson(), store.openProject(created.manifest.projectId).manifest.runnerUi)
+    }
+
+    @Test
+    fun freezeGuardAcceptsReadOnlyDefaultsWithoutWritingOrRecoveringFiles() {
+        val created = store.createProject("旧配置", ProjectSourceMode.LUA)
+        val manifest = File(created.directory, "project.json")
+        val tree = JsonParser.parseString(manifest.readText()).asJsonObject
+        tree.remove("debugSettings")
+        manifest.writeText(tree.toString())
+        val reopened = store.openProject(created.manifest.projectId)
+        val bytes = manifest.readBytes()
+        val pending = File(created.directory, "project.json.tmp").apply { writeText("pending freeze guard must not delete") }
+        val previous = File(created.directory, "project.json.previous").apply { writeText("previous freeze guard must not delete") }
+        assertTrue(store.matchesManifestSnapshot(reopened, bytes))
+        assertTrue(manifest.readBytes().contentEquals(bytes))
+        assertTrue(pending.isFile)
+        assertTrue(previous.isFile)
+    }
+
+    @Test
+    fun freezeGuardAcceptsOmittedOptionalFieldsWithinDebugSettings() {
+        val created = store.createProject("部分旧调试配置", ProjectSourceMode.LUA)
+        val manifest = File(created.directory, "project.json")
+        val tree = JsonParser.parseString(manifest.readText()).asJsonObject
+        tree.getAsJsonObject("debugSettings").apply {
+            remove("showRunPrompts"); remove("runPromptFilters"); remove("popupStyle")
+        }
+        manifest.writeText(tree.toString())
+        val reopened = store.openProject(created.manifest.projectId)
+        val bytes = manifest.readBytes()
+        assertTrue(store.matchesManifestSnapshot(reopened, bytes))
+        assertTrue(manifest.readBytes().contentEquals(bytes))
+    }
+
+    @Test
+    fun freezeGuardRejectsActualManifestChangeAndDoesNotRecoverInvalidPrimary() {
+        val created = store.createProject("原项目", ProjectSourceMode.LUA)
+        val manifest = File(created.directory, "project.json")
+        val bytes = manifest.readBytes()
+        val tree = JsonParser.parseString(bytes.toString(Charsets.UTF_8)).asJsonObject
+        tree.addProperty("name", "已修改项目")
+        manifest.writeText(tree.toString())
+        assertFalse(store.matchesManifestSnapshot(created, bytes))
+        assertFalse(store.matchesManifestSnapshot(created, manifest.readBytes()))
+        manifest.writeText("invalid primary")
+        assertFalse(store.matchesManifestSnapshot(created, manifest.readBytes()))
+        assertEquals("invalid primary", manifest.readText())
     }
 
     @Test
@@ -679,7 +738,7 @@ class ProjectStoreTest {
         val entries = ZipInputStream(ByteArrayInputStream(backup)).use { zip ->
             generateSequence { zip.nextEntry }.map { it.name }.toList()
         }
-        assertTrue(entries.none { it.contains("source-groups") })
+        assertTrue(".studio/source-groups.json" in entries)
 
         assertThrows(IllegalArgumentException::class.java) {
             store.writeSourceGroups(projectId, listOf(SourceGroup("a/b", listOf("flow-a"))))

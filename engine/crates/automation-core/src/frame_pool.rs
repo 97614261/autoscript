@@ -766,6 +766,80 @@ impl FramePool {
         Ok(None)
     }
 
+    /// Collects origins by template priority then search direction. Includes overlapping origins.
+    /// Count is retained count, not an unbounded total. One look-ahead detects truncation.
+    /// # Errors
+    /// Rejects unknown/duplicate templates, invalid limits, cancellation and exhausted budgets.
+    pub fn find_all_named_templates(
+        &self,
+        task: TaskToken,
+        screen: FrameHandle,
+        resources: &TaskResourceRegistry,
+        paths: &[String],
+        options: TemplateOptions,
+        limit: usize,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<(Vec<NamedTemplateMatch>, bool), FrameVisionError> {
+        if paths.is_empty() || paths.len() > 64 || !(1..=64).contains(&limit) {
+            return Err(FrameError::InvalidTemplateName.into());
+        }
+        if options.search.step_x == 0 || options.search.step_y == 0 {
+            return Err(VisionError::InvalidStep.into());
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for path in paths {
+            if !names.insert(path) || !self.templates.contains_key(path) {
+                return Err(FrameError::InvalidTemplateName.into());
+            }
+        }
+        let frame = self.view(task, screen, resources)?;
+        let roi = options.search.roi;
+        if roi.left >= roi.right
+            || roi.top >= roi.bottom
+            || roi.right > frame.metadata.width
+            || roi.bottom > frame.metadata.height
+        {
+            return Err(VisionError::InvalidRoi.into());
+        }
+        if options.minimum_match_permille > 1000 {
+            return Err(VisionError::InvalidSimilarity.into());
+        }
+        let mut remaining = options.search.max_pixel_comparisons;
+        let mut matches = Vec::new();
+        for path in paths {
+            if cancelled() {
+                return Err(VisionError::Cancelled.into());
+            }
+            let template = self
+                .templates
+                .get(path)
+                .ok_or(FrameError::InvalidTemplateName)?;
+            if template.metadata.width > roi.width() || template.metadata.height > roi.height() {
+                continue;
+            }
+            for matched in pixel_vision::find_prepared_templates_controlled(
+                frame.image_view()?,
+                &template.prepared,
+                options,
+                limit + 1 - matches.len(),
+                &mut remaining,
+                cancelled,
+            )? {
+                matches.push(NamedTemplateMatch {
+                    path: path.clone(),
+                    matched,
+                    width: template.metadata.width,
+                    height: template.metadata.height,
+                });
+            }
+            if matches.len() > limit {
+                matches.truncate(limit);
+                return Ok((matches, true));
+            }
+        }
+        Ok((matches, false))
+    }
+
     /// Creates a packed immutable crop owned by the calling task.
     ///
     /// # Errors
@@ -1312,6 +1386,75 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(matched.path, paths[1]);
+        let (items, truncated) = pool
+            .find_all_named_templates(task(1), screen, &resources, &paths, options, 2, &mut || {
+                false
+            })
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(truncated);
+        assert_eq!(items[0].path, paths[1]);
+        assert_eq!(
+            (items[0].matched.origin.x, items[0].matched.origin.y),
+            (0, 0)
+        );
+        assert_eq!(
+            (items[1].matched.origin.x, items[1].matched.origin.y),
+            (1, 0)
+        );
+        let (items, truncated) = pool
+            .find_all_named_templates(task(1), screen, &resources, &paths, options, 4, &mut || {
+                false
+            })
+            .unwrap();
+        assert_eq!(items.len(), 4);
+        assert!(!truncated);
+        for limit in [0, 65] {
+            assert!(pool
+                .find_all_named_templates(
+                    task(1),
+                    screen,
+                    &resources,
+                    &paths,
+                    options,
+                    limit,
+                    &mut || false
+                )
+                .is_err());
+        }
+        assert!(pool
+            .find_all_named_templates(task(1), screen, &resources, &paths, options, 2, &mut || {
+                true
+            })
+            .is_err());
+        assert!(pool
+            .find_all_named_templates(
+                task(1),
+                screen,
+                &resources,
+                &[paths[1].clone(), paths[1].clone()],
+                options,
+                2,
+                &mut || false
+            )
+            .is_err());
+        assert!(pool
+            .find_all_named_templates(
+                task(1),
+                screen,
+                &resources,
+                &paths,
+                TemplateOptions {
+                    search: SearchOptions {
+                        max_pixel_comparisons: 1,
+                        ..options.search
+                    },
+                    ..options
+                },
+                2,
+                &mut || false
+            )
+            .is_err());
         assert!(pool
             .find_named_templates(
                 task(1),

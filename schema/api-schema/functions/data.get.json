@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14001,
+  "name": "Data.get",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。",
+  "params": [
+    {
+      "name": "json",
+      "type": "string",
+      "required": true,
+      "summary": "有界 JSON 集合或对象文本。"
+    },
+    {
+      "name": "key",
+      "type": "string",
+      "required": true,
+      "summary": "对象键或从 1 开始的数组索引文本。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。"
+  },
+  "legacyAliases": []
+}

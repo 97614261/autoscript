@@ -1,0 +1,1 @@
+{"schemaVersion":1,"kind":"control.continue","nodeVersion":1,"nodeSchemaId":"https://autoscript.local/schema/node/control.continue/1/control.continue.schema.json","title":"结束本次循环","category":"control","summary":"跳过最近循环体的剩余积木，开始下一轮；下一轮仍可取消地让步。","searchTerms":["continue","结束本次循环","下一轮"],"requiredCapabilities":[],"childBlocks":[],"properties":[],"migrations":[]}

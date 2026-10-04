@@ -297,7 +297,7 @@ internal class VisualEditorState private constructor(
         val selected = selectedNodeId ?: return false
         val document = editableDocument() ?: return false
         val node = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
-        if (contract.kind in positionLoopKinds && nearestAncestorOfKind(node.parentId, setOf("control.repeat", "control.while")) == null) return false
+        if (contract.kind in positionLoopKinds && nearestAncestorOfKind(node.parentId, setOf("control.repeat", "control.while", "control.cycle")) == null) return false
         val removedNodeIds = mutableSetOf<String>()
         fun collectBlock(blockId: String) {
             document.nodes.filter { it.blockId == blockId }.forEach { child ->
@@ -586,12 +586,12 @@ internal class VisualEditorState private constructor(
         ?.getAsJsonArray("elseIf")?.size() ?: 0
 
     fun flowCallTarget(nodeId: String): String? = editableDocument()?.nodes
-        ?.firstOrNull { it.nodeId == nodeId && it.kind == "flow.call" }
+        ?.firstOrNull { it.nodeId == nodeId && it.kind in setOf("flow.call", "flow.call.branch") }
         ?.json?.getAsJsonObject("args")?.get("targetFlowId")
         ?.takeIf { it.isJsonPrimitive }?.asString
 
     fun flowCallArguments(nodeId: String): JsonObject? = editableDocument()?.nodes
-        ?.firstOrNull { it.nodeId == nodeId && it.kind == "flow.call" }
+        ?.firstOrNull { it.nodeId == nodeId && it.kind in setOf("flow.call", "flow.call.branch") }
         ?.json?.getAsJsonObject("args")?.getAsJsonObject("arguments")?.deepCopy()
 
     fun updateFlowCall(nodeId: String, targetFlowId: String, arguments: JsonObject): Boolean =
@@ -619,9 +619,29 @@ internal class VisualEditorState private constructor(
         return true
     }
 
+    /** Raw editing preserves undo and rejects a changed draft; callers must compile-validate first. */
+    fun replaceRawSource(expected: String, replacement: String): String? {
+        if (isReadOnly) return "当前插件只读"
+        if (currentSource != expected) return "插件已变化，请重新打开源码编辑，避免覆盖新的修改"
+        if (replacement.toByteArray(Charsets.UTF_8).size > 1_048_576) return "源码超过 1 MiB"
+        val document = parseDocument(replacement, rootBlockId)?.editable ?: return "JSONL 或积木层级结构无效"
+        commit(document)
+        pruneSelection()
+        return null
+    }
+
     /** Marks exactly the submitted snapshot saved; later edits remain dirty. */
     fun markSaved(submittedSource: String) {
         savedSource = submittedSource
+    }
+
+    /** A project-wide rename is a committed transaction, not an undoable single-node mutation. */
+    fun reloadCommittedSource(source: String) {
+        currentSource = source
+        savedSource = source
+        undoStack.clear()
+        redoStack.clear()
+        pruneSelection()
     }
 
     private fun insertNode(
@@ -639,7 +659,7 @@ internal class VisualEditorState private constructor(
         val after = if (childBlockId == null) selected else null
         val blockId = childBlockId ?: after?.blockId ?: rootBlockId
         val parentId = if (childBlockId != null) selected?.nodeId else after?.parentId
-        if (kind in positionLoopKinds && nearestAncestorOfKind(parentId, setOf("control.repeat", "control.while")) == null) return null
+        if (kind in positionLoopKinds && nearestAncestorOfKind(parentId, setOf("control.repeat", "control.while", "control.cycle")) == null) return null
         val siblings = document.nodes.filter { it.blockId == blockId }.sortedBy { it.orderKey }
         val insertionIndex = after?.let { selected ->
             siblings.indexOfFirst { it.nodeId == selected.nodeId }.takeIf { it >= 0 }?.plus(1)

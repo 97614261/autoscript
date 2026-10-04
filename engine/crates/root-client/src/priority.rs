@@ -1,6 +1,9 @@
 //! Independent, bounded control worker. Its mutex never waits on the input response.
+use crate::ClientError;
 #[cfg(any(target_os = "android", test))]
 use crate::{PacketTransport, RootClient};
+use root_protocol::recording::{RecordingFinish, RecordingResult};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,7 +20,12 @@ pub(crate) struct Gate {
     pub last_input: u64,
     pub status: StopStatus,
     generation: u64,
-    closed: bool,
+    pub(crate) closed: bool,
+    pub recording_token: u64,
+    recording: Option<(
+        RecordingFinish,
+        SyncSender<Result<RecordingResult, ClientError>>,
+    )>,
 }
 pub(crate) struct Shared {
     pub gate: Mutex<Gate>,
@@ -34,6 +42,32 @@ impl std::fmt::Debug for Shared {
 #[derive(Clone, Debug)]
 pub struct PriorityStop(Arc<Shared>);
 impl PriorityStop {
+    /// Uses the authenticated priority channel, never the input/host request queue.
+    pub fn finish_recording(
+        &self,
+        finish: RecordingFinish,
+    ) -> Result<RecordingResult, ClientError> {
+        let (send, receive) = mpsc::sync_channel(1);
+        {
+            let mut gate = self
+                .0
+                .gate
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if gate.closed
+                || gate.recording.is_some()
+                || gate.recording_token != finish.token
+                || finish.token == 0
+            {
+                return Err(ClientError::InvalidRecording);
+            }
+            gate.recording = Some((finish, send));
+            self.0.changed.notify_all();
+        }
+        receive
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| ClientError::Closed)?
+    }
     pub fn set_listener(&self, listener: Arc<dyn Fn() + Send + Sync>) {
         *self
             .0
@@ -111,6 +145,9 @@ impl PriorityStop {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         gate.closed = true;
         gate.status = StopStatus::Closed;
+        if let Some((_, reply)) = gate.recording.take() {
+            let _ = reply.send(Err(ClientError::Closed));
+        }
         self.0.changed.notify_all();
     }
 }
@@ -124,6 +161,8 @@ pub(crate) fn spawn<T: PacketTransport + Send + 'static>(
             status: StopStatus::Ready,
             generation: 0,
             closed: false,
+            recording_token: 0,
+            recording: None,
         }),
         changed: Condvar::new(),
         listener: Mutex::new(None),
@@ -134,13 +173,14 @@ pub(crate) fn spawn<T: PacketTransport + Send + 'static>(
         .spawn(move || {
             let mut seen = 0;
             loop {
-                let (cutoff, generation) = {
+                let (cutoff, generation, recording) = {
                     let mut gate = shared
                         .gate
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     while !gate.closed
                         && (gate.status != StopStatus::Pending || gate.generation == seen)
+                        && gate.recording.is_none()
                     {
                         gate = shared
                             .changed
@@ -150,14 +190,43 @@ pub(crate) fn spawn<T: PacketTransport + Send + 'static>(
                     if gate.closed {
                         return;
                     }
-                    (gate.last_input, gate.generation)
+                    if gate.status == StopStatus::Pending && gate.generation != seen {
+                        (gate.last_input, gate.generation, None)
+                    } else {
+                        (gate.last_input, gate.generation, gate.recording.take())
+                    }
                 };
+                if let Some((finish, reply)) = recording {
+                    let result = control.finish_recording_control(finish);
+                    let mut gate = shared
+                        .gate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    // A failed finish leaves input fenced until explicit priority cleanup/reconnect.
+                    if result.is_ok() && gate.recording_token == finish.token {
+                        gate.recording_token = 0;
+                    }
+                    if result.is_err() && gate.status != StopStatus::Pending && !gate.closed {
+                        gate.status = StopStatus::Failed;
+                    }
+                    drop(gate);
+                    let _ = reply.send(result);
+                    continue;
+                }
                 let success = control.cancel(cutoff).is_ok();
                 let mut gate = shared
                     .gate
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 seen = generation;
+                if success {
+                    gate.recording_token = 0;
+                }
+                if let Some((_, reply)) = gate.recording.take() {
+                    let _ = reply.send(Err(ClientError::Remote(
+                        root_protocol::StatusCode::Cancelled,
+                    )));
+                }
                 if gate.generation == generation && gate.status == StopStatus::Pending {
                     gate.status = if success {
                         StopStatus::Clean
@@ -204,6 +273,16 @@ mod tests {
             self.pending_cancel = frame.command == Command::Cancel;
             let payload = if frame.command == Command::Hello {
                 frame.payload
+            } else if frame.command == Command::RecordingFinish {
+                let finish = RecordingFinish::decode(&frame.payload).unwrap();
+                RecordingResult {
+                    token: finish.token,
+                    elapsed_ms: 100,
+                    status: u32::from(finish.cancel) * 4,
+                    skipped_gestures: 0,
+                    actions: Vec::new(),
+                }
+                .encode()
             } else {
                 Vec::new()
             };
@@ -328,5 +407,128 @@ mod tests {
                 .decode(&packet)
                 .is_err()
         );
+    }
+    #[test]
+    fn recording_is_token_fenced_and_finish_uses_control_not_input_transport() {
+        let (control, control_seen) = connection(
+            [5; 32],
+            Capabilities::INPUT_PRIORITY_STOP | Capabilities::INPUT_RECORDING,
+            None,
+            false,
+        );
+        let stop = spawn(control).unwrap();
+        let (mut input, input_seen) = connection(
+            [7; 32],
+            Capabilities::INPUT_BASIC | Capabilities::INPUT_RECORDING,
+            None,
+            false,
+        );
+        input.priority = Some(stop.clone());
+        let config = root_protocol::recording::RecordingConfig {
+            token: 51,
+            width: 1080,
+            height: 1920,
+            rotation: 0,
+            max_duration_ms: 60000,
+            event_budget: 8192,
+        };
+        input.begin_recording(config).unwrap();
+        assert_eq!(input.input_features(), 5);
+        assert!(input.tap(1, 2).is_err());
+        assert!(input.begin_recording(config).is_err());
+        assert!(stop
+            .finish_recording(RecordingFinish {
+                token: 52,
+                cancel: false,
+                discard_current_touch: true
+            })
+            .is_err());
+        let reply = stop
+            .finish_recording(RecordingFinish {
+                token: 51,
+                cancel: false,
+                discard_current_touch: true,
+            })
+            .unwrap();
+        assert_eq!(reply.token, 51);
+        assert_eq!(reply.status, 0);
+        input.tap(1, 2).unwrap();
+        assert_eq!(
+            *control_seen.lock().unwrap(),
+            vec![Command::Hello, Command::RecordingFinish]
+        );
+        assert_eq!(
+            *input_seen.lock().unwrap(),
+            vec![Command::Hello, Command::RecordingStart, Command::Tap]
+        );
+        stop.close();
+    }
+    #[test]
+    fn stop_before_recording_send_fences_start_without_advancing_wire() {
+        let (control, _) = connection(
+            [6; 32],
+            Capabilities::INPUT_PRIORITY_STOP | Capabilities::INPUT_RECORDING,
+            None,
+            false,
+        );
+        let stop = spawn(control).unwrap();
+        let (mut input, seen) = connection(
+            [8; 32],
+            Capabilities::INPUT_BASIC | Capabilities::INPUT_RECORDING,
+            None,
+            false,
+        );
+        input.priority = Some(stop.clone());
+        stop.shared().gate.lock().unwrap().recording_token = 51;
+        stop.request_stop();
+        let config = root_protocol::recording::RecordingConfig {
+            token: 51,
+            width: 1080,
+            height: 1920,
+            rotation: 0,
+            max_duration_ms: 60000,
+            event_budget: 8192,
+        };
+        assert!(input
+            .transact_empty(Command::RecordingStart, &config.encode())
+            .is_err());
+        assert_eq!(*seen.lock().unwrap(), vec![Command::Hello]);
+        stop.wait_clean(Duration::from_secs(2)).unwrap();
+        stop.close();
+    }
+    #[test]
+    fn queued_recording_finish_is_cancelled_without_downgrading_priority_stop() {
+        let (control, seen) = connection(
+            [9; 32],
+            Capabilities::INPUT_PRIORITY_STOP | Capabilities::INPUT_RECORDING,
+            None,
+            false,
+        );
+        let stop = spawn(control).unwrap();
+        let (send, receive) = mpsc::sync_channel(1);
+        {
+            let mut gate = stop.shared().gate.lock().unwrap();
+            gate.recording_token = 51;
+            gate.recording = Some((
+                RecordingFinish {
+                    token: 51,
+                    cancel: false,
+                    discard_current_touch: true,
+                },
+                send,
+            ));
+            gate.status = StopStatus::Pending;
+            gate.generation += 1;
+            stop.shared().changed.notify_all();
+        }
+        stop.wait_clean(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            receive.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(ClientError::Remote(StatusCode::Cancelled))
+        ));
+        assert_eq!(stop.status(), StopStatus::Clean);
+        stop.resume().unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![Command::Hello, Command::Cancel]);
+        stop.close();
     }
 }

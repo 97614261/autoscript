@@ -22,11 +22,12 @@ class ScriptUiView(
     private val image: (String) -> File? = { null },
     private val onEvent: (id: String, event: String, value: String, action: String?) -> Unit,
 ) : LinearLayout(context) {
-    private val values = initial.toMutableMap()
+    private val commandState = ScriptUiCommandState(definition, initial)
+    private val values = commandState.values
     private val widgets = mutableMapOf<String, View>()
-    private val visibilityOverrides = mutableMapOf<String, Boolean>()
-    private val enabledOverrides = mutableMapOf<String, Boolean>()
-    private val optionOverrides = mutableMapOf<String, List<String>>()
+    private val visibilityOverrides = commandState.visibility
+    private val enabledOverrides = commandState.enabled
+    private val optionOverrides = commandState.items
     private var pageId = definition.pages.first().id
     private var updating = false
     private var runtime = false
@@ -65,6 +66,7 @@ class ScriptUiView(
         }
     }
     fun values(): Map<String, String> = values.toMap()
+    fun readProperty(id: String, property: ScriptUiRuntimeProperty): String = commandState.read(id, property)
     fun setRuntime(running: Boolean) { runtime = running; renderActions() }
     fun currentPage() = definition.pages.single { it.id == pageId }
     fun switchPage(id: String) {
@@ -80,8 +82,7 @@ class ScriptUiView(
         displayMode = mode; renderPage()
     }
     fun resetDefaults() {
-        values.clear(); values.putAll(definition.initialValues())
-        visibilityOverrides.clear(); enabledOverrides.clear(); optionOverrides.clear(); scrollPositions.clear()
+        commandState.reset(); scrollPositions.clear()
         scrollPositions[pageId] = 0
         renderPage()
     }
@@ -93,18 +94,12 @@ class ScriptUiView(
     }
     fun applyCommand(id: String, operation: String, value: String) {
         if (operation == "page") { switchPage(value); return }
-        val field = definition.fields.singleOrNull { it.id == id } ?: return
+        val field = commandState.apply(id, operation, value)
         val widget = widgets[id]
         when (operation) {
             "value", "text" -> {
-                when (field.kind) {
-                    "integer" -> require(value.toLongOrNull()?.let { it in (field.minimum ?: -1_000_000_000)..(field.maximum ?: 1_000_000_000) } == true)
-                    "boolean" -> require(value in setOf("true", "false"))
-                    "choice" -> require(value in options(field))
-                    else -> require(value.length <= 2048 && '\u0000' !in value)
-                }
-                values[id] = value; updating = true
-                when (widget) {
+                updating = true
+                try { when (widget) {
                     is EditText -> widget.setText(value)
                     is CompoundButton -> widget.isChecked = value == "true"
                     is Spinner -> widget.setSelection(options(field).indexOf(value).coerceAtLeast(0))
@@ -112,17 +107,12 @@ class ScriptUiView(
                     is ProgressBar -> widget.progress = value.toIntOrNull() ?: 0
                     is TextView -> widget.text = value.ifEmpty { field.label }
                     else -> renderPage()
-                }; updating = false }
-            "visible" -> { require(value in setOf("true", "false")); visibilityOverrides[id] = value == "true"; widget?.visibility = if (value == "true") View.VISIBLE else View.INVISIBLE }
-            "enabled" -> { require(value in setOf("true", "false")); enabledOverrides[id] = value == "true"; renderPage() }
-            "items" -> {
-                require(field.kind == "choice")
-                val updated = value.split('\n'); require(updated.size in 1..64 && updated.distinct().size == updated.size && updated.all { it.length in 1..128 })
-                optionOverrides[id] = updated
-                if (values[id] !in updated) values[id] = updated.first()
-                renderPage()
+                } } finally { updating = false }
             }
-            "progress" -> { require(field.control == UiControl.PROGRESS); val progress = value.toIntOrNull() ?: error("进度需要整数"); require(progress in 0..(field.maximum ?: 100).toInt()); values[id] = value; if (widget is ProgressBar) widget.progress = progress }
+            "visible" -> { widget?.visibility = if (value == "true") View.VISIBLE else View.INVISIBLE }
+            "enabled", "items" -> renderPage()
+            "progress" -> if (widget is ProgressBar) widget.progress = value.toInt()
+            else -> renderPage()
         }
     }
     private fun renderActions() {
@@ -141,7 +131,11 @@ class ScriptUiView(
         }
         values[f.id] = value
         val action = f.ui?.events?.get(event)
-        if (action?.startsWith("page:") == true) { switchPage(action.removePrefix("page:")); return }
+        if (action?.startsWith("page:") == true) {
+            // Page navigation must still synchronize its control value/binding with the host.
+            onEvent(f.id, event, value, action)
+            switchPage(action.removePrefix("page:")); return
+        }
         onEvent(f.id, event, value, action)
     }
     private fun renderPage() {
@@ -177,10 +171,13 @@ class ScriptUiView(
         while (remaining.isNotEmpty()) {
             val f = remaining.firstOrNull { it.ui?.parentId == null || widgets[it.ui?.parentId] is FrameLayout } ?: break
             remaining.remove(f)
-            val p = requireNotNull(f.ui); val widget = widget(f); widgets[f.id] = widget
+            val p = requireNotNull(commandState.presentation(f)); val widget = widget(f); widgets[f.id] = widget
             widget.visibility = if (visibilityOverrides[f.id] ?: p.visible) View.VISIBLE else View.INVISIBLE
             widget.isEnabled = enabled(f)
-            widget.background = GradientDrawable().apply { setColor(Color.parseColor(p.background)); cornerRadius = 6 * scale }
+            widget.background = GradientDrawable().apply {
+                setColor(Color.parseColor(p.background)); cornerRadius = p.cornerPx * scale
+                if (p.borderWidthPx > 0) setStroke((p.borderWidthPx * scale).roundToInt().coerceAtLeast(1), Color.parseColor(p.borderColor))
+            }
             if (widget is TextView) {
                 styleText(widget, f)
             }
@@ -235,13 +232,24 @@ class ScriptUiView(
             UiControl.CONTAINER -> FrameLayout(context)
             UiControl.CHECKBOX -> CheckBox(context).apply { text = f.label; isChecked = value == "true"; setOnCheckedChangeListener { _, checked -> emit(f, "change", checked.toString()) } }
             UiControl.RADIO -> RadioGroup(context).apply {
-                orientation = if (f.ui?.let { ScriptUiGeometry.radioHorizontal(it.height, it.fontPx, choices.size) } == true) HORIZONTAL else VERTICAL
+                orientation = if (commandState.presentation(f)?.let { ScriptUiGeometry.radioHorizontal(it.height, it.fontPx, choices.size) } == true) HORIZONTAL else VERTICAL
                 gravity = Gravity.CENTER_VERTICAL
-                choices.forEachIndexed { index, option -> addView(RadioButton(context).apply { id = index + 1; text = option; isChecked = option == value }) }
+                choices.forEachIndexed { index, option -> addView(RadioButton(context).apply {
+                    id = index + 1; text = option; isChecked = option == value
+                    if (f.ui?.events?.containsKey("click") == true) setOnClickListener { emit(f, "click", option) }
+                    if (f.ui?.events?.containsKey("longClick") == true) setOnLongClickListener { emit(f, "longClick", values[f.id].orEmpty()); true }
+                }) }
                 setOnCheckedChangeListener { _, id -> choices.getOrNull(id - 1)?.let { emit(f, "selection", it) } }
             }
-            UiControl.SELECT -> Spinner(context).apply {
+            UiControl.SELECT -> object : Spinner(context) {
+                override fun performClick(): Boolean {
+                    val handled = super.performClick()
+                    if (handled && f.ui?.events?.containsKey("click") == true) emit(f, "click")
+                    return handled
+                }
+            }.apply {
                 adapter = choicesAdapter(f, android.R.layout.simple_spinner_dropdown_item, choices); setSelection(choices.indexOf(value).coerceAtLeast(0), false)
+                if (f.ui?.events?.containsKey("longClick") == true) setOnLongClickListener { emit(f, "longClick"); true }
                 onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                     override fun onNothingSelected(parent: AdapterView<*>?) {}
                     override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { choices.getOrNull(position)?.let { if (values[f.id] != it) emit(f, "selection", it) } }
@@ -249,12 +257,18 @@ class ScriptUiView(
             }
             UiControl.LIST -> ListView(context).apply {
                 choiceMode = ListView.CHOICE_MODE_SINGLE; adapter = choicesAdapter(f, android.R.layout.simple_list_item_single_choice, choices)
-                setItemChecked(choices.indexOf(value).coerceAtLeast(0), true); setOnItemClickListener { _, _, i, _ -> choices.getOrNull(i)?.let { emit(f, "selection", it) } }
+                setItemChecked(choices.indexOf(value).coerceAtLeast(0), true)
+                setOnItemClickListener { _, _, i, _ -> choices.getOrNull(i)?.let {
+                    emit(f, "selection", it)
+                    if (f.ui?.events?.containsKey("click") == true) emit(f, "click", it)
+                } }
+                if (f.ui?.events?.containsKey("longClick") == true) setOnItemLongClickListener { _, _, _, _ -> emit(f, "longClick"); true }
             }
             UiControl.SLIDER -> SeekBar(context).apply {
                 val min = f.minimum ?: 0; max = ((f.maximum ?: 100) - min).coerceIn(1, 1_000_000).toInt(); progress = ((value.toLongOrNull() ?: min) - min).toInt()
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onStartTrackingTouch(bar: SeekBar?) {}; override fun onStopTrackingTouch(bar: SeekBar?) {}
+                    override fun onStartTrackingTouch(bar: SeekBar?) {}
+                    override fun onStopTrackingTouch(bar: SeekBar?) { if (f.ui?.events?.containsKey("click") == true) emit(f, "click") }
                     override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) { if (fromUser) emit(f, "change", (progress + min).toString()) }
                 })
             }
@@ -273,8 +287,8 @@ class ScriptUiView(
                 contentDescription = f.label
             }
         }
-        if (f.control !in setOf(UiControl.BUTTON, UiControl.NAVIGATION) && f.ui?.events?.containsKey("click") == true) view.setOnClickListener { emit(f, "click") }
-        if (f.ui?.events?.containsKey("longClick") == true) view.setOnLongClickListener { emit(f, "longClick"); true }
+        if (f.control !in setOf(UiControl.BUTTON, UiControl.NAVIGATION, UiControl.RADIO, UiControl.LIST, UiControl.SELECT, UiControl.SLIDER) && f.ui?.events?.containsKey("click") == true) view.setOnClickListener { emit(f, "click") }
+        if (f.control !in setOf(UiControl.RADIO, UiControl.LIST, UiControl.SELECT) && f.ui?.events?.containsKey("longClick") == true) view.setOnLongClickListener { emit(f, "longClick"); true }
         return view
     }
     private fun Int.dp() = (this * resources.displayMetrics.density).roundToInt()
@@ -290,10 +304,12 @@ class ScriptUiView(
         return true
     }
     private fun styleText(view: TextView, field: UiField) {
-        val style = field.ui ?: return
+        val style = commandState.presentation(field) ?: return
         val scale = renderScale
         view.setTextColor(Color.parseColor(style.textColor))
         view.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.fontPx * scale)
+        view.setTypeface(android.graphics.Typeface.DEFAULT, if (style.fontBold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        view.paintFlags = if (style.textUnderline) view.paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG else view.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG.inv()
         view.gravity = Gravity.CENTER_VERTICAL or when (style.alignment) { "left" -> Gravity.START; "right" -> Gravity.END; else -> Gravity.CENTER_HORIZONTAL }
         view.minWidth = 0; view.minHeight = 0; view.minimumWidth = 0; view.minimumHeight = 0
         view.setPadding((4 * scale).toInt(), 0, (4 * scale).toInt(), 0)
@@ -323,7 +339,7 @@ class ScriptUiView(
         private fun compact(view: View, popup: Boolean): View = view.also {
             (it as? TextView)?.let { text ->
                 styleText(text, field)
-                field.ui?.let { style ->
+                commandState.presentation(field)?.let { style ->
                     val scale = renderScale
                     val height = ((style.fontPx * 1.8f).coerceAtLeast(20f) * scale).roundToInt().coerceAtLeast(1)
                     text.layoutParams?.height = if (popup) height.coerceAtLeast(24.dp()) else height

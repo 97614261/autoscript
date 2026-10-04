@@ -6,7 +6,7 @@ import com.autoscript.project.store.ProjectSnapshot
 internal enum class StudioProjectFileKind(val label: String, val symbol: String) {
     MANIFEST("项目配置", "⚙"),
     LUA("Lua 脚本", "{ }"),
-    FLOW("积木流程", "▦"),
+    FLOW("插件", "▦"),
     IMAGE("图片", "▧"),
     GLYPH_DICTIONARY("字库", "字"),
 }
@@ -22,7 +22,7 @@ internal data class StudioProjectFile(
 
 internal fun projectFileCatalog(snapshot: ProjectSnapshot): List<StudioProjectFile> = buildList {
     add(projectFile(snapshot.directory, "project.json", StudioProjectFileKind.MANIFEST, opensEditor = false))
-    snapshot.manifest.entryPoint?.let { path ->
+    snapshot.manifest.luaFiles.ifEmpty { listOfNotNull(snapshot.manifest.entryPoint) }.forEach { path ->
         add(projectFile(snapshot.directory, path, StudioProjectFileKind.LUA, opensEditor = true))
     }
     snapshot.manifest.flows.sortedBy { it.path }.forEach { flow ->

@@ -769,18 +769,18 @@ mod tests {
         assert_eq!(session.state(), EngineState::Paused);
         let first = session.debug_snapshot().unwrap();
         assert_eq!(first.node_id, "node-1");
-        assert_eq!(first.variables[0].2, LuaScalar::Integer(0));
+        assert_eq!(first.variables[0].value, Some(LuaScalar::Integer(0)));
         session.step(2).unwrap();
         session.pump(3).unwrap();
         let second = session.debug_snapshot().unwrap();
         assert_eq!(second.node_id, "node-2");
-        assert_eq!(second.variables[0].2, LuaScalar::Integer(1));
+        assert_eq!(second.variables[0].value, Some(LuaScalar::Integer(1)));
         session.resume(4).unwrap();
         session.pump(5).unwrap();
         assert_eq!(session.state(), EngineState::Stopped);
         assert_eq!(
-            session.debug_snapshot().unwrap().variables[0].2,
-            LuaScalar::Integer(3)
+            session.debug_snapshot().unwrap().variables[0].value,
+            Some(LuaScalar::Integer(3))
         );
     }
 
@@ -811,13 +811,93 @@ mod tests {
         end"#, "stop-debug", &["core.task".into()]).unwrap();
         session.pump(1).unwrap();
         let snapshot = session.debug_snapshot().unwrap();
-        assert!(snapshot.variables[0].3);
-        assert!(matches!(&snapshot.variables[0].2, LuaScalar::Bytes(bytes) if bytes.len() == 1024));
+        assert!(snapshot.variables[0].truncated);
+        assert!(
+            matches!(&snapshot.variables[0].value, Some(LuaScalar::Bytes(bytes)) if bytes.len() == 1024)
+        );
         session.stop(2).unwrap();
         assert_eq!(session.state(), EngineState::Stopped);
         assert_eq!(
             session.diagnostic_global("should_not_run"),
             Some(LuaScalar::Nil)
+        );
+    }
+
+    #[test]
+    fn paused_inspection_reads_changed_values_scopes_and_ui_overrides_without_metamethods() {
+        let mut session = EngineSession::new(720, 1280, EngineSessionConfig::default()).unwrap();
+        session.start(br#"return function()
+            __autoscript_debug_step=true
+            local locals=setmetatable({score=1, complex=setmetatable({}, {__tostring=function() inspection_side_effect=true; return 'bad' end})}, {__index=function() inspection_side_effect=true; return 999 end})
+            local globals={score=10}
+            local bound={score=21}
+            __autoscript_debug_snapshot={flowId='child',nodeId='first',locals=locals,globals=globals,localTypes={score='integer',missing='boolean',complex='string'},globalTypes={score='integer'},localOverrides=bound}
+            coroutine.yield('__AUTOSCRIPT_DEBUG_CHECKPOINT_V1')
+            locals.score=2; globals.score=12; bound.score=22
+            __autoscript_debug_snapshot.nodeId='next'
+            coroutine.yield('__AUTOSCRIPT_DEBUG_CHECKPOINT_V1')
+        end"#, "inspection", &["core.task".into()]).unwrap();
+        session.pump(1).unwrap();
+        let first = session.debug_snapshot().unwrap();
+        assert_eq!(session.state(), EngineState::Paused);
+        assert_eq!(first.flow_id, "child");
+        let local = first
+            .variables
+            .iter()
+            .find(|value| value.scope == "local" && value.name == "score")
+            .unwrap();
+        assert_eq!(local.value, Some(LuaScalar::Integer(21)));
+        assert_eq!(local.declared_type.as_deref(), Some("integer"));
+        assert_eq!(
+            first
+                .variables
+                .iter()
+                .find(|value| value.name == "missing")
+                .unwrap()
+                .value,
+            Some(LuaScalar::Nil)
+        );
+        assert_eq!(
+            first
+                .variables
+                .iter()
+                .find(|value| value.name == "complex")
+                .unwrap()
+                .unsupported_type,
+            Some("table")
+        );
+        assert_eq!(
+            first
+                .variables
+                .iter()
+                .find(|value| value.scope == "global")
+                .unwrap()
+                .value,
+            Some(LuaScalar::Integer(10))
+        );
+        assert_eq!(
+            session.diagnostic_global("inspection_side_effect"),
+            Some(LuaScalar::Nil)
+        );
+        session.step(2).unwrap();
+        session.pump(3).unwrap();
+        let next = session.debug_snapshot().unwrap();
+        assert_eq!(next.node_id, "next");
+        assert_eq!(
+            next.variables
+                .iter()
+                .find(|value| value.scope == "local" && value.name == "score")
+                .unwrap()
+                .value,
+            Some(LuaScalar::Integer(22))
+        );
+        assert_eq!(
+            next.variables
+                .iter()
+                .find(|value| value.scope == "global")
+                .unwrap()
+                .value,
+            Some(LuaScalar::Integer(12))
         );
     }
 

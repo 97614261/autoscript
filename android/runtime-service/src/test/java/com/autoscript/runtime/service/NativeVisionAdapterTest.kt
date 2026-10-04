@@ -6,6 +6,15 @@ import org.junit.Test
 class NativeVisionAdapterTest {
     private val dictionary=listOf("") + ('A'..'Z').map(Char::toString) + ('a'..'z').map(Char::toString) + ('0'..'9').map(Char::toString) + listOf(".", " ")
     private fun step(symbol:String, confidence:Float=.9f)=FloatArray(dictionary.size).apply { this[dictionary.indexOf(symbol)]=confidence }
+    @Test fun all62SymbolsAndThresholdEndpointsHaveExplicitSemantics() {
+        val symbols = ('A'..'Z').toList() + ('a'..'z').toList() + ('0'..'9').toList()
+        val steps = symbols.map { step(it.toString(), 1f) }.toTypedArray()
+        assertEquals(symbols.joinToString("") to 1000, decodeAlphanumeric(steps, dictionary, 1000))
+        assertEquals("AA" to 1000, decodeAlphanumeric(arrayOf(step("A", 1f), step("", 1f), step("A", 1f)), dictionary, 1000))
+        assertEquals("" to 0, decodeAlphanumeric(arrayOf(step("A", .999f)), dictionary, 1000))
+        assertThrows(IllegalArgumentException::class.java) { decodeAlphanumeric(steps, dictionary, 1001) }
+        assertThrows(IllegalArgumentException::class.java) { decodeAlphanumeric(Array(1025) { step("A") }, dictionary, 500) }
+    }
     @Test fun ctcCollapsesRepeatsButNotAcrossBlanksAndFiltersPunctuation() {
         val (text,score)=decodeAlphanumeric(arrayOf(step("A"),step("A"),step(""),step("A"),step("a"),step("1"),step("."),step(" ")),dictionary,500)
         assertEquals("AAa1",text)

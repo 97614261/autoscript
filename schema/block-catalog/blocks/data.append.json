@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "data.append",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/data.append/1/data.append.schema.json",
+  "title": "追加集合标量",
+  "category": "variable",
+  "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+  "searchTerms": [
+    "数据",
+    "集合",
+    "对象",
+    "追加集合标量"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "json",
+      "label": "有界 JSON 数组文本。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[]"
+    },
+    {
+      "path": "jsonVariable",
+      "label": "有界 JSON 数组文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "valueJson",
+      "label": "JSON primitive 编码；拒绝集合或对象。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "null"
+    },
+    {
+      "path": "valueJsonVariable",
+      "label": "JSON primitive 编码；拒绝集合或对象来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "data"
+    }
+  ],
+  "migrations": []
+}

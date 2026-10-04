@@ -230,12 +230,12 @@
       "name": "UI.command",
       "since": "1.7",
       "capability": "ui.control",
-      "execution": "rust_sync",
-      "cancelMode": "none",
+      "execution": "host_sync",
+      "cancelMode": "cooperative",
       "sideEffect": "ui_prompt",
-      "timeoutMs": null,
+      "timeoutMs": 3000,
       "resourceOwnership": "none",
-      "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。",
+      "summary": "白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。",
       "params": [
         {
           "name": "id",
@@ -257,9 +257,9 @@
         }
       ],
       "returns": {
-        "type": "void",
-        "nullable": false,
-        "summary": "白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。"
+        "type": "string",
+        "nullable": true,
+        "summary": "get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。"
       },
       "legacyAliases": []
     },
@@ -1670,6 +1670,126 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 5114,
+      "name": "Screen.findAllImages",
+      "since": "1.7",
+      "capability": "vision.template",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "有界多模板多位置识别：按模板优先级和方向枚举，包含重叠位置，共享比较预算。count为保留数量，truncated明确标记额外匹配。非旧Native等价声明。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "借用缓存帧。"
+        },
+        {
+          "name": "pathsJson",
+          "type": "string",
+          "required": true,
+          "summary": "1–64个已声明模板路径的JSON数组，最多16384字节。"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0–255通道容差。"
+        },
+        {
+          "name": "similarityPermille",
+          "type": "integer",
+          "required": true,
+          "summary": "0–1000最低相似度。"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "左边界。"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "上边界。"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "右边界不含。"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "下边界不含。"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "required": true,
+          "summary": "0左上、1右上、2左下、3右下、4中心向外。"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": true,
+          "summary": "最大保留数量1–64。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "版本1的有界JSON结果集合，最大64KiB；无匹配为count=0/matches=[]。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5115,
+      "name": "Screen.matchValue",
+      "since": "1.7",
+      "capability": "vision.template",
+      "execution": "async_task",
+      "cancelMode": "discard_result",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "none",
+      "summary": "读取有界找图结果的白名单属性；返回JSON标量编码，不求值代码。",
+      "params": [
+        {
+          "name": "result",
+          "type": "string",
+          "required": true,
+          "summary": "多图结果JSON，最多64KiB。"
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "required": true,
+          "summary": "count/truncated必须0，逐项属性从1开始，越界报错。"
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "required": true,
+          "summary": "count/truncated/x/y/width/height/scorePermille/path；truncated为1或0。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "数字使用int转换，路径用Data.text解码；未知字段拒绝。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 5200,
       "name": "Screen.captureSeries",
       "since": "1.5",
@@ -1910,6 +2030,339 @@
         "type": "AlphanumericResult",
         "nullable": false,
         "summary": "text与averageScorePermille，无可信字符为空文本。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14000,
+      "name": "Data.length",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "有界 JSON 集合或对象文本。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "当前容器的项数。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14001,
+      "name": "Data.get",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "有界 JSON 集合或对象文本。"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键或从 1 开始的数组索引文本。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14002,
+      "name": "Data.set",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "有界 JSON 集合或对象文本。"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键或已存在的数组索引文本。"
+        },
+        {
+          "name": "valueJson",
+          "type": "string",
+          "required": true,
+          "summary": "JSON primitive 编码；拒绝集合或对象。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14003,
+      "name": "Data.remove",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "有界 JSON 集合或对象文本。"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键或数组索引文本。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14004,
+      "name": "Data.append",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "有界 JSON 数组文本。"
+        },
+        {
+          "name": "valueJson",
+          "type": "string",
+          "required": true,
+          "summary": "JSON primitive 编码；拒绝集合或对象。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14005,
+      "name": "Data.keys",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "有界 JSON 集合或对象文本。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14006,
+      "name": "Data.text",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "严格解码 JSON string，不接受数字、布尔、null、集合或对象。",
+      "params": [
+        {
+          "name": "valueJson",
+          "type": "string",
+          "required": true,
+          "summary": "JSON string 编码。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "严格解码 JSON string，不接受数字、布尔、null、集合或对象。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14100,
+      "name": "Files.read",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "仅项目私有 data 内相对文件路径。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14101,
+      "name": "Files.write",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "仅项目私有 data 内相对文件路径。"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "最多 64 KiB 的 UTF-8 文本。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "操作完成时返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14102,
+      "name": "Files.list",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "项目私有 data 内相对目录路径；根目录填空字符串。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14103,
+      "name": "Files.remove",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "仅项目私有 data 内相对文件路径；移入有界回收区。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "操作完成时返回。"
       },
       "legacyAliases": []
     }

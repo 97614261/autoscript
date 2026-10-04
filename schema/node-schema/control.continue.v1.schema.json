@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://autoscript.local/schema/node/control.continue/1/control.continue.schema.json","type":"object","required":["kind","nodeVersion","args"],"properties":{"kind":{"const":"control.continue"},"nodeVersion":{"const":1},"args":{"type":"object","additionalProperties":false,"maxProperties":0}}}

@@ -82,6 +82,7 @@ internal class RuntimeOverlayController(
     private var latestPrompt: String? = null
     private var toastView: TextView? = null
     private var toastExpiry: Runnable? = null
+    private val popupLease = RuntimePopupLease()
     private var expanded = false
     private var dockRight = true
     private var captureOnly = false
@@ -154,10 +155,12 @@ internal class RuntimeOverlayController(
             val metrics = appContext.resources.displayMetrics
             val width = style.widthPx.coerceAtMost(metrics.widthPixels - dp(16))
             val height = style.heightPx.coerceAtMost(metrics.heightPixels - dp(16))
+            val ticket = popupLease.begin()
             val view = TextView(appContext).apply {
                 this.text = text
                 setTextSize(TypedValue.COMPLEX_UNIT_PX, style.fontPx.toFloat())
                 setTextColor(style.textColor)
+                includeFontPadding = false
                 gravity = Gravity.CENTER_VERTICAL or when (style.textAlign) {
                     "left" -> Gravity.START
                     "right" -> Gravity.END
@@ -173,7 +176,7 @@ internal class RuntimeOverlayController(
                     cornerRadius = style.cornerPx.toFloat()
                     setColor(style.backgroundColor)
                 }
-                setOnClickListener { removeToastView(notify = true) }
+                setOnClickListener { expireToast(ticket) }
             }
             val params = WindowManager.LayoutParams(
                 width, height,
@@ -196,11 +199,12 @@ internal class RuntimeOverlayController(
             runCatching { windowManager.addView(view, params) }
                 .onSuccess {
                     toastView = view
-                    toastExpiry = Runnable { removeToastView(notify = true) }.also {
+                    toastExpiry = Runnable { expireToast(ticket) }.also {
                         mainHandler.postDelayed(it, style.durationMs.toLong())
                     }
                 }
                 .onFailure {
+                    popupLease.clear()
                     Toast.makeText(appContext, text, Toast.LENGTH_LONG).show()
                     onToastExpired()
                 }
@@ -208,12 +212,17 @@ internal class RuntimeOverlayController(
     }
 
     private fun removeToastView(notify: Boolean) {
+        popupLease.clear()
         toastExpiry?.let(mainHandler::removeCallbacks)
         toastExpiry = null
         val view = toastView ?: return
         toastView = null
         runCatching { windowManager.removeView(view) }
         if (notify) onToastExpired()
+    }
+
+    private fun expireToast(ticket: Long) {
+        if (popupLease.end(ticket)) removeToastView(notify = true)
     }
 
     private fun removeControlView() {

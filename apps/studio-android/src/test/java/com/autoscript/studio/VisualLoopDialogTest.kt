@@ -65,7 +65,12 @@ class VisualLoopDialogTest {
         assertEquals("control.loopcheck", check.kind)
         assertEquals(0.5, check.arguments["limit"].asDouble, 0.0)
         assertNotNull(buildLoopInsertion(LoopDraft(mode = LoopMode.CHECK_COUNT, checkCount = "0"), variables).error)
-        assertNotNull(buildLoopInsertion(LoopDraft(mode = LoopMode.FOREVER, maxIterations = "0"), variables).error)
+        assertNotNull(buildLoopInsertion(LoopDraft(mode = LoopMode.FOREVER, cancellable = false, maxIterations = "0"), variables).error)
+        assertNotNull(buildLoopInsertion(LoopDraft(mode = LoopMode.FOREVER, yieldMs = "0"), variables).error)
+        assertEquals("control.cycle", build(LoopDraft(mode = LoopMode.FOREVER)).kind)
+        val legacy = loopDraftFromArguments("control.while", JsonObject().apply { addProperty("maxIterations", 37) })
+        assertFalse(legacy.cancellable)
+        assertEquals(37, build(legacy).arguments["maxIterations"].asInt)
     }
 
     @Test fun metricsCannotBeInsertedBesideRootLoopOrReplaceIt() {

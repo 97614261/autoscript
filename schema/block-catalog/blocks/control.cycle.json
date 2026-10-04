@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1, "kind": "control.cycle", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/control.cycle/1/control.cycle.schema.json",
+  "title": "可取消无限 / 限时循环", "category": "control",
+  "summary": "无次数上限，每轮让步；由跳出、时长、停止或会话资源保护结束。",
+  "searchTerms": ["无限循环", "限时循环", "取消", "让步"],
+  "requiredCapabilities": ["core.task"], "childBlocks": ["body"],
+  "properties": [
+    {"path":"yieldMs","label":"每轮让步(毫秒)","editor":"integer","required":true,"defaultValue":"1"},
+    {"path":"durationMs","label":"限时(毫秒，可选)","editor":"integer","required":false},
+    {"path":"durationVariable","label":"时长变量(可选)","editor":"string","required":false},
+    {"path":"durationUnit","label":"时长变量单位","editor":"enum","required":false,"defaultValue":"milliseconds","choices":["milliseconds","seconds","minutes"]},
+    {"path":"iterationVariable","label":"次数变量(可选)","editor":"string","required":false},
+    {"path":"elapsedVariable","label":"时间变量(毫秒，可选)","editor":"string","required":false}
+  ], "migrations": []
+}

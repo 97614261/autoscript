@@ -61,6 +61,7 @@ pub enum ClientError {
     InvalidDuration,
     InvalidPointerId,
     UnsupportedCapability,
+    InvalidRecording,
     InvalidCapture,
     CaptureTooLarge,
     Closed,
@@ -182,6 +183,74 @@ impl<T: PacketTransport> RootClient<T> {
             self.negotiated_capabilities
                 .supports(Capabilities::INPUT_POINTER_SINGLE),
         ) << 1)
+            | (u32::from(
+                self.negotiated_capabilities
+                    .supports(Capabilities::INPUT_RECORDING)
+                    && self.priority.is_some(),
+            ) << 2)
+    }
+
+    /// Starts a bounded real evdev capture. No file paths or command strings cross this boundary.
+    pub fn begin_recording(
+        &mut self,
+        config: root_protocol::recording::RecordingConfig,
+    ) -> Result<(), ClientError> {
+        config
+            .validate()
+            .map_err(|_| ClientError::InvalidRecording)?;
+        if !self
+            .negotiated_capabilities
+            .supports(Capabilities::INPUT_RECORDING)
+        {
+            return Err(ClientError::UnsupportedCapability);
+        }
+        let priority = self
+            .priority
+            .clone()
+            .ok_or(ClientError::UnsupportedCapability)?;
+        {
+            let mut gate = priority
+                .shared()
+                .gate
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if gate.recording_token != 0 || gate.status != StopStatus::Ready || gate.closed {
+                return Err(ClientError::Remote(StatusCode::Cancelled));
+            }
+            gate.recording_token = config.token;
+        }
+        let result = self.transact_empty(Command::RecordingStart, &config.encode());
+        if result.is_err() {
+            let mut gate = priority
+                .shared()
+                .gate
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if gate.recording_token == config.token {
+                gate.recording_token = 0;
+            }
+        }
+        result
+    }
+
+    #[cfg(any(target_os = "android", test))]
+    fn finish_recording_control(
+        &mut self,
+        finish: root_protocol::recording::RecordingFinish,
+    ) -> Result<root_protocol::recording::RecordingResult, ClientError> {
+        if !self
+            .negotiated_capabilities
+            .supports(Capabilities::INPUT_RECORDING)
+        {
+            return Err(ClientError::UnsupportedCapability);
+        }
+        let bytes = self.transact(Command::RecordingFinish, &finish.encode())?;
+        let result = root_protocol::recording::RecordingResult::decode(&bytes)
+            .map_err(|_| ClientError::InvalidRecording)?;
+        if result.token != finish.token {
+            return Err(ClientError::InvalidRecording);
+        }
+        Ok(result)
     }
 
     /// Injects a physical-pixel tap.
@@ -407,6 +476,7 @@ impl<T: PacketTransport> RootClient<T> {
                 | Command::PointerDown
                 | Command::PointerMove
                 | Command::PointerUp
+                | Command::RecordingStart
         ) {
             if let Some(priority) = self.priority.as_ref() {
                 let mut gate = priority
@@ -414,7 +484,15 @@ impl<T: PacketTransport> RootClient<T> {
                     .gate
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if gate.status != StopStatus::Ready {
+                let recording_start = command == Command::RecordingStart
+                    && payload
+                        .get(..8)
+                        .and_then(|token| token.try_into().ok())
+                        .map(u64::from_le_bytes)
+                        == Some(gate.recording_token);
+                if gate.status != StopStatus::Ready
+                    || (gate.recording_token != 0 && !recording_start)
+                {
                     // Priority ACK already released every old pointer; ordinary cleanup is idempotent.
                     if command == Command::PointerUp && gate.status == StopStatus::Clean {
                         return Ok(Vec::new());
@@ -491,7 +569,8 @@ pub fn connect_android(
             Capabilities::INPUT_BASIC
                 | Capabilities::INPUT_POINTER_SINGLE
                 | Capabilities::INPUT_PRIORITY_STOP
-                | Capabilities::CAPTURE_RAW,
+                | Capabilities::CAPTURE_RAW
+                | Capabilities::INPUT_RECORDING,
         ),
         Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
     )?;
@@ -507,10 +586,13 @@ pub fn connect_android(
         control
             .set_write_timeout(Some(std::time::Duration::from_secs(2)))
             .map_err(|e| ClientError::Transport(TransportError::Io(e)))?;
-        let control = RootClient::connect(
+        let control = RootClient::connect_with_required(
             control,
             root_protocol::priority_control_key(&key),
-            Capabilities::from_bits(Capabilities::INPUT_PRIORITY_STOP),
+            Capabilities::from_bits(
+                Capabilities::INPUT_PRIORITY_STOP | Capabilities::INPUT_RECORDING,
+            ),
+            Capabilities::INPUT_PRIORITY_STOP,
         )?;
         client.priority = Some(
             priority::spawn(control).map_err(|e| ClientError::Transport(TransportError::Io(e)))?,

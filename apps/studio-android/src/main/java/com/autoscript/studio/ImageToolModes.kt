@@ -66,11 +66,6 @@ internal enum class ImageToolMode(
         label = "取字",
         icon = R.drawable.tool_region_24,
         hint = "框选区域识别文字",
-        enabled = false,
-        // NativeEngineBridge 只有 nativeCapturePreview / nativeRegisterTemplate /
-        // nativeRegisterDictionary 和脚本生命周期，没有"对任意位图跑一次 OCR"的入口。
-        // 字库 OCR 在 Rust 的 glyph-ocr crate 里，但编辑器侧调不到。
-        blockedReason = "取字需要编辑器侧的位图识别通道，当前 JNI 桥未提供，属后续阶段",
     ),
     NODE(
         label = "节点",

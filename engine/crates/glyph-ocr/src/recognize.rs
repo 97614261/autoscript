@@ -49,6 +49,7 @@ pub enum GlyphOcrError {
     PixelBudgetExceeded,
     SegmentLimitExceeded,
     ComparisonBudgetExceeded,
+    Cancelled,
 }
 
 #[derive(Debug)]
@@ -86,8 +87,22 @@ pub fn recognize(
     dictionary: &GlyphDictionary,
     options: GlyphOcrOptions,
 ) -> Result<GlyphOcrResult, GlyphOcrError> {
+    recognize_cancellable(image, dictionary, options, || false)
+}
+
+/// The same recognizer with bounded cancellation checkpoints between rows, lines and glyphs.
+///
+/// # Errors
+/// Returns the ordinary recognition errors, or `Cancelled` when the caller revokes the request.
+pub fn recognize_cancellable(
+    image: ImageView<'_>,
+    dictionary: &GlyphDictionary,
+    options: GlyphOcrOptions,
+    cancelled: impl Fn() -> bool,
+) -> Result<GlyphOcrResult, GlyphOcrError> {
+    check_cancelled(&cancelled)?;
     validate(image, options)?;
-    let binary = binarize(image, options)?;
+    let binary = binarize(image, options, &cancelled)?;
     let lines = occupied_runs(binary.height, |y| {
         (0..binary.width).any(|x| binary.foreground(x, y))
     });
@@ -95,6 +110,7 @@ pub fn recognize(
     let mut matches = Vec::new();
     let mut comparisons = 0_u64;
     for (line_index, (top, bottom)) in lines.into_iter().enumerate() {
+        check_cancelled(&cancelled)?;
         if line_index > 0 {
             text.push('\n');
         }
@@ -107,6 +123,7 @@ pub fn recognize(
             &mut comparisons,
             &mut text,
             &mut matches,
+            &cancelled,
         )?;
     }
     summarize(text, matches)
@@ -122,6 +139,7 @@ fn recognize_line(
     comparisons: &mut u64,
     text: &mut String,
     matches: &mut Vec<GlyphMatch>,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(), GlyphOcrError> {
     let segments = occupied_runs(binary.width, |x| {
         (top..bottom).any(|y| binary.foreground(x, y))
@@ -131,6 +149,7 @@ fn recognize_line(
     }
     let mut previous_right = None;
     for (left, right) in segments {
+        check_cancelled(cancelled)?;
         if previous_right.is_some_and(|previous| {
             left.saturating_sub(previous) >= u32::from(options.space_gap_columns)
                 && options.space_gap_columns > 0
@@ -143,7 +162,7 @@ fn recognize_line(
             right,
             bottom,
         };
-        let (label, score) = best_match(binary, rect, dictionary, comparisons)?;
+        let (label, score) = best_match(binary, rect, dictionary, comparisons, cancelled)?;
         let recognized = score >= options.minimum_similarity_permille;
         let output = if recognized { label } else { "?" };
         text.push_str(output);
@@ -168,10 +187,12 @@ fn best_match<'a>(
     rect: GlyphRect,
     dictionary: &'a GlyphDictionary,
     comparisons: &mut u64,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(&'a str, u16), GlyphOcrError> {
     let mut best_label = "?";
     let mut best_score = 0;
     for glyph in dictionary.glyphs() {
+        check_cancelled(cancelled)?;
         let cells = u64::from(glyph.width) * u64::from(glyph.height);
         *comparisons = comparisons
             .checked_add(cells)
@@ -292,7 +313,19 @@ fn validate(image: ImageView<'_>, options: GlyphOcrOptions) -> Result<(), GlyphO
     Ok(())
 }
 
-fn binarize(image: ImageView<'_>, options: GlyphOcrOptions) -> Result<BinaryImage, GlyphOcrError> {
+fn check_cancelled(cancelled: &impl Fn() -> bool) -> Result<(), GlyphOcrError> {
+    if cancelled() {
+        Err(GlyphOcrError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn binarize(
+    image: ImageView<'_>,
+    options: GlyphOcrOptions,
+    cancelled: &impl Fn() -> bool,
+) -> Result<BinaryImage, GlyphOcrError> {
     let capacity = usize::try_from(options.roi.width())
         .ok()
         .and_then(|width| {
@@ -303,6 +336,7 @@ fn binarize(image: ImageView<'_>, options: GlyphOcrOptions) -> Result<BinaryImag
         .ok_or(GlyphOcrError::PixelBudgetExceeded)?;
     let mut pixels = Vec::with_capacity(capacity);
     for y in options.roi.top..options.roi.bottom {
+        check_cancelled(cancelled)?;
         for x in options.roi.left..options.roi.right {
             pixels.push(matches_color(
                 read_pixel(image, x, y)?,

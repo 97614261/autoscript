@@ -163,7 +163,7 @@
     },
     "variables": {
       "type": "array",
-      "maxItems": 256,
+      "maxItems": 512,
       "items": {
         "$ref": "#/$defs/projectVariable"
       }
@@ -441,7 +441,7 @@
             "fields": {
               "type": "array",
               "minItems": 1,
-              "maxItems": 128,
+              "maxItems": 256,
               "items": {
                 "$ref": "#/$defs/runnerUiFieldV2"
               }
@@ -980,6 +980,11 @@
           "minimum": 8,
           "maximum": 160
         },
+        "fontBold": { "type": "boolean", "default": false },
+        "textUnderline": { "type": "boolean", "default": false },
+        "borderColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{8}$", "default": "#00000000" },
+        "borderWidthPx": { "type": "integer", "minimum": 0, "maximum": 32, "default": 0 },
+        "cornerPx": { "type": "integer", "minimum": 0, "maximum": 512, "default": 6 },
         "textColor": {
           "type": "string",
           "pattern": "^#[0-9A-Fa-f]{8}$"

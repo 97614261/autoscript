@@ -1,6 +1,7 @@
 //! Transport-independent state machine for the privileged `RootDaemon` endpoint.
 
 pub mod priority;
+pub mod recording;
 
 use root_protocol::{
     Capabilities, Command, Frame, FrameKind, HandshakeError, PeerIdentity, ProtocolError,
@@ -226,6 +227,7 @@ const fn command_capability(command: Command) -> Option<u64> {
             Some(Capabilities::INPUT_POINTER_SINGLE)
         }
         Command::GetWindowBounds => Some(Capabilities::WINDOW_BOUNDS),
+        Command::RecordingStart | Command::RecordingFinish => Some(Capabilities::INPUT_RECORDING),
         Command::Capture | Command::CaptureChunk | Command::ReleaseCapture => {
             Some(Capabilities::CAPTURE_RAW)
         }

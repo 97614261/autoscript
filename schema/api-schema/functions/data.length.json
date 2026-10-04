@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14000,
+  "name": "Data.length",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。",
+  "params": [
+    {
+      "name": "json",
+      "type": "string",
+      "required": true,
+      "summary": "有界 JSON 集合或对象文本。"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "当前容器的项数。"
+  },
+  "legacyAliases": []
+}

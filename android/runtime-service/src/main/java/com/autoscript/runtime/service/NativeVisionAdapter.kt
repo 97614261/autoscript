@@ -16,6 +16,7 @@ import java.nio.FloatBuffer
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
@@ -30,6 +31,7 @@ internal class NativeVisionAdapter(private val assets: AssetManager) : AutoClose
         fun cancel() { cancelled.set(true); options.get()?.let { runCatching { it.setTerminate(true) } } }
     }
     private val active = AtomicReference<Work?>(null)
+    private val lifecycle = NativeVisionLifecycle()
     private val cancelled = LinkedHashSet<Long>()
     private val deadlines = Executors.newSingleThreadScheduledExecutor { task -> Thread(task, "vision-deadline").apply { isDaemon = true } }
     private var session: OrtSession? = null
@@ -48,17 +50,26 @@ internal class NativeVisionAdapter(private val assets: AssetManager) : AutoClose
     fun dispatch(id: Long, operation: Int, pixels: ByteBuffer, metadata: IntArray,
                  templatePixels: ByteBuffer?, templateMetadata: IntArray, options: IntArray): ByteArray {
         val work = Work(id)
-        if (!active.compareAndSet(null, work)) return failure("VISION_BUSY")
-        val expiry = deadlines.schedule({ work.cancel() }, 5, TimeUnit.SECONDS)
+        if (!lifecycle.enter()) return failure(if (lifecycle.isClosed()) "VISION_CLOSED" else "VISION_BUSY")
+        active.set(work)
+        var expiry: ScheduledFuture<*>? = null
         var source: Mat? = null
         var template: Mat? = null
         return try {
+            expiry = deadlines.schedule({ work.cancel() }, 5, TimeUnit.SECONDS)
+            if (lifecycle.isClosed()) work.cancel()
             synchronized(cancelled) { if (cancelled.remove(id)) work.cancel() }
             checkWork(work)
-            require(cvLoaded && options.size == 5)
-            source = image(pixels, metadata)
+            require(operation in setOf(5108, 6101) && options.size == 5)
+            validateVisionBuffer(pixels.capacity(), pixels.remaining(), pixels.isDirect, metadata)
             val roi = checkedVisionRect(metadata[0], metadata[1], options)
             val score = options[4].also { require(it in 0..1000) }
+            if (operation == 5108) {
+                require(templatePixels != null)
+                validateVisionBuffer(templatePixels.capacity(), templatePixels.remaining(), templatePixels.isDirect, templateMetadata)
+            }
+            require(cvLoaded)
+            source = image(pixels, metadata)
             val payload = when (operation) {
                 5108 -> {
                     require(templatePixels != null)
@@ -72,19 +83,18 @@ internal class NativeVisionAdapter(private val assets: AssetManager) : AutoClose
             byteArrayOf(0) + payload
         } catch (_: UnsatisfiedLinkError) { failure("VISION_LIBRARY_UNAVAILABLE")
         } catch (_: Throwable) {
-            failure(if (work.cancelled.get()) "VISION_CANCELLED_OR_TIMEOUT" else "VISION_OPERATION_FAILED")
+            failure(if (lifecycle.isClosed()) "VISION_CLOSED" else if (work.cancelled.get()) "VISION_CANCELLED_OR_TIMEOUT" else "VISION_OPERATION_FAILED")
         } finally {
             template?.release(); source?.release()
-            expiry.cancel(false)
+            expiry?.cancel(false)
             active.compareAndSet(work, null)
             synchronized(cancelled) { cancelled.remove(id) }
+            lifecycle.finish(::releaseSession)
         }
     }
 
     private fun image(pixels: ByteBuffer, meta: IntArray): Mat {
-        require(meta.size == 4 && meta[0] in 1..16384 && meta[1] in 1..16384 && meta[3] in 1..2)
-        val required = meta[2].toLong() * meta[1]
-        require(meta[2].toLong() >= meta[0].toLong()*4 && required in 1..(64L*1024*1024) && pixels.isDirect && pixels.capacity().toLong() == required)
+        validateVisionBuffer(pixels.capacity(), pixels.remaining(), pixels.isDirect, meta)
         return Mat(meta[1], meta[0], CvType.CV_8UC4, pixels.asReadOnlyBuffer(), meta[2].toLong())
     }
 
@@ -184,7 +194,10 @@ internal class NativeVisionAdapter(private val assets: AssetManager) : AutoClose
 
     private fun checkWork(work: Work) { check(!work.cancelled.get()) { "VISION_CANCELLED_OR_TIMEOUT" } }
     private fun failure(code: String)=byteArrayOf(1)+code.toByteArray(Charsets.US_ASCII)
-    override fun close() { active.get()?.cancel(); deadlines.shutdownNow(); session?.close(); session=null }
+    private fun releaseSession() { session?.close(); session = null }
+    override fun close() {
+        lifecycle.close(cancel = { active.get()?.cancel(); deadlines.shutdownNow() }, release = ::releaseSession)
+    }
 }
 
 internal fun checkedVisionRect(width: Int, height: Int, options: IntArray): Rect {

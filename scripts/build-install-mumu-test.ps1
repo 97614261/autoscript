@@ -2,6 +2,21 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'build-install-mumu.ps1')
 
+$cli = (Get-Process -Id $PID).Path
+$fixture = Join-Path $PSScriptRoot 'test-fixtures\bounded-cli.ps1'
+$echoed = Invoke-BoundedCli $cli @('-NoProfile', '-File', $fixture, 'echo', 'spaces and "quotes"\') 10
+if ($echoed -ne 'spaces and "quotes"\') { throw 'CLI argument quoting changed data' }
+$pipes = Invoke-BoundedCli $cli @('-NoProfile', '-File', $fixture, 'pipes') 10
+if ($pipes -notmatch 'output' -or $pipes -notmatch 'error') { throw 'Both pipes must drain without deadlock' }
+$failed = $false
+try { Invoke-BoundedCli $cli @('-NoProfile', '-File', $fixture, 'failure') 10 } catch { $failed = $_.Exception.Message -match 'failed \(7\)' }
+if (-not $failed) { throw 'Nonzero CLI exit must fail' }
+$timer = [Diagnostics.Stopwatch]::StartNew()
+$timedOut = $false
+try { Invoke-BoundedCli $cli @('-NoProfile', '-File', $fixture, 'timeout') 1 } catch { $timedOut = $_.Exception.Message -match 'timed out' }
+if (-not $timedOut -or $timer.Elapsed.TotalSeconds -gt 6) { throw 'Hung CLI did not stop within its own timeout' }
+Write-Host 'PASS: real CLI quoting, asynchronous pipes, failure and owned-process timeout'
+
 $script:Scenario = 'success'
 $script:Calls = [System.Collections.Generic.List[object]]::new()
 function Invoke-CheckedCli {
@@ -37,7 +52,7 @@ function Assert-Fails {
 Install-StudioToMuMu $PSCommandPath 'manager' 'adb' 3 10
 $install = @($script:Calls | Where-Object { $_.Arguments -contains 'install' })
 Assert-True ($install.Count -eq 1) 'Expected exactly one installation'
-Assert-True (($install[0].Arguments -join '|') -eq "-s|127.0.0.1:16448|install|-r|-t|$PSCommandPath") 'Wrong target or missing data-preserving install flags'
+Assert-True (($install[0].Arguments -join '|') -eq "-s|127.0.0.1:16448|install|--no-streaming|-r|-t|$PSCommandPath") 'Wrong target or missing data-preserving install flags'
 Write-Host 'PASS: selected instance, actual port and update installation'
 
 $script:Scenario = 'wrong-host'

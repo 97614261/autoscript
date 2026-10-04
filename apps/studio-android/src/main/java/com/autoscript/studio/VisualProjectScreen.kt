@@ -54,6 +54,7 @@ import com.autoscript.core.model.RuntimeConnectionPhase
 import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.core.model.RuntimeEngineState
 import com.autoscript.project.store.ProjectSnapshot
+import com.autoscript.project.store.ProjectDesign
 import com.autoscript.project.store.ProjectFlow
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.project.store.ProjectVariable
@@ -99,9 +100,11 @@ internal fun VisualProjectScreen(
     val context = LocalContext.current
     val currentInputSnapshot by rememberUpdatedState(snapshot)
     val currentRuntimeState by rememberUpdatedState(runtimeState)
-    var inputBackendFeatures by remember { mutableIntStateOf(0) }
-    LaunchedEffect(runtimeState.rootState, runtimeState.sessionGeneration) {
-        inputBackendFeatures = 0
+    var inputBackendFeatures by remember { mutableStateOf<Int?>(null) }
+    var inputCapabilityRevision by remember { mutableIntStateOf(0) }
+    val openSoftwarePermissions = rememberSoftwarePermissionsLauncher(runtimeClient)
+    LaunchedEffect(runtimeState.phase, runtimeState.rootState, runtimeState.sessionGeneration, inputCapabilityRevision) {
+        inputBackendFeatures = null
         inputBackendFeatures = withContext(Dispatchers.IO) { runtimeClient.inputFeatures() }
     }
     var selectedFlowId by remember(projectId) {
@@ -162,7 +165,10 @@ internal fun VisualProjectScreen(
     var inputPointCaptureJob by remember(projectId) { mutableStateOf<Job?>(null) }
     var inputPickTarget by remember(projectId) { mutableStateOf<InputPickTarget?>(null) }
     var inputFloatingRequest by remember(projectId) { mutableStateOf<Long?>(null) }
+    var inputFloatingJob by remember(projectId) { mutableStateOf<Job?>(null) }
     var pendingInputInsertion by remember(projectId) { mutableStateOf<InputInsertionDraft?>(null) }
+    var recordingTarget by remember(projectId) { mutableStateOf<Pair<InputPickTarget, ProjectDesign>?>(null) }
+    var recordingActive by remember(projectId) { mutableStateOf(false) }
     var inputPickOpenRequest by remember(projectId) { mutableIntStateOf(0) }
     var imageToolRequest by remember(projectId) { mutableStateOf(false) }
     var pickedImageRegion by remember(projectId) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
@@ -180,6 +186,7 @@ internal fun VisualProjectScreen(
 
     DisposableEffect(projectId) {
         onDispose {
+            inputFloatingJob?.cancel()
             inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
             inputPointRequestId++
             inputPointCaptureJob?.cancel()
@@ -189,6 +196,8 @@ internal fun VisualProjectScreen(
 
     LaunchedEffect(selectedFlowId) {
         editingCallNodeId = null
+        inputFloatingJob?.cancel()
+        inputFloatingJob = null
         inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
         inputFloatingRequest = null
         if (inputPickTarget?.flowId != selectedFlowId) {
@@ -221,6 +230,7 @@ internal fun VisualProjectScreen(
             store = store,
             onSnapshotChanged = onSnapshotChanged,
             onDismiss = { showDockProjectSettings = false },
+            onOpenPermissions = openSoftwarePermissions,
         )
     }
 
@@ -319,6 +329,7 @@ internal fun VisualProjectScreen(
 
     fun runProject(singleStep: Boolean = false) {
         if (action != null || !canStartAction) return
+        if (inputFloatingJob?.isActive == true || inputFloatingRequest != null) { notice = "请先完成或取消选点，再运行"; return }
         if (runtimeState.phase != RuntimeConnectionPhase.CONNECTED) {
             error = "Runner尚未连接"
             return
@@ -377,8 +388,16 @@ internal fun VisualProjectScreen(
         error = null
         notice = null
         scope.launch {
-            withContext(Dispatchers.IO) { runtimeClient.requestStop() }
-            action = null
+            try {
+                val accepted = withContext(Dispatchers.IO) { runtimeClient.requestStop() }
+                if (!accepted) error = currentRuntimeState.message ?: "停止请求未被 Runner 接受"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "停止请求失败"
+            } finally {
+                action = null
+            }
         }
     }
 
@@ -390,7 +409,11 @@ internal fun VisualProjectScreen(
                 val accepted = withContext(Dispatchers.IO) {
                     if (pause) runtimeClient.requestPause() else runtimeClient.requestResume()
                 }
-                if (!accepted) error = "运行控制被拒绝，请检查当前会话状态"
+                if (!accepted) error = currentRuntimeState.message ?: "运行控制被拒绝，请检查当前会话状态"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "运行控制请求失败"
             } finally {
                 action = null
             }
@@ -404,34 +427,50 @@ internal fun VisualProjectScreen(
             currentFlowId = selectedFlowId,
             flows = snapshot.manifest.flows,
             onDismiss = { showVariableManager = false },
-            onSave = { variables ->
+            onSave = { variables, renames ->
                 scope.launch {
                     if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
                         error = "请停止运行后再修改变量"; return@launch
                     }
+                    action = VisualAction.SAVING
+                    val drafts = editors.mapValues { it.value.currentSource }
+                    val expectedSources = snapshot.flowSources + editors.mapValues { it.value.savedSource }
                     runCatching {
-                        withContext(Dispatchers.IO) { store.updateVariables(projectId, variables, snapshot.manifest.variables) }
+                        withContext(Dispatchers.IO) { store.updateVariables(projectId, variables, snapshot.manifest.variables, renames, drafts, expectedSources) }
                     }.onSuccess {
+                        if (renames.isNotEmpty()) {
+                            editors.forEach { (id, state) -> it.flowSources[id]?.let(state::reloadCommittedSource) }
+                            editorRevision++
+                        }
                         onSnapshotChanged(it); notice = "变量表已保存"; showVariableManager = false
-                    }.onFailure { error = it.message ?: "变量表保存失败" }
+                        action = null
+                    }.onFailure { action = null; error = it.message ?: "变量表保存失败" }
                 }
             },
-            onSaveAndInsert = { variables, arguments ->
+            onSaveAndInsert = { variables, arguments, renames ->
                 scope.launch {
                     if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
                         error = "请停止运行后再修改变量"; return@launch
                     }
+                    action = VisualAction.SAVING
+                    val drafts = editors.mapValues { it.value.currentSource }
+                    val expectedSources = snapshot.flowSources + editors.mapValues { it.value.savedSource }
                     runCatching {
-                        withContext(Dispatchers.IO) { store.updateVariables(projectId, variables, snapshot.manifest.variables) }
+                        withContext(Dispatchers.IO) { store.updateVariables(projectId, variables, snapshot.manifest.variables, renames, drafts, expectedSources) }
                     }.onSuccess { updated ->
+                        if (renames.isNotEmpty()) {
+                            editors.forEach { (id, state) -> updated.flowSources[id]?.let(state::reloadCommittedSource) }
+                            editorRevision++
+                        }
                         onSnapshotChanged(updated)
+                        action = null
                         val contract = BlockCatalog.find("variable.calculate")
                         if (contract != null && editor.insertBlock(contract, arguments) != null) {
                             editorRevision++; showVariableManager = false
                             pendingBlockConfiguration = null
                             notice = "已加入变量计算"; saveCurrent()
                         } else error = "变量表已保存，但无法把计算加入当前位置"
-                    }.onFailure { error = it.message ?: "变量表保存失败" }
+                    }.onFailure { action = null; error = it.message ?: "变量表保存失败" }
                 }
             },
         )
@@ -498,7 +537,7 @@ internal fun VisualProjectScreen(
                 recognitionCaptureTemplatePath = null
                 return
             }
-            val preferredFlowId = if (contract.kind == "flow.call") JumpPanelCode.callTargetId(hint) else null
+            val preferredFlowId = if (contract.kind in setOf("flow.call", "flow.call.branch")) JumpPanelCode.callTargetId(hint) else null
             val args = initialBlockArguments(
                 contract,
                 snapshot.manifest.flows,
@@ -549,7 +588,7 @@ internal fun VisualProjectScreen(
                 editorRevision++
                 error = null
                 notice = "已加入：${contract.title}"
-                if (contract.kind == "flow.call") {
+                if (contract.kind in setOf("flow.call", "flow.call.branch")) {
                     reflectionPosition = null
                     reflectionChildSlot = null
                     editingCallNodeId = inserted
@@ -638,20 +677,49 @@ internal fun VisualProjectScreen(
         }
     }
 
+    recordingTarget?.let { (target, design) ->
+        RecordingWorkspaceScreen(
+            projectId = target.projectId,
+            flowId = target.flowId,
+            design = design,
+            capabilities = snapshot.manifest.capabilities.toSet(),
+            runtimeClient = runtimeClient,
+            onRecordingActive = { recordingActive = it },
+            onApply = { snippet ->
+                if (!target.draft(snippet).matches(projectId, selectedFlowId, editor) ||
+                    design != snapshot.manifest.design || !editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
+                    error = "插件内容或坐标配置已变化，请重新录制"
+                } else {
+                    inputPickTarget = target
+                    queueInputInsertion(snippet)
+                }
+                recordingActive = false
+                recordingTarget = null
+            },
+            onBack = { recordingActive = false; recordingTarget = null },
+        )
+    }
+
     fun openInputFloatingPicker(mode: ImageToolMode) {
         if (runtimeBusy || running) { error = "请先停止运行"; return }
+        if (inputFloatingJob?.isActive == true || inputFloatingRequest != null) { notice = "选点正在准备或进行中"; return }
         val target = InputPickTarget(projectId, selectedFlowId, editor.currentSource, editor.selectedNodeId)
         inputPickTarget = target
         val design = snapshot.manifest.design
-        inputFloatingRequest = runtimeClient.beginInputPointPick(projectId, selectedFlowId, inputPointAction(mode)) { result ->
-            inputFloatingRequest = null
-            if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
-            else if (inputPickTarget != target || currentInputSnapshot.manifest.design != design) error = "插件或设计分辨率已变化，请重新选点"
-            else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
-                .onSuccess(::queueInputInsertion).onFailure { error = it.message ?: "选点转换失败" }
+        notice = "正在准备悬浮选点…"
+        inputFloatingJob = scope.launch {
+            var completed = false
+            inputFloatingRequest = runtimeClient.beginInputPointPick(projectId, selectedFlowId, inputPointAction(mode)) { result ->
+                completed = true
+                inputFloatingRequest = null
+                if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
+                else if (inputPickTarget != target || currentInputSnapshot.manifest.design != design) error = "插件或设计分辨率已变化，请重新选点"
+                else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
+                    .onSuccess(::queueInputInsertion).onFailure { error = it.message ?: "选点转换失败" }
+            }
+            if (!completed && inputFloatingRequest != null) context.inputPickerActivity()?.moveTaskToBack(true)
+            else if (!completed) error = "悬浮选点未启动，请在按键面板打开权限 / 环境检查"
         }
-        if (inputFloatingRequest != null) context.inputPickerActivity()?.moveTaskToBack(true)
-        else error = "悬浮选点未启动，请检查悬浮窗权限和Root状态"
     }
 
     fun openInputPointPicker(mode: ImageToolMode, delayMillis: Long = 0L) {
@@ -859,74 +927,83 @@ internal fun VisualProjectScreen(
         sourceBusy = true
         sourceMessage = null
         scope.launch {
-            val result = runCatching {
-                when (sourceAction) {
-                    is SourceManagerAction.Open -> {
-                        if (saveAllIfNeeded()) selectedFlowId = sourceAction.flowId
-                        null
-                    }
-                    is SourceManagerAction.InsertCall -> {
-                        val target = snapshot.manifest.flows.firstOrNull { it.flowId == sourceAction.flowId }
-                        if (target == null) error = "源文件不存在" else {
-                            finishDockMutation(
-                                editor.insertFlowCall(target.flowId, defaultFlowCallArguments(target)) != null,
-                                "已加入调用：${target.displayName()}",
-                            )
+            try {
+                val result = runCatching {
+                    if (sourceAction !is SourceManagerAction.Open && sourceAction !is SourceManagerAction.InsertCall &&
+                        !saveAllIfNeeded()) return@runCatching null
+                    when (sourceAction) {
+                        SourceManagerAction.Refresh -> withContext(Dispatchers.IO) { store.openProject(projectId) }
+                        is SourceManagerAction.SetEntry -> withContext(Dispatchers.IO) { sourceFiles.setEntry(snapshot, sourceAction.flowId) }
+                        is SourceManagerAction.Open -> {
+                            if (saveAllIfNeeded()) selectedFlowId = sourceAction.flowId
+                            null
                         }
-                        null
-                    }
-                    is SourceManagerAction.CreateFile -> withContext(Dispatchers.IO) {
-                        sourceFiles.createFlow(snapshot, sourceAction.name, sourceAction.group)
-                    }.also { updated ->
-                        val created = updated.manifest.flows.map(ProjectFlow::flowId) -
-                            snapshot.manifest.flows.map(ProjectFlow::flowId).toSet()
-                        created.singleOrNull()?.let { flowId ->
-                            ensureEditor(updated, flowId)
-                            selectedFlowId = flowId
+                        is SourceManagerAction.InsertCall -> {
+                            val target = snapshot.manifest.flows.firstOrNull { it.flowId == sourceAction.flowId }
+                            if (target == null) error = "源文件不存在" else {
+                                finishDockMutation(
+                                    editor.insertFlowCall(target.flowId, defaultFlowCallArguments(target)) != null,
+                                    "已加入调用：${target.displayName()}",
+                                )
+                            }
+                            null
                         }
-                    }
-                    is SourceManagerAction.SaveAs -> withContext(Dispatchers.IO) {
-                        sourceFiles.copyFlow(snapshot, sourceAction.flowId, sourceAction.name)
-                    }
-                    is SourceManagerAction.RenameFile -> withContext(Dispatchers.IO) {
-                        sourceFiles.renameFlow(snapshot, sourceAction.flowId, sourceAction.name)
-                    }
-                    is SourceManagerAction.Delete -> {
-                        if (!saveAllIfNeeded()) return@runCatching null
-                        val deletion = withContext(Dispatchers.IO) {
-                            if (sourceAction.groups.isNotEmpty()) sourceFiles.deleteGroups(snapshot, sourceAction.groups)
-                            sourceFiles.deleteFlows(snapshot, sourceAction.flowIds)
+                        is SourceManagerAction.CreateFile -> withContext(Dispatchers.IO) {
+                            sourceFiles.createFlow(snapshot, sourceAction.name, sourceAction.group)
+                        }.also { updated ->
+                            val created = updated.manifest.flows.map(ProjectFlow::flowId) -
+                                snapshot.manifest.flows.map(ProjectFlow::flowId).toSet()
+                            created.singleOrNull()?.let { flowId ->
+                                ensureEditor(updated, flowId)
+                                selectedFlowId = flowId
+                            }
                         }
-                        deletion.deleted.forEach(editors::remove)
-                        if (selectedFlowId in deletion.deleted) {
-                            selectedFlowId = requireNotNull(deletion.snapshot.manifest.entryFlowId)
+                        is SourceManagerAction.SaveAs -> withContext(Dispatchers.IO) {
+                            sourceFiles.copyFlow(snapshot, sourceAction.flowId, sourceAction.name)
                         }
-                        if (deletion.failures.isNotEmpty()) sourceMessage = deletion.failures.joinToString("\n")
-                        deletion.snapshot
-                    }
-                    is SourceManagerAction.CreateGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.createGroup(snapshot, sourceAction.name) }
-                        null
-                    }
-                    is SourceManagerAction.RenameGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.renameGroup(snapshot, sourceAction.group, sourceAction.name) }
-                        null
-                    }
-                    is SourceManagerAction.AddToGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.addToGroup(snapshot, sourceAction.group, sourceAction.flowIds) }
-                        null
-                    }
-                    is SourceManagerAction.RemoveFromGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.removeFromGroup(snapshot, sourceAction.flowIds) }
-                        null
+                        is SourceManagerAction.RenameFile -> withContext(Dispatchers.IO) {
+                            sourceFiles.renameFlow(snapshot, sourceAction.flowId, sourceAction.name)
+                        }
+                        is SourceManagerAction.Delete -> {
+                            val deletion = withContext(Dispatchers.IO) {
+                                if (sourceAction.groups.isNotEmpty()) sourceFiles.deleteGroups(snapshot, sourceAction.groups)
+                                sourceFiles.deleteFlows(snapshot, sourceAction.flowIds)
+                            }
+                            deletion.deleted.forEach(editors::remove)
+                            if (selectedFlowId in deletion.deleted) {
+                                selectedFlowId = requireNotNull(deletion.snapshot.manifest.entryFlowId)
+                            }
+                            if (deletion.failures.isNotEmpty()) sourceMessage = deletion.failures.joinToString("\n")
+                            deletion.snapshot
+                        }
+                        is SourceManagerAction.CreateGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.createGroup(snapshot, sourceAction.name) }
+                            null
+                        }
+                        is SourceManagerAction.RenameGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.renameGroup(snapshot, sourceAction.group, sourceAction.name) }
+                            null
+                        }
+                        is SourceManagerAction.AddToGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.addToGroup(snapshot, sourceAction.group, sourceAction.flowIds) }
+                            null
+                        }
+                        is SourceManagerAction.RemoveFromGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.removeFromGroup(snapshot, sourceAction.flowIds) }
+                            null
+                        }
                     }
                 }
+                result.onFailure { failure ->
+                    if (failure is CancellationException) throw failure
+                    sourceMessage = failure.message ?: "插件操作失败"
+                }
+                val current = result.getOrNull() ?: snapshot
+                if (current !== snapshot) onSnapshotChanged(current)
+                sourceTree = withContext(Dispatchers.IO) { runCatching { sourceFiles.load(current) }.getOrDefault(sourceTree) }
+            } finally {
+                sourceBusy = false
             }
-            result.onFailure { failure -> sourceMessage = failure.message ?: "源文件操作失败" }
-            val current = result.getOrNull() ?: snapshot
-            if (current !== snapshot) onSnapshotChanged(current)
-            sourceTree = withContext(Dispatchers.IO) { runCatching { sourceFiles.load(current) }.getOrDefault(sourceTree) }
-            sourceBusy = false
         }
     }
 
@@ -1115,6 +1192,14 @@ internal fun VisualProjectScreen(
                     saveCurrent()
                 }
             },
+            onInsertRecognition = { kind, arguments ->
+                val blocks = ocrRecognitionSequence(kind, arguments)
+                val missing = blocks.flatMap { it.first.requiredCapabilities }.toSet() - snapshot.manifest.capabilities.toSet()
+                if (missing.isNotEmpty()) error = "识别需要能力：${missing.joinToString()}"
+                else if (editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState) && editor.insertBlocks(blocks)) {
+                    showRecognitionTest = false; editorRevision++; saveCurrent()
+                }
+            },
         )
     }
     if (showImageLibrary) {
@@ -1133,6 +1218,8 @@ internal fun VisualProjectScreen(
             snapshot = snapshot,
             confirmLabel = "加入",
             automaticCapture = true,
+            currentFlowId = selectedFlowId,
+            onManageVariables = { showVariableManager = true },
             allowKindChange = true,
             visible = !showingInputPointPicker,
             captureSelection = recognitionCaptureSelection,
@@ -1152,7 +1239,7 @@ internal fun VisualProjectScreen(
                 val frameVariable = configured.get("frameVariable")?.asString ?: "frame"
                 val captureArgs = JsonObject().apply { addProperty("resultVariable", frameVariable) }
                 val releaseArgs = JsonObject().apply { addProperty("frameVariable", frameVariable) }
-                val blocks = if (selectedContract.kind in setOf("vision.findimage", "vision.findgray", "ocr.alphanumeric")) {
+                val blocks = if (selectedContract.kind in setOf("vision.findimage", "vision.findallimages", "vision.findgray", "ocr.alphanumeric")) {
                     configured.addProperty("autoCapture", true)
                     listOf(selectedContract to configured)
                 } else listOf(capture to captureArgs, selectedContract to configured, release to releaseArgs)
@@ -1161,7 +1248,7 @@ internal fun VisualProjectScreen(
                 else if (editor.insertBlocks(blocks)) {
                     editorRevision++
                     error = null
-                    notice = "已加入：截图 → ${selectedContract.title} → 释放截图"
+                    notice = "已加入：${selectedContract.title}（自动截图并释放）"
                     pendingImageBlock = null
                     saveCurrent()
                 } else error = "无法把${selectedContract.title}加入当前位置"
@@ -1174,6 +1261,8 @@ internal fun VisualProjectScreen(
             request.contract, request.arguments, snapshot.manifest.resources,
             visualKnownVariables(editor, snapshot.manifest.variables, selectedFlowId), snapshot,
             confirmLabel = if (request.position == EditorInsertPosition.REPLACE) "确定" else "加入",
+            currentFlowId = selectedFlowId,
+            onManageVariables = { showVariableManager = true },
             visible = !showingInputPointPicker, captureSelection = recognitionCaptureSelection,
             captureTemplatePath = recognitionCaptureTemplatePath,
             onPickFromScreen = { mode ->
@@ -1328,7 +1417,7 @@ internal fun VisualProjectScreen(
 
     Box(modifier.fillMaxSize()) {
         val projectFiles = remember(snapshot) { projectFileCatalog(snapshot) }
-        EditorDock(
+        if (!recordingActive) EditorDock(
             projectName = snapshot.manifest.name,
             initiallyExpanded = true,
             onClose = onExit,
@@ -1402,6 +1491,18 @@ internal fun VisualProjectScreen(
             onOpenInputFloatingPicker = ::openInputFloatingPicker,
             inputPickOpenRequest = inputPickOpenRequest,
             inputBackendFeatures = inputBackendFeatures,
+            onOpenPermissions = openSoftwarePermissions,
+            onRefreshInputCapabilities = { inputCapabilityRevision++ },
+            onOpenRecorder = if ((inputBackendFeatures ?: 0) and 4 != 0) {
+                {
+                    if (editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) {
+                        inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
+                        inputFloatingRequest = null
+                        inputPickTarget = null
+                        recordingTarget = InputPickTarget(projectId, selectedFlowId, editor.currentSource, editor.selectedNodeId) to snapshot.manifest.design
+                    } else error = "请停止运行后再录制"
+                }
+            } else null,
             onOpenImageTools = ::openImageTools,
             onOpenImageLibrary = { showImageLibrary = true },
             onTestRecognition = { showRecognitionTest = true },
@@ -1460,6 +1561,14 @@ internal fun VisualProjectScreen(
             onProgramNodeSelectionToggled = { nodeId -> editor.toggleSelection(nodeId); editorRevision++ },
             editingEnabled = editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState),
             programSource = editor.currentSource,
+            onApplyProgramSource = { expected, replacement ->
+                val problem = applyValidatedPluginSource(runtimeClient, snapshot.manifest.projectId,
+                    selectedFlowId.orEmpty(), editor, expected, replacement) {
+                    editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeClient.runtimeStates.value.engineState)
+                }
+                if (problem == null) finishDockMutation(true, "已应用插件源码，可撤销")
+                problem
+            },
             onReplaceProgramText = { query, replacement, selectedOnly ->
                 if (!editorCanMutate(runtimeBusy, editor.isReadOnly, runtimeState.engineState)) "请停止运行后再替换"
                 else {
@@ -1574,7 +1683,9 @@ internal fun VisualProjectScreen(
         )
         if (showingInputPointPicker) {
             ImageToolWindow(
-                pointerInputSupported = inputBackendFeatures and 2 != 0,
+                snapshot = snapshot,
+                runtimeClient = runtimeClient,
+                pointerInputSupported = (inputBackendFeatures ?: 0) and 2 != 0,
                 bitmap = inputPointBitmap,
                 designWidth = snapshot.manifest.design.width,
                 designHeight = snapshot.manifest.design.height,
@@ -1604,6 +1715,8 @@ internal fun VisualProjectScreen(
         }
         pendingTemplateRoi?.let { roi ->
             ImageTemplateSaveDialog(
+                store = store,
+                projectId = projectId,
                 imagePaths = snapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
                 onDismiss = { pendingTemplateRoi = null },
                 onSave = { folder, name ->
@@ -1779,11 +1892,11 @@ internal fun visualJumpInsertionError(
     position: EditorInsertPosition,
 ): String? {
     val selected = editor.rows.firstOrNull { it.nodeId == editor.selectedNodeId }
-    if (kind == "control.break") {
-        val insideLoop = childSlot == "body" && selected?.kind in setOf("control.repeat", "control.while") ||
+    if (kind in setOf("control.break", "control.continue")) {
+        val insideLoop = childSlot == "body" && selected?.kind in setOf("control.repeat", "control.while", "control.cycle") ||
             selected?.depth?.let { it > 0 } == true &&
-            editor.nearestAncestorOfKind(kinds = setOf("control.repeat", "control.while")) != null
-        if (position == EditorInsertPosition.LIST_BOTTOM || !insideLoop) return "跳出循环只能加入循环体"
+            editor.nearestAncestorOfKind(kinds = setOf("control.repeat", "control.while", "control.cycle")) != null
+        if (position == EditorInsertPosition.LIST_BOTTOM || !insideLoop) return "跳出/结束本次循环只能加入循环体"
     }
     if (kind !in setOf("control.label", "control.goto")) return null
     if (childSlot != null || (position != EditorInsertPosition.LIST_BOTTOM && selected?.depth?.let { it > 0 } == true)) {
@@ -1824,8 +1937,8 @@ internal fun legacyDockBlockArguments(
     snippet: String,
     defaults: JsonObject,
 ): JsonObject = defaults.deepCopy().apply {
-    if (contract.kind in setOf("task.runprompt", "task.prompt", "task.log", "task.comment",
-            "flow.call", "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
+    if (contract.kind in setOf("task.runprompt", "task.prompt", "task.log", "task.message", "task.comment",
+            "flow.call", "flow.call.branch", "flow.status.return", "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
         snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + contract.kind + "\n")) {
         val encoded = snippet.lineSequence().drop(1).firstOrNull().orEmpty()
         val payload = runCatching { com.google.gson.JsonParser.parseString(encoded).asJsonObject }.getOrNull()
@@ -2105,6 +2218,9 @@ internal fun initialBlockArguments(
                 property.path,
                 resourcePaths(resources, property.resourceKind).firstOrNull() ?: if (allowMissingResources) "" else return null,
             )
+            BlockPropertyEditor.RESOURCE_LIST -> arguments.add(property.path, JsonArray().apply {
+                resourcePaths(resources, property.resourceKind).firstOrNull()?.let(::add)
+            })
             BlockPropertyEditor.SCALAR -> arguments.add(
                 property.path,
                 parseScalar(property.defaultValue ?: "null") ?: return null,
@@ -2215,6 +2331,7 @@ private fun VisualVariableConditionDialog(
     var elseIfBranches by remember(contract.kind, inputs) {
         mutableStateOf(parseElseIfDrafts(inputs["elseIf"]))
     }
+    var invalidConditions by remember(contract.kind, inputs) { mutableStateOf(emptySet<String>()) }
     var validationError by remember(contract.kind, inputs) { mutableStateOf<String?>(null) }
     val title = when (contract.kind) {
         "control.if" -> "如果"
@@ -2241,9 +2358,13 @@ private fun VisualVariableConditionDialog(
                     Text("×", color = AutoScriptPalette.TextSecondary, fontSize = 22.sp, modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 8.dp))
                 }
                 HorizontalDivider(color = AutoScriptPalette.Divider)
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     when (contract.kind) {
                         "control.if" -> {
+                            CompoundConditionEditor(values["condition"].orEmpty(), conditionSeed(values["variable"].orEmpty(), values["operator"].orEmpty(), values["value"].orEmpty(), values["valueVariable"].orEmpty()), knownVariables, { valid -> invalidConditions = if (valid) invalidConditions - "main" else invalidConditions + "main" }) {
+                                values = values + ("condition" to it)
+                            }
+                            if (values["condition"].isNullOrBlank()) {
                             VisualVariableField("左值（变量）", values["variable"].orEmpty(), knownVariables) { values = values + ("variable" to it) }
                             Text("比较运算符", color = AutoScriptPalette.Accent, fontSize = 11.sp)
                             Row(Modifier.fillMaxWidth()) {
@@ -2263,6 +2384,7 @@ private fun VisualVariableConditionDialog(
                                 label = { Text("右值（字符串请用双引号）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                             )
                             VisualVariableField("右值变量（优先于右值）", values["valueVariable"].orEmpty(), knownVariables) { values = values + ("valueVariable" to it) }
+                            }
                             if (elseIfBranches.isNotEmpty()) {
                                 Text("否则如果分支", color = AutoScriptPalette.Accent, fontSize = 11.sp)
                                 elseIfBranches.forEachIndexed { index, branch ->
@@ -2273,6 +2395,10 @@ private fun VisualVariableConditionDialog(
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text("否则如果 ${index + 1}", fontSize = 11.sp, modifier = Modifier.weight(1f))
                                         }
+                                        CompoundConditionEditor(branch.condition, conditionSeed(branch.variable, branch.operator, branch.value, branch.valueVariable), knownVariables, { valid -> invalidConditions = if (valid) invalidConditions - "branch$index" else invalidConditions + "branch$index" }) { next ->
+                                            elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(condition = next)) }
+                                        }
+                                        if (branch.condition.isBlank()) {
                                         VisualVariableField("左值", branch.variable, knownVariables) { next ->
                                             elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(variable = next)) }
                                         }
@@ -2289,6 +2415,7 @@ private fun VisualVariableConditionDialog(
                                         OutlinedTextField(branch.value, { next -> elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(value = next)) } }, label = { Text("右值（JSON 标量）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                         VisualVariableField("右值变量（优先）", branch.valueVariable, knownVariables) { next ->
                                             elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(valueVariable = next)) }
+                                        }
                                         }
                                     }
                                 }
@@ -2360,7 +2487,7 @@ private fun VisualVariableConditionDialog(
                     Text("取消", textAlign = TextAlign.Center, color = AutoScriptPalette.TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable(onClick = onDismiss).wrapContentSize(Alignment.Center))
                     Text(confirmLabel, textAlign = TextAlign.Center, color = AutoScriptPalette.Accent, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable {
                         val complete = if (contract.kind == "control.if") values + ("elseIf" to serializeElseIfDrafts(elseIfBranches)) else values
-                        validationError = onConfirm(complete)
+                        validationError = if (invalidConditions.isNotEmpty()) "请修正复合条件输入后再保存" else onConfirm(complete)
                     }.wrapContentSize(Alignment.Center))
                 }
             }
@@ -2373,6 +2500,7 @@ private data class VisualElseIfDraft(
     val operator: String = "equals",
     val value: String = "true",
     val valueVariable: String = "",
+    val condition: String = "",
 )
 
 private fun parseElseIfDrafts(value: String?): List<VisualElseIfDraft> = runCatching {
@@ -2383,6 +2511,7 @@ private fun parseElseIfDrafts(value: String?): List<VisualElseIfDraft> = runCatc
                 operator = branch.get("operator")?.asString ?: "equals",
                 value = branch.get("value")?.toString() ?: "true",
                 valueVariable = branch.get("valueVariable")?.asString.orEmpty(),
+                condition = branch.get("condition")?.toString().orEmpty(),
             )
         }
     }
@@ -2394,6 +2523,7 @@ private fun serializeElseIfDrafts(branches: List<VisualElseIfDraft>): String = J
         addProperty("operator", branch.operator)
         add("value", parseScalar(branch.value) ?: com.google.gson.JsonPrimitive(branch.value))
         if (branch.valueVariable.isNotBlank()) addProperty("valueVariable", branch.valueVariable)
+        if (branch.condition.isNotBlank()) add("condition", JsonParser.parseString(branch.condition))
     }) }
 }.toString()
 
@@ -2458,13 +2588,14 @@ internal fun VisualNodeArgumentsDialog(
             onDismiss, onConfirm = { onConfirm(it); null }, onManageVariables = onManageVariables, confirmLabel = confirmLabel)
         return
     }
-    if (contract.kind in visualRecognitionKinds) {
+    if (contract.kind in visualRecognitionKinds || contract.kind == "vision.result") {
         VisualImageRecognitionDialog(
             contract, arguments, resources, knownVariables, imageProject,
             visible = imageDialogVisible, captureSelection = imageCaptureSelection,
             captureTemplatePath = imageCaptureTemplatePath, onPickFromScreen = onPickImageFromScreen,
             confirmLabel = confirmLabel,
             onDismiss = onDismiss, onConfirm = { _, configured -> onConfirm(configured) },
+            currentFlowId = currentFlowId, onManageVariables = onManageVariables,
         )
         return
     }
@@ -2502,6 +2633,11 @@ internal fun VisualNodeArgumentsDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     contract.properties.forEach { property ->
+                        if (contract.kind == "ui.command") {
+                            val reading = inputs["operation"].orEmpty().startsWith("get:")
+                            if (reading && property.path in setOf("value", "valueVariable")) return@forEach
+                            if (!reading && property.path == "resultVariable") return@forEach
+                        }
                         when (property.editor) {
                             BlockPropertyEditor.FLOW_REFERENCE -> {
                                 Text(property.label, color = AutoScriptPalette.Accent, fontSize = 11.sp)
@@ -2527,6 +2663,24 @@ internal fun VisualNodeArgumentsDialog(
                                         modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
+                            }
+                            BlockPropertyEditor.RESOURCE_LIST -> {
+                                Text(property.label, color = AutoScriptPalette.Accent, fontSize = 11.sp)
+                                val selected = runCatching { JsonParser.parseString(inputs[property.path].orEmpty()).asJsonArray.map { it.asString } }.getOrDefault(emptyList())
+                                var search by remember(property.path) { mutableStateOf("") }
+                                OutlinedTextField(value = search, onValueChange = { search = it.take(128) },
+                                    placeholder = { Text("搜索模板 · 已选 ${selected.size}/64") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
+                                    resourcePaths(resources, property.resourceKind).filter { it.contains(search, true) }.forEach { path ->
+                                        Text(if (path in selected) "✓ ${path.substringAfterLast('/')}" else path.substringAfterLast('/'),
+                                            color = if (path in selected) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary,
+                                            fontSize = 12.sp, modifier = Modifier.fillMaxWidth().clickable {
+                                                val next = if (path in selected) selected - path else if (selected.size < 64) selected + path else selected
+                                                inputs = inputs + (property.path to JsonArray().apply { next.forEach(::add) }.toString())
+                                            }.padding(vertical = 6.dp))
+                                    }
+                                }
+                                Text("按选择顺序匹配；再次点击取消。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                             }
                             BlockPropertyEditor.RESOURCE -> {
                                 Text(property.label, color = AutoScriptPalette.Accent, fontSize = 11.sp)
@@ -2645,7 +2799,7 @@ private fun conditionPropertyTexts(contract: BlockContract, arguments: JsonObjec
     blockPropertyTexts(contract, arguments).let { values ->
         if (contract.kind != "control.if") values else values + (
             "elseIf" to (arguments.getAsJsonArray("elseIf")?.toString() ?: "[]")
-        )
+        ) + ("condition" to arguments.get("condition")?.toString().orEmpty())
     }
 
 internal fun parseBlockArguments(
@@ -2656,7 +2810,13 @@ internal fun parseBlockArguments(
     resources: List<JsonObject>,
 ): Pair<JsonObject?, String?> {
     val arguments = JsonObject()
+    val uiReading = contract.kind == "ui.command" && inputs["operation"].orEmpty().startsWith("get:")
     contract.properties.forEach { property ->
+        if (contract.kind == "ui.command") {
+            if (uiReading && property.path == "value") { arguments.addProperty("value", ""); return@forEach }
+            if (uiReading && property.path == "valueVariable") return@forEach
+            if (!uiReading && property.path == "resultVariable") return@forEach
+        }
         val text = inputs[property.path].orEmpty()
         if (!property.required && text.isBlank() && property.editor != BlockPropertyEditor.FLOW_ARGUMENTS) {
             return@forEach
@@ -2689,6 +2849,14 @@ internal fun parseBlockArguments(
                     return null to "${property.label}不是已登记的项目资源"
                 }
                 arguments.addProperty(property.path, text)
+            }
+            BlockPropertyEditor.RESOURCE_LIST -> {
+                val selected = runCatching { JsonParser.parseString(text).asJsonArray }.getOrNull()
+                    ?: return null to "${property.label}需要资源列表"
+                val choices = resourcePaths(resources, property.resourceKind)
+                if (selected.size() !in 1..64 || selected.any { !it.isJsonPrimitive || !it.asJsonPrimitive.isString || it.asString !in choices } ||
+                    selected.map { it.asString }.distinct().size != selected.size()) return null to "请选择1–64个不同的项目模板"
+                arguments.add(property.path, selected.deepCopy())
             }
             BlockPropertyEditor.SCALAR -> arguments.add(
                 property.path,
@@ -2750,7 +2918,13 @@ internal fun parseBlockArguments(
             }
         }
     }
+    if (uiReading && !inputs["resultVariable"].orEmpty().matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}"))) {
+        return null to "请选择接收属性值的字符变量"
+    }
     if (contract.kind == "control.if") {
+        inputs["condition"]?.takeIf(String::isNotBlank)?.let {
+            arguments.add("condition", parseCompoundCondition(it) ?: return null to "复合条件需为64项/8层内的比较与/或/非树")
+        }
         val branches = runCatching { JsonParser.parseString(inputs["elseIf"].orEmpty()).asJsonArray }
             .getOrNull() ?: return null to "否则如果分支格式无效"
         if (branches.size() > 32 || branches.any { branch ->
@@ -2759,6 +2933,7 @@ internal fun parseBlockArguments(
                     branch.asJsonObject.get("value") == null
             }) return null to "否则如果分支参数无效"
         if (branches.size() > 0) arguments.add("elseIf", branches)
+        if (branches.any { it.asJsonObject.get("condition")?.let { tree -> parseCompoundCondition(tree.toString()) == null } == true }) return null to "否则如果复合条件无效"
     }
     if (contract.kind == "task.comment" && arguments.get("message")?.asString.isNullOrBlank()) {
         return null to "注释内容不能为空"

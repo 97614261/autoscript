@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -84,12 +83,15 @@ internal fun ProjectSettingsDialog(
     snapshot: ProjectSnapshot,
     store: ProjectStore,
     onSnapshotChanged: (ProjectSnapshot) -> Unit,
+    onOpenPermissions: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val latestSnapshot by rememberUpdatedState(snapshot)
     var importKind by remember { mutableStateOf<ProjectResourceKind?>(null) }
+    var choosingImportFolder by remember { mutableStateOf(false) }
+    var importImageDirectory by remember { mutableStateOf("") }
     var deletePath by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -128,6 +130,7 @@ internal fun ProjectSettingsDialog(
                             sourceName,
                             it,
                             current.resourcePaths(),
+                            imageDirectory = if (kind == ProjectResourceKind.IMAGE) importImageDirectory else "",
                         )
                     }
                 }
@@ -141,6 +144,18 @@ internal fun ProjectSettingsDialog(
         }
     }
 
+    if (choosingImportFolder) ImageTemplateSaveDialog(
+        imagePaths = snapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
+        store = store, projectId = snapshot.manifest.projectId, folderOnly = true,
+        initialFolder = importImageDirectory,
+        onDismiss = { choosingImportFolder = false },
+        onSave = { folder, _ ->
+            choosingImportFolder = false
+            importImageDirectory = folder
+            importKind = ProjectResourceKind.IMAGE
+            picker.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
+        },
+    )
     var activePage by remember(snapshot.manifest.projectId) { mutableStateOf(ProjectSettingsPage.RESOURCES) }
     var resourceFilter by remember { mutableStateOf<String?>(null) }
     var resourceDetailsVisible by remember { mutableStateOf<JsonObject?>(null) }
@@ -194,6 +209,9 @@ internal fun ProjectSettingsDialog(
             )
         },
     ) {
+        onOpenPermissions?.let { open ->
+            SettingsOutlineAction("软件权限 / Root 环境", true, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), open)
+        }
         Row(Modifier.fillMaxWidth().height(36.dp).background(AutoScriptPalette.PageBackground)) {
             ProjectSettingsPage.entries.forEach { page ->
                 Column(Modifier.weight(1f).fillMaxHeight().selectable(
@@ -218,8 +236,7 @@ internal fun ProjectSettingsDialog(
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SettingsOutlineAction("＋ 图片", !busy, Modifier.weight(1f)) {
-                        importKind = ProjectResourceKind.IMAGE
-                        picker.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
+                        choosingImportFolder = true
                     }
                     SettingsOutlineAction("＋ 字库", !busy, Modifier.weight(1f)) {
                         importKind = ProjectResourceKind.GLYPH_DICTIONARY
@@ -232,7 +249,7 @@ internal fun ProjectSettingsDialog(
                         SettingsFilterChip("$title $count", resourceFilter == kind) { resourceFilter = kind }
                     }
                 }
-                Text("图片 ≤32 MiB · 字库 ASGLYPH v1 ≤8 MiB · 导入后自动保存",
+                Text("图片先选文件夹再导入 · ≤32 MiB · 字库 ≤8 MiB · 自动保存",
                     fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                 val resources = filterSettingsResources(snapshot.manifest.resources, resourceFilter)
@@ -313,7 +330,7 @@ internal fun ProjectSettingsDialog(
         ProjectInterfacePreview(snapshot.manifest.runnerUi, snapshot.directory) { interfacePreviewVisible = false }
     }
     resourceDetailsVisible?.let { resource ->
-        AlertDialog(
+        StudioConfirmDialog(
             onDismissRequest = { resourceDetailsVisible = null },
             containerColor = Color.White, shape = RoundedCornerShape(5.dp),
             title = { Text(File(resource.get("path").asString).name, fontSize = 16.sp, color = AutoScriptPalette.Accent, maxLines = 2) },
@@ -322,7 +339,7 @@ internal fun ProjectSettingsDialog(
         )
     }
     if (discardCapabilitiesVisible) {
-        AlertDialog(
+        StudioConfirmDialog(
             onDismissRequest = { discardCapabilitiesVisible = false },
             containerColor = Color.White, shape = RoundedCornerShape(5.dp),
             title = { Text("能力修改尚未保存", fontSize = 16.sp, color = AutoScriptPalette.Accent) },
@@ -332,7 +349,7 @@ internal fun ProjectSettingsDialog(
         )
     }
     deletePath?.let { path ->
-        AlertDialog(
+        StudioConfirmDialog(
             onDismissRequest = { deletePath = null },
             containerColor = Color.White, shape = RoundedCornerShape(5.dp),
             title = { Text("删除资源", fontSize = 16.sp, color = AutoScriptPalette.Accent) },

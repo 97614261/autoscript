@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.remove",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.remove/1/files.remove.schema.json",
+  "title": "移除项目数据文件",
+  "category": "variable",
+  "summary": "仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。",
+  "searchTerms": [
+    "数据",
+    "文件",
+    "对象",
+    "移除项目数据文件"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "仅项目私有 data 内相对文件路径；移入有界回收区。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "state.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "仅项目私有 data 内相对文件路径；移入有界回收区来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

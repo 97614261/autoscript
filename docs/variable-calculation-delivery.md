@@ -25,6 +25,8 @@
 
 ## 验证边界
 
+2026-10-03原生扩展：字符处理菜单新增 `byteLen/byteFind/byteSub`，整数运算菜单提供 `idiv/irem`；函数库变量计算条目可搜索这些名字并查看签名和边界。保存/修改仍复用原计算面板。字节起点0、查找未找到-1、截取禁止切断UTF-8；整除向零、余数跟被除数同号。既有字符函数及 //、% 不变。详见ADR0030及 native-capability-delivery.md；这不是新增全局Lua API或宣布全部旧能力完成。
+
 本批不操作设备。Rust全仓243项通过，Android JUnit 202项（Studio161、project-store33、runtime-service8）通过，无失败/错误/跳过。fmt、契约生成校验、Schema门禁、diff检查通过；Clippy退出0但仍有警告，没有声称通过 `-D warnings`。Studio lint无错误，23警告/19提示；Studio与Runner Debug构建通过。目录46个真实积木、脚本API仍42个，不新增伪API。
 
 中文变量标识、旧“寻图对象”的集合属性/转换、字符分组与完整字符串处理不是本批已完成项；不声称所有参考变量功能完全等价。

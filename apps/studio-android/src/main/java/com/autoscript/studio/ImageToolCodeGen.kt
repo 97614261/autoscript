@@ -102,6 +102,7 @@ internal object ImageToolCodeGen {
         val tolerance: Int,
         val frameWidth: Int,
         val frameHeight: Int,
+        val ocr: ImageToolOcrConfig? = null,
     )
 
     data class FlowBlockInsertion(val kind: String, val arguments: Map<String, Int> = emptyMap())

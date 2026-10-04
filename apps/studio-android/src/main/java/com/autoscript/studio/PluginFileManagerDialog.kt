@@ -69,6 +69,8 @@ internal sealed interface SourceManagerAction {
     data class RemoveFromGroup(val flowIds: List<String>) : SourceManagerAction
     data class Open(val flowId: String) : SourceManagerAction
     data class InsertCall(val flowId: String) : SourceManagerAction
+    data class SetEntry(val flowId: String) : SourceManagerAction
+    data object Refresh : SourceManagerAction
 }
 
 private val SourceBlue = AutoScriptPalette.DialogTitle
@@ -78,8 +80,8 @@ private val SourceMuted = AutoScriptPalette.Muted
 private val SourceDivider = AutoScriptPalette.Divider
 private val SourceActive = Color(0xFFF6F8FF)
 
-/** ae1：源文件名与分组名输入框 `LengthFilter(15)`。 */
-private const val MAX_SOURCE_NAME_INPUT = 15
+/** Keep the input limit consistent with ProjectStore's current plugin/group name rule. */
+private const val MAX_SOURCE_NAME_INPUT = 64
 private const val GROUP_KEY = "g:"
 private const val FILE_KEY = "f:"
 
@@ -126,9 +128,10 @@ internal fun PluginFileManagerDialog(
     onCreatePluginRequestHandled: () -> Unit = {},
     selectCurrentPluginOnOpen: Boolean = false,
     onSelectCurrentPluginRequestHandled: () -> Unit = {},
-    title: String = "插件选择",
+    title: String = "项目插件",
+    projectName: String = "",
 ) {
-    var currentGroup by rememberSaveable { mutableStateOf<String?>(null) }
+    var currentGroup by rememberSaveable { mutableStateOf(tree.entry(currentFlowId.orEmpty())?.group) }
     var selectedFlowId by rememberSaveable(currentFlowId) { mutableStateOf(currentFlowId) }
     var selectedKeys by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var menuVisible by rememberSaveable { mutableStateOf(false) }
@@ -143,6 +146,13 @@ internal fun PluginFileManagerDialog(
     var localNotice by rememberSaveable { mutableStateOf<String?>(null) }
     val timestamp = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     val dialogHeight = (LocalConfiguration.current.screenHeightDp - 48).coerceIn(160, 480).dp
+
+    LaunchedEffect(tree) {
+        val validKeys = tree.entries.map { FILE_KEY + it.flowId }.toSet() + tree.groups.map { GROUP_KEY + it.name }
+        selectedKeys = selectedKeys.filter { it in validKeys }
+        if (tree.entry(selectedFlowId.orEmpty()) == null) selectedFlowId = currentFlowId
+        if (nameAction in setOf(SourceNameAction.SAVE_AS, SourceNameAction.RENAME) && selectedKeys.isEmpty()) nameAction = null
+    }
 
     LaunchedEffect(createPluginOnOpen) {
         if (createPluginOnOpen) {
@@ -171,7 +181,7 @@ internal fun PluginFileManagerDialog(
         } else {
             emptyList()
         }
-        val fileRows = tree.entriesIn(currentGroup).map(SourceRow::File)
+        val fileRows = (if (currentGroup == null && needle.isNotEmpty()) tree.entries else tree.entriesIn(currentGroup)).map(SourceRow::File)
         val comparator = when (sortMode) {
             SourceSortMode.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { row: SourceRow.File -> row.entry.name }
             SourceSortMode.SIZE -> compareBy<SourceRow.File> { it.entry.sizeBytes }
@@ -282,7 +292,7 @@ internal fun PluginFileManagerDialog(
                             )
                             DropdownMenuItem(
                                 text = { Text("刷新", fontSize = 14.sp) },
-                                onClick = { menuVisible = false; localNotice = "已刷新" },
+                                onClick = { menuVisible = false; dispatch(SourceManagerAction.Refresh) },
                             )
                             DropdownMenuItem(
                                 text = { Text("搜索", fontSize = 14.sp) },
@@ -312,6 +322,12 @@ internal fun PluginFileManagerDialog(
                         }
                     }
                 }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(projectName.ifBlank { "当前项目" }, fontSize = 11.sp, color = SourceMuted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("主插件：${tree.entries.firstOrNull { it.isEntry }?.name ?: "未设置"}", fontSize = 11.sp,
+                        color = SourceBlue, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                }
                 // line_tk_ywj_xz_cz_search
                 if (searchVisible) {
                     SourceSearchBar(query, { query = it.take(60) }) {
@@ -337,7 +353,7 @@ internal fun PluginFileManagerDialog(
                     }
                 } else {
                     Text(
-                        "点击打开插件 · 长按或勾选管理 · 新建可创建插件或分组",
+                        "点击打开 · 长按管理/设置主插件 · 分组仅分类，不移动文件",
                         color = SourceMuted,
                         fontSize = 10.sp,
                         maxLines = 1,
@@ -398,6 +414,16 @@ internal fun PluginFileManagerDialog(
                     val singleFile = selectedFlowIds.size == 1 && selectedGroups.isEmpty()
                     val singleGroup = selectedGroups.size == 1 && selectedFlowIds.isEmpty()
                     val groupedSelected = selectedFlowIds.any { tree.entry(it)?.group != null }
+                    if (singleFile) {
+                        val selected = tree.entry(selectedFlowIds.single())
+                        Row(Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("局部变量 ${selected?.localVariableCount ?: 0} 个", color = SourceMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                            Text(if (selected?.isEntry == true) "当前主插件" else "设为主插件", color = SourceBlue, fontSize = 12.sp,
+                                modifier = Modifier.clickable(enabled = !busy && selected != null && !selected.isEntry) {
+                                    dispatch(SourceManagerAction.SetEntry(selectedFlowIds.single()))
+                                }.padding(horizontal = 8.dp, vertical = 5.dp))
+                        }
+                    }
                     SourceSelectionActions(
                         canSaveAs = singleFile && !busy,
                         canRename = (singleFile || singleGroup) && !busy,
@@ -479,7 +505,7 @@ internal fun PluginFileManagerDialog(
 
     if (confirmDelete) {
         SourceConfirmDialog(
-            text = "是否删除所选 ${selectedKeys.size} 项文件?",
+            text = "删除 ${selectedFlowIds.size} 个插件，解散 ${selectedGroups.size} 个分组？\n删除插件也会清理其局部变量。主插件、被调用或被界面绑定的插件不能删除；解散分组不会删除其中插件。",
             confirmLabel = "删除",
             onDismiss = { confirmDelete = false },
             onConfirm = { dispatch(SourceManagerAction.Delete(selectedFlowIds, selectedGroups)) },
@@ -587,7 +613,7 @@ private fun SourceFileRow(
         // 同 SourceFolderRow：固定高度 + SpaceBetween 会把 8sp 的时间与大小切掉下半截。
         Column(Modifier.weight(1f).padding(start = 3.dp, top = 4.dp, bottom = 5.dp)) {
             Text(
-                if (entry.isEntry) "${entry.name}（入口）" else entry.name,
+                if (entry.isEntry) "${entry.name}（主插件）" else entry.name,
                 color = SourceText,
                 fontSize = 14.sp,
                 maxLines = 1,
@@ -784,28 +810,7 @@ private fun SourceNameDialog(
 
 @Composable
 private fun SourceConfirmDialog(text: String, confirmLabel: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp),
-                color = Color.White,
-                shape = RoundedCornerShape(2.dp),
-                shadowElevation = 9.dp,
-            ) {
-                Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
-                    Text(text, color = SourceText, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 25.dp))
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 15.dp, top = 14.dp, bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        SourceNameActionText("取消", onDismiss)
-                        Spacer(Modifier.weight(1f))
-                        SourceNameActionText(confirmLabel, onConfirm, Modifier.padding(end = 15.dp))
-                    }
-                }
-            }
-        }
-    }
+    EditorPromptDialog("项目插件", text, onDismiss, onConfirm, confirmLabel = confirmLabel, confirmDanger = confirmLabel == "删除")
 }
 
 @Composable

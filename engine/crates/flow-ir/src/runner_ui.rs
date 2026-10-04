@@ -216,6 +216,11 @@ pub fn validate_layout(ui: &RunnerUi) -> Result<(), String> {
                     | "enabled"
                     | "binding"
                     | "events"
+                    | "fontBold"
+                    | "textUnderline"
+                    | "borderColor"
+                    | "borderWidthPx"
+                    | "cornerPx"
             )
         }) {
             return Err("unknown presentation field".into());
@@ -268,6 +273,19 @@ pub fn validate_layout(ui: &RunnerUi) -> Result<(), String> {
             if !p.get(key).is_some_and(Value::is_boolean) {
                 return Err("invalid UI state".into());
             }
+        }
+        for key in ["fontBold", "textUnderline"] {
+            if p.get(key).is_some_and(|v| !v.is_boolean()) {
+                return Err("invalid UI text style".into());
+            }
+        }
+        for (key, hi) in [("borderWidthPx", 32), ("cornerPx", 512)] {
+            if p.get(key).is_some() {
+                range(p, key, 0, hi)?;
+            }
+        }
+        if p.get("borderColor").is_some() && !color(text(p, "borderColor")?) {
+            return Err("invalid UI border color".into());
         }
         if let Some(b) = p.get("binding").filter(|v| !v.is_null()) {
             let parts = b

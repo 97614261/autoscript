@@ -32,6 +32,7 @@ val packagedDisplayName = releaseString("displayName", "自动化Runner")
 android {
     namespace = "com.autoscript.runner"
     compileSdk = 36
+    ndkVersion = "30.0.14904198"
 
     defaultConfig {
         applicationId = packagedApplicationId
@@ -40,7 +41,8 @@ android {
         versionCode = packagedVersionCode
         versionName = packagedVersionName
         manifestPlaceholders["runnerLabel"] = packagedDisplayName
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        @Suppress("UNCHECKED_CAST")
+        ndk { abiFilters += rootProject.extra["autoscript.abis"] as List<String> }
     }
 
     buildFeatures {

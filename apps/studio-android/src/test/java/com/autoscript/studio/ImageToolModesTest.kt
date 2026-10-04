@@ -32,14 +32,14 @@ class ImageToolModesTest {
     @Test
     fun implementedImageAndInputModesAreEnabled() {
         val enabled = ImageToolMode.entries.filter { it.enabled }.map { it.label }.toSet()
-        assertEquals(setOf("裁剪", "范围", "取色", "多点", "单击", "长按", "滑动", "拖动", "按下", "移动", "弹起"), enabled)
+        assertEquals(setOf("裁剪", "范围", "取色", "多点", "单击", "长按", "滑动", "拖动", "按下", "移动", "弹起", "取字"), enabled)
     }
 
-    /** OCR / 节点 / 录制是本轮明确不做的三项。 */
+    /** 控件节点和录制仍不属于当前 Root 图像工具能力。 */
     @Test
     fun blockedModesAreTheThreeKnownGaps() {
         val blocked = ImageToolMode.entries.filterNot { it.enabled }.map { it.label }.toSet()
-        assertEquals(setOf("取字", "节点", "录制"), blocked)
+        assertEquals(setOf("节点", "录制"), blocked)
     }
 
     /** 菜单里能用的排在禁用的前面，别让用户先点到点不动的。 */

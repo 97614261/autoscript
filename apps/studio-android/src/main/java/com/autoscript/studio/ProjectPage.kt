@@ -191,6 +191,7 @@ internal fun ProjectPage(
     var floatingInputTarget by remember { mutableStateOf<InputPickTarget?>(null) }
     var floatingInputInsertion by remember { mutableStateOf<InputInsertionDraft?>(null) }
     var floatingInputRequest by remember { mutableStateOf<Long?>(null) }
+    var floatingInputJob by remember { mutableStateOf<Job?>(null) }
     var floatingInputOpenRequest by remember { mutableIntStateOf(0) }
     var floatingTree by remember { mutableStateOf(SourceFileTree()) }
     var floatingSourceBusy by remember { mutableStateOf(false) }
@@ -198,9 +199,11 @@ internal fun ProjectPage(
     var busyProjectId by remember { mutableStateOf<String?>(null) }
     val sourceFiles = remember(store) { ProjectSourceFiles(store) }
     val scope = rememberCoroutineScope()
-    var inputBackendFeatures by remember { mutableIntStateOf(0) }
-    LaunchedEffect(runtimeState.rootState, runtimeState.sessionGeneration) {
-        inputBackendFeatures = 0
+    var inputBackendFeatures by remember { mutableStateOf<Int?>(null) }
+    var inputCapabilityRevision by remember { mutableIntStateOf(0) }
+    val openSoftwarePermissions = rememberSoftwarePermissionsLauncher(runtimeClient)
+    LaunchedEffect(runtimeState.phase, runtimeState.rootState, runtimeState.sessionGeneration, inputCapabilityRevision) {
+        inputBackendFeatures = null
         inputBackendFeatures = withContext(Dispatchers.IO) { runtimeClient.inputFeatures() }
     }
     val context = LocalContext.current
@@ -228,6 +231,7 @@ internal fun ProjectPage(
     }
     DisposableEffect(Unit) {
         onDispose {
+            floatingInputJob?.cancel()
             floatingInputRequest?.let(runtimeClient::cancelInputPointPick)
             onFullScreenChanged(false)
             handoffCaptureBitmap?.recycle()
@@ -235,6 +239,8 @@ internal fun ProjectPage(
     }
 
     LaunchedEffect(floatingEditorProject?.projectId, floatingFlowId) {
+        floatingInputJob?.cancel()
+        floatingInputJob = null
         floatingInputRequest?.let(runtimeClient::cancelInputPointPick)
         floatingInputRequest = null
         val target = floatingInputTarget
@@ -390,6 +396,7 @@ internal fun ProjectPage(
         uiValues: Map<String, String>? = null, expectedUi: com.google.gson.JsonObject? = null) {
         val singleStep = entry == StudioRunEntry.SINGLE_STEP
         if (busyProjectId != null) return
+        if (floatingInputJob?.isActive == true || floatingInputRequest != null) { notice = "请先完成或取消选点，再运行"; return }
         if (runtimeState.phase != RuntimeConnectionPhase.CONNECTED) {
             error = "Runner尚未连接"
             return
@@ -786,21 +793,27 @@ internal fun ProjectPage(
         val editor = floatingVisualEditor ?: return
         val current = floatingEditorSnapshot ?: return
         val flowId = floatingFlowId ?: return
+        if (floatingInputJob?.isActive == true || floatingInputRequest != null) { notice = "选点正在准备或进行中"; return }
         if (busyProjectId != null || runtimeState.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING)) {
             error = "请先停止运行"; return
         }
         val target = InputPickTarget(project.projectId, flowId, editor.currentSource, editor.selectedNodeId)
         floatingInputTarget = target
         val design = current.manifest.design
-        floatingInputRequest = runtimeClient.beginInputPointPick(project.projectId, flowId, inputPointAction(mode)) { result ->
-            floatingInputRequest = null
-            if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
-            else if (floatingInputTarget != target || floatingEditorSnapshot?.manifest?.design != design) error = "插件或设计分辨率已变化，请重新选点"
-            else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
-                .onSuccess(::queueFloatingInput).onFailure { error = it.message ?: "选点转换失败" }
+        notice = "正在准备悬浮选点…"
+        floatingInputJob = scope.launch {
+            var completed = false
+            floatingInputRequest = runtimeClient.beginInputPointPick(project.projectId, flowId, inputPointAction(mode)) { result ->
+                completed = true
+                floatingInputRequest = null
+                if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
+                else if (floatingInputTarget != target || floatingEditorSnapshot?.manifest?.design != design) error = "插件或设计分辨率已变化，请重新选点"
+                else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
+                    .onSuccess(::queueFloatingInput).onFailure { error = it.message ?: "选点转换失败" }
+            }
+            if (!completed && floatingInputRequest != null) context.inputPickerActivity()?.moveTaskToBack(true)
+            else if (!completed) error = "悬浮选点未启动，请在按键面板打开权限 / 环境检查"
         }
-        if (floatingInputRequest != null) context.inputPickerActivity()?.moveTaskToBack(true)
-        else error = "悬浮选点未启动，请检查悬浮窗权限和Root状态"
     }
 
     fun finishFloatingMutation(changed: Boolean, message: String) {
@@ -919,76 +932,83 @@ internal fun ProjectPage(
         floatingSourceBusy = true
         floatingSourceMessage = null
         scope.launch {
-            val base = persistFloatingFlow()
-            if (base == null) {
-                floatingSourceBusy = false
-                return@launch
-            }
-            val result = runCatching {
-                when (sourceAction) {
-                    is SourceManagerAction.Open -> {
-                        showFloatingFlow(base, sourceAction.flowId)
-                        null
-                    }
-                    is SourceManagerAction.InsertCall -> {
-                        val target = base.manifest.flows.firstOrNull { it.flowId == sourceAction.flowId }
-                        val editor = floatingVisualEditor
-                        if (target == null || editor == null) error = "源文件不存在" else {
-                            finishFloatingMutation(
-                                editor.insertFlowCall(target.flowId, defaultFlowCallArguments(target)) != null,
-                                "已加入调用：${target.displayName()}",
-                            )
+            try {
+                val base = persistFloatingFlow()
+                if (base == null) {
+                    return@launch
+                }
+                val result = runCatching {
+                    when (sourceAction) {
+                        SourceManagerAction.Refresh -> withContext(Dispatchers.IO) { store.openProject(base.manifest.projectId) }
+                        is SourceManagerAction.SetEntry -> withContext(Dispatchers.IO) { sourceFiles.setEntry(base, sourceAction.flowId) }
+                        is SourceManagerAction.Open -> {
+                            showFloatingFlow(base, sourceAction.flowId)
+                            null
                         }
-                        null
-                    }
-                    is SourceManagerAction.CreateFile -> withContext(Dispatchers.IO) {
-                        sourceFiles.createFlow(base, sourceAction.name, sourceAction.group)
-                    }.also { updated ->
-                        val created = updated.manifest.flows.map(ProjectFlow::flowId) -
-                            base.manifest.flows.map(ProjectFlow::flowId).toSet()
-                        created.singleOrNull()?.let { showFloatingFlow(updated, it) }
-                    }
-                    is SourceManagerAction.SaveAs -> withContext(Dispatchers.IO) {
-                        sourceFiles.copyFlow(base, sourceAction.flowId, sourceAction.name)
-                    }
-                    is SourceManagerAction.RenameFile -> withContext(Dispatchers.IO) {
-                        sourceFiles.renameFlow(base, sourceAction.flowId, sourceAction.name)
-                    }
-                    is SourceManagerAction.Delete -> {
-                        val deletion = withContext(Dispatchers.IO) {
-                            if (sourceAction.groups.isNotEmpty()) sourceFiles.deleteGroups(base, sourceAction.groups)
-                            sourceFiles.deleteFlows(base, sourceAction.flowIds)
+                        is SourceManagerAction.InsertCall -> {
+                            val target = base.manifest.flows.firstOrNull { it.flowId == sourceAction.flowId }
+                            val editor = floatingVisualEditor
+                            if (target == null || editor == null) error = "源文件不存在" else {
+                                finishFloatingMutation(
+                                    editor.insertFlowCall(target.flowId, defaultFlowCallArguments(target)) != null,
+                                    "已加入调用：${target.displayName()}",
+                                )
+                            }
+                            null
                         }
-                        if (floatingFlowId in deletion.deleted) {
-                            showFloatingFlow(deletion.snapshot, requireNotNull(deletion.snapshot.manifest.entryFlowId))
+                        is SourceManagerAction.CreateFile -> withContext(Dispatchers.IO) {
+                            sourceFiles.createFlow(base, sourceAction.name, sourceAction.group)
+                        }.also { updated ->
+                            val created = updated.manifest.flows.map(ProjectFlow::flowId) -
+                                base.manifest.flows.map(ProjectFlow::flowId).toSet()
+                            created.singleOrNull()?.let { showFloatingFlow(updated, it) }
                         }
-                        if (deletion.failures.isNotEmpty()) floatingSourceMessage = deletion.failures.joinToString("\n")
-                        deletion.snapshot
-                    }
-                    is SourceManagerAction.CreateGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.createGroup(base, sourceAction.name) }
-                        null
-                    }
-                    is SourceManagerAction.RenameGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.renameGroup(base, sourceAction.group, sourceAction.name) }
-                        null
-                    }
-                    is SourceManagerAction.AddToGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.addToGroup(base, sourceAction.group, sourceAction.flowIds) }
-                        null
-                    }
-                    is SourceManagerAction.RemoveFromGroup -> {
-                        withContext(Dispatchers.IO) { sourceFiles.removeFromGroup(base, sourceAction.flowIds) }
-                        null
+                        is SourceManagerAction.SaveAs -> withContext(Dispatchers.IO) {
+                            sourceFiles.copyFlow(base, sourceAction.flowId, sourceAction.name)
+                        }
+                        is SourceManagerAction.RenameFile -> withContext(Dispatchers.IO) {
+                            sourceFiles.renameFlow(base, sourceAction.flowId, sourceAction.name)
+                        }
+                        is SourceManagerAction.Delete -> {
+                            val deletion = withContext(Dispatchers.IO) {
+                                if (sourceAction.groups.isNotEmpty()) sourceFiles.deleteGroups(base, sourceAction.groups)
+                                sourceFiles.deleteFlows(base, sourceAction.flowIds)
+                            }
+                            if (floatingFlowId in deletion.deleted) {
+                                showFloatingFlow(deletion.snapshot, requireNotNull(deletion.snapshot.manifest.entryFlowId))
+                            }
+                            if (deletion.failures.isNotEmpty()) floatingSourceMessage = deletion.failures.joinToString("\n")
+                            deletion.snapshot
+                        }
+                        is SourceManagerAction.CreateGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.createGroup(base, sourceAction.name) }
+                            null
+                        }
+                        is SourceManagerAction.RenameGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.renameGroup(base, sourceAction.group, sourceAction.name) }
+                            null
+                        }
+                        is SourceManagerAction.AddToGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.addToGroup(base, sourceAction.group, sourceAction.flowIds) }
+                            null
+                        }
+                        is SourceManagerAction.RemoveFromGroup -> {
+                            withContext(Dispatchers.IO) { sourceFiles.removeFromGroup(base, sourceAction.flowIds) }
+                            null
+                        }
                     }
                 }
+                result.onFailure { failure ->
+                    if (failure is CancellationException) throw failure
+                    floatingSourceMessage = failure.message ?: "插件操作失败"
+                }
+                val current = result.getOrNull() ?: base
+                floatingEditorSnapshot = current
+                floatingTree = withContext(Dispatchers.IO) { runCatching { sourceFiles.load(current) }.getOrDefault(floatingTree) }
+                projects = withContext(Dispatchers.IO) { store.listProjects() }
+            } finally {
+                floatingSourceBusy = false
             }
-            result.onFailure { failure -> floatingSourceMessage = failure.message ?: "源文件操作失败" }
-            val current = result.getOrNull() ?: base
-            floatingEditorSnapshot = current
-            floatingTree = withContext(Dispatchers.IO) { runCatching { sourceFiles.load(current) }.getOrDefault(floatingTree) }
-            projects = withContext(Dispatchers.IO) { store.listProjects() }
-            floatingSourceBusy = false
         }
     }
 
@@ -1522,7 +1542,9 @@ internal fun ProjectPage(
                 // ImageToolWindow 自带 BackHandler 关窗；这里不再叠一层，避免两个
                 // BackHandler 争同一次返回键（EditorDock 那次踩过类似的坑）。
                 ImageToolWindow(
-                    pointerInputSupported = inputBackendFeatures and 2 != 0,
+                    snapshot = imageToolSnapshot,
+                    runtimeClient = runtimeClient,
+                    pointerInputSupported = (inputBackendFeatures ?: 0) and 2 != 0,
                     bitmap = imageToolBitmap,
                     // 基准分辨率在 manifest.design 里；ProjectSummary 上那对同名字段是列表用的投影。
                     designWidth = imageToolSnapshot.manifest.design.width,
@@ -1547,6 +1569,8 @@ internal fun ProjectPage(
                 )
                 pendingImageTemplateRoi?.let { roi ->
                     ImageTemplateSaveDialog(
+                        store = store,
+                        projectId = imageToolSnapshot.manifest.projectId,
                         imagePaths = imageToolSnapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
                         onDismiss = { pendingImageTemplateRoi = null },
                         onSave = { folder, name ->
@@ -1734,6 +1758,8 @@ internal fun ProjectPage(
                     onPluginAction = ::handleFloatingPluginAction,
                     capabilities = visualSnapshot?.manifest?.capabilities?.toSet().orEmpty(),
                     inputBackendFeatures = inputBackendFeatures,
+                    onOpenPermissions = openSoftwarePermissions,
+                    onRefreshInputCapabilities = { inputCapabilityRevision++ },
                     onOpenRecorder = visualSnapshot?.let { current ->
                         {
                             opened = current
@@ -1824,6 +1850,14 @@ internal fun ProjectPage(
                             visualEditor?.isReadOnly == false
                         ),
                     programSource = visualEditor?.currentSource,
+                    onApplyProgramSource = if (visualEditor == null || visualSnapshot == null) null else { expected, replacement ->
+                        val problem = applyValidatedPluginSource(runtimeClient, visualSnapshot.manifest.projectId,
+                            floatingFlowId.orEmpty(), visualEditor, expected, replacement) {
+                            editorCanMutate(busyProjectId != null, visualEditor.isReadOnly, runtimeClient.runtimeStates.value.engineState)
+                        }
+                        if (problem == null) finishFloatingMutation(true, "已应用插件源码，可撤销")
+                        problem
+                    },
                     onReplaceProgramText = if (visualEditor == null) null else { query, replacement, selectedOnly ->
                         if (!editorCanMutate(busyProjectId != null, visualEditor.isReadOnly, runtimeState.engineState)) "请停止运行后再替换"
                         else {
@@ -1952,41 +1986,58 @@ internal fun ProjectPage(
                         flows = visualSnapshot.manifest.flows,
                         allowFlowScope = project.sourceMode == ProjectSourceMode.VISUAL,
                         onDismiss = { floatingVariablesVisible = false },
-                        onSave = { variables ->
+                        onSave = { variables, renames ->
                             scope.launch {
                                 if (!editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState)) {
                                     error = "请停止运行后再修改变量"; return@launch
                                 }
+                                busyProjectId = visualSnapshot.manifest.projectId
+                                val drafts = if (visualEditor != null && floatingFlowId != null) mapOf(floatingFlowId!! to visualEditor.currentSource) else emptyMap()
+                                val expectedSources = visualSnapshot.flowSources + if (visualEditor != null && floatingFlowId != null) mapOf(floatingFlowId!! to visualEditor.savedSource) else emptyMap()
                                 runCatching {
                                     withContext(Dispatchers.IO) {
                                         store.updateVariables(
                                             visualSnapshot.manifest.projectId,
                                             variables,
                                             visualSnapshot.manifest.variables,
+                                            renames, drafts, expectedSources,
                                         )
                                     }
                                 }.onSuccess { updated ->
+                                    if (renames.isNotEmpty()) {
+                                        updated.flowSources[floatingFlowId]?.let { visualEditor?.reloadCommittedSource(it) }
+                                        floatingEditorRevision++
+                                    }
                                     floatingEditorSnapshot = updated
                                     floatingVariablesVisible = false
                                     notice = "变量已保存"
                                 }.onFailure { failure ->
                                     error = failure.message ?: "变量保存失败"
                                 }
+                                busyProjectId = null
                             }
                         },
-                        onSaveAndInsert = if (project.sourceMode == ProjectSourceMode.VISUAL) { variables, arguments ->
+                        onSaveAndInsert = if (project.sourceMode == ProjectSourceMode.VISUAL) { variables, arguments, renames ->
                             scope.launch {
                                 if (!editorCanMutate(busyProjectId != null, visualEditor?.isReadOnly != false, runtimeState.engineState)) {
                                     error = "请停止运行后再修改变量"; return@launch
                                 }
+                                busyProjectId = visualSnapshot.manifest.projectId
+                                val drafts = if (visualEditor != null && floatingFlowId != null) mapOf(floatingFlowId!! to visualEditor.currentSource) else emptyMap()
+                                val expectedSources = visualSnapshot.flowSources + if (visualEditor != null && floatingFlowId != null) mapOf(floatingFlowId!! to visualEditor.savedSource) else emptyMap()
                                 runCatching {
-                                    withContext(Dispatchers.IO) { store.updateVariables(visualSnapshot.manifest.projectId, variables, visualSnapshot.manifest.variables) }
+                                    withContext(Dispatchers.IO) { store.updateVariables(visualSnapshot.manifest.projectId, variables, visualSnapshot.manifest.variables, renames, drafts, expectedSources) }
                                 }.onSuccess { updated ->
+                                    if (renames.isNotEmpty()) {
+                                        updated.flowSources[floatingFlowId]?.let { visualEditor?.reloadCommittedSource(it) }
+                                        floatingEditorRevision++
+                                    }
                                     floatingEditorSnapshot = updated
                                     floatingVariablesVisible = false
                                     floatingCalculationInsert = null
+                                    busyProjectId = null
                                     insertFloatingBlock(variableCalculationHint(arguments), null)
-                                }.onFailure { error = it.message ?: "变量表保存失败" }
+                                }.onFailure { busyProjectId = null; error = it.message ?: "变量表保存失败" }
                             }
                         } else null,
                     )
@@ -2122,6 +2173,14 @@ internal fun ProjectPage(
                                 floatingRecognitionTest = false
                                 floatingEditorRevision++
                                 saveFloatingFlow()
+                            }
+                        },
+                        onInsertRecognition = { kind, arguments ->
+                            val blocks = ocrRecognitionSequence(kind, arguments)
+                            val missing = blocks.flatMap { it.first.requiredCapabilities }.toSet() - visualSnapshot.manifest.capabilities.toSet()
+                            if (missing.isNotEmpty()) error = "识别需要能力：${missing.joinToString()}"
+                            else if (editorCanMutate(busyProjectId != null, visualEditor.isReadOnly, runtimeState.engineState) && visualEditor.insertBlocks(blocks)) {
+                                floatingRecognitionTest = false; floatingEditorRevision++; saveFloatingFlow()
                             }
                         },
                     )
@@ -2311,6 +2370,7 @@ internal fun ProjectPage(
                 }
             },
             onDismiss = { settingsSnapshot = null },
+            onOpenPermissions = openSoftwarePermissions,
         )
     }
 }
@@ -2570,107 +2630,22 @@ private fun ProjectDeleteDialog(projectName: String, onDismiss: () -> Unit, onCo
     }
     var answer by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.White,
-                shape = RoundedCornerShape(12.dp),
-                shadowElevation = 10.dp,
-            ) {
-                Column {
-                    Text(
-                        "删除当前项目",
-                        color = WorkspaceDanger,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp).wrapContentHeight(),
-                    )
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(WorkspaceBorder))
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                        Text(
-                            "当前项目：$projectName",
-                            color = WorkspaceTextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 12.dp)
-                                .background(Color(0xFFF8FAFC))
-                                .padding(horizontal = 12.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("计算验证", color = Color(0xFF697386), fontSize = 10.sp)
-                                Text(
-                                    "${challenge.first} − ${challenge.second} = ?",
-                                    color = WorkspaceTextPrimary,
-                                    fontSize = 21.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(top = 3.dp),
-                                )
-                            }
-                            BasicTextField(
-                                value = answer,
-                                onValueChange = { value ->
-                                    answer = value.filter(Char::isDigit).take(3)
-                                    wrong = false
-                                },
-                                singleLine = true,
-                                textStyle = TextStyle(
-                                    fontSize = 17.sp,
-                                    color = WorkspaceTextPrimary,
-                                    textAlign = TextAlign.Center,
-                                ),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                cursorBrush = SolidColor(WorkspaceAccent),
-                                modifier = Modifier
-                                    .size(width = 64.dp, height = 42.dp)
-                                    .border(1.dp, WorkspaceBorder, RoundedCornerShape(6.dp))
-                                    .wrapContentHeight(),
-                            )
-                        }
-                        if (wrong) {
-                            Text(
-                                "答案不正确，请重新计算",
-                                color = WorkspaceDanger,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(top = 6.dp),
-                            )
-                        }
-                    }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(WorkspaceBorder))
-                    Row(
-                        Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            Modifier.weight(1f).height(38.dp).padding(end = 6.dp)
-                                .background(AutoScriptPalette.PageBackground, RoundedCornerShape(6.dp))
-                                .clickable(onClick = onDismiss),
-                            contentAlignment = Alignment.Center,
-                        ) { Text("取消", color = WorkspaceTextPrimary, fontSize = 12.sp) }
-                        Box(
-                            Modifier.weight(1f).height(38.dp).padding(start = 6.dp)
-                                .background(WorkspaceDanger, RoundedCornerShape(6.dp))
-                                .clickable {
-                                    if (answer.toIntOrNull() == challenge.first - challenge.second) {
-                                        onConfirm()
-                                    } else {
-                                        wrong = true
-                                    }
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text("确认删除", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
+    StudioConfirmDialog(onDismissRequest = onDismiss, title = { Text("删除项目") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("将删除项目“$projectName”。此操作不能撤销，请先确认已有备份。", fontSize = 13.sp)
+                Text("计算验证：${challenge.first} − ${challenge.second} = ?", fontSize = 13.sp, color = WorkspaceAccent)
+                BasicTextField(answer, { answer = it.filter(Char::isDigit).take(3); wrong = false }, singleLine = true,
+                    textStyle = TextStyle(fontSize = 15.sp, textAlign = TextAlign.Center, color = WorkspaceTextPrimary),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().border(1.dp, WorkspaceBorder, RoundedCornerShape(3.dp)).padding(10.dp))
+                if (wrong) Text("答案不正确，请重新计算", color = WorkspaceDanger, fontSize = 11.sp)
             }
-        }
-    }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        confirmButton = { TextButton(onClick = {
+            if (answer.toIntOrNull() == challenge.first - challenge.second) onConfirm() else wrong = true
+        }) { Text("确认删除", color = WorkspaceDanger) } })
 }
 
 @Composable

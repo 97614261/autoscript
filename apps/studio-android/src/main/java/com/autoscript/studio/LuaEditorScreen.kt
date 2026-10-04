@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -508,7 +507,7 @@ internal fun LuaEditorScreen(
                 flows = emptyList(),
                 allowFlowScope = false,
                 onDismiss = { luaVariableManagerVisible = false },
-                onSave = { variables ->
+                onSave = { variables, _ ->
                     scope.launch {
                         runCatching {
                             withContext(Dispatchers.IO) {
@@ -564,6 +563,8 @@ internal fun LuaEditorScreen(
         }
         if (showingImageTools) {
             ImageToolWindow(
+                snapshot = snapshot,
+                runtimeClient = runtimeClient,
                 bitmap = imageToolBitmap,
                 designWidth = snapshot.manifest.design.width,
                 designHeight = snapshot.manifest.design.height,
@@ -1214,7 +1215,7 @@ private fun LuaToolPopupDialog(
         }, initialGroup = initialApiGroup)
         return
     }
-    AlertDialog(
+    StudioConfirmDialog(
         onDismissRequest = onDismiss,
         title = { Text(popup.title, color = AutoScriptPalette.TextPrimary, fontSize = 16.sp) },
         text = {

@@ -18,6 +18,7 @@ internal data class SourceFileEntry(
     val sizeBytes: Long,
     val group: String?,
     val isEntry: Boolean,
+    val localVariableCount: Int = 0,
 )
 
 internal data class SourceFileTree(
@@ -63,6 +64,7 @@ internal class ProjectSourceFiles(
                 sizeBytes = file.length(),
                 group = groupOf[flow.flowId],
                 isEntry = flow.flowId == snapshot.manifest.entryFlowId,
+                localVariableCount = snapshot.manifest.variables.count { it.flowId == flow.flowId },
             )
         }
         return SourceFileTree(groups, entries)
@@ -81,8 +83,14 @@ internal class ProjectSourceFiles(
 
     fun copyFlow(snapshot: ProjectSnapshot, flowId: String, name: String): ProjectSnapshot {
         val flowIds = snapshot.flowIds()
-        return store.copyFlow(snapshot.manifest.projectId, flowId, freshFlowId(flowIds), name, flowIds)
+        val targetId = freshFlowId(flowIds)
+        val copied = store.copyFlow(snapshot.manifest.projectId, flowId, targetId, name, flowIds)
+        load(snapshot).entry(flowId)?.group?.let { addToGroup(copied, it, listOf(targetId)) }
+        return copied
     }
+
+    fun setEntry(snapshot: ProjectSnapshot, flowId: String): ProjectSnapshot =
+        store.setEntryFlow(snapshot.manifest.projectId, flowId, snapshot.manifest.entryFlowId, snapshot.flowIds())
 
     /** 逐个删除；入口 Flow 和仍被 `flow.call` 引用的 Flow 会被 Store 拒绝，失败原因逐条返回。 */
     fun deleteFlows(snapshot: ProjectSnapshot, flowIds: List<String>): SourceDeleteResult {
@@ -144,6 +152,12 @@ internal class ProjectSourceFiles(
     /** 没有被任何 `flow.call` 引用、又不是入口的 Flow（旧版“未调用插件”）。 */
     fun unreferencedFlows(snapshot: ProjectSnapshot): List<ProjectFlow> {
         val targets = snapshot.flowSources.values.flatMapTo(mutableSetOf(), ::flowCallTargets)
+        snapshot.manifest.runnerUi?.takeIf { it.has("version") }?.let { json ->
+            com.autoscript.script.ui.ScriptUiDefinition.parse(json.toString()).fields.forEach { field ->
+                field.ui?.events?.values?.filter { it.startsWith("flow:") }?.forEach { targets += it.removePrefix("flow:") }
+                field.ui?.binding?.takeIf { it.startsWith("flow:") }?.split(':')?.getOrNull(1)?.let(targets::add)
+            }
+        }
         return snapshot.manifest.flows.filter { it.flowId != snapshot.manifest.entryFlowId && it.flowId !in targets }
     }
 

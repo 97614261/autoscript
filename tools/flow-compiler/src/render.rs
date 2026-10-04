@@ -31,9 +31,9 @@ pub(crate) fn render_lua(
     writer.line("local __recognition_ticks = {}");
     writer.line("local function __recognition_visit(key, every) local tick = __recognition_ticks[key] or 0; __recognition_ticks[key] = (tick + 1) % every; return tick == 0 end");
     writer
-        .line("local function __checkpoint(flow, node, locals, globals, localTypes, globalTypes)");
+        .line("local function __checkpoint(flow, node, locals, globals, localTypes, globalTypes, localOverrides)");
     writer.line("  if not __autoscript_debug_capture then return end");
-    writer.line("  __autoscript_debug_snapshot = {flowId=flow,nodeId=node,locals=locals,globals=globals,localTypes=localTypes,globalTypes=globalTypes}");
+    writer.line("  __autoscript_debug_snapshot = {flowId=flow,nodeId=node,locals=locals,globals=globals,localTypes=localTypes,globalTypes=globalTypes,localOverrides=localOverrides}");
     writer.line("  if __autoscript_debug_target_node then");
     writer.line("    if flow ~= __autoscript_debug_target_flow or node ~= __autoscript_debug_target_node then return end");
     writer.line("    __autoscript_debug_target_node = nil; __autoscript_debug_target_flow = nil; __autoscript_debug_step = true");
@@ -82,10 +82,12 @@ pub(crate) fn render_lua(
     writer.line("end");
     let mut entries = Vec::new();
     if project.flows.iter().any(|flow| {
-        flow.document
-            .nodes
-            .iter()
-            .any(|node| node.envelope.kind == "variable.calculate")
+        flow.document.nodes.iter().any(|node| {
+            matches!(
+                node.envelope.kind.as_str(),
+                "variable.calculate" | "task.message"
+            )
+        })
     }) {
         for line in crate::variable_expression::LUA_HELPERS.lines() {
             writer.line(line);
@@ -147,7 +149,7 @@ pub(crate) fn render_lua(
         writer.line("  local __call_args = {}");
         writer.line("  local __last_return_values = {}");
         writer.line("  local __return_values = {}");
-        writer.line("  local function __checked_return()");
+        writer.line("  local function __checked_return(status)");
         if let Some(declaration) = &flow.declaration.returns {
             if !declaration.nullable {
                 writer.line(
@@ -166,6 +168,7 @@ pub(crate) fn render_lua(
                 "    if __return_values[1] ~= nil and ({invalid}) then error(\"插件返回类型不匹配\", 0) end"
             ));
         }
+        writer.line("    __return_values.__status = status ~= false");
         writer.line("    return __return_values");
         writer.line("  end");
         writer.indented(
@@ -378,9 +381,10 @@ fn render_flow_body<'a>(
                 writer.indented(
                     indent,
                     &format!(
-                        "__checkpoint({}, {}, __locals, __globals, __local_types, __global_types)",
+                        "__checkpoint({}, {}, __locals, __globals, __local_types, __global_types{})",
                         lua_string(flow_id)?,
                         lua_string(&node.envelope.node_id)?,
+                        if project.manifest.runner_ui.as_ref().is_some_and(|ui| ui.version == Some(2)) { ", __ui_bound" } else { "" },
                     ),
                 );
                 render_node(project, flow_id, node, indent, writer, entries, &mut events)?;
@@ -432,13 +436,13 @@ fn render_node<'a>(
                 entries,
             );
         }
-        "flow.call" | "task.spawn" | "timer.every" => {
+        "flow.call" | "flow.call.branch" | "task.spawn" | "timer.every" => {
             let call = project.calls.get(&node.envelope.node_id).ok_or_else(|| {
                 CompileError::Serialization("validated flow.call is missing".into())
             })?;
             let rendered = render_call(project, call)?;
             let kind = node.envelope.kind.as_str();
-            if kind == "flow.call" {
+            if matches!(kind, "flow.call" | "flow.call.branch") {
                 writer.indented(indent, &format!("__last_return_values = {rendered}"));
             } else {
                 // Freeze scalar arguments at registration, not at a future timer tick.
@@ -452,6 +456,46 @@ fn render_node<'a>(
                 writer.indented(indent,&format!("do local __payload={payload}; __vars[{}]={api}function() {function}(__payload) end) end",lua_string(call.result_variable.as_deref().unwrap_or("jobId"))?));
             }
             writer.indented(indent, "__call_args = {}");
+            if kind == "flow.call.branch" {
+                writer.indented(indent, "if __last_return_values.__status then");
+                events.push(RenderEvent::Line(indent, "end"));
+                events.push(RenderEvent::Block(
+                    child_block(node, "failure")?,
+                    indent + 1,
+                ));
+                events.push(RenderEvent::Line(indent, "else"));
+                events.push(RenderEvent::Block(
+                    child_block(node, "success")?,
+                    indent + 1,
+                ));
+            }
+            push_source_entry(
+                flow_id,
+                node,
+                writer.current_line(),
+                writer.current_line(),
+                entries,
+            );
+        }
+        "flow.status.return" => {
+            let success = node.envelope.args["success"]
+                .as_bool()
+                .ok_or_else(invalid_builtin_variant)?;
+            writer.indented(
+                indent,
+                &format!("do return __checked_return({success}) end"),
+            );
+            push_source_entry(
+                flow_id,
+                node,
+                writer.current_line(),
+                writer.current_line(),
+                entries,
+            );
+        }
+        "control.continue" => {
+            let owner = nearest_loop(project, flow_id, node).ok_or_else(invalid_builtin_variant)?;
+            writer.indented(indent, &format!("goto {}", continue_label(owner)));
             push_source_entry(
                 flow_id,
                 node,
@@ -579,6 +623,17 @@ fn render_node<'a>(
             );
         }
         "task.sleep"
+        | "data.length"
+        | "data.get"
+        | "data.set"
+        | "data.remove"
+        | "data.append"
+        | "data.keys"
+        | "data.text"
+        | "files.read"
+        | "files.write"
+        | "files.list"
+        | "files.remove"
         | "ui.get"
         | "ui.set"
         | "ui.command"
@@ -586,6 +641,7 @@ fn render_node<'a>(
         | "timer.cancel"
         | "task.log"
         | "task.prompt"
+        | "task.message"
         | "task.runprompt"
         | "input.tap"
         | "input.pointerdown"
@@ -605,6 +661,8 @@ fn render_node<'a>(
         | "vision.countcolor"
         | "vision.findallcolor"
         | "vision.findimage"
+        | "vision.findallimages"
+        | "vision.result"
         | "vision.findgray"
         | "ocr.alphanumeric"
         | "ocr.glyph"
@@ -645,6 +703,25 @@ fn render_node<'a>(
                 render_builtin(arguments, &key)?
             };
             writer.indented(indent, &rendered);
+            if let BuiltinNodeArgs::FindAllImages(v) = arguments {
+                writer.indented(
+                    indent,
+                    &format!(
+                        "if tonumber(Screen.matchValue(__vars[{}],0,\"count\")) > 0 then",
+                        lua_string(&v.result_variable)?
+                    ),
+                );
+                events.push(RenderEvent::Line(indent, "end"));
+                events.push(RenderEvent::Block(
+                    child_block(node, "failure")?,
+                    indent + 1,
+                ));
+                events.push(RenderEvent::Line(indent, "else"));
+                events.push(RenderEvent::Block(
+                    child_block(node, "success")?,
+                    indent + 1,
+                ));
+            }
             match arguments {
                 BuiltinNodeArgs::VariableCalculate(value) => writer.indented(
                     indent,
@@ -696,7 +773,7 @@ fn render_node<'a>(
         "control.repeat" => {
             render_repeat(project, flow_id, node, indent, writer, entries, events)?;
         }
-        "control.while" => {
+        "control.while" | "control.cycle" => {
             render_while(project, flow_id, node, indent, writer, entries, events)?;
         }
         _ => {
@@ -721,18 +798,20 @@ fn render_if<'a>(
     let BuiltinNodeArgs::If(arguments) = builtin_arguments(project, node)? else {
         return Err(invalid_builtin_variant());
     };
+    writer.indented(indent, "do");
+    writer.indented(
+        indent,
+        &format!("local __condition = {}", render_comparison(arguments)?),
+    );
     writer.indented(
         indent,
         &format!(
             "__autoscript_debug_event(\"jump\", {}, \"如果\", {})",
             lua_string(flow_id)?,
-            render_comparison(arguments)?,
+            "__condition",
         ),
     );
-    writer.indented(
-        indent,
-        &format!("if {} then", render_comparison(arguments)?),
-    );
+    writer.indented(indent, "if __condition then");
     push_source_entry(
         flow_id,
         node,
@@ -740,6 +819,7 @@ fn render_if<'a>(
         writer.current_line(),
         entries,
     );
+    events.push(RenderEvent::Line(indent, "end"));
     events.push(RenderEvent::Line(indent, "end"));
     events.push(RenderEvent::Block(child_block(node, "else")?, indent + 1));
     events.push(RenderEvent::Line(indent, "else"));
@@ -752,12 +832,16 @@ fn render_if<'a>(
             indent,
             format!(
                 "elseif {} then",
-                comparison_expression(
-                    &branch.variable,
-                    branch.operator,
-                    &branch.value,
-                    branch.value_variable.as_deref(),
-                )?
+                if let Some(tree) = &branch.condition {
+                    crate::compound_condition::render(tree)?
+                } else {
+                    comparison_expression(
+                        &branch.variable,
+                        branch.operator,
+                        &branch.value,
+                        branch.value_variable.as_deref(),
+                    )?
+                }
             ),
         ));
     }
@@ -823,7 +907,13 @@ fn render_repeat<'a>(
     push_source_entry(flow_id, node, start, writer.current_line(), entries);
     events.push(RenderEvent::Line(indent, "end"));
     events.push(RenderEvent::Line(indent + 1, "end"));
-    events.push(RenderEvent::Block(child_block(node, "body")?, indent + 2));
+    events.push(RenderEvent::OwnedLine(
+        indent + 2,
+        format!("::{}::", continue_label(node)),
+    ));
+    events.push(RenderEvent::Line(indent + 2, "end"));
+    events.push(RenderEvent::Block(child_block(node, "body")?, indent + 3));
+    writer.indented(indent + 2, "do");
     Ok(())
 }
 
@@ -879,6 +969,12 @@ fn render_while<'a>(
             }
         ),
     );
+    if arguments.yield_ms > 0 {
+        writer.indented(indent + 2, &format!("Task.sleep({})", arguments.yield_ms));
+        if arguments.duration_ms.is_some() || arguments.duration_variable.is_some() {
+            writer.indented(indent + 2, "if System.elapsedRealtimeMillis() - __loop_started_at >= __loop_duration then break end");
+        }
+    }
     writer.indented(indent + 2, "__iterations = __iterations + 1");
     writer.indented(
         indent + 2,
@@ -902,17 +998,24 @@ fn render_while<'a>(
             ),
         );
     }
-    writer.indented(
-        indent + 2,
-        &format!(
+    if arguments.max_iterations > 0 {
+        writer.indented(
+            indent + 2,
+            &format!(
             "if __iterations > {} then error(\"control.while iteration limit exceeded\", 0) end",
-            arguments.max_iterations
-        ),
-    );
+            arguments.max_iterations),
+        );
+    }
     push_source_entry(flow_id, node, start, writer.current_line(), entries);
     events.push(RenderEvent::Line(indent, "end"));
     events.push(RenderEvent::Line(indent + 1, "end"));
-    events.push(RenderEvent::Block(child_block(node, "body")?, indent + 2));
+    events.push(RenderEvent::OwnedLine(
+        indent + 2,
+        format!("::{}::", continue_label(node)),
+    ));
+    events.push(RenderEvent::Line(indent + 2, "end"));
+    events.push(RenderEvent::Block(child_block(node, "body")?, indent + 3));
+    writer.indented(indent + 2, "do");
     Ok(())
 }
 
@@ -924,6 +1027,13 @@ fn builtin_arguments<'a>(
         .builtins
         .get(&node.envelope.node_id)
         .ok_or_else(|| CompileError::Serialization("validated builtin node is missing".into()))
+}
+
+fn continue_label(node: &flow_ir::FlowNode) -> String {
+    format!(
+        "__continue_{}",
+        crate::digest::content_digest(node.envelope.node_id.as_bytes())
+    )
 }
 
 fn nearest_loop<'a>(
@@ -944,7 +1054,7 @@ fn nearest_loop<'a>(
             .find(|node| node.envelope.node_id == id)?;
         if matches!(
             owner.envelope.kind.as_str(),
-            "control.repeat" | "control.while"
+            "control.repeat" | "control.while" | "control.cycle"
         ) {
             return Some(owner);
         }
@@ -991,11 +1101,29 @@ fn render_builtin(arguments: &BuiltinNodeArgs, key: &str) -> Result<String, Comp
                 lua_string(args.result_variable.as_deref().unwrap_or(""))?
             ),
             "ui.set" => format!("UI.setValue({id},{value})"),
-            _ => format!("UI.command({id},{},{value})", lua_string(&args.operation)?),
+            _ => {
+                let call = format!("UI.command({id},{},{value})", lua_string(&args.operation)?);
+                if let Some(name) = args.result_variable.as_deref() {
+                    format!("__vars[{}] = {call}", lua_string(name)?)
+                } else {
+                    call
+                }
+            }
         });
     }
     match arguments {
         BuiltinNodeArgs::Ui(_,_) => unreachable!(),
+        BuiltinNodeArgs::Data(operation) => {
+            let operands = operation.operands.iter().map(|operand| {
+                if let Some(name) = operand.variable.as_deref() {
+                    lua_string(name).map(|key| format!("__vars[{key}]"))
+                } else { lua_string(&operand.literal) }
+            }).collect::<Result<Vec<_>, CompileError>>()?.join(",");
+            let call = format!("{}({operands})", operation.api);
+            Ok(if let Some(name) = operation.result_variable.as_deref() {
+                format!("__vars[{}] = {call}", lua_string(name)?)
+            } else { call })
+        }
         BuiltinNodeArgs::Sleep(value) => {
             if let Some(name) = &value.milliseconds_variable {
                 Ok(format!(
@@ -1022,6 +1150,16 @@ fn render_builtin(arguments: &BuiltinNodeArgs, key: &str) -> Result<String, Comp
                 None => lua_string(&value.message)?,
             };
             Ok(format!("Log.{level}({message})"))
+        }
+        BuiltinNodeArgs::Message(value) => {
+            let function = match value.channel {
+                crate::analyze::MessageChannel::Popup => "Prompt.toast",
+                crate::analyze::MessageChannel::Output => "Prompt.show",
+                crate::analyze::MessageChannel::Console => "Log.info",
+            };
+            let expression = crate::variable_expression::render(&value.expression)
+                .map_err(|error| CompileError::Serialization(error.to_owned()))?;
+            Ok(format!("do local __message=__calc_source({expression},'string'); if #__message > 2048 or not utf8.len(__message) then error('提示结果必须为合法UTF-8且不超过2048字节',0) end; {function}(__message) end"))
         }
         BuiltinNodeArgs::Prompt(value) => {
             let message = match value.value_variable.as_deref() {
@@ -1124,6 +1262,34 @@ fn render_builtin(arguments: &BuiltinNodeArgs, key: &str) -> Result<String, Comp
             ))
         }
         BuiltinNodeArgs::FindImage(value) => render_find_image(value, key, false),
+        BuiltinNodeArgs::FindAllImages(v) => {
+            let paths=serde_json::to_string(&v.image_paths).map_err(|e|CompileError::Serialization(e.to_string()))?;
+            let frame=if v.auto_capture { "Screen.cache(Screen.capture())".to_string() } else {format!("__vars[{}]",lua_string(&v.frame_variable)?)};
+            let release=if v.auto_capture { "Screen.release(__frame);" } else { "" };
+            let before = if v.before_wait_ms > 0 { format!("Task.sleep({});",v.before_wait_ms) } else { String::new() };
+            let after = if v.after_wait_ms > 0 { format!("Task.sleep({});",v.after_wait_ms) } else { String::new() };
+            let mut code = format!("do {before} local __frame={frame}; local __ok,__result=pcall(Screen.findAllImages,__frame,{},{},{},{},{},{},{},{},{}); {release} if not __ok then error(__result,0) end; __vars[{}]=__result;",
+                lua_string(&paths)?,v.tolerance,v.similarity_permille,v.region.left,v.region.top,v.region.right,v.region.bottom,v.direction,v.limit,lua_string(&v.result_variable)?);
+            if v.success_action != crate::analyze::RecognitionAction::None {
+                use crate::analyze::RecognitionAction;
+                code.push_str(&format!(" local __n=assert(tonumber(Screen.matchValue(__result,0,'count'))); for __i=1,{} do local __x=assert(tonumber(Screen.matchValue(__result,__i,'x')))+({}); local __y=assert(tonumber(Screen.matchValue(__result,__i,'y')))+({});", if v.all_matches {"__n"} else {"math.min(__n,1)"},v.offset_x,v.offset_y));
+                code.push_str(&match v.success_action {
+                    RecognitionAction::Tap => "Input.tapScreen(__x,__y);".into(),
+                    RecognitionAction::Hold => "Input.pointerDownScreen(__x,__y);".into(),
+                    RecognitionAction::TapWait => format!("Input.tapScreen(__x,__y); Task.sleep({});",v.action_duration_ms),
+                    RecognitionAction::PressRelease => format!("Input.pointerDownScreen(__x,__y); Task.sleep({}); Input.pointerUp();",v.action_duration_ms),
+                    RecognitionAction::None => unreachable!("action guard"),
+                });
+                code.push_str(" end;");
+            }
+            code.push_str(&format!(" {after} end"));
+            Ok(code)
+        },
+        BuiltinNodeArgs::MatchResult(v) => {
+            let call = format!("Screen.matchValue(__vars[{}],{},{})", lua_string(&v.source_variable)?, v.index, lua_string(&v.field)?);
+            let value = if v.field == "path" { format!("Data.text({call})") } else { format!("assert(tonumber({call}))") };
+            Ok(format!("__vars[{}] = {value}", lua_string(&v.target_variable)?))
+        }
         BuiltinNodeArgs::GlyphOcr(value) => render_glyph_ocr(value),
         BuiltinNodeArgs::Gray(v) => {
             let r = &v.region;
@@ -1468,6 +1634,9 @@ fn render_glyph_ocr(value: &crate::analyze::GlyphOcrArgs) -> Result<String, Comp
 }
 
 fn render_comparison(arguments: &crate::analyze::ComparisonArgs) -> Result<String, CompileError> {
+    if let Some(tree) = &arguments.condition {
+        return crate::compound_condition::render(tree);
+    }
     comparison_expression(
         &arguments.variable,
         arguments.operator,
@@ -1485,7 +1654,7 @@ fn render_while_comparison(arguments: &crate::analyze::WhileArgs) -> Result<Stri
     )
 }
 
-fn comparison_expression(
+pub(crate) fn comparison_expression(
     variable: &str,
     operator: ComparisonOperator,
     value: &Value,

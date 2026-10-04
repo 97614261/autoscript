@@ -7,6 +7,28 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualStepStateTest {
+    @Test fun lateSnapshotCannotReenableStepAfterStopNewReadOrRunning() {
+        val reply = RuntimeDebugReply(com.autoscript.runtime.api.RuntimeDebugReply.SUCCESS,
+            "main", "next", emptyList(), runtimeState = com.autoscript.runtime.api.RuntimeProtocol.STATE_PAUSED)
+        val state = VisualStepState()
+        repeat(100) {
+            val old = state.fetching()
+            state.reset()
+            val next = state.fetching()
+            assertFalse(state.fetched(old, reply))
+            assertTrue(state.loading)
+            assertTrue(state.fetched(next, reply))
+            assertTrue(state.begin())
+            state.reset()
+            assertFalse(state.fetched(next, reply))
+            assertFalse(state.begin())
+            val runningRead = state.fetching()
+            state.running()
+            assertFalse(state.fetched(runningRead, reply))
+            assertNull(state.position)
+        }
+    }
+
     @Test fun stepGateRejectsDoubleClicksAndUnlocksOnNextPause() {
         val state = VisualStepState()
         assertFalse(state.begin())

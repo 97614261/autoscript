@@ -118,12 +118,13 @@ private fun DesignerControlPreview(field: RunnerUiFieldDraft, scale: Float, dire
     val alignment = when (p.alignment) { "left" -> Alignment.CenterStart; "right" -> Alignment.CenterEnd; else -> Alignment.Center }
     val textAlign = when (p.alignment) { "left" -> TextAlign.Start; "right" -> TextAlign.End; else -> TextAlign.Center }
     val options = field.optionsText.split(',').map(String::trim).filter(String::isNotEmpty)
-    val shape = RoundedCornerShape((6 * scale).dp)
-    val framed = field.kind !in setOf(RunnerUiControlKind.LABEL, RunnerUiControlKind.IMAGE, RunnerUiControlKind.CONTAINER)
+    val shape = RoundedCornerShape((p.cornerPx * scale).dp)
     CompositionLocalProvider(LocalTextStyle provides TextStyle(fontSize = font, lineHeight = (font.value * 1.2f).sp,
+        fontWeight = if (p.fontBold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+        textDecoration = if (p.textUnderline) androidx.compose.ui.text.style.TextDecoration.Underline else androidx.compose.ui.text.style.TextDecoration.None,
         platformStyle = PlatformTextStyle(includeFontPadding = false))) {
         Box(Modifier.fillMaxSize().clip(shape).background(designerColor(p.background))
-            .then(if (framed) Modifier.border(.6.dp, DesignerColors.Line, shape) else Modifier)
+            .then(if (p.borderWidthPx > 0) Modifier.border((p.borderWidthPx * scale).dp, designerColor(p.borderColor), shape) else Modifier)
             .padding(horizontal = (4 * scale).dp), contentAlignment = alignment) {
             when (field.kind) {
                 RunnerUiControlKind.CONTAINER -> Box(Modifier.fillMaxSize().border(.5.dp, DesignerColors.Muted.copy(alpha = .45f))) {

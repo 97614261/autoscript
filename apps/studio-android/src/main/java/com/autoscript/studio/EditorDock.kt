@@ -3,9 +3,11 @@ package com.autoscript.studio
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,7 +36,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
@@ -97,6 +98,7 @@ internal fun EditorDock(
     programNodes: List<EditorProgramNode>? = null,
     programSource: String? = null,
     onReplaceProgramText: ((String, String, Boolean) -> String?)? = null,
+    onApplyProgramSource: (suspend (String, String) -> String?)? = null,
     programSelectedNodeId: String? = null,
     programCurrentNodeId: String? = null,
     executionStatus: String? = null,
@@ -163,6 +165,8 @@ internal fun EditorDock(
     onOpenInputFloatingPicker: ((ImageToolMode) -> Unit)? = null,
     inputPickOpenRequest: Int = 0,
     inputBackendFeatures: Int? = null,
+    onOpenPermissions: (() -> Unit)? = null,
+    onRefreshInputCapabilities: (() -> Unit)? = null,
     /** “工具 → 打开标注库”的项目图片列表页。 */
     onOpenImageLibrary: (() -> Unit)? = null,
     onTestRecognition: (() -> Unit)? = null,
@@ -190,6 +194,8 @@ internal fun EditorDock(
     }
     var searchingProgram by rememberSaveable(projectName, sourceName) { mutableStateOf(false) }
     var nodeEditorVisible by rememberSaveable(projectName, sourceName) { mutableStateOf(false) }
+    var nodeActionsVisible by rememberSaveable(projectName, sourceName) { mutableStateOf(false) }
+    var sourceEditorVisible by remember(projectName, sourceName) { mutableStateOf(false) }
     var inputActionDialogVisible by rememberSaveable(projectName, sourceName) { mutableStateOf(false) }
     var moreMenuVisible by rememberSaveable(projectName, sourceName) { mutableStateOf(false) }
     var reflectionVisible by rememberSaveable(projectName, sourceName) { mutableStateOf(false) }
@@ -228,12 +234,33 @@ internal fun EditorDock(
     }
     val effectiveSelection = if (externallyManaged) programSelectedNodeIds.ifEmpty { setOfNotNull(displayedSelectedNodeId) }
         else setOfNotNull(displayedSelectedNodeId)
+    fun editSelectedParameters() {
+        nodeEditorVisible = false
+        nodeActionsVisible = false
+        if (!editingEnabled || effectiveSelection.size != 1) return
+        if (externallyManaged) onProgramNodeEdited()
+        else treeNodes.firstOrNull { it.id == selectedNodeId }?.let { selected ->
+            editingNodeId = selected.id
+            if (selected.entry == EditorToolPanel.FUNCTIONS) functionLibrary = true else toolDialog = selected.entry
+        }
+    }
+    fun reuseSelectedParameters() {
+        nodeActionsVisible = false
+        if (!editingEnabled || effectiveSelection.size != 1) return
+        if (externallyManaged && onProgramNodeReflected != null) {
+            reflectionNodeId = displayedSelectedNodeId
+            reflectionSource = programSource
+            reflectionVisible = true
+        } else editSelectedParameters()
+    }
     fun requestDelete() {
         if (editingEnabled && effectiveSelection.isNotEmpty()) { deleteSource = programSource; deleteRequest = displayedTreeNodes to effectiveSelection }
     }
     LaunchedEffect(editingEnabled) {
         if (!editingEnabled) {
             nodeEditorVisible = false; toolDialog = null; functionLibrary = false
+            nodeActionsVisible = false
+            sourceEditorVisible = false
             inputActionDialogVisible = false; deleteRequest = null
             reflectionVisible = false; reflectionBranchVisible = false
         }
@@ -246,7 +273,7 @@ internal fun EditorDock(
                 ancestor >= 0 && legacyIsDescendant(originalNodes, ancestor, originalNodes[index].id)
             }
         }
-        AlertDialog(onDismissRequest = { deleteRequest = null }, title = { Text("删除积木") },
+        StudioConfirmDialog(onDismissRequest = { deleteRequest = null }, title = { Text("删除积木") },
             text = { Text(if (valid) "删除选中积木及其包含的子积木，共 $count 项？删除后可以撤销。" else "程序或选择已变化，请取消后重新选择。") },
             dismissButton = { TextButton(onClick = { deleteRequest = null }) { Text("取消") } },
             confirmButton = { TextButton(enabled = valid, onClick = {
@@ -292,9 +319,7 @@ internal fun EditorDock(
         val density = LocalDensity.current
         val ballSizePx = with(density) { 35.dp.toPx() }
         val minPanelWidthPx = with(density) { 210.dp.toPx() }
-        // 最小高度原来和默认值一样，缩放柄往下拖不动，所以放开到 260dp。
-        // 注意这低于右侧九个入口需要的 247dp + 头 35dp + 底 40dp，缩到最小时最后一两个入口会被裁掉；
-        // 参考那列是 match_parent 的非滚动 LinearLayout(service_tk.xml:24)，缩小时同样会裁，故不额外加滚动。
+        // Allow compact windows; the side actions scroll below their natural height.
         val minPanelHeightPx = with(density) { 260.dp.toPx() }
         val maxWidthPx = constraints.maxWidth.toFloat()
         val maxHeightPx = constraints.maxHeight.toFloat()
@@ -303,18 +328,10 @@ internal fun EditorDock(
         var ballY by rememberSaveable(projectName) { mutableFloatStateOf(Float.NaN) }
         var panelX by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 4.dp.toPx() }) }
         var panelY by rememberSaveable(projectName) { mutableFloatStateOf(Float.NaN) }
-        var panelWidthPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 232.dp.toPx() }) }
-        // 默认 324dp，由右侧九个入口撑出来，不能再按截图比例估。
-        // 参考 service_tk.xml:5 的根容器 line_tk_lashen_width 是 layout_height="wrap_content"，
-        // 即面板高度由内容决定；其中最高的一列就是 line_tk_right_bar(:24)：
-        //   padding 3dp×2 + 9×25dp + 边距(前八个各 1+1dp，第九个 1+3dp) = 251dp，
-        //   中段 :12 有 marginTop/Bottom = -5dp 抵掉 10dp → 实际占 241dp，
-        //   加头 35dp(:6) 与底部 5+5+25+5=40dp(:36-38) ≈ 316dp。
-        // 我们这列没有那对负边距，需要 9×27 + padding 2dp×2 = 247dp，
-        // 加头 35dp + 分隔线 1dp + 底栏 40dp = 323dp，故取 324dp。
-        // 曾按旧版截图「占屏高 37%」改成 300dp，结果第九个入口 AI 被挤出面板点不到——
-        // 旧版截图只有八个入口，不能用来定新版的高度。
-        var panelHeightPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 324.dp.toPx() }) }
+        var panelWidthPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 292.dp.toPx() }) }
+        // 40dp title + side actions + a 44dp footer. Smaller saved
+        // windows retain their size; side actions scroll instead of losing the AI entry.
+        var panelHeightPx by rememberSaveable(projectName) { mutableFloatStateOf(with(density) { 378.dp.toPx() }) }
         val effectiveMinPanelWidthPx = minPanelWidthPx.coerceAtMost(maxWidthPx)
         val effectiveMinPanelHeightPx = minPanelHeightPx.coerceAtMost(maxHeightPx)
         val effectivePanelWidthPx = panelWidthPx.coerceIn(effectiveMinPanelWidthPx, maxWidthPx)
@@ -406,8 +423,6 @@ internal fun EditorDock(
                 selectedNodeId = displayedSelectedNodeId,
                 currentNodeId = programCurrentNodeId,
                 executionStatus = executionStatus,
-                consoleVisible = consoleVisible,
-                consoleLines = consoleLines,
                 editingEnabled = editingEnabled,
                 running = running,
                 paused = paused,
@@ -428,7 +443,8 @@ internal fun EditorDock(
                 onStop = onStop,
                 onStep = onStep,
                 stepEnabled = stepEnabled,
-                canReflect = effectiveSelection.size == 1,
+                selectionCount = effectiveSelection.size,
+                selectedNodeIds = effectiveSelection,
                 onFunctions = {
                     if (editingEnabled) {
                         inputActionDialogVisible = false
@@ -450,9 +466,8 @@ internal fun EditorDock(
                 onTool = { entry ->
                     if (editingEnabled) {
                         if (entry == EditorToolPanel.IMAGE && onCreateImageBlock != null) {
-                            toolDialog = null
+                            toolDialog = EditorToolPanel.IMAGE
                             functionLibrary = false
-                            onCreateImageBlock("vision.findimage")
                         } else toolDialog = entry
                     }
                 },
@@ -483,24 +498,15 @@ internal fun EditorDock(
                         }
                     }
                 },
-                onDeleteNode = ::requestDelete,
-                onEditNode = {
-                    if (externallyManaged && onProgramNodeReflected != null) {
-                        reflectionNodeId = displayedSelectedNodeId
-                        reflectionSource = programSource
-                        reflectionVisible = true
-                    } else if (externallyManaged) {
-                        onProgramNodeEdited()
-                    } else treeNodes.firstOrNull { it.id == selectedNodeId }?.let { selected ->
-                        editingNodeId = selected.id
-                        if (selected.entry == EditorToolPanel.FUNCTIONS) {
-                            functionLibrary = true
-                        } else {
-                            toolDialog = selected.entry
+                onEditSelection = { if (externallyManaged) nodeEditorVisible = true else editSelectedParameters() },
+                onNodeActions = { nodeId ->
+                    if (editingEnabled) {
+                        if (nodeId !in effectiveSelection) {
+                            if (externallyManaged) onProgramNodeSelected(nodeId) else selectedNodeId = nodeId
                         }
+                        nodeActionsVisible = true
                     }
                 },
-                onOpenNodeEditor = { nodeEditorVisible = true },
                 onOpenMoreMenu = { moreMenuVisible = true },
                 onMoreAnchor = { moreAnchor = it },
                 onToggleConsole = { consoleVisible = !consoleVisible },
@@ -523,7 +529,7 @@ internal fun EditorDock(
             if (moreMenuVisible) {
                 Box(Modifier.fillMaxSize().clickable { moreMenuVisible = false })
                 val moreWidthPx = with(density) { 148.dp.toPx() }
-                val moreHeightPx = with(density) { 220.dp.toPx() }
+                val moreHeightPx = with(density) { 400.dp.toPx() }.coerceAtMost(maxHeightPx)
                 val anchor = moreAnchor
                 val moreX = ((anchor?.left?.minus(dockOrigin.x)) ?: effectivePanelX)
                     .coerceIn(0f, (maxWidthPx - moreWidthPx).coerceAtLeast(0f))
@@ -533,7 +539,7 @@ internal fun EditorDock(
                     modifier = Modifier.offset { IntOffset(moreX.roundToInt(), moreY.roundToInt()) }.heightIn(max = maxHeight),
                     onShowMain = { moreMenuVisible = false; onShowInterface?.invoke() },
                     canShowInterface = onShowInterface != null,
-                    canRecord = false, // Runtime has no recording event stream; the existing workspace is a preview only.
+                    canRecord = onOpenRecorder != null && editingEnabled && !running,
                     onRecord = {
                         moreMenuVisible = false
                         if (onOpenRecorder != null) onOpenRecorder() else toolDialog = EditorToolPanel.RECORDING
@@ -541,6 +547,7 @@ internal fun EditorDock(
                     onVariableCheck = { moreMenuVisible = false; toolDialog = EditorToolPanel.VARIABLE_CHECK },
                     onSearchReplace = { moreMenuVisible = false; searchingProgram = true },
                     onRuntimeVariables = { moreMenuVisible = false; toolDialog = EditorToolPanel.RUNTIME_VARIABLES },
+                    editingEnabled = editingEnabled && !running && !paused,
                 )
             }
         }
@@ -550,8 +557,9 @@ internal fun EditorDock(
         EditorInsertPositionDialog(
             hasSelection = displayedSelectedNodeId != null,
             canInsertInside = programNodes?.firstOrNull { it.nodeId == displayedSelectedNodeId }?.childSlots?.isNotEmpty() == true,
-            title = "参数反显 · 修改或复用",
-            initialPosition = EditorInsertPosition.REPLACE,
+            title = "以此为模板 · 选择加入位置",
+            initialPosition = EditorInsertPosition.BELOW,
+            allowReplace = false,
             onDismiss = { reflectionVisible = false },
             onConfirm = { position ->
                 reflectionVisible = false
@@ -565,7 +573,7 @@ internal fun EditorDock(
         )
     }
     if (reflectionBranchVisible && editingEnabled) {
-        AlertDialog(
+        StudioConfirmDialog(
             onDismissRequest = { reflectionBranchVisible = false },
             title = { Text("选择加入分支") },
             text = {
@@ -585,6 +593,13 @@ internal fun EditorDock(
         )
     }
 
+    if (nodeActionsVisible && editingEnabled) {
+        LaunchedEffect(Unit) {
+            nodeActionsVisible = false
+            if (externallyManaged) nodeEditorVisible = true else editSelectedParameters()
+        }
+    }
+
     if (nodeEditorVisible) {
         EditorNodeEditDialog(
             nodes = displayedTreeNodes,
@@ -594,17 +609,10 @@ internal fun EditorDock(
             onSelectNode = { nodeId ->
                 if (externallyManaged) onProgramNodeSelected(nodeId) else selectedNodeId = nodeId
             },
-            onEditSelected = {
-                nodeEditorVisible = false
-                if (externallyManaged) {
-                    onProgramNodeEdited()
-                } else {
-                    treeNodes.firstOrNull { it.id == selectedNodeId }?.let { selected ->
-                        editingNodeId = selected.id
-                        if (selected.entry == EditorToolPanel.FUNCTIONS) functionLibrary = true else toolDialog = selected.entry
-                    }
-                }
-            },
+            onEditSelected = ::editSelectedParameters,
+            onReuseSelected = if (externallyManaged && onProgramNodeReflected != null) {
+                { nodeEditorVisible = false; reuseSelectedParameters() }
+            } else null,
             onAnnotateSelected = onProgramNodeAnnotated?.let { annotate ->
                 { nodeEditorVisible = false; annotate() }
             },
@@ -614,8 +622,24 @@ internal fun EditorDock(
             canUndo = canUndoProgram,
             canRedo = canRedoProgram,
             canPaste = hasProgramClipboard,
+            onEditSource = onApplyProgramSource?.let { { nodeEditorVisible = false; sourceEditorVisible = true } },
             onDismiss = { nodeEditorVisible = false },
         )
+    }
+
+    if (consoleVisible) StudioPanelDialog(title = "运行日志", onDismiss = { consoleVisible = false }) {
+        Box(Modifier.fillMaxWidth().heightIn(max = 420.dp).height(360.dp)) { EditorConsolePanel(consoleLines) }
+    }
+    if (sourceEditorVisible && programSource != null && onApplyProgramSource != null && editingEnabled) {
+        val root = projectFlows.firstOrNull { it.flowId == currentFlowId }?.rootBlockId
+        if (root != null) androidx.compose.runtime.key(currentFlowId) {
+            val flow = projectFlows.first { it.flowId == currentFlowId }
+            val declared = projectVariables.filter {
+                it.scope == com.autoscript.project.store.ProjectVariableScope.GLOBAL || it.flowId == currentFlowId
+            }.map { it.name }.toSet() + flow.params.mapNotNull { it.get("name")?.takeIf { name -> name.isJsonPrimitive }?.asString }
+            PluginSourceEditorDialog(programSource, root, declared,
+                onApplyProgramSource, { sourceEditorVisible = false })
+        }
     }
 
     if (functionLibrary) {
@@ -656,6 +680,8 @@ internal fun EditorDock(
         VisualInputActionDialog(
             canPickPoint = onOpenInputPointPicker != null && editingEnabled,
             backendFeatures = inputBackendFeatures,
+            onOpenPermissions = onOpenPermissions,
+            onRefresh = onRefreshInputCapabilities,
             onDismiss = { inputActionDialogVisible = false },
             onPick = { mode ->
                 inputActionDialogVisible = false
@@ -672,7 +698,8 @@ internal fun EditorDock(
         PluginFileManagerDialog(
             tree = sourceTree,
             currentFlowId = currentFlowId,
-            title = "插件选择",
+            title = "项目插件",
+            projectName = projectName,
             busy = sourceBusy,
             message = sourceMessage,
             onManagePlugins = { pluginManagerVisible = true },
@@ -1087,9 +1114,9 @@ internal data class EditorProgramNode(
 private fun legacyEntryForKind(kind: String): EditorToolPanel = when {
     kind.startsWith("vision.") || kind.startsWith("ocr.") -> EditorToolPanel.IMAGE
     kind.startsWith("control.if") -> EditorToolPanel.JUDGMENT
-    kind.startsWith("control.repeat") || kind.startsWith("control.while") -> EditorToolPanel.LOOP
+    kind.startsWith("control.repeat") || kind.startsWith("control.while") || kind == "control.cycle" -> EditorToolPanel.LOOP
     kind.startsWith("file.") -> EditorToolPanel.FILES
-    kind.startsWith("debug.") || kind.startsWith("log.") -> EditorToolPanel.DEBUG
+    kind.startsWith("debug.") || kind.startsWith("log.") || kind in setOf("task.prompt", "task.runprompt", "task.message", "task.log", "task.comment") -> EditorToolPanel.DEBUG
     kind.startsWith("ai.") -> EditorToolPanel.AI
     kind.startsWith("function.") || kind == "flow.call" -> EditorToolPanel.FUNCTIONS
     else -> EditorToolPanel.COMMON
@@ -1127,8 +1154,6 @@ private fun EditorDockPanel(
     selectedNodeId: String?,
     currentNodeId: String?,
     executionStatus: String?,
-    consoleVisible: Boolean,
-    consoleLines: List<String>,
     editingEnabled: Boolean,
     running: Boolean,
     paused: Boolean,
@@ -1145,15 +1170,15 @@ private fun EditorDockPanel(
     onStop: () -> Unit,
     onStep: () -> Unit,
     stepEnabled: Boolean,
-    canReflect: Boolean,
+    selectionCount: Int,
+    selectedNodeIds: Set<String>,
     onFunctions: () -> Unit,
     onKeys: () -> Unit,
     onTool: (EditorToolPanel) -> Unit,
     onSelectNode: (String) -> Unit,
     onToggleNode: (String) -> Unit,
-    onDeleteNode: () -> Unit,
-    onEditNode: () -> Unit,
-    onOpenNodeEditor: () -> Unit,
+    onEditSelection: () -> Unit,
+    onNodeActions: (String) -> Unit,
     onOpenMoreMenu: () -> Unit,
     onMoreAnchor: (Rect) -> Unit,
     onToggleConsole: () -> Unit,
@@ -1240,33 +1265,42 @@ private fun EditorDockPanel(
             }
             Row(Modifier.fillMaxWidth().weight(1f)) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    if (consoleVisible) {
-                        EditorConsolePanel(consoleLines)
-                    } else if (hasSource) {
-                        Box(Modifier.fillMaxSize().horizontalScroll(treeHorizontalState)) {
-                            LazyColumn(
-                                state = treeListState,
-                                modifier = Modifier.width(960.dp).fillMaxHeight(),
-                            ) {
-                                itemsIndexed(visibleNodes, key = { _, node -> node.id }) { visibleIndex, node ->
-                                    val fullIndex = nodeIndexes[node.id] ?: -1
-                                    EditorProgramTreeRow(
-                                        node = node,
-                                        hasChildren = legacyHasChildren(nodes, fullIndex),
-                                        selected = selectedNodeId == node.id,
-                                        current = currentNodeId == node.id,
-                                        onSelect = { onSelectNode(node.id) },
-                                        onToggle = { onToggleNode(node.id) },
-                                    )
-                                    if (visibleIndex != visibleNodes.lastIndex) {
-                                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF0F1F4)))
+                    if (selectionCount > 1) {
+                        Box(Modifier.fillMaxWidth().height(20.dp).background(Color(0xFFF8FAFD)).padding(horizontal = 5.dp),
+                            contentAlignment = Alignment.CenterStart) {
+                            Text("已选 $selectionCount 项", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1)
+                        }
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        if (hasSource) {
+                            Box(Modifier.fillMaxSize().horizontalScroll(treeHorizontalState)) {
+                                LazyColumn(
+                                    state = treeListState,
+                                    modifier = Modifier.width(960.dp).fillMaxHeight(),
+                                ) {
+                                    itemsIndexed(visibleNodes, key = { _, node -> node.id }) { visibleIndex, node ->
+                                        val fullIndex = nodeIndexes[node.id] ?: -1
+                                        EditorProgramTreeRow(
+                                            node = node,
+                                            hasChildren = legacyHasChildren(nodes, fullIndex),
+                                            selected = node.id in selectedNodeIds,
+                                            current = currentNodeId == node.id,
+                                            onSelect = { onSelectNode(node.id) },
+                                            onToggle = { onToggleNode(node.id) },
+                                            onLongClick = { onNodeActions(node.id) },
+                                        )
+                                        if (visibleIndex != visibleNodes.lastIndex) {
+                                            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF0F1F4)))
+                                        }
                                     }
                                 }
                             }
+                        } else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("空任务", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp)
                         }
                     }
                 }
-                Column(modifier = Modifier.width(51.dp).padding(horizontal = 3.dp, vertical = 2.dp)) {
+                Column(modifier = Modifier.width(51.dp).verticalScroll(rememberScrollState()).padding(horizontal = 3.dp, vertical = 2.dp)) {
                     EditorDockAction("变量", editingEnabled, onManageVariables)
                     EditorDockAction("按键", editingEnabled, onKeys)
                     EditorDockAction("图像", editingEnabled) { onTool(EditorToolPanel.IMAGE) }
@@ -1279,27 +1313,40 @@ private fun EditorDockPanel(
                 }
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF0F1F4)))
-            Row(
-                modifier = Modifier.fillMaxWidth().height(40.dp).background(Color.White)
-                    .padding(start = 1.dp, top = 7.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                EditorBottomButton(
-                    if (paused) EditorBottomIcon.CONTINUE else if (running) EditorBottomIcon.PAUSE else EditorBottomIcon.RUN,
-                    if (paused) resumeEnabled else runEnabled,
-                    if (paused) onResume else if (running) onPause else onRun,
-                )
-                EditorBottomButton(EditorBottomIcon.STEP, hasSource && stepEnabled, onStep)
-                if (running) EditorBottomButton(EditorBottomIcon.STOP, runEnabled, onStop)
-                else EditorBottomButton(EditorBottomIcon.DELETE, editingEnabled && selectedNodeId != null, onDeleteNode)
-                EditorBottomButton(EditorBottomIcon.EDIT, editingEnabled && selectedNodeId != null, onOpenNodeEditor)
-                EditorBottomButton(EditorBottomIcon.BACKFILL, editingEnabled && selectedNodeId != null && canReflect, onEditNode)
-                EditorBottomButton(EditorBottomIcon.MORE, hasSource, onOpenMoreMenu,
-                    Modifier.onGloballyPositioned { onMoreAnchor(it.boundsInRoot()) })
-                EditorBottomButton(EditorBottomIcon.SWAP, true, onToggleConsole)
-                Spacer(Modifier.weight(1f))
-                ResizeHandle(Modifier.size(20.dp).padding(2.dp), onResize)
+            BoxWithConstraints(Modifier.fillMaxWidth().background(Color.White)) {
+                val entries = editorToolbarEntries(running, paused, runEnabled, resumeEnabled,
+                    stepEnabled, hasSource, editingEnabled)
+                val columns = editorToolbarColumns(maxWidth.value)
+                val rows = entries.chunked(columns)
+                val showLabels = maxWidth.value >= columns * 44 + 24
+                Row(Modifier.fillMaxWidth().height((rows.size * 44).dp)) {
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        rows.forEach { row ->
+                            Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+                                row.forEach { entry ->
+                                    val callback = when (entry.action) {
+                                        EditorToolbarAction.RUN -> onRun
+                                        EditorToolbarAction.PAUSE -> onPause
+                                        EditorToolbarAction.RESUME -> onResume
+                                        EditorToolbarAction.STOP -> onStop
+                                        EditorToolbarAction.STEP -> onStep
+                                        EditorToolbarAction.EDIT -> onEditSelection
+                                        EditorToolbarAction.LOG -> onToggleConsole
+                                        EditorToolbarAction.MORE -> onOpenMoreMenu
+                                        else -> error("Editing commands belong to the edit dialog")
+                                    }
+                                    EditorBottomButton(entry.action, entry.enabled, showLabels, callback,
+                                        Modifier.weight(1f).then(if (entry.action == EditorToolbarAction.MORE)
+                                            Modifier.onGloballyPositioned { onMoreAnchor(it.boundsInRoot()) } else Modifier))
+                                }
+                                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                    Box(Modifier.width(24.dp).fillMaxHeight(), contentAlignment = Alignment.BottomEnd) {
+                        ResizeHandle(Modifier.size(24.dp).padding(3.dp), onResize)
+                    }
+                }
             }
         }
     }
@@ -1311,29 +1358,43 @@ private fun EditorDockPanel(
  */
 @Composable
 private fun EditorConsolePanel(lines: List<String>) {
+    var query by remember { mutableStateOf("") }
+    var follow by remember { mutableStateOf(true) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val visible = remember(lines, query) { lines.takeLast(1000).filter { it.contains(query, ignoreCase = true) } }
     val listState = rememberLazyListState()
-    LaunchedEffect(lines.size) {
-        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
+    LaunchedEffect(visible.size, visible.lastOrNull(), follow) {
+        if (follow && visible.isNotEmpty()) listState.animateScrollToItem(visible.lastIndex)
     }
     Column(Modifier.fillMaxSize().background(Color.White)) {
-        if (lines.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("显示 ${visible.size} 项", fontSize = 10.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = { follow = !follow }) { Text(if (follow) "跟随最新 ✓" else "跟随最新", fontSize = 11.sp) }
+            TextButton(enabled = visible.isNotEmpty(), onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(visible.joinToString("\n")))
+            }) { Text("复制", fontSize = 11.sp) }
+        }
+        Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) { InspectorSearchField(query, { query = it.take(128) }, "筛选日志（最多显示最近1000项）") }
+        if (visible.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    "暂无运行记录\nRunner 状态/诊断与脚本调试日志显示在这里；面向脚本使用者的运行提示会单独显示",
+                    if (lines.isEmpty()) "暂无运行记录\nRunner 状态/诊断与脚本调试日志显示在这里；面向脚本使用者的运行提示会单独显示" else "没有符合筛选的日志",
                     color = Color(0xFF777777),
                     fontSize = 11.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp), state = listState) {
-                itemsIndexed(lines) { _, line ->
-                    Text(
-                        line,
-                        color = if (line.contains("诊断：") || line.endsWith("失败")) AutoScriptPalette.Danger else Color.Black,
-                        fontSize = 10.sp,
-                        modifier = Modifier.padding(vertical = 2.dp),
-                    )
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp), state = listState) {
+                itemsIndexed(visible) { _, line ->
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                            line,
+                            color = if (editorConsoleLineIsFailure(line)) AutoScriptPalette.Danger else Color.Black,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(vertical = 2.dp),
+                        )
+                    }
                 }
             }
         }
@@ -1350,13 +1411,15 @@ private fun EditorMorePopup(
     onVariableCheck: () -> Unit,
     onSearchReplace: () -> Unit,
     onRuntimeVariables: () -> Unit,
+    editingEnabled: Boolean,
 ) {
+    data class MenuRow(val label: String, @DrawableRes val icon: Int, val enabled: Boolean, val action: () -> Unit)
     val rows = listOf(
-        Triple("显示界面（预览）", R.drawable.editor_more_show_ui_24, onShowMain),
-        Triple(if (canRecord) "录制动作" else "录制动作（未接入）", R.drawable.editor_more_record_24, onRecord),
-        Triple("变量检查", R.drawable.editor_more_variable_check_24, onVariableCheck),
-        Triple("查找替换", R.drawable.editor_more_search_24, onSearchReplace),
-        Triple("变量信息", R.drawable.editor_more_runtime_variables_24, onRuntimeVariables),
+        MenuRow("界面预览", R.drawable.editor_more_show_ui_24, canShowInterface, onShowMain),
+        MenuRow(if (canRecord) "录制动作" else "录制动作（需Root支持）", R.drawable.editor_more_record_24, canRecord, onRecord),
+        MenuRow("变量检查", R.drawable.editor_more_variable_check_24, true, onVariableCheck),
+        MenuRow("查找替换", R.drawable.editor_more_search_24, editingEnabled, onSearchReplace),
+        MenuRow("运行变量", R.drawable.editor_more_runtime_variables_24, true, onRuntimeVariables),
     )
     Surface(
         modifier = modifier.width(148.dp),
@@ -1365,12 +1428,7 @@ private fun EditorMorePopup(
         shadowElevation = 8.dp,
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            rows.forEach { (label, icon, action) ->
-                val enabled = when (icon) {
-                    R.drawable.editor_more_show_ui_24 -> canShowInterface
-                    R.drawable.editor_more_record_24 -> canRecord
-                    else -> true
-                }
+            rows.forEach { (label, icon, enabled, action) ->
                 Row(
                     Modifier.fillMaxWidth().height(44.dp).clickable(enabled = enabled, onClick = action).padding(start = 8.dp, end = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1388,10 +1446,9 @@ private fun EditorMorePopup(
     }
 }
 
+
 /**
- * `tk_bjck.xml`（底栏“编辑”）：顶部 40dp 面包屑（选中节点的祖先链，8sp `lan3`），中间是带复选框的
- * 35dp 程序树行，底部两行 40dp 图标栏——第二行 撤销/恢复/上移/下移/左移/右移，第一行
- * 关闭/注释/删除/复制/粘贴/剪切。参数编辑放在标题行右侧，避免占用参考的注释入口。
+ * 有界多选小窗：顶部参数/模板与选择操作，中部滚动树，底部四列命令网格。
  */
 @Composable
 private fun EditorNodeEditDialog(
@@ -1401,6 +1458,7 @@ private fun EditorNodeEditDialog(
     onToggleNode: ((String) -> Unit)?,
     onSelectNode: (String) -> Unit,
     onEditSelected: () -> Unit,
+    onReuseSelected: (() -> Unit)?,
     onAnnotateSelected: (() -> Unit)?,
     onDeleteSelected: () -> Unit,
     disabledSelection: Boolean,
@@ -1408,6 +1466,7 @@ private fun EditorNodeEditDialog(
     canUndo: Boolean,
     canRedo: Boolean,
     canPaste: Boolean,
+    onEditSource: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val selectedIndex = nodes.indexOfFirst { it.id == selectedNodeId }
@@ -1415,24 +1474,22 @@ private fun EditorNodeEditDialog(
     val hasSelection = nodes.any { it.id in checkedIds }
     val singleSelection = selectedIndex >= 0 && checkedIds.size == 1
     val breadcrumb = remember(nodes, selectedIndex) { legacyBreadcrumb(nodes, selectedIndex) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxSize().padding(vertical = 5.dp),
-            color = Color.White,
-            shape = RoundedCornerShape(2.dp),
-            shadowElevation = 10.dp,
-        ) {
-            Column {
+    StudioPanelDialog(title = "编辑 · 已选 ${checkedIds.size} 项", onDismiss = onDismiss) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
                 Row(Modifier.fillMaxWidth().padding(5.dp).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         if (checkedIds.size > 1) "已选择 ${checkedIds.size} 个节点（包含子树）" else breadcrumb.ifBlank { "请选择程序节点" },
                         color = EditorBlue,
-                        fontSize = 8.sp,
+                        fontSize = 11.sp,
                         lineHeight = 12.sp,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f).padding(start = 5.dp),
                     )
+                    onReuseSelected?.let { reuse ->
+                        Text("以此为模板", color = if (singleSelection) EditorBlue else EditorDisabledBlue, fontSize = 11.sp,
+                            modifier = Modifier.clickable(enabled = singleSelection, onClick = reuse).padding(horizontal = 8.dp, vertical = 8.dp))
+                    }
                     Text(
                         "参数",
                         color = if (singleSelection) EditorBlue else EditorDisabledBlue,
@@ -1440,6 +1497,20 @@ private fun EditorNodeEditDialog(
                         modifier = Modifier.clickable(enabled = singleSelection, onClick = onEditSelected)
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
+                }
+                Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
+                    onEditSource?.let { edit ->
+                        Text("源码", fontSize = 11.sp, color = EditorBlue,
+                            modifier = Modifier.weight(1f).fillMaxHeight().clickable(onClick = edit).wrapContentSize(Alignment.Center))
+                    }
+                    Text("全选（最多256项）", fontSize = 11.sp, color = EditorBlue,
+                        modifier = Modifier.weight(1f).fillMaxHeight().clickable(enabled = onToggleNode != null) {
+                            editorSelectionToggleIds(nodes.map { it.id }, checkedIds, selectAll = true).forEach { onToggleNode?.invoke(it) }
+                        }.wrapContentSize(Alignment.Center))
+                    Text("清除选择", fontSize = 11.sp, color = EditorBlue,
+                        modifier = Modifier.weight(1f).fillMaxHeight().clickable(enabled = onToggleNode != null) {
+                            editorSelectionToggleIds(nodes.map { it.id }, checkedIds, selectAll = false).forEach { onToggleNode?.invoke(it) }
+                        }.wrapContentSize(Alignment.Center))
                 }
                 Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                 LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
@@ -1474,33 +1545,27 @@ private fun EditorNodeEditDialog(
                     }
                 }
                 Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
-                Row(
-                    Modifier.fillMaxWidth().height(40.dp).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    EditorDockToolbarItem(R.drawable.visual_undo_24, "撤销", canUndo) { onCommand(EditorProgramCommand.UNDO) }
-                    EditorDockToolbarItem(R.drawable.visual_redo_24, "恢复", canRedo) { onCommand(EditorProgramCommand.REDO) }
-                    EditorDockToolbarItem(R.drawable.ic_arrow_right_24, "上移", hasSelection, rotation = -90f) { onCommand(EditorProgramCommand.MOVE_UP) }
-                    EditorDockToolbarItem(R.drawable.ic_arrow_right_24, "下移", hasSelection, rotation = 90f) { onCommand(EditorProgramCommand.MOVE_DOWN) }
-                    EditorDockToolbarItem(R.drawable.ic_arrow_right_24, "左移", hasSelection, rotation = 180f) { onCommand(EditorProgramCommand.OUTDENT) }
-                    EditorDockToolbarItem(R.drawable.ic_arrow_right_24, "右移", hasSelection) { onCommand(EditorProgramCommand.INDENT) }
-                }
-                Row(
-                    Modifier.fillMaxWidth().height(40.dp).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    EditorDockToolbarItem(R.drawable.editor_close_24, "关闭", true, onClick = onDismiss)
-                    EditorDockToolbarItem(R.drawable.editor_edit_24, "说明", singleSelection && onAnnotateSelected != null) { onAnnotateSelected?.invoke() }
-                    EditorDockToolbarItem(R.drawable.editor_edit_24, if (disabledSelection) "恢复执行" else "禁用", hasSelection) { onCommand(EditorProgramCommand.TOGGLE_DISABLED) }
-                    EditorDockToolbarItem(R.drawable.editor_delete_24, "删除", hasSelection, onClick = onDeleteSelected)
-                    EditorDockToolbarItem(R.drawable.editor_file_copy_24, "复制", hasSelection) { onCommand(EditorProgramCommand.COPY) }
-                    EditorDockToolbarItem(R.drawable.editor_file_paste_24, "粘贴", canPaste) { onCommand(EditorProgramCommand.PASTE) }
-                    EditorDockToolbarItem(R.drawable.ic_content_cut_24, "剪切", hasSelection) { onCommand(EditorProgramCommand.CUT) }
+                data class Command(val icon: Int, val title: String, val enabled: Boolean, val rotation: Float = 0f, val click: () -> Unit)
+                val commands = listOf(
+                    Command(R.drawable.visual_undo_24, "撤销", canUndo) { onCommand(EditorProgramCommand.UNDO) },
+                    Command(R.drawable.visual_redo_24, "重做", canRedo) { onCommand(EditorProgramCommand.REDO) },
+                    Command(R.drawable.editor_file_copy_24, "复制", hasSelection) { onCommand(EditorProgramCommand.COPY) },
+                    Command(R.drawable.editor_file_paste_24, "粘贴", canPaste) { onCommand(EditorProgramCommand.PASTE) },
+                    Command(R.drawable.ic_arrow_right_24, "上移", hasSelection, -90f) { onCommand(EditorProgramCommand.MOVE_UP) },
+                    Command(R.drawable.ic_arrow_right_24, "下移", hasSelection, 90f) { onCommand(EditorProgramCommand.MOVE_DOWN) },
+                    Command(R.drawable.ic_arrow_right_24, "减少缩进", hasSelection, 180f) { onCommand(EditorProgramCommand.OUTDENT) },
+                    Command(R.drawable.ic_arrow_right_24, "增加缩进", hasSelection) { onCommand(EditorProgramCommand.INDENT) },
+                    Command(R.drawable.ic_content_cut_24, "剪切", hasSelection) { onCommand(EditorProgramCommand.CUT) },
+                    Command(R.drawable.editor_edit_24, "注释", singleSelection && onAnnotateSelected != null) { onAnnotateSelected?.invoke() },
+                    Command(R.drawable.editor_edit_24, if (disabledSelection) "恢复执行" else "禁用", hasSelection) { onCommand(EditorProgramCommand.TOGGLE_DISABLED) },
+                    Command(R.drawable.editor_delete_24, "删除", hasSelection, click = onDeleteSelected),
+                )
+                commands.chunked(4).forEach { row ->
+                    Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+                        row.forEach { item -> EditorDockToolbarItem(item.icon, item.title, item.enabled, Modifier.weight(1f), item.rotation, item.click) }
+                    }
                 }
             }
-        }
     }
 }
 
@@ -1526,16 +1591,18 @@ private fun EditorDockToolbarItem(
     @DrawableRes icon: Int,
     label: String,
     enabled: Boolean,
+    modifier: Modifier = Modifier,
     rotation: Float = 0f,
     onClick: () -> Unit,
 ) {
     val tint = if (enabled) EditorBlue else EditorDisabledBlue
     Column(
-        Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 15.dp, vertical = 3.dp),
+        modifier.height(44.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 2.dp, vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(painterResource(icon), contentDescription = label, tint = tint, modifier = Modifier.size(20.dp).rotate(rotation))
-        Text(label, color = tint, fontSize = 8.sp)
+        Text(label, color = tint, fontSize = 10.sp, maxLines = 1, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
     }
 }
 
@@ -1552,6 +1619,7 @@ private fun legacyVisibleTreeNodes(nodes: List<EditorTreeNode>): List<EditorTree
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EditorProgramTreeRow(
     node: EditorTreeNode,
@@ -1560,11 +1628,12 @@ private fun EditorProgramTreeRow(
     current: Boolean,
     onSelect: () -> Unit,
     onToggle: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().height(35.dp)
             .background(if (current) Color(0xFFFFE6AA) else if (selected) Color(0xFFE7EEFF) else Color.White)
-            .clickable(onClick = onSelect)
+            .combinedClickable(onClick = onSelect, onLongClick = onLongClick, onLongClickLabel = "积木操作")
             .padding(start = (5 + node.depth * 12).dp, end = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1581,97 +1650,81 @@ private fun EditorProgramTreeRow(
                 )
             }
         }
-        Text(
-            (if (current) "▶ 下一步 · " else "") + node.label,
-            // item_tree_list 的 tv_name 是纯黑 #000000，不是偏蓝的深灰。
-            color = Color.Black,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 1.dp, top = 8.dp, end = 4.dp),
-        )
+        Box(Modifier.weight(1f).fillMaxHeight().padding(start = 1.dp, end = 4.dp), contentAlignment = Alignment.CenterStart) {
+            Text(
+                (if (current) "▶ 下一步 · " else "") + node.label,
+                color = Color.Black,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+            )
+        }
     }
 }
 
 @Composable
 private fun EditorProgramSearchDialog(
-    nodes: List<EditorTreeNode>,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit,
-    onReplace: ((String, String, Boolean) -> String?)?,
-    programSource: String?,
+    nodes: List<EditorTreeNode>, onDismiss: () -> Unit, onSelect: (String) -> Unit,
+    onReplace: ((String, String, Boolean) -> String?)?, programSource: String?,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var replacement by rememberSaveable { mutableStateOf("") }
+    var mode by rememberSaveable { mutableStateOf("find") }
     var selectionOnly by rememberSaveable { mutableStateOf(false) }
+    var confirmSource by remember { mutableStateOf<String?>(null) }
     var confirmReplace by remember { mutableStateOf(false) }
     var replaceError by remember { mutableStateOf<String?>(null) }
     val argumentText = remember(programSource) {
         programSource.orEmpty().lineSequence().filter(String::isNotBlank).mapNotNull { line ->
-            runCatching { val json = com.google.gson.JsonParser.parseString(line).asJsonObject; json.get("nodeId").asString to json.get("args").toString() }.getOrNull()
+            runCatching {
+                val json = com.google.gson.JsonParser.parseString(line).asJsonObject
+                json.get("nodeId").asString to json.get("args").toString()
+            }.getOrNull()
         }.toMap()
     }
-    val matches = remember(nodes, query, argumentText) {
-        val normalized = query.trim()
-        if (normalized.isEmpty()) nodes.take(100)
-        else nodes.filter { node ->
-            node.label.contains(normalized, ignoreCase = true) ||
-                node.code.contains(normalized, ignoreCase = true) || argumentText[node.id]?.contains(normalized, ignoreCase = true) == true
-        }.take(100)
-    }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().widthIn(max = 430.dp),
-            color = Color.White,
-            shape = RoundedCornerShape(3.dp),
-            shadowElevation = 8.dp,
-        ) {
-            Column(Modifier.padding(10.dp)) {
-                Text("查找 / 替换文字", color = EditorBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                BasicTextField(
-                    value = query,
-                    onValueChange = { query = it.take(80) },
-                    singleLine = true,
-                    textStyle = TextStyle(color = Color(0xFF202839), fontSize = 13.sp),
-                    modifier = Modifier.padding(top = 9.dp).fillMaxWidth().height(34.dp)
-                        .border(1.dp, EditorBorder, RoundedCornerShape(3.dp))
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                )
-                if (onReplace != null) {
-                    Text("替换为（可留空）", fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
-                    BasicTextField(replacement, { replacement = it.take(2048); replaceError = null },
-                        textStyle = TextStyle(fontSize = 13.sp), modifier = Modifier.fillMaxWidth().height(34.dp)
-                            .border(1.dp, EditorBorder, RoundedCornerShape(3.dp)).padding(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(selectionOnly, { selectionOnly = it })
-                        Text("仅选中积木及子树", fontSize = 11.sp)
-                    }
-                    Text("大小写敏感，仅替换提示、日志、说明和字符串固定值；不修改变量名、资源路径或跳转标记。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                    replaceError?.let { Text(it, fontSize = 11.sp, color = Color.Red) }
-                    TextButton(enabled = query.isNotEmpty(), onClick = { confirmReplace = true }) { Text("替换匹配文字") }
-                }
-                LazyColumn(Modifier.fillMaxWidth().height(245.dp).padding(top = 6.dp)) {
-                    itemsIndexed(matches, key = { _, node -> node.id }) { _, node ->
-                        Row(
-                            Modifier.fillMaxWidth().height(36.dp).clickable { onSelect(node.id) }
-                                .padding(start = (5 + node.depth.coerceAtMost(12) * 8).dp, end = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(node.label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    EditorDialogTextButton("关闭", onDismiss)
-                }
-            }
+    val allMatches = remember(nodes, query, argumentText) {
+        if (query.isEmpty()) emptyList() else nodes.filter { node ->
+            node.label.contains(query, ignoreCase = true) || node.code.contains(query, ignoreCase = true) ||
+                argumentText[node.id]?.contains(query, ignoreCase = true) == true
         }
     }
-    if (confirmReplace) AlertDialog(onDismissRequest = { confirmReplace = false },
-        title = { Text("确认文字替换") }, text = { Text("替换${if (selectionOnly) "所选子树" else "当前插件"}中的匹配文字？可撤销。") },
+    StudioPanelDialog("查找替换", onDismiss) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 430.dp).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (onReplace != null) InspectorFilterRow(listOf("find" to "查找", "replace" to "替换"), mode) { mode = it }
+            InspectorSearchField(query, { query = it.take(80); replaceError = null }, "输入积木名称、类型或参数")
+            if (mode == "replace" && onReplace != null) {
+                InspectorSearchField(replacement, { replacement = it.take(2048); replaceError = null }, "替换为（可留空删除文字）")
+                InspectorFilterRow(listOf("all" to "当前插件", "selection" to "选中积木及子树"),
+                    if (selectionOnly) "selection" else "all") { selectionOnly = it == "selection" }
+                Text("替换区分大小写，仅修改 message / value 字符串；变量名、表达式、路径和标记不变。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                TextButton(enabled = query.isNotEmpty() && query != replacement, onClick = {
+                    confirmSource = programSource; confirmReplace = true
+                }, modifier = Modifier.fillMaxWidth()) { Text("确认范围并替换") }
+            }
+            replaceError?.let { Text(it, fontSize = 11.sp, color = AutoScriptPalette.Danger) }
+            Text(if (query.isEmpty()) "输入关键词后显示结果" else "匹配 ${allMatches.size} 项 · 显示前 ${allMatches.size.coerceAtMost(100)} 项 · 点击定位", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+            LazyColumn(Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 230.dp)) {
+                itemsIndexed(allMatches.take(100), key = { _, node -> node.id }) { _, node ->
+                    Row(Modifier.fillMaxWidth().heightIn(min = 38.dp).clickable { onSelect(node.id) }.padding(6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(node.label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text("定位 ›", color = EditorBlue, fontSize = 10.sp)
+                    }
+                    Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
+                }
+            }
+            if (query.isNotEmpty() && allMatches.isEmpty()) Text("没有匹配的积木。", fontSize = 12.sp)
+        }
+    }
+    if (confirmReplace) StudioConfirmDialog(onDismissRequest = { confirmReplace = false },
+        title = { Text("确认文字替换") },
+        text = { Text("在${if (selectionOnly) "选中积木及子树" else "当前插件"}内，将“$query”替换为“$replacement”？仅修改字符串正文，可撤销。") },
         dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text("取消") } },
         confirmButton = { TextButton(onClick = {
-            confirmReplace = false; replaceError = onReplace?.invoke(query, replacement, selectionOnly)
+            confirmReplace = false
+            replaceError = if (confirmSource != programSource) "程序已变化，请重新确认替换"
+                else onReplace?.invoke(query, replacement, selectionOnly)
         }) { Text("替换") } })
 }
 
@@ -1812,34 +1865,43 @@ private fun RowScope.EditorBallControl(label: String, enabled: Boolean, color: C
     }
 }
 
-private enum class EditorBottomIcon(@DrawableRes val drawable: Int, val description: String) {
-    RUN(R.drawable.editor_run_24, "运行"),
-    CONTINUE(R.drawable.editor_run_24, "继续运行"),
-    PAUSE(R.drawable.editor_pause_24, "暂停运行"),
-    STOP(R.drawable.editor_stop_24, "停止"),
-    STEP(R.drawable.editor_step_run_24, "单步运行"),
-    DELETE(R.drawable.editor_delete_24, "删除"),
-    EDIT(R.drawable.editor_edit_24, "编辑"),
-    BACKFILL(R.drawable.editor_backfill_24, "参数反显"),
-    MORE(R.drawable.editor_more_24, "更多工具"),
-    SWAP(R.drawable.editor_swap_24, "切换程序树/控制台日志"),
-}
-
 @Composable
-private fun EditorBottomButton(icon: EditorBottomIcon, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val tint = when (icon) {
-        EditorBottomIcon.RUN, EditorBottomIcon.CONTINUE -> if (enabled) Color(0xFF9ADDB7) else EditorDisabledBlue
-        EditorBottomIcon.STOP -> if (enabled) Color(0xFFE55353) else EditorDisabledBlue
-        EditorBottomIcon.SWAP -> EditorBlue
+private fun EditorBottomButton(action: EditorToolbarAction, enabled: Boolean, showLabel: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val tint = when (action) {
+        EditorToolbarAction.RUN, EditorToolbarAction.RESUME -> if (enabled) Color(0xFF38B36D) else EditorDisabledBlue
+        EditorToolbarAction.STOP, EditorToolbarAction.DELETE -> if (enabled) Color(0xFFE55353) else EditorDisabledBlue
         else -> if (enabled) EditorBlue else EditorDisabledBlue
     }
-    Box(modifier.width(30.dp).height(25.dp).clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
+    val drawable = when (action) {
+        EditorToolbarAction.RUN, EditorToolbarAction.RESUME -> R.drawable.editor_run_24
+        EditorToolbarAction.PAUSE -> R.drawable.editor_pause_24
+        EditorToolbarAction.STOP -> R.drawable.editor_stop_24
+        EditorToolbarAction.STEP -> R.drawable.editor_step_run_24
+        EditorToolbarAction.EDIT -> R.drawable.editor_edit_24
+        EditorToolbarAction.LOG -> R.drawable.editor_log_24
+        EditorToolbarAction.UNDO -> R.drawable.visual_undo_24
+        EditorToolbarAction.REDO -> R.drawable.visual_redo_24
+        EditorToolbarAction.MORE -> R.drawable.editor_more_24
+        EditorToolbarAction.COPY -> R.drawable.editor_file_copy_24
+        EditorToolbarAction.PASTE -> R.drawable.editor_file_paste_24
+        EditorToolbarAction.DELETE -> R.drawable.editor_delete_24
+        EditorToolbarAction.MOVE_UP, EditorToolbarAction.MOVE_DOWN -> R.drawable.ic_arrow_right_24
+        EditorToolbarAction.ORGANIZE -> R.drawable.editor_more_24
+    }
+    Column(modifier.fillMaxHeight().clickable(enabled = enabled, onClick = onClick),
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
-            painter = painterResource(icon.drawable),
-            contentDescription = icon.description,
+            painter = painterResource(drawable),
+            contentDescription = action.label,
             tint = tint,
-            modifier = Modifier.size(25.dp),
+            modifier = Modifier.size(20.dp).rotate(when (action) {
+                EditorToolbarAction.MOVE_UP -> -90f
+                EditorToolbarAction.MOVE_DOWN -> 90f
+                else -> 0f
+            }),
         )
+        if (showLabel) Text(action.label, color = tint, fontSize = 9.sp, maxLines = 1,
+            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
     }
 }
 
@@ -1849,7 +1911,7 @@ private fun ResizeHandle(modifier: Modifier, onResize: (Offset) -> Unit) {
     Icon(
         painter = painterResource(R.drawable.editor_resize_24),
         contentDescription = "调整窗口大小",
-        tint = Color.Unspecified,
+        tint = EditorBlue.copy(alpha = .6f),
         modifier = modifier.pointerInput(Unit) {
             detectDragGestures { change, delta ->
                 change.consume()
@@ -1913,8 +1975,8 @@ private fun EditorToolPanelDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(5.dp), color = Color(0xFFF6F6F6)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("录制动作 · 未接入", color = EditorDockGreenDark, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                Text("Runtime 尚未提供真实输入事件流，当前不能录制动作。", fontSize = 13.sp, color = Color(0xFF596270))
+                Text("录制动作 · 需Root支持", color = EditorDockGreenDark, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                Text("请在可视化插件编辑器中使用；需要Root后端就绪、受支持的输入设备与悬浮窗权限。", fontSize = 13.sp, color = Color(0xFF596270))
                 Text("关闭", modifier = Modifier.fillMaxWidth().border(1.dp, FunctionLibraryBlue, RoundedCornerShape(3.dp)).clickable(onClick = onDismiss).padding(10.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = FunctionLibraryBlue)
             }
         }

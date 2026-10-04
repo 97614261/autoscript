@@ -3,6 +3,8 @@ mod model;
 mod order_key;
 mod project;
 mod runner_ui;
+#[cfg(test)]
+mod ui_budget_tests;
 mod validation;
 
 pub use codec::{encode_canonical, load_jsonl, EncodeError};

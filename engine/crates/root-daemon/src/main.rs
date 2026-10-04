@@ -1,4 +1,7 @@
 #[cfg(target_os = "android")]
+mod input_recording;
+
+#[cfg(target_os = "android")]
 mod android {
     use std::ffi::CString;
     use std::fs;
@@ -71,6 +74,7 @@ mod android {
         if input_bridge.is_some() || supports_pointer_commands() {
             capability_bits |= Capabilities::INPUT_POINTER_SINGLE;
         }
+        let recording = Arc::new(super::input_recording::RecordingHub::default());
         let dispatcher = Arc::new(Mutex::new(AndroidDispatcher {
             input_bridge,
             next_capture_id: 0,
@@ -78,6 +82,7 @@ mod android {
             active_pointer: None,
             pointer_owner: 0,
             cancellation: InputCancellation::default(),
+            recording: recording.clone(),
         }));
         let fence = Arc::new(InputFence::default());
         // This guard is owned by the business connection, not the detached control thread.
@@ -93,7 +98,9 @@ mod android {
             arguments.idle_timeout,
             dispatcher.clone(),
             fence.clone(),
+            recording,
         )?;
+        capability_bits |= Capabilities::INPUT_RECORDING;
         let mut session = DaemonSession::new(
             key,
             peer_uid,
@@ -289,6 +296,7 @@ mod android {
         input_bridge: Option<RootInputProcess>,
         pointer_owner: u64,
         cancellation: InputCancellation,
+        recording: Arc<super::input_recording::RecordingHub>,
     }
 
     struct SharedDispatcher {
@@ -303,6 +311,7 @@ mod android {
         fn drop(&mut self) {
             self.fence.cancel_through(u64::MAX);
             if let Ok(mut dispatcher) = self.dispatcher.lock() {
+                dispatcher.recording.cancel_all();
                 dispatcher.cancellation = InputCancellation::default();
                 if let Some((_, x, y)) = dispatcher.active_pointer {
                     if dispatcher.inject_pointer(1, x, y) == StatusCode::Ok {
@@ -324,6 +333,7 @@ mod android {
                 | Command::PointerDown
                 | Command::PointerMove
                 | Command::PointerUp
+                | Command::RecordingStart
         )
     }
     impl CommandDispatcher for SharedDispatcher {
@@ -331,6 +341,9 @@ mod android {
             let mut dispatcher = self.dispatcher.lock().map_err(|_| DispatchError)?;
             if !input_command(frame.command) {
                 return dispatcher.dispatch(frame);
+            }
+            if dispatcher.recording.active() {
+                return Ok(empty_response(StatusCode::InvalidRequest));
             }
             let Some(token) = self.fence.begin(frame.request_id) else {
                 return Ok(empty_response(if self.fence.is_failed() {
@@ -344,6 +357,9 @@ mod android {
             let result = dispatcher.dispatch(frame);
             self.fence.finish(frame.request_id);
             if token.is_cancelled() {
+                if frame.command == Command::RecordingStart {
+                    dispatcher.recording.cancel_all();
+                }
                 Ok(empty_response(StatusCode::Cancelled))
             } else {
                 result
@@ -353,13 +369,27 @@ mod android {
     struct StopDispatcher {
         dispatcher: Arc<Mutex<AndroidDispatcher>>,
         fence: Arc<InputFence>,
+        recording: Arc<super::input_recording::RecordingHub>,
     }
     impl CommandDispatcher for StopDispatcher {
         fn dispatch(&mut self, frame: &Frame) -> Result<DispatchResponse, DispatchError> {
+            if frame.command == Command::RecordingFinish {
+                let finish = root_protocol::recording::RecordingFinish::decode(&frame.payload)
+                    .map_err(|_| DispatchError)?;
+                return Ok(match self.recording.finish(finish) {
+                    Ok(result) => DispatchResponse {
+                        status: StatusCode::Ok,
+                        payload: result.encode(),
+                    },
+                    Err(_) => empty_response(StatusCode::InvalidRequest),
+                });
+            }
             if frame.command != Command::Cancel {
                 return Ok(empty_response(StatusCode::InvalidRequest));
             }
             let cutoff = read_u64(&frame.payload, 0);
+            // Recording has its own token; even an otherwise stale runtime-stop must cancel it.
+            self.recording.cancel_all();
             // Stale stop acknowledges without waiting for a newer long gesture's mutex.
             if !self.fence.cancel_through(cutoff) {
                 return Ok(empty_response(StatusCode::Ok));
@@ -391,6 +421,7 @@ mod android {
         idle: Duration,
         dispatcher: Arc<Mutex<AndroidDispatcher>>,
         fence: Arc<InputFence>,
+        recording: Arc<super::input_recording::RecordingHub>,
     ) -> Result<(), String> {
         std::thread::Builder::new()
             .name("root-priority-stop".into())
@@ -407,7 +438,7 @@ mod android {
                         DaemonSessionConfig {
                             expected_runner_uid: uid,
                             server_capabilities: Capabilities::from_bits(
-                                Capabilities::INPUT_PRIORITY_STOP,
+                                Capabilities::INPUT_PRIORITY_STOP | Capabilities::INPUT_RECORDING,
                             ),
                             required_client_capabilities: Capabilities::INPUT_PRIORITY_STOP,
                             idle_timeout_ms: u64::try_from(idle.as_millis())
@@ -417,6 +448,7 @@ mod android {
                         StopDispatcher {
                             dispatcher,
                             fence: fence.clone(),
+                            recording,
                         },
                     )
                     .map_err(|_| "stop handshake failed")?;
@@ -453,6 +485,19 @@ mod android {
     impl CommandDispatcher for AndroidDispatcher {
         fn dispatch(&mut self, frame: &Frame) -> Result<DispatchResponse, DispatchError> {
             match frame.command {
+                Command::RecordingStart => {
+                    if self.active_pointer.is_some() {
+                        return Ok(empty_response(StatusCode::InvalidRequest));
+                    }
+                    let config = root_protocol::recording::RecordingConfig::decode(&frame.payload)
+                        .map_err(|_| DispatchError)?;
+                    return Ok(match self.recording.start(config) {
+                        Ok(()) => DispatchResponse::success(),
+                        Err(1) => empty_response(StatusCode::BackendUnavailable),
+                        Err(_) => empty_response(StatusCode::InvalidRequest),
+                    });
+                }
+                Command::RecordingFinish => return Ok(empty_response(StatusCode::InvalidRequest)),
                 Command::Capture => return Ok(self.capture()),
                 Command::CaptureChunk => return Ok(self.capture_chunk(&frame.payload)),
                 Command::ReleaseCapture => return Ok(self.release_capture(&frame.payload)),
@@ -510,7 +555,9 @@ mod android {
                 Command::Hello
                 | Command::Capture
                 | Command::CaptureChunk
-                | Command::ReleaseCapture => StatusCode::InvalidRequest,
+                | Command::ReleaseCapture
+                | Command::RecordingStart
+                | Command::RecordingFinish => StatusCode::InvalidRequest,
             };
             Ok(DispatchResponse {
                 status: response,
@@ -652,6 +699,7 @@ mod android {
 
     impl Drop for AndroidDispatcher {
         fn drop(&mut self) {
+            self.recording.cancel_all();
             if let Some((_, x, y)) = self.active_pointer.take() {
                 self.cancellation = InputCancellation::default();
                 let _ = self.inject_pointer(1, x, y);

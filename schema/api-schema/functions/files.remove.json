@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14103,
+  "name": "Files.remove",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "仅项目私有 data 内相对文件路径；移入有界回收区。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "操作完成时返回。"
+  },
+  "legacyAliases": []
+}

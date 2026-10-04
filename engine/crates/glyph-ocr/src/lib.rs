@@ -9,6 +9,7 @@ pub use format::{
     GlyphSource,
 };
 pub use recognize::{
-    recognize, GlyphMatch, GlyphOcrError, GlyphOcrOptions, GlyphOcrResult, GlyphRect,
+    recognize, recognize_cancellable, GlyphMatch, GlyphOcrError, GlyphOcrOptions, GlyphOcrResult,
+    GlyphRect,
 };
 pub use store::{DictionaryHandle, DictionaryStore, DictionaryStoreConfig, DictionaryStoreError};

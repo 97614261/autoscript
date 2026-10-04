@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.write",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.write/1/files.write.schema.json",
+  "title": "写入项目数据文件",
+  "category": "variable",
+  "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。",
+  "searchTerms": [
+    "数据",
+    "文件",
+    "对象",
+    "写入项目数据文件"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "仅项目私有 data 内相对文件路径。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "state.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "仅项目私有 data 内相对文件路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "text",
+      "label": "最多 64 KiB 的 UTF-8 文本。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "textVariable",
+      "label": "最多 64 KiB 的 UTF-8 文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

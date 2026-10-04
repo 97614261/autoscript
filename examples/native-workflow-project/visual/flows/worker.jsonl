@@ -1,0 +1,2 @@
+{"flowSchemaVersion":1,"nodeId":"worker-output","blockId":"root-worker","parentId":null,"depth":0,"orderKey":"a0","kind":"task.message","nodeVersion":1,"args":{"channel":"output","expression":"\"插件执行：\" .. text(total)"}}
+{"flowSchemaVersion":1,"nodeId":"worker-log","blockId":"root-worker","parentId":null,"depth":0,"orderKey":"a1","kind":"task.message","nodeVersion":1,"args":{"channel":"console","expression":"\"public workflow iteration \" .. text(total)"}}

@@ -254,7 +254,7 @@ class ProjectSourceFiles(store: ProjectStore) {
 }
 ```
 
-关键决策（与最初设想不同，按新版源码核对后改）：**分组是虚拟视图，不是目录**。新版易编精灵 `ae1` 把分组存在独立的 `分组配置.json` 里，源文件仍在同一目录，所以这里同样把分组存到 `.studio/source-groups.json`（不进 `project.json`、不进备份、删 Flow 时自动剔除），Flow 路径固定单层 `visual/flows/<名称>.jsonl`。
+关键决策（与最初设想不同，按新版源码核对后改）：**分组是虚拟视图，不是目录**。新版易编精灵 `ae1` 把分组存在独立的 `分组配置.json` 里，源文件仍在同一目录，所以这里同样把分组存到 `.studio/source-groups.json`（不进 `project.json`，删 Flow 时自动剔除），Flow 路径固定单层 `visual/flows/<名称>.jsonl`。2026-10-02 按 ADR 0021 将分组与空图片目录加入项目备份/恢复；原“不进备份”决定已撤销。
 
 `flowId` 是引用身份，`path` 只是位置：重命名/移动只改 `path`，`flow.call` 引用不断；`copyFlow` 则必须换新的 `flowId`/`rootBlockId` 并重写全部 `nodeId`/`blockId`，否则副本与原件身份二义。
 
@@ -294,7 +294,7 @@ B5 已完成的静态核对（代替不了编译，但能挡掉大部分低级�
 ## 6. 已拍板的决策（2026-09-15，用户确认）
 
 1. **函数弹窗版式**：采用**新版 `service_tk_functionui` 版式**，但命令只列本项目真实存在的 25 个脚本 API 与积木目录条目（`LegacyFunctionCatalog.kt`）。原先 30 余条 `Net.get`、`Language.shell`、`Accessibility.*` 之类的假命令已删除——它们插入后要么匹配不到积木，要么直接违反 R0 边界。缺能力的条目按 `project.json.capabilities` 显示为禁用，不伪造可用。
-2. **空分组持久化**：核对新版源码后**改为虚拟分组**（不是原推荐的真实目录）。依据：新版 `ae1` 自己就把分组存在 `分组配置.json` 里，源文件并不移动。因此 Flow 路径保持单层，分组存 `.studio/source-groups.json`，空分组可以存在，备份不携带分组。
+2. **空分组持久化**：核对新版源码后**改为虚拟分组**（不是原推荐的真实目录）。依据：新版 `ae1` 自己就把分组存在 `分组配置.json` 里，源文件并不移动。因此 Flow 路径保持单层，分组存 `.studio/source-groups.json`，空分组可以存在。2026-10-02 起备份携带分组，见 ADR 0021。
 3. **项目文件页去留**：**删除** `ProjectFilesScreen.kt`，文件入口统一走悬浮面板"文件"弹窗。
 4. **本批范围**：**B0→B5 全做完再申请构建**。
 

@@ -57,6 +57,8 @@ internal fun VisualInputActionDialog(
     onDismiss: () -> Unit,
     onPick: (ImageToolMode) -> Unit,
     onFloatingPick: ((ImageToolMode) -> Unit)? = null,
+    onOpenPermissions: (() -> Unit)? = null,
+    onRefresh: (() -> Unit)? = null,
 ) {
     var screenshot by remember { mutableStateOf(onFloatingPick == null) }
     val blue = AutoScriptPalette.Accent
@@ -70,7 +72,7 @@ internal fun VisualInputActionDialog(
                 Column {
                     Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 12.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("按键", color = blue, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Text(if (basicReason != null) "未就绪" else if (pointerReason == null) "Root · 单指" else "Root · 基础输入",
+                        Text(if (backendFeatures == null && canPickPoint) "读取中" else if (basicReason != null) "未就绪" else if (pointerReason == null) "Root · 单指" else "Root · 基础输入",
                             color = if (basicReason == null) blue else muted, fontSize = 10.sp,
                             modifier = Modifier.background(Color(0xFFF3F5F8), RoundedCornerShape(3.dp)).padding(horizontal = 7.dp, vertical = 3.dp))
                         InputPanelButton("×", onDismiss, Modifier.width(36.dp).fillMaxHeight())
@@ -98,10 +100,15 @@ internal fun VisualInputActionDialog(
                             }
                         }
                         Text(when {
+                            backendFeatures == null && canPickPoint -> "正在读取输入服务能力，请稍候。"
                             basicReason != null -> "$basicReason，请确认 Runner 连接、Root 授权和输入后端。"
                             pointerReason != null -> "单击、滑动可用；其他动作需后端支持持续单指。"
                             else -> "定位不会触发目标触摸，加入插件并运行后才执行。"
                         }, color = muted, fontSize = 10.sp, lineHeight = 14.sp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            onOpenPermissions?.let { open -> InputPanelButton("权限 / 环境", open, Modifier.weight(1f).height(36.dp).background(blue.copy(alpha = .06f), RoundedCornerShape(4.dp))) }
+                            onRefresh?.let { refresh -> InputPanelButton("重新读取能力", refresh, Modifier.weight(1f).height(36.dp).background(blue.copy(alpha = .06f), RoundedCornerShape(4.dp))) }
+                        }
                     }
                     HorizontalDivider(color = AutoScriptPalette.Divider)
                     InputPanelButton("取消", onDismiss, Modifier.fillMaxWidth().height(40.dp))

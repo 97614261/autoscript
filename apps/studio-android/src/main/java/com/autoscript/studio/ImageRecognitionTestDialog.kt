@@ -20,11 +20,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectSnapshot
-import com.autoscript.runtime.api.TemplateMatchReply
+import com.autoscript.runtime.api.RecognitionPreviewReply as Reply
 import com.autoscript.runtime.client.RuntimeClient
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -55,6 +56,8 @@ internal fun recognitionBlockSequence(arguments: JsonObject) = listOf(
     requireNotNull(BlockCatalog.find("screen.release")) to JsonObject().apply { addProperty("frameVariable", arguments.get("frameVariable").asString) },
 )
 
+private data class DecodedRecognitionImage(val path: String, val directory: File, val bitmap: android.graphics.Bitmap)
+
 /** Test saved screenshot/template pairs with exactly the runtime's pixel matcher. */
 @Composable
 internal fun ImageRecognitionTestDialog(
@@ -63,6 +66,7 @@ internal fun ImageRecognitionTestDialog(
     onDismiss: () -> Unit,
     onInsert: (JsonObject) -> Unit,
     onCapture: () -> Unit,
+    onInsertRecognition: ((String, JsonObject) -> Unit)? = null,
 ) {
     val paths = remember(snapshot.manifest.resources) {
         snapshot.manifest.resources.filter { it.get("kind")?.asString == "image" }.mapNotNull { it.get("path")?.asString }.sorted()
@@ -72,39 +76,64 @@ internal fun ImageRecognitionTestDialog(
     var tolerance by remember { mutableStateOf("0") }
     var similarity by remember { mutableStateOf("900") }
     var pickSource by remember { mutableStateOf<Boolean?>(null) }
-    var reply by remember { mutableStateOf<TemplateMatchReply?>(null) }
+    var reply by remember { mutableStateOf<Reply?>(null) }
+    var operation by remember { mutableIntStateOf(Reply.TEMPLATE) }
+    var showOcr by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("选取已保存的截屏和模板。坐标是原图像素，从左上角计算。") }
-    var busy by remember { mutableStateOf(false) }
+    var requestId by remember { mutableLongStateOf(0L) }
+    var recognitionJob by remember { mutableStateOf<Job?>(null) }
+    val busy = requestId != 0L
     val scope = rememberCoroutineScope()
+    fun cancelRecognition() {
+        val id = requestId
+        requestId = 0L
+        if (id != 0L) runtimeClient.cancelRecognitionPreview(id)
+        recognitionJob?.cancel(); recognitionJob = null
+    }
+    DisposableEffect(runtimeClient) { onDispose { cancelRecognition() } }
     // Decode only bounded, declared files; no bitmap is recycled while Compose/worker owns it.
-    val bitmap by produceState<android.graphics.Bitmap?>(null, source, snapshot.directory) {
+    val decoded by produceState<DecodedRecognitionImage?>(null, source, snapshot.directory) {
+        val selectedSource = source
+        val selectedSnapshot = snapshot
+        value = null
         value = withContext(Dispatchers.IO) {
             runCatching {
-                val file = imageRecognitionFile(snapshot, source)
+                val file = imageRecognitionFile(selectedSnapshot, selectedSource)
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(file.path, bounds)
                 require(bounds.outWidth in 1..4096 && bounds.outHeight in 1..4096 && bounds.outWidth.toLong() * bounds.outHeight <= 4_194_304)
-                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inScaled = false })
+                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inScaled = false })?.let {
+                    DecodedRecognitionImage(selectedSource, selectedSnapshot.directory, it)
+                }
             }.getOrNull()
         }
     }
+    // produceState is launched after composition; never borrow the previous file's dimensions meanwhile.
+    val bitmap = decoded?.takeIf { it.path == source && it.directory == snapshot.directory }?.bitmap
     val parametersValid = tolerance.toIntOrNull() in 0..255 && similarity.toIntOrNull() in 0..1000
-    Dialog(onDismissRequest = { if (!busy) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = { cancelRecognition(); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 580.dp).fillMaxHeight(.82f), color = Color.White) {
             Column {
-                Text("测试识别 · 模板找图", color = AutoScriptPalette.Accent, modifier = Modifier.padding(14.dp))
+                Text("测试识别", color = AutoScriptPalette.Accent, modifier = Modifier.padding(14.dp))
                 HorizontalDivider()
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { pickSource = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("截屏图像：${source.substringAfterLast('/').ifEmpty { "未选择" }}") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(Reply.TEMPLATE to "像素找图", Reply.GRAY_TEMPLATE to "灰度找图").forEach { (value, label) ->
+                            FilterChip(operation == value, onClick = { operation = value; reply = null }, enabled = !busy &&
+                                (value == Reply.TEMPLATE || onInsertRecognition != null), label = { Text(label) })
+                        }
+                        TextButton(onClick = { showOcr = true }, enabled = !busy && bitmap != null && onInsertRecognition != null) { Text("取字测试") }
+                    }
                     OutlinedButton(onClick = { pickSource = false }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("模板：${template.substringAfterLast('/').ifEmpty { "未选择" }}") }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(tolerance, { tolerance = it.take(3); reply = null }, label = { Text("容差 0–255") }, singleLine = true, enabled = !busy, modifier = Modifier.weight(1f))
+                        OutlinedTextField(tolerance, { tolerance = it.take(3); reply = null }, label = { Text("容差 0–255") }, singleLine = true, enabled = !busy && operation == Reply.TEMPLATE, modifier = Modifier.weight(1f))
                         OutlinedTextField(similarity, { similarity = it.take(4); reply = null }, label = { Text("相似度 ‰") }, singleLine = true, enabled = !busy, modifier = Modifier.weight(1f))
                     }
                     bitmap?.let { frame ->
                         Box(Modifier.fillMaxWidth().aspectRatio(frame.width.toFloat() / frame.height)) {
                             Image(frame.asImageBitmap(), "识别原图", Modifier.fillMaxSize())
-                            reply?.takeIf { it.status == TemplateMatchReply.MATCH }?.let { match ->
+                            reply?.takeIf { it.status == Reply.SUCCESS }?.let { match ->
                                 Canvas(Modifier.fillMaxSize()) {
                                     val point = Offset(match.x.toFloat() / frame.width * size.width, match.y.toFloat() / frame.height * size.height)
                                     drawCircle(Color.Red, 7.dp.toPx(), point, style = Stroke(2.dp.toPx()))
@@ -114,37 +143,50 @@ internal fun ImageRecognitionTestDialog(
                     }
                     Text(message, color = AutoScriptPalette.TextSecondary)
                     Button(enabled = !busy && parametersValid && bitmap != null && template.isNotEmpty(), onClick = {
-                        busy = true
+                        val frame = bitmap ?: return@Button
+                        val id = System.nanoTime().coerceAtLeast(1L)
+                        requestId = id
                         reply = null
-                        scope.launch {
+                        val selectedOperation = operation
+                        val selectedSource = source
+                        val selectedTemplate = template
+                        val options = intArrayOf(0, 0, frame.width, frame.height, similarity.toInt(), 0xFFFFFF, tolerance.toInt(), 0)
+                        recognitionJob = scope.launch {
                             val result = withContext(Dispatchers.IO) {
-                                runCatching { runtimeClient.testTemplate(imageRecognitionFile(snapshot, source), imageRecognitionFile(snapshot, template), tolerance.toInt(), similarity.toInt()) }
+                                runCatching { runtimeClient.testRecognitionPreview(id, selectedOperation, imageRecognitionFile(snapshot, selectedSource), imageRecognitionFile(snapshot, selectedTemplate), options) }
                             }
-                            reply = result.getOrNull()
-                            message = when (reply?.status) {
-                                TemplateMatchReply.MATCH -> "已找到：(${reply!!.x}, ${reply!!.y}) · ${reply!!.scorePermille}‰"
-                                TemplateMatchReply.NOT_FOUND -> "未找到符合条件的模板"
-                                TemplateMatchReply.BUSY -> "脚本运行或其他测试进行中，请先停止"
-                                TemplateMatchReply.BUDGET_EXCEEDED -> "超过匹配预算，请裁剪截屏/模板后重试"
-                                TemplateMatchReply.SESSION_MISMATCH -> "运行服务会话未建立或已变化，请重试"
-                                else -> result.exceptionOrNull()?.message ?: "图片格式、尺寸或参数无效"
+                            if (requestId == id) {
+                                reply = result.getOrNull()
+                                message = reply?.let(::recognitionPreviewMessage) ?: "图片格式、尺寸或参数无效"
+                                requestId = 0L; recognitionJob = null
                             }
-                            busy = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "正在识别…" else "测试识别") }
-                    TextButton(onClick = onCapture, enabled = !busy) { Text("截屏 / 标注新模板") }
+                    TextButton(onClick = onCapture, enabled = !busy) { Text("截屏 / 框选取字 / 标注模板") }
                 }
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onDismiss, enabled = !busy) { Text("取消") }
-                    TextButton(enabled = !busy && parametersValid && bitmap != null && template.isNotEmpty(), onClick = {
+                    TextButton(onClick = { if (busy) { cancelRecognition(); reply = null; message = "已取消识别" } else onDismiss() }) { Text(if (busy) "取消识别" else "返回") }
+                    TextButton(enabled = !busy && parametersValid && bitmap != null && template.isNotEmpty() && reply?.status in setOf(Reply.SUCCESS, Reply.NOT_FOUND), onClick = {
                         val frame = bitmap ?: return@TextButton
-                        onInsert(recognitionBlockArguments(template, tolerance.toInt(), similarity.toInt(), frame.width, frame.height))
-                    }) { Text("加入找图积木") }
+                        if (!runtimeClient.isRecognitionPreviewCurrent(requireNotNull(reply))) { reply = null; message = "运行服务会话已变化，请重新测试" }
+                        else {
+                            val args = recognitionBlockArguments(template, tolerance.toInt(), similarity.toInt(), frame.width, frame.height)
+                            if (operation == Reply.TEMPLATE) onInsert(args) else onInsertRecognition?.invoke("vision.findgray", args.apply {
+                                remove("tolerance"); addProperty("scoreVariable", "grayScore"); addProperty("autoCapture", true)
+                            })
+                        }
+                    }) { Text("回填找图配置") }
                 }
             }
         }
     }
+    val ocrBitmap = bitmap
+    if (showOcr && ocrBitmap != null) ImageToolOcrDialog(ocrBitmap,
+        ImageToolCodeGen.Roi(0, 0, ocrBitmap.width, ocrBitmap.height), snapshot, runtimeClient,
+        onDismiss = { showOcr = false }, onConfirm = { config, roi ->
+            showOcr = false; onInsertRecognition?.invoke(config.kind, config.arguments(roi))
+        })
     pickSource?.let { choosingSource ->
         Dialog(onDismissRequest = { pickSource = null }) {
             Surface(color = Color.White) {

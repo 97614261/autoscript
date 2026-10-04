@@ -211,92 +211,31 @@ internal fun ProjectBackupSlotsScreen(
  */
 @Composable
 private fun SlotConfirmDialog(
-    action: SlotAction,
-    slot: Int,
-    occupied: Boolean,
-    initialRemark: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String?) -> Unit,
+    action: SlotAction, slot: Int, occupied: Boolean, initialRemark: String,
+    onDismiss: () -> Unit, onConfirm: (String?) -> Unit,
 ) {
     var remark by remember(slot) { mutableStateOf(initialRemark) }
     val body = when (action) {
-        SlotAction.BACKUP ->
-            if (occupied) "槽位 $slot 已有备份，继续将覆盖它。备份只包含权威清单、源码和已登记资源。"
-            else "把当前项目导出到槽位 $slot。备份只包含权威清单、源码和已登记资源。"
-        SlotAction.RESTORE -> "槽位 $slot 的备份会导入为一个新项目，不会覆盖本机已有项目。"
+        SlotAction.BACKUP -> if (occupied) "槽位 $slot 已有备份，继续将覆盖它。备份包含项目清单、源码和已登记资源。"
+            else "把当前项目备份到槽位 $slot。"
+        SlotAction.RESTORE -> "恢复为一个新项目，不覆盖本机已有项目。"
         SlotAction.DELETE -> "清空槽位 $slot 后，该备份无法恢复。"
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.White,
-                shape = RoundedCornerShape(2.dp),
-                shadowElevation = 9.dp,
-            ) {
-                Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
-                    Text(
-                        action.title,
-                        color = Color(0xFF304FFE),
-                        fontSize = 18.sp,
-                        modifier = Modifier.padding(start = 25.dp, end = 25.dp),
-                    )
-                    Text(
-                        body,
-                        color = Color.Black,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        modifier = Modifier.padding(start = 25.dp, top = 10.dp, end = 25.dp, bottom = 10.dp),
-                    )
-                    if (action == SlotAction.BACKUP) {
-                        BasicTextField(
-                            value = remark,
-                            onValueChange = { remark = it.take(MAX_SLOT_REMARK_INPUT) },
-                            singleLine = true,
-                            textStyle = TextStyle(fontSize = 15.sp, color = AutoScriptPalette.TextPrimary),
-                            cursorBrush = SolidColor(AutoScriptPalette.Accent),
-                            modifier = Modifier.fillMaxWidth()
-                                .padding(start = 30.dp, end = 30.dp, bottom = 5.dp)
-                                .background(AutoScriptPalette.PageBackground, RoundedCornerShape(2.dp))
-                                .border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(2.dp))
-                                .padding(horizontal = 9.dp, vertical = 10.dp),
-                            decorationBox = { field ->
-                                Box {
-                                    if (remark.isEmpty()) {
-                                        Text("备注（可选）", color = AutoScriptPalette.TextSecondary, fontSize = 15.sp)
-                                    }
-                                    field()
-                                }
-                            },
-                        )
-                    }
-                    Row(
-                        Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        SlotDialogTextButton("取消", onDismiss)
-                        SlotDialogTextButton(action.confirm, Modifier.padding(end = 15.dp)) {
-                            onConfirm(remark.trim().takeIf { it.isNotEmpty() })
-                        }
-                    }
-                }
+    StudioConfirmDialog(onDismissRequest = onDismiss, title = { Text(action.title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(body)
+                if (action == SlotAction.BACKUP) BasicTextField(remark, { remark = it.take(MAX_SLOT_REMARK_INPUT) },
+                    singleLine = true, textStyle = TextStyle(fontSize = 13.sp),
+                    modifier = Modifier.fillMaxWidth().border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(3.dp)).padding(10.dp),
+                    decorationBox = { field -> Box { if (remark.isEmpty()) Text("备注（可选）", color = AutoScriptPalette.TextSecondary); field() } })
             }
-        }
-    }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("取消") } },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { onConfirm(remark.trim().takeIf { it.isNotEmpty() }) }) {
+            Text(action.confirm, color = if (action == SlotAction.DELETE) AutoScriptPalette.Danger else AutoScriptPalette.Accent)
+        } })
 }
-
-@Composable
-private fun SlotDialogTextButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Text(
-        label,
-        color = Color(0xFF2962FF),
-        fontSize = 14.sp,
-        modifier = modifier.clickable(onClick = onClick).padding(horizontal = 15.dp, vertical = 8.dp),
-    )
-}
-
-@Composable
-private fun SlotDialogTextButton(label: String, onClick: () -> Unit) = SlotDialogTextButton(label, Modifier, onClick)
 
 /** `ProjectStore.MAX_BACKUP_REMARK_CHARS` 是 64，输入框留同样的上限。 */
 private const val MAX_SLOT_REMARK_INPUT = 64

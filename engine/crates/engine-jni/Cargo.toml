@@ -12,17 +12,16 @@ crate-type = ["cdylib", "rlib"]
 automation-core = { path = "../automation-core" }
 coordinate = { path = "../coordinate" }
 engine-core = { path = "../engine-core" }
+glyph-ocr = { path = "../glyph-ocr" }
 jni = { workspace = true }
 lua-runtime = { path = "../lua-runtime" }
 pixel-vision = { path = "../pixel-vision" }
 root-client = { path = "../root-client" }
+root-protocol = { path = "../root-protocol" }
 runtime-executor = { path = "../runtime-executor" }
 runtime-scheduler = { path = "../runtime-scheduler" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-glyph-ocr = { path = "../glyph-ocr" }
 
 [lints.rust]
 unsafe_code = "allow"

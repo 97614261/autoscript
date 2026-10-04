@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -51,6 +52,8 @@ internal fun RuntimeEnvironmentScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onShowDebug: (String) -> Unit,
+    onOpenPermissions: () -> Unit,
+    inputFeatures: Int?,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
@@ -80,7 +83,9 @@ internal fun RuntimeEnvironmentScreen(
                         color = Color.White,
                         textAlign = TextAlign.Center,
                     )
-                    Spacer(Modifier.width(48.dp))
+                    Box(Modifier.width(48.dp).fillMaxHeight().clickable(onClick = onOpenPermissions), contentAlignment = Alignment.Center) {
+                        Text("权限", color = Color.White, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -109,7 +114,7 @@ internal fun RuntimeEnvironmentScreen(
                         // bg_runtime_restart_button：88×38，浅蓝底 + 蓝描边 + 12sp 加粗。
                         // 描边不能省：参考截图里这颗按钮是有轮廓的，只填底色会显得比参考“平”。
                         Text(
-                            "重启服务",
+                            "刷新状态",
                             color = AutoScriptPalette.Accent,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -135,8 +140,10 @@ internal fun RuntimeEnvironmentScreen(
         item {
             RuntimeCard {
                 RuntimeStatusRow("设备 Root 状态", if (rootReady) "已开启" else rootStateLabel(state.rootState), rootReady)
-                RuntimeStatusRow("截屏服务", if (rootReady) "Root screencap · 已连接" else "Root 未就绪，截屏未连接", rootReady)
-                RuntimeStatusRow("按键服务", if (rootReady) "Root 输入 · 已连接" else "Root 未就绪，按键未连接", rootReady)
+                RuntimeStatusRow("截屏服务", if (rootReady) "Root 后端就绪，未测试截图" else "Root 未就绪", rootReady)
+                automationPermissionStatuses(state, inputFeatures).filter { it.title in setOf("点击 / 滑动", "长按 / 拖动 / 按下弹起") }.forEach {
+                    RuntimeStatusRow(it.title, it.status, it.healthy)
+                }
                 RuntimeStatusRow("Runner 服务", phaseLabel(state.phase), connected)
                 RuntimeStatusRow("执行引擎", engineLabel(state.engineState), state.message == null, last = true)
                 state.message?.let { message ->

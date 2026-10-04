@@ -13,6 +13,23 @@ import org.junit.Test
 
 class ProjectFileCatalogTest {
     @Test
+    fun `Lua catalog includes independent modules rather than only entry point`() {
+        val root = Files.createTempDirectory("project-lua-catalog").toFile()
+        try {
+            val paths = listOf("lua/main.lua", "lua/utils/login.lua")
+            val snapshot = ProjectSnapshot(root, ProjectManifestDocument(
+                projectId = "lua-project", name = "Lua", sourceMode = ProjectSourceMode.LUA,
+                entryPoint = paths.first(), luaFiles = paths,
+            ), luaSource = "return function() end", flowSources = emptyMap())
+            assertEquals(paths, projectFileCatalog(snapshot).filter { it.kind == StudioProjectFileKind.LUA }.map { it.path })
+            assertEquals(listOf(paths.first()), projectFileCatalog(snapshot.copy(manifest = snapshot.manifest.copy(luaFiles = emptyList())))
+                .filter { it.kind == StudioProjectFileKind.LUA }.map { it.path })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `canonical containment rejects traversal and sibling prefix without requiring API 26`() {
         val root = Files.createTempDirectory("project-file-containment").toFile()
         try {

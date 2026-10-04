@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "data.text",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/data.text/1/data.text.schema.json",
+  "title": "解码 JSON 字符串",
+  "category": "variable",
+  "summary": "严格解码 JSON string，不接受数字、布尔、null、集合或对象。",
+  "searchTerms": [
+    "数据",
+    "集合",
+    "对象",
+    "解码 JSON 字符串"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "valueJson",
+      "label": "JSON string 编码。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "\"text\""
+    },
+    {
+      "path": "valueJsonVariable",
+      "label": "JSON string 编码来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "data"
+    }
+  ],
+  "migrations": []
+}

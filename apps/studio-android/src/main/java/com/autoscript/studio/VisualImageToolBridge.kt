@@ -14,6 +14,7 @@ internal fun visualImageToolDraft(selection: ImageToolCodeGen.VisualSelection): 
         addProperty("bottom", region.bottom)
     }
     return when (selection.mode) {
+        ImageToolMode.OCR -> selection.ocr?.let { config -> config.kind to config.arguments(region) }
         ImageToolMode.COLOR -> selection.points.firstOrNull()?.let { point ->
             "vision.findcolor" to JsonObject().apply {
                 addProperty("rgb", point.rgb and 0xFFFFFF)

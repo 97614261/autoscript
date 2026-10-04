@@ -18,7 +18,7 @@ internal data class RunnerUiFieldDraft(
 )
 internal data class RunnerUiDesignerDraft(val description: String = "", val fields: List<RunnerUiFieldDraft> = emptyList(), val pages: List<UiPage> = listOf(UiPage())) {
     fun add(kind: RunnerUiControlKind, pageId: String = pages.first().id): RunnerUiDesignerDraft {
-        require(fields.size < 128) { "控件不能超过128个" }
+        require(fields.size < MAX_SCRIPT_UI_CONTROLS) { "控件不能超过${MAX_SCRIPT_UI_CONTROLS}个" }
         var n = fields.size + 1; while (fields.any { it.id == "control$n" }) n++
         val value = when (kind.wireName) { "integer" -> "0"; "boolean" -> "false"; "choice" -> "选项1"; else -> if (kind == RunnerUiControlKind.LABEL) "标签" else "" }
         val currentPage = pages.first { it.id == pageId }
@@ -137,7 +137,8 @@ internal data class RunnerUiDesignerDraft(val description: String = "", val fiel
     fun shrinkAll(): RunnerUiDesignerDraft = copy(fields = fields.map { f ->
         fun reduced(value: Int, minimum: Int) = (value * .75f).roundToInt().coerceAtLeast(minimum)
         f.copy(ui = f.ui.copy(x = reduced(f.ui.x, 0), y = reduced(f.ui.y, 0),
-            width = reduced(f.ui.width, 20), height = reduced(f.ui.height, 20), fontPx = reduced(f.ui.fontPx, 8)))
+            width = reduced(f.ui.width, 20), height = reduced(f.ui.height, 20), fontPx = reduced(f.ui.fontPx, 8),
+            borderWidthPx = if (f.ui.borderWidthPx == 0) 0 else reduced(f.ui.borderWidthPx, 1), cornerPx = reduced(f.ui.cornerPx, 0)))
     })
 
     fun layer(ids: Set<String>, front: Boolean): RunnerUiDesignerDraft {

@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.autoscript.core.designsystem.AutoScriptPalette
+import com.autoscript.project.store.ProjectSnapshot
+import com.autoscript.runtime.client.RuntimeClient
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -64,6 +66,8 @@ internal fun ImageToolWindow(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     pointerInputSupported: Boolean = false,
+    snapshot: ProjectSnapshot? = null,
+    runtimeClient: RuntimeClient? = null,
 ) {
     BackHandler(onBack = onClose)
     // 参考 html{background:#000} 的全屏黑底只在有图时铺——它是给图片当衬底的，不是遮罩。
@@ -84,6 +88,7 @@ internal fun ImageToolWindow(
         var swipeDuration by rememberSaveable { mutableFloatStateOf(300f) }
         var gestureDuration by rememberSaveable { mutableFloatStateOf(800f) }
         var tolerance by rememberSaveable { mutableFloatStateOf(8f) }
+        var ocrRegion by remember(bitmap) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
 
         var toolbarX by rememberSaveable { mutableFloatStateOf(Float.NaN) }
         var toolbarY by rememberSaveable { mutableFloatStateOf(Float.NaN) }
@@ -232,6 +237,9 @@ internal fun ImageToolWindow(
                     blocked = "当前后端不支持持续触点（按下/移动/弹起）"
                 } else if (map == null) {
                     blocked = "请先截图"
+                } else if (mode == ImageToolMode.OCR) {
+                    if (snapshot == null || runtimeClient == null) blocked = "取字需要已打开的项目与运行服务会话"
+                    else ocrRegion = selection.box
                 } else {
                     val snippet = buildSnippet(
                         mode = mode,
@@ -269,6 +277,17 @@ internal fun ImageToolWindow(
                 toolbarMeasuredWidthPx = measured.width.toFloat()
             },
         )
+
+        val ocrSource = bitmap
+        ocrRegion?.let { roi ->
+            if (ocrSource != null && snapshot != null && runtimeClient != null) ImageToolOcrDialog(
+                bitmap = ocrSource, initialRoi = roi, snapshot = snapshot, runtimeClient = runtimeClient,
+                onDismiss = { ocrRegion = null }, onConfirm = { config, region ->
+                    val snippet = config.snippet(region, ocrSource.width, ocrSource.height)
+                    if (snippet.rejection != null) blocked = snippet.rejection else { ocrRegion = null; onEmit(snippet) }
+                },
+            )
+        }
 
         if (menuOpen) {
             val menuWidth = with(density) { MENU_WIDTH.toPx() }
@@ -316,7 +335,7 @@ private fun isReady(
     slideEnd: Pair<Int, Int>?,
     mapping: ImageToolCodeGen.DesignMapping?,
 ): Boolean = mapping != null && when (mode) {
-    ImageToolMode.CROP, ImageToolMode.REGION -> selection.box != null
+    ImageToolMode.CROP, ImageToolMode.REGION, ImageToolMode.OCR -> selection.box != null
     // 单击随时可确定（取的是准星中心）；取色/多点要先按住抬手取到点。
     ImageToolMode.TAP, ImageToolMode.LONG_PRESS, ImageToolMode.POINTER_DOWN, ImageToolMode.POINTER_MOVE, ImageToolMode.POINTER_UP -> true
     ImageToolMode.COLOR -> selection.points.isNotEmpty()

@@ -58,11 +58,32 @@ class VisualVariableCalculationTest {
     @Test fun maintenanceReferencesIgnoreTextAndConversions() {
         assertEquals(setOf("count", "total"), calculationReferencedNames("\"count fake\" .. text(count + total)"))
         assertEquals(setOf("e12"), calculationReferencedNames("1e+12 + e12"))
+        assertEquals(setOf("len", "label", "find"), calculationReferencedNames("len + len(label) + find + find(label, \"len\")"))
     }
 
     @Test fun conversionWrapsExpressionOrSelectedOperandInsteadOfAppendingInvalidCode() {
         assertEquals("int(12.7)", wrapCalculationConversion(TextFieldValue("12.7"), "int", "count").text)
         assertEquals("text(count) .. label", wrapCalculationConversion(TextFieldValue("count .. label", TextRange(0, 5)), "text", "").text)
         assertEquals(TextRange(4), wrapCalculationConversion(TextFieldValue(), "int", "").selection)
+    }
+
+    @Test fun nativeCalculationOptionsRoundTripAsRealNodesAndAppearInLibrary() {
+        val cases = mapOf("byteLen" to "byteLen(label)", "byteFind" to "byteFind(label,\"查找\",0)",
+            "byteSub" to "byteSub(label,0,0)", "idiv" to "idiv(count,1)", "irem" to "irem(count,1)")
+        cases.forEach { (function, expression) ->
+            val source = if (function in setOf("idiv", "irem")) "count" else "label"
+            val wrapped = wrapCalculationFunction(TextFieldValue(source), function, "0")
+            assertEquals(expression, wrapped.text)
+            val args = JsonObject().apply { addProperty("name", "result"); addProperty("expression", wrapped.text) }
+            val hint = variableCalculationHint(args)
+            assertEquals(args, variableCalculationArguments(hint))
+            assertEquals(args, legacyDockBlockArguments(requireNotNull(BlockCatalog.find("variable.calculate")), hint, JsonObject()))
+            val entries = FunctionCatalog.search(FunctionCatalog.visualGroups(), function)
+            assertTrue(entries.any { it.second.blockKind == "variable.calculate" })
+        }
+        assertEquals("byteLen(label) .. suffix", wrapCalculationFunction(TextFieldValue("label .. suffix", TextRange(0, 5)), "byteLen", "\"\"").text)
+        val full = TextFieldValue("a".repeat(1024))
+        assertEquals(full, wrapCalculationFunction(full, "byteLen", "\"\""))
+        assertEquals(setOf("label", "count"), calculationReferencedNames("byteLen(label) + idiv(count,1)"))
     }
 }

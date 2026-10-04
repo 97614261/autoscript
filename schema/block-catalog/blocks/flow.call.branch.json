@@ -1,0 +1,11 @@
+{
+  "schemaVersion":1,"kind":"flow.call.branch","nodeVersion":1,
+  "nodeSchemaId":"https://autoscript.local/schema/node/flow.call.branch/1/flow.call.branch.schema.json",
+  "title":"调用插件 · 成功 / 失败分支","category":"flow",
+  "summary":"按独立返回状态选择成功或失败子区，返回参数仍可读取；异常和取消继续中止。",
+  "searchTerms":["调用插件","成功","失败","返回状态"],"requiredCapabilities":[],"childBlocks":["success","failure"],
+  "properties":[
+    {"path":"targetFlowId","label":"目标插件","editor":"flow_reference","required":true},
+    {"path":"arguments","label":"调用参数","editor":"flow_arguments","required":true,"dependsOn":"targetFlowId"}
+  ],"migrations":[]
+}

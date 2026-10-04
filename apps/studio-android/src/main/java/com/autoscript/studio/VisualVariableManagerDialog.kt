@@ -35,6 +35,7 @@ import com.autoscript.project.store.ProjectFlow
 import com.autoscript.project.store.ProjectVariable
 import com.autoscript.project.store.ProjectVariableScope
 import com.autoscript.project.store.ProjectVariableType
+import com.autoscript.project.store.ProjectVariableRename
 import com.google.gson.JsonObject
 
 /** Filtering declarations must not leak locals from another plugin or hide shadowed declarations. */
@@ -97,11 +98,15 @@ internal fun VisualVariableManagerDialog(
     currentFlowId: String,
     flows: List<ProjectFlow>,
     onDismiss: () -> Unit,
-    onSave: (List<ProjectVariable>) -> Unit,
+    onSave: (List<ProjectVariable>, List<ProjectVariableRename>) -> Unit,
     allowFlowScope: Boolean = true,
-    onSaveAndInsert: ((List<ProjectVariable>, JsonObject) -> Unit)? = null,
+    onSaveAndInsert: ((List<ProjectVariable>, JsonObject, List<ProjectVariableRename>) -> Unit)? = null,
 ) {
     var draft by remember(variables) { mutableStateOf(variables) }
+    var origins by remember(variables) { mutableStateOf(variables.associateWith { it }) }
+    fun renames() = if (allowFlowScope) draft.mapNotNull { variable ->
+        origins[variable]?.takeIf { it.name != variable.name }?.let { ProjectVariableRename(it, variable.name) }
+    } else emptyList()
     var scope by remember(currentFlowId, allowFlowScope) {
         mutableStateOf(if (allowFlowScope) ProjectVariableScope.FLOW else ProjectVariableScope.GLOBAL)
     }
@@ -205,7 +210,7 @@ internal fun VisualVariableManagerDialog(
                     Row(Modifier.fillMaxWidth().height(40.dp)) {
                         VariableAction("取消", ::dismiss, Modifier.weight(1f).fillMaxHeight(), color = VariableInk)
                         Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))
-                        VariableAction("保存", { onSave(draft) }, Modifier.weight(1f).fillMaxHeight())
+                        VariableAction("保存", { onSave(draft, renames()) }, Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -215,6 +220,7 @@ internal fun VisualVariableManagerDialog(
         VariableDeclarationEditor(request, flowName, onDismiss = { editRequest = null }) { name, type ->
             val replacement = ProjectVariable(name.trim(), request.scope, if (request.scope == ProjectVariableScope.FLOW) currentFlowId else null, type)
             variableDeclarationError(replacement, draft, request.original)?.let { return@VariableDeclarationEditor it }
+            request.original?.let { old -> origins[old]?.let { origin -> origins = (origins - old) + (replacement to origin) } }
             draft = request.original?.let { original -> draft.map { if (it == original) replacement else it } } ?: draft + replacement
             query = ""
             notice = null
@@ -225,7 +231,7 @@ internal fun VisualVariableManagerDialog(
     calculationArguments?.let { arguments ->
         VisualVariableCalculationDialog(arguments, draft, currentFlowId, flows,
             onDismiss = { calculationArguments = null },
-            onConfirm = { configured -> calculationArguments = null; onSaveAndInsert?.invoke(draft, configured); null })
+            onConfirm = { configured -> calculationArguments = null; onSaveAndInsert?.invoke(draft, configured, renames()); null })
     }
     deleteVariable?.let { variable ->
         EditorPromptDialog("删除变量 ${variable.name}", "仅删除声明，不删除已有积木。仍有引用时，需修正并通过编译检查。",
@@ -315,7 +321,7 @@ private fun VariableDeclarationEditor(
                             ProjectVariableType.STRING -> "默认空字符串 · 用于文本、提示和拼接"
                             ProjectVariableType.IMAGE -> "默认空图像 · 由截图/识别积木赋值，不参与算术"
                         }, color = VariableMuted, fontSize = 11.sp, modifier = Modifier.fillMaxWidth().background(VariablePanel, RoundedCornerShape(4.dp)).padding(9.dp))
-                        if (request.original != null) Text("改名或修改类型不会自动改写已有积木引用，保存后需编译检查。", color = Color(0xFF976919), fontSize = 11.sp)
+                        if (request.original != null) Text("可视化改名会同步变量引用与界面绑定；类型变更仍须编译检查。Lua源码需自行维护。", color = Color(0xFF976919), fontSize = 11.sp)
                         error?.let { Text(it, color = VariableDanger, fontSize = 11.sp) }
                     }
                     HorizontalDivider(color = AutoScriptPalette.Divider)

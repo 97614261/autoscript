@@ -3,6 +3,12 @@ package com.autoscript.studio
 import com.autoscript.project.store.ProjectSourceMode
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.project.store.SourceGroup
+import com.autoscript.project.store.ProjectVariable
+import com.autoscript.project.store.ProjectVariableScope
+import com.autoscript.project.store.ProjectVariableType
+import com.autoscript.script.ui.ScriptUiDefinition
+import com.autoscript.script.ui.UiField
+import com.autoscript.script.ui.UiPresentation
 import java.io.File
 import java.nio.file.Files
 import org.junit.After
@@ -102,5 +108,45 @@ class ProjectSourceFilesTest {
         val tree = files.load(snapshot)
         assertEquals(listOf("main", "主流程副本"), tree.entries.map(SourceFileEntry::name))
         assertEquals(listOf("main", "flow-1"), tree.entries.map(SourceFileEntry::flowId))
+    }
+
+    @Test
+    fun `copy keeps group and locals while main selection survives rename`() {
+        var snapshot = store.createProject("工程", ProjectSourceMode.VISUAL)
+        snapshot = files.createFlow(snapshot, "登录", group = "账号")
+        snapshot = store.updateVariables(snapshot.manifest.projectId,
+            listOf(ProjectVariable("count", ProjectVariableScope.FLOW, "flow-1", ProjectVariableType.INTEGER)), emptyList())
+        snapshot = files.copyFlow(snapshot, "flow-1", "登录副本")
+        var tree = files.load(snapshot)
+        assertEquals("账号", tree.entry("flow-2")!!.group)
+        assertEquals(1, tree.entry("flow-2")!!.localVariableCount)
+        snapshot = files.setEntry(snapshot, "flow-2")
+        snapshot = files.renameFlow(snapshot, "flow-2", "新主插件")
+        tree = files.load(store.openProject(snapshot.manifest.projectId))
+        assertTrue(tree.entry("flow-2")!!.isEntry)
+        assertEquals("新主插件", tree.entry("flow-2")!!.name)
+        assertEquals("账号", tree.entry("flow-2")!!.group)
+        files.deleteGroups(snapshot, listOf("账号"))
+        assertTrue(File(snapshot.directory, "visual/flows/新主插件.jsonl").isFile)
+        assertNull(files.load(snapshot).entry("flow-2")!!.group)
+    }
+
+    @Test
+    fun `UI event and binding targets are not classified as unused plugins`() {
+        var snapshot = store.createProject("界面引用", ProjectSourceMode.VISUAL)
+        snapshot = files.createFlow(snapshot, "事件")
+        snapshot = files.createFlow(snapshot, "绑定")
+        snapshot = files.createFlow(snapshot, "未使用")
+        snapshot = store.updateVariables(snapshot.manifest.projectId,
+            listOf(ProjectVariable("count", ProjectVariableScope.FLOW, "flow-2", ProjectVariableType.INTEGER)), emptyList())
+        val ui = ScriptUiDefinition(version = 2, fields = listOf(
+            UiField("run", "启动", "text", false, "", ui = UiPresentation(control = "BUTTON", events = mapOf("click" to "flow:flow-1"))),
+            UiField("count", "次数", "integer", false, "1", ui = UiPresentation(control = "NUMBER", binding = "flow:flow-2:count")),
+        ))
+        snapshot = store.updateRunnerUi(snapshot.manifest.projectId, ui.toJson(), null)
+        assertEquals(listOf("flow-3"), files.unreferencedFlows(snapshot).map { it.flowId })
+        val deletion = files.deleteFlows(snapshot, listOf("flow-1", "flow-2", "flow-3"))
+        assertEquals(listOf("flow-3"), deletion.deleted)
+        assertEquals(2, deletion.failures.size)
     }
 }

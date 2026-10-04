@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/data.set/1/data.set.schema.json",
+  "title": "设置集合 / 对象标量",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "data.set"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "json",
+        "key",
+        "valueJson",
+        "resultVariable"
+      ],
+      "properties": {
+        "json": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "jsonVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "key": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "keyVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "valueJson": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "valueJsonVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

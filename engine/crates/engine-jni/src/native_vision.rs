@@ -318,11 +318,7 @@ impl VisionHub {
                     let bytes = env
                         .convert_byte_array(array)
                         .map_err(|_| "VISION_RESPONSE_INVALID")?;
-                    match bytes.first() {
-                        Some(0) => Ok(bytes[1..].to_vec()),
-                        _ => Err(String::from_utf8(bytes[1..].to_vec())
-                            .unwrap_or_else(|_| "VISION_OPERATION_FAILED".into())),
-                    }
+                    decode_vision_response(&bytes)
                 })();
                 let _ = env.exception_clear();
                 // SAFETY: only Rust owned bytes leave this frame, no Java references escape.
@@ -346,6 +342,58 @@ impl VisionHub {
         }
     }
 }
+fn decode_vision_response(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if !(1..=2048).contains(&bytes.len()) {
+        return Err("VISION_RESPONSE_INVALID".into());
+    }
+    match bytes[0] {
+        0 => Ok(bytes[1..].to_vec()),
+        1 if (1..=64).contains(&bytes[1..].len())
+            && bytes[1..].iter().all(|byte| {
+                byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_'
+            }) =>
+        {
+            String::from_utf8(bytes[1..].to_vec())
+                .map_or_else(|_| Err("VISION_RESPONSE_INVALID".into()), Err)
+        }
+        _ => Err("VISION_RESPONSE_INVALID".into()),
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::decode_vision_response;
+
+    #[test]
+    fn valid_payload_and_bounded_failure_codes_survive_the_boundary() {
+        assert_eq!(decode_vision_response(&[0]), Ok(vec![]));
+        assert_eq!(decode_vision_response(&[0, 3, 4]), Ok(vec![3, 4]));
+        assert_eq!(
+            decode_vision_response(b"\x01VISION_CANCELLED_OR_TIMEOUT"),
+            Err("VISION_CANCELLED_OR_TIMEOUT".into())
+        );
+    }
+
+    #[test]
+    fn malformed_status_and_arbitrary_java_messages_are_not_error_codes() {
+        for response in [
+            vec![],
+            vec![2],
+            vec![1],
+            vec![1, 255],
+            vec![0; 2049],
+            b"\x01path/user-private-script.lua".to_vec(),
+            b"\x01VISION_FAILED\n".to_vec(),
+            [vec![1], vec![b'A'; 65]].concat(),
+        ] {
+            assert_eq!(
+                decode_vision_response(&response),
+                Err("VISION_RESPONSE_INVALID".into())
+            );
+        }
+    }
+}
+
 fn frame_metadata(frame: &FrameView) -> Result<Vec<i32>, String> {
     let m = frame.metadata;
     Ok(vec![

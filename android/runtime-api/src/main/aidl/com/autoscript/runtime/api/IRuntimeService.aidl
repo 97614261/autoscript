@@ -5,6 +5,8 @@ import com.autoscript.runtime.api.IRuntimeStateListener;
 import com.autoscript.runtime.api.ScriptValidationReply;
 import com.autoscript.runtime.api.VisualCompileReply;
 import com.autoscript.runtime.api.TemplateMatchReply;
+import com.autoscript.runtime.api.RecognitionPreviewReply;
+import com.autoscript.runtime.api.RecordingReply;
 import com.autoscript.runtime.api.RuntimeDebugReply;
 import com.autoscript.runtime.api.IInputPointPickListener;
 
@@ -36,4 +38,9 @@ interface IRuntimeService {
     String[] getRecentRuntimeLogs(long expectedGeneration, int maximumEntries);
     int beginInputPointPick(long requestId, long expectedGeneration, String projectId, String flowId, String action, IInputPointPickListener listener);
     int cancelInputPointPick(long requestId, long expectedGeneration);
+    RecognitionPreviewReply testRecognitionPreview(long requestId, long expectedGeneration, int operation, in ParcelFileDescriptor frameFile, in @nullable ParcelFileDescriptor assetFile, in int[] options);
+    int cancelRecognitionPreview(long requestId, long expectedGeneration);
+    RecordingReply startInputRecording(long requestId, long expectedGeneration, long recordingId, String projectId, String flowId, int maxDurationMs, int eventBudget);
+    RecordingReply finishInputRecording(long requestId, long expectedGeneration, long recordingId);
+    int cancelInputRecording(long requestId, long expectedGeneration, long recordingId);
 }

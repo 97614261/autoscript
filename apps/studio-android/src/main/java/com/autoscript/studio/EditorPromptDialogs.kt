@@ -2,14 +2,18 @@ package com.autoscript.studio
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,50 +47,17 @@ import com.autoscript.core.designsystem.hairline
  * 参考的这类弹窗都是 `match_parent` 宽、根布局左右 10dp、2dp 圆角带阴影，不是居中的小卡片。
  */
 
-private val PromptTitle = Color(0xFF304FFE)
-private val PromptAction = Color(0xFF2962FF)
-
-/** `service_tk_prompt_dialog.xml`：20dp 上内边距、18sp 标题（左 25）、正文 25 边距、按钮 15/8 内边距。 */
+/** Confirmation prompts share the current Studio shell and preserve caller actions. */
 @Composable
 internal fun EditorPromptDialog(
-    title: String,
-    text: String,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-    cancelLabel: String = "取消",
-    confirmLabel: String = "确定",
-    confirmDanger: Boolean = false,
+    title: String, text: String, onDismiss: () -> Unit, onConfirm: () -> Unit,
+    cancelLabel: String = "取消", confirmLabel: String = "确定", confirmDanger: Boolean = false,
 ) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.White,
-                shape = RoundedCornerShape(2.dp),
-                shadowElevation = 9.dp,
-            ) {
-                Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
-                    Text(title, color = PromptTitle, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 25.dp))
-                    Text(
-                        text,
-                        color = Color.Black,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        modifier = Modifier.padding(start = 25.dp, top = 10.dp, end = 25.dp, bottom = 10.dp),
-                    )
-                    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.End) {
-                        PromptTextButton(cancelLabel, onClick = onDismiss)
-                        PromptTextButton(
-                            confirmLabel,
-                            color = if (confirmDanger) AutoScriptPalette.Danger else PromptAction,
-                            modifier = Modifier.padding(end = 15.dp),
-                            onClick = onConfirm,
-                        )
-                    }
-                }
-            }
-        }
-    }
+    StudioConfirmDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { Text(text) },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text(cancelLabel) } },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onConfirm) {
+            Text(confirmLabel, color = if (confirmDanger) AutoScriptPalette.Danger else AutoScriptPalette.Accent)
+        } })
 }
 
 
@@ -103,9 +74,10 @@ internal fun <T> EditorOptionDialog(
 ) {
     var selectedIndex by remember(options) { mutableStateOf(0) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            val availableHeight = maxHeight
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(max = availableHeight),
                 color = Color.White,
                 shape = RoundedCornerShape(2.dp),
                 shadowElevation = 9.dp,
@@ -124,68 +96,48 @@ internal fun <T> EditorOptionDialog(
                         )
                     }
                     Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
-                    if (options.isEmpty()) {
-                        Text(
-                            "没有可选项",
-                            color = AutoScriptPalette.Muted,
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                        )
-                    }
-                    options.forEachIndexed { index, (_, label) ->
-                        Row(
-                            Modifier.fillMaxWidth().height(43.dp).clickable { selectedIndex = index }.padding(horizontal = 15.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(label, color = Color(0xFF20242C), fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                        if (options.isEmpty()) {
                             Text(
-                                if (selectedIndex == index) "◉" else "○",
-                                color = AutoScriptPalette.DialogTitle,
-                                fontSize = 28.sp,
+                                "没有可选项",
+                                color = AutoScriptPalette.Muted,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                             )
+                        }
+                        options.forEachIndexed { index, (_, label) ->
+                            Row(
+                                Modifier.fillMaxWidth().height(43.dp).clickable { selectedIndex = index }.padding(horizontal = 15.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(label, color = Color(0xFF20242C), fontSize = 14.sp, modifier = Modifier.weight(1f))
+                                Text(
+                                    if (selectedIndex == index) "◉" else "○",
+                                    color = AutoScriptPalette.DialogTitle,
+                                    fontSize = 28.sp,
+                                )
+                            }
                         }
                     }
                     Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                     Row(Modifier.fillMaxWidth().height(42.dp)) {
-                        Text(
-                            "取消",
-                            color = Color(0xFF20242C),
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.weight(1f).fillMaxHeight().clickable(onClick = onDismiss).padding(top = 11.dp),
-                        )
+                        Box(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+                            Text("取消", color = Color(0xFF20242C), fontSize = 14.sp)
+                        }
                         if (options.isNotEmpty()) {
                             Box(Modifier.width(hairline()).fillMaxHeight().background(AutoScriptPalette.Divider))
-                            Text(
-                                "确定",
-                                color = AutoScriptPalette.DialogTitle,
-                                fontSize = 14.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.weight(1f).fillMaxHeight()
-                                    .clickable { options.getOrNull(selectedIndex)?.let { onConfirm(it.first) } }
-                                    .padding(top = 11.dp),
-                            )
+                            Box(
+                                Modifier.weight(1f).fillMaxHeight()
+                                    .clickable { options.getOrNull(selectedIndex)?.let { onConfirm(it.first) } },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("确定", color = AutoScriptPalette.DialogTitle, fontSize = 14.sp)
+                            }
                         }
                     }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun PromptTextButton(
-    label: String,
-    color: Color = PromptAction,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Text(
-        label,
-        color = color,
-        fontSize = 14.sp,
-        modifier = modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 15.dp, vertical = 8.dp),
-    )
 }

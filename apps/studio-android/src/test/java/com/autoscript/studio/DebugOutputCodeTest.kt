@@ -8,6 +8,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DebugOutputCodeTest {
+
+    @Test
+    fun dynamicMessagesKeepExpressionsChannelsAndSavedEdits() {
+        var id = 0
+        val expression = "\"进度：\" .. text(count)"
+        val contract = requireNotNull(BlockCatalog.find("task.message"))
+        for ((mode, channel) in listOf(0 to "output", 1 to "popup", 2 to "console")) {
+            val snippet = requireNotNull(DebugOutputCode.expressionSnippet(mode, expression, true))
+            assertEquals("task.message", FunctionCatalog.blockKindOf(snippet))
+            val args = legacyDockBlockArguments(contract, snippet, JsonObject())
+            assertEquals(expression, args["expression"].asString)
+            assertEquals(channel, args["channel"].asString)
+            assertEquals(mode, DebugOutputCode.expressionOutputMode(args))
+            val editor = VisualEditorState.create("", "root") { "message-${++id}" }
+            val node = requireNotNull(editor.insertBlock(contract, args))
+            val restored = VisualEditorState.create(editor.currentSource, "root") { "restore-${++id}" }
+            assertEquals(args, restored.nodeArguments(node))
+            val changed = args.deepCopy().apply { addProperty("expression", "\"next\"") }
+            assertTrue(restored.updateArguments(node, changed))
+            assertEquals("\"next\"", restored.nodeArguments(node)!!["expression"].asString)
+        }
+        assertNull(DebugOutputCode.expressionSnippet(1, expression, false))
+        assertNull(DebugOutputCode.expressionSnippet(3, expression, true))
+        assertNull(DebugOutputCode.expressionSnippet(1, "中".repeat(342), true))
+        assertEquals("\"进度\" .. text(count)", DebugOutputCode.appendExpressionVariable("\"进度\"", "count"))
+        assertEquals("\"进度\" ..text(count)", DebugOutputCode.appendExpressionVariable("\"进度\" .. ", "count"))
+        assertNull(DebugOutputCode.appendExpressionVariable("x".repeat(1024), "count"))
+        assertNull(DebugOutputCode.appendExpressionVariable("", "x);shell"))
+    }
     @Test
     fun visualOutputHasFourDistinctTypedKindsAndPreservesMessage() {
         val cases = listOf(

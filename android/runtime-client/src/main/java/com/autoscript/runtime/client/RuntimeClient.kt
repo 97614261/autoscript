@@ -21,14 +21,20 @@ import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.runtime.api.RuntimeProtocol
 import com.autoscript.runtime.api.VisualCompileReply
 import com.autoscript.runtime.api.TemplateMatchReply
+import com.autoscript.runtime.api.RecognitionPreviewReply
+import com.autoscript.runtime.api.RecordingReply
 import com.autoscript.runtime.api.RuntimeDebugReply
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 enum class RuntimeProjectResourceKind {
     IMAGE,
@@ -77,8 +83,12 @@ class RuntimeClient(context: Context) {
     @Volatile private var lastRootState: RuntimeRootState = RuntimeRootState.UNKNOWN
     private val stateRevision = java.util.concurrent.atomic.AtomicLong(0)
     private val connectionStates = MutableStateFlow(RuntimeConnectionState())
+    val runtimeStates = connectionStates.asStateFlow()
     private data class PendingInputPick(val id: Long, val generation: Long, val features: Int, val callback: (InputPointPickReply) -> Unit)
     private var pendingInputPick: PendingInputPick? = null
+    private data class RecordingLease(val id: Long, val generation: Long, val service: IRuntimeService)
+    private val recordingLease = java.util.concurrent.atomic.AtomicReference<RecordingLease?>()
+    private val recordingRandom = java.security.SecureRandom()
     private val inputPickListener = object : IInputPointPickListener.Stub() {
         override fun onFinished(reply: InputPointPickReply) {
             mainHandler.post {
@@ -197,6 +207,7 @@ class RuntimeClient(context: Context) {
 
     fun unbind() {
         startGate.cancel()
+        recordingLease.getAndSet(null)?.let { lease -> runCatching { lease.service.cancelInputRecording(System.nanoTime().and(Long.MAX_VALUE).coerceAtLeast(1),lease.generation,lease.id) } }
         cancelInputPointPick()
         runCatching { remote?.unregisterStateListener(stateListener) }
         if (bound) appContext.unbindService(connection)
@@ -458,8 +469,12 @@ class RuntimeClient(context: Context) {
             return false
         }
         return try {
-            startPreparedProject(projectId, generatedLuaModule, resources, capabilities, designWidth,
-                designHeight, scaleMode, requestId, requiresPointerInput, scriptUiJson, scriptUiValuesJson)
+            // Bitmap decoding, file descriptors and synchronous Binder preparation must not block
+            // the editor/UI thread. Cancellation is checked between every session-bound operation.
+            withContext(Dispatchers.IO) {
+                startPreparedProject(projectId, generatedLuaModule, resources, capabilities, designWidth,
+                    designHeight, scaleMode, requestId, requiresPointerInput, scriptUiJson, scriptUiValuesJson)
+            }
         } finally {
             startGate.finish(job)
         }
@@ -490,7 +505,9 @@ class RuntimeClient(context: Context) {
             currentCoroutineContext().ensureActive()
             check(remote === service && lastSessionGeneration == generation) { "Runner会话已变化，请重试" }
         }
-        if (requiresPointerInput && inputFeatures() and RuntimeProtocol.INPUT_FEATURE_SINGLE_POINTER == 0) {
+        ensureSession()
+        val features = if (requiresPointerInput) runCatching { service.getInputFeatures(generation) }.getOrDefault(0) else 0
+        if (requiresPointerInput && features and RuntimeProtocol.INPUT_FEATURE_SINGLE_POINTER == 0) {
             publishOperationError("当前 Root 后端不支持持续触点，请移除按下/移动/弹起或更换支持的 Android 系统")
             return false
         }
@@ -514,52 +531,52 @@ class RuntimeClient(context: Context) {
         if (!prepareProject(requestIds[0], service, generation)) return false
         var started = false
         try {
-        for ((index, resource) in resources.sortedBy(RuntimeProjectResource::path).withIndex()) {
+            for ((index, resource) in resources.sortedBy(RuntimeProjectResource::path).withIndex()) {
+                ensureSession()
+                val resourceRequestId = requestIds[index + 1]
+                val registered = when (resource.kind) {
+                    RuntimeProjectResourceKind.IMAGE -> registerTemplate(
+                        service, generation,
+                        resource.path,
+                        resource.file,
+                        resourceRequestId,
+                    )
+                    RuntimeProjectResourceKind.GLYPH_DICTIONARY -> registerDictionary(
+                        service, generation,
+                        resource.path,
+                        resource.file,
+                        resourceRequestId,
+                    )
+                }
+                if (!registered) {
+                    return false
+                }
+            }
+            if (scriptUiJson != null) {
+                ensureSession()
+                val images = resources.filter { it.kind == RuntimeProjectResourceKind.IMAGE }
+                val configured = runCatching {
+                    service.configureScriptUi(generation, projectId, scriptUiJson,
+                        scriptUiValuesJson, images.map { it.path }.toTypedArray(),
+                        images.map { it.file.canonicalPath }.toTypedArray()) == RuntimeProtocol.CONTROL_ACCEPTED
+                }.getOrDefault(false)
+                if (!configured) {
+                    publishOperationError("脚本界面准备失败，请检查界面配置与悬浮窗权限")
+                    return false
+                }
+            }
             ensureSession()
-            val resourceRequestId = requestIds[index + 1]
-            val registered = when (resource.kind) {
-                RuntimeProjectResourceKind.IMAGE -> registerTemplate(
-                    service, generation,
-                    resource.path,
-                    resource.file,
-                    resourceRequestId,
-                )
-                RuntimeProjectResourceKind.GLYPH_DICTIONARY -> registerDictionary(
-                    service, generation,
-                    resource.path,
-                    resource.file,
-                    resourceRequestId,
-                )
-            }
-            if (!registered) {
-                return false
-            }
-        }
-        if (scriptUiJson != null) {
-            ensureSession()
-            val images = resources.filter { it.kind == RuntimeProjectResourceKind.IMAGE }
-            val configured = runCatching {
-                service.configureScriptUi(generation, projectId, scriptUiJson,
-                    scriptUiValuesJson, images.map { it.path }.toTypedArray(),
-                    images.map { it.file.canonicalPath }.toTypedArray()) == RuntimeProtocol.CONTROL_ACCEPTED
-            }.getOrDefault(false)
-            if (!configured) {
-                publishOperationError("脚本界面准备失败，请检查界面配置与悬浮窗权限")
-                return false
-            }
-        }
-        ensureSession()
-        started = startScript(
-            service = service, expectedGeneration = generation,
-            projectId = projectId,
-            generatedLuaModule = generatedLuaModule,
-            capabilities = capabilities,
-            designWidth = designWidth,
-            designHeight = designHeight,
-            scaleMode = scaleMode,
-            requestId = requestIds[resources.size + 1],
-        )
-        return started
+            started = startScript(
+                service = service, expectedGeneration = generation,
+                projectId = projectId,
+                generatedLuaModule = generatedLuaModule,
+                capabilities = capabilities,
+                designWidth = designWidth,
+                designHeight = designHeight,
+                scaleMode = scaleMode,
+                requestId = requestIds[resources.size + 1],
+            )
+            return started
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -718,28 +735,106 @@ class RuntimeClient(context: Context) {
         val service = remote ?: return RuntimeDebugReply.unavailable()
         val generation = expectedGeneration ?: return RuntimeDebugReply.unavailable()
         if (generation != lastSessionGeneration) return RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
-        return runCatching { service.getDebugSnapshot(generation, projectId) }.getOrElse { RuntimeDebugReply.unavailable() }
+        val reply = runCatching { service.getDebugSnapshot(generation, projectId) }.getOrElse { RuntimeDebugReply.unavailable() }
+        return if (service !== remote || generation != lastSessionGeneration ||
+            (reply.status == RuntimeDebugReply.SUCCESS && reply.sessionGeneration != generation)) {
+            RuntimeDebugReply.unavailable(RuntimeDebugReply.SESSION_MISMATCH)
+        } else reply
     }
 
     fun inputFeatures(): Int {
         val service = remote ?: return 0
         val generation = lastSessionGeneration ?: return 0
-        return runCatching { service.getInputFeatures(generation) and 3 }.getOrDefault(0)
+        val features = runCatching { service.getInputFeatures(generation) and 7 }.getOrDefault(0)
+        return if (remote === service && lastSessionGeneration == generation) features else 0
     }
 
-    /** Call on the editor thread. A callback is one-shot and always delivered on the main thread. */
-    fun beginInputPointPick(projectId: String, flowId: String, action: InputPointAction, onResult: (InputPointPickReply) -> Unit): Long? {
+    /** Waits for authoritative Root readiness; never polls and never enables Accessibility. */
+    suspend fun startRecording(projectId: String, flowId: String, maxDurationMs: Int = 60_000, eventBudget: Int = 8192): Result<Long> {
+        val service = remote ?: return Result.failure(IllegalStateException("Runner会话尚未建立"))
+        val generation = lastSessionGeneration ?: return Result.failure(IllegalStateException("Runner会话尚未建立"))
+        val id = recordingRandom.nextLong().and(Long.MAX_VALUE).coerceAtLeast(1)
+        val lease = RecordingLease(id,generation,service)
+        if (!recordingLease.compareAndSet(null,lease)) return Result.failure(IllegalStateException("已有录制，请先停止或取消"))
+        var accepted = false
+        try {
+            require(maxDurationMs in 1000..60_000 && eventBudget in 128..16_384) { "录制预算无效" }
+            require(awaitRuntimeReady(connectionStates,generation) == RuntimeStartReadiness.READY) { "Root后端未就绪，或脚本仍在运行" }
+            currentCoroutineContext().ensureActive()
+            require(recordingLease.get() === lease && remote === service && lastSessionGeneration == generation) { "录制会话已变化" }
+            val reply = withContext(Dispatchers.IO) { service.startInputRecording(id,generation,id,projectId,flowId,maxDurationMs,eventBudget) }
+            require(reply.valid() && reply.recordingId == id && reply.generation == generation && recordingLease.get() === lease && remote === service && lastSessionGeneration == generation) { "录制会话已变化" }
+            require(reply.status == RecordingReply.SUCCESS) { recordingError(reply.status) }
+            accepted = true
+            return Result.success(id)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { return Result.failure(error) }
+        finally {
+            if (!accepted) {
+                recordingLease.compareAndSet(lease,null)
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { service.cancelInputRecording(id,generation,id) } }
+            }
+        }
+    }
+
+    suspend fun finishRecording(recordingId: Long): Result<RecordingReply> = withContext(Dispatchers.IO) {
+        val lease = recordingLease.get() ?: return@withContext Result.failure(IllegalStateException("录制会话已失效"))
+        if (lease.id != recordingId || remote !== lease.service || lastSessionGeneration != lease.generation)
+            return@withContext Result.failure(IllegalStateException("录制会话已变化"))
+        try {
+            val reply = lease.service.finishInputRecording(recordingId,lease.generation,recordingId)
+            require(reply.valid() && reply.recordingId == recordingId && reply.generation == lease.generation &&
+                remote === lease.service && lastSessionGeneration == lease.generation) { "录制结果已失效" }
+            if (reply.status != RecordingReply.BUSY) recordingLease.compareAndSet(lease,null)
+            Result.success(reply)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { Result.failure(error) }
+    }
+
+    suspend fun cancelRecording(recordingId: Long): Result<Unit> = withContext(NonCancellable + Dispatchers.IO) {
+        val lease = recordingLease.get() ?: return@withContext Result.failure(IllegalStateException("录制会话已失效，未确认取消"))
+        if (lease.id != recordingId) return@withContext Result.failure(IllegalStateException("录制会话已变化"))
+        confirmRecordingCancel(recordingLease,lease,
+            sessionCurrent = { remote === lease.service && lastSessionGeneration == lease.generation },
+            cancel = { lease.service.cancelInputRecording(recordingId,lease.generation,recordingId) })
+    }
+
+    /** Window disposal has no coroutine lifetime; only a one-shot structured cancel is sent. */
+    fun cancelRecordingOnClose() {
+        val lease = recordingLease.getAndSet(null) ?: return
+        Thread({ runCatching { lease.service.cancelInputRecording(lease.id,lease.generation,lease.id) } },"recording-close").start()
+    }
+
+    private fun recordingError(status: Int): String = when (status) {
+        RecordingReply.UNSUPPORTED_DEVICE -> "设备没有受支持的Root输入事件源"
+        RecordingReply.BUSY -> "请先停止脚本或已有录制"
+        RecordingReply.INVALID_EVENT -> "录制项目/插件无效，或project.json未声明input.basic能力"
+        RecordingReply.SESSION_MISMATCH -> "录制会话已变化"
+        else -> "录制无法启动：请检查Root与悬浮窗权限（$status）"
+    }
+
+    /** Called from the editor coroutine. Blocking feature/Binder reads never run on the UI thread. */
+    suspend fun beginInputPointPick(projectId: String, flowId: String, action: InputPointAction, onResult: (InputPointPickReply) -> Unit): Long? {
         if (pendingInputPick != null) { publishOperationError("已有选点会话，请先取消"); return null }
         val service = remote ?: return null
         val generation = lastSessionGeneration ?: return null
-        val features = inputFeatures()
+        val features = withContext(Dispatchers.IO) { inputFeatures() }
+        currentCoroutineContext().ensureActive()
+        if (remote !== service || lastSessionGeneration != generation || pendingInputPick != null) return null
         if (!action.available(features)) { publishOperationError("Root输入能力不可用"); return null }
         val requestId = System.nanoTime().and(Long.MAX_VALUE).coerceAtLeast(1L)
-        pendingInputPick = PendingInputPick(requestId, generation, features, onResult)
-        val accepted = runCatching {
-            service.beginInputPointPick(requestId, generation, projectId, flowId, action.wire, inputPickListener) == RuntimeProtocol.CONTROL_ACCEPTED
-        }.getOrDefault(false)
-        if (!accepted) {
+        val pending = PendingInputPick(requestId, generation, features, onResult)
+        pendingInputPick = pending
+        val outcome = startInputPickOffUi(
+            start = {
+                service.beginInputPointPick(requestId, generation, projectId, flowId, action.wire, inputPickListener) == RuntimeProtocol.CONTROL_ACCEPTED
+            },
+            isCurrent = { remote === service && lastSessionGeneration == generation && pendingInputPick === pending },
+            clearPending = { if (pendingInputPick === pending) pendingInputPick = null },
+            cancel = { service.cancelInputPointPick(requestId, generation) },
+        )
+        if (outcome == InputPickStartOutcome.STALE) return null
+        if (outcome == InputPickStartOutcome.REJECTED) {
             pendingInputPick = null
             publishOperationError("选点未能启动：请检查悬浮窗权限、Root状态，并先停止脚本")
             return null
@@ -777,6 +872,36 @@ class RuntimeClient(context: Context) {
                 else service.requestResume(System.nanoTime(), generation)) == RuntimeProtocol.CONTROL_ACCEPTED
         }.getOrDefault(false)
     }
+
+    /** Explicit preview on saved images; callers execute this bounded operation off the UI thread. */
+    fun testRecognitionPreview(requestId: Long, operation: Int, frame: File, asset: File?, options: IntArray): RecognitionPreviewReply {
+        val service = remote
+        val generation = lastSessionGeneration ?: 0L
+        fun failure(status: Int) = RecognitionPreviewReply(requestId, generation, status, operation)
+        if (service == null || generation == 0L) return failure(RecognitionPreviewReply.SESSION_MISMATCH)
+        if (requestId <= 0 || !RecognitionPreviewReply.validOptions(operation, options) || frame.length() !in 1..MAX_PREVIEW_FILE_BYTES ||
+            (operation != RecognitionPreviewReply.ALPHANUMERIC && (asset == null || asset.length() !in 1..if (operation == RecognitionPreviewReply.GLYPH) 8L * 1024 * 1024 else MAX_PREVIEW_FILE_BYTES)) ||
+            (operation == RecognitionPreviewReply.ALPHANUMERIC && asset != null)) return failure(RecognitionPreviewReply.INVALID_INPUT)
+        return runCatching {
+            ParcelFileDescriptor.open(frame, ParcelFileDescriptor.MODE_READ_ONLY).use { source ->
+                asset?.let { ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY) }.use { target ->
+                    val reply = service.testRecognitionPreview(requestId, generation, operation, source, target, options.copyOf())
+                    if (lastSessionGeneration != generation || remote !== service || reply.requestId != requestId ||
+                        reply.generation != generation || reply.operation != operation || reply.text.length > RecognitionPreviewReply.MAX_TEXT_LENGTH ||
+                        reply.status !in RecognitionPreviewReply.SUCCESS..RecognitionPreviewReply.ENGINE_ERROR ||
+                        reply.scorePermille !in 0..1000 || reply.coveragePermille !in 0..1000) failure(RecognitionPreviewReply.SESSION_MISMATCH) else reply
+                }
+            }
+        }.getOrElse { failure(RecognitionPreviewReply.ENGINE_ERROR) }
+    }
+
+    fun cancelRecognitionPreview(requestId: Long) {
+        val generation = lastSessionGeneration ?: return
+        if (requestId > 0) runCatching { remote?.cancelRecognitionPreview(requestId, generation) }
+    }
+
+    fun isRecognitionPreviewCurrent(reply: RecognitionPreviewReply): Boolean =
+        remote != null && lastSessionGeneration == reply.generation && reply.requestId > 0L
 
     /** Explicit preview on saved images; callers execute this bounded operation off the UI thread. */
     fun testTemplate(frame: File, template: File, tolerance: Int, similarityPermille: Int): TemplateMatchReply {

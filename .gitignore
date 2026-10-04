@@ -37,3 +37,6 @@ secrets.properties
 .DS_Store
 Thumbs.db
 *.swp
+__pycache__/
+/tools/legacy-converter/output/
+/tools/legacy-converter/dist/

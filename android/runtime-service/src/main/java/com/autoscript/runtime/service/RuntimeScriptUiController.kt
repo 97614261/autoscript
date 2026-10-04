@@ -13,6 +13,7 @@ import android.widget.Toast
 import com.autoscript.script.ui.ScriptUiDefinition
 import com.autoscript.script.ui.ScriptUiWindowView
 import com.autoscript.script.ui.ScriptUiDisplay
+import com.autoscript.script.ui.ScriptUiRuntimeProperty
 import com.autoscript.script.ui.UiScreenBounds
 import com.autoscript.script.ui.UiWindowSize
 import org.json.JSONObject
@@ -47,9 +48,14 @@ internal class RuntimeScriptUiController(
     private var lastBounds: UiScreenBounds? = null
 
     fun accepts(token: Long) = token == epoch.get()
+    fun currentToken(): Long = epoch.get()
     fun clear() {
-        epoch.incrementAndGet()
-        main.post { removeWindows(); definition = null; values = emptyMap(); images = emptyMap(); active = false }
+        val token = epoch.incrementAndGet()
+        main.post {
+            if (accepts(token)) {
+                removeWindows(); definition = null; values = emptyMap(); images = emptyMap(); active = false
+            }
+        }
     }
 
     fun prepare(source: String, rawValues: String, paths: Array<out String>, files: Array<out String>): Boolean {
@@ -121,6 +127,36 @@ internal class RuntimeScriptUiController(
                 }
             }
             } finally { pendingCommands.decrementAndGet() }
+        }
+    }
+
+    /** Host completion follows this main-thread operation, including when no page is mounted. */
+    fun requestProperty(token: Long, id: String, operation: String, value: String,
+        cancelled: () -> Boolean, completion: (Result<String>) -> Unit) {
+        if (pendingCommands.incrementAndGet() > 128) {
+            pendingCommands.decrementAndGet()
+            completion(Result.failure(IllegalStateException("UI_QUEUE_FULL")))
+            return
+        }
+        val posted = main.post {
+            try {
+                completion(runCatching {
+                    check(accepts(token) && active && !cancelled()) { "UI_SESSION_STALE" }
+                    val view = requireNotNull(runtimeView(token)).renderer
+                    if (operation.startsWith("get:")) {
+                        require(value.isEmpty())
+                        view.readProperty(id, ScriptUiRuntimeProperty.fromOperation(operation.removePrefix("get:")))
+                    } else {
+                        require(ScriptUiRuntimeProperty.fromOperation(operation).presentation)
+                        view.applyCommand(id, operation, value)
+                        ""
+                    }
+                })
+            } finally { pendingCommands.decrementAndGet() }
+        }
+        if (!posted) {
+            pendingCommands.decrementAndGet()
+            completion(Result.failure(IllegalStateException("UI_UNAVAILABLE")))
         }
     }
 

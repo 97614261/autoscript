@@ -92,7 +92,7 @@ internal fun ConfiguredEntryArgumentsDialog(
     knownLabels: List<String> = emptyList(),
 ): Boolean {
     val kind = contract.kind
-    if (kind in setOf("control.repeat", "control.loopmetric", "control.loopcheck", "task.sleep") ||
+    if (kind in setOf("control.repeat", "control.cycle", "control.loopmetric", "control.loopcheck", "task.sleep") ||
         (kind == "control.while" && arguments.get("always")?.asBoolean == true)) {
         val initial = remember(kind, arguments) { loopDraftFromArguments(kind, arguments) }
         VisualLoopDialog(variables, currentFlowId, flows, onDismiss, { hint ->
@@ -100,10 +100,11 @@ internal fun ConfiguredEntryArgumentsDialog(
         }, onManageVariables, initial, kind, confirmLabel)
         return true
     }
-    val jump = kind in setOf("control.break", "control.label", "control.goto", "flow.return", "flow.call",
+    val jump = kind in setOf("control.break", "control.continue", "control.label", "control.goto", "flow.return", "flow.call", "flow.call.branch", "flow.status.return",
         "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
-        (kind != "flow.return" || arguments.size() == 0) && (kind != "flow.call" || arguments.getAsJsonObject("arguments")?.size() in listOf(null, 0))
-    val debug = kind in setOf("task.prompt", "task.runprompt", "task.log", "task.comment")
+        (kind != "flow.return" || arguments.size() == 0) &&
+        (kind !in setOf("flow.call", "flow.call.branch") || arguments.getAsJsonObject("arguments")?.size() in listOf(null, 0))
+    val debug = kind in setOf("task.prompt", "task.runprompt", "task.log", "task.message", "task.comment")
     if (!jump && !debug) return false
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 560.dp).heightIn(max = 540.dp).fillMaxHeight(.68f),
@@ -154,7 +155,10 @@ internal fun EditorEntryDialog(
         return
     }
     if (entry == EditorToolPanel.IMAGE && onCreateImageBlock != null) {
-        LaunchedEffect(entry) { onCreateImageBlock("vision.findimage") }
+        VisualImageHomeDialog(onDismiss, onCreateImageBlock,
+            onCapture = onOpenImageTools?.let { open -> { open(0L) } },
+            onLibrary = onOpenImageLibrary,
+            onTest = onTestRecognition)
         return
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1039,10 +1043,11 @@ private fun CommonPage(
         else listOf("流程操作")
     val targets = projectFlows.filter { it.flowId != currentFlowId }
     fun text(key: String, fallback: String = "") = initialArguments?.get(key)?.takeIf { it.isJsonPrimitive }?.asString ?: fallback
-    val initialTab = when (initialKind) { "flow.call" -> 1; "flow.argument.set" -> 2; "flow.argument.get" -> 3; "flow.return.set" -> 4; "flow.return.get" -> 5; else -> 0 }
-    val initialAction = when (initialKind) { "control.label" -> 1; "flow.return" -> 2; "control.goto" -> 3; "task.sleep" -> 4; else -> 0 }
+    val initialTab = when (initialKind) { "flow.call", "flow.call.branch" -> 1; "flow.argument.set" -> 2; "flow.argument.get" -> 3; "flow.return.set" -> 4; "flow.return.get" -> 5; else -> 0 }
+    val initialAction = when (initialKind) { "control.label" -> 1; "flow.return" -> 2; "control.goto" -> 3; "task.sleep" -> 4; "flow.status.return" -> if (text("success") == "false") 6 else 5; "control.continue" -> 7; else -> 0 }
     var selected by remember { mutableStateOf(initialTab) }
     var action by remember { mutableStateOf(initialAction) }
+    var callBranches by remember { mutableStateOf(initialKind == "flow.call.branch") }
     var waitValue by remember { mutableStateOf(text("millisecondsVariable", text("milliseconds", "500"))) }
     var waitIsVariable by remember { mutableStateOf(initialArguments?.has("millisecondsVariable") == true) }
     val autoLabel = remember(availableLabels, visualMode) {
@@ -1082,6 +1087,9 @@ private fun CommonPage(
                     "::$name::\n"
                 }
                 2 -> "return\n"
+                5 -> JumpPanelCode.statusSnippet(true)
+                6 -> JumpPanelCode.statusSnippet(false)
+                7 -> "${FunctionCatalog.BLOCK_HINT_PREFIX}control.continue\n{}\n"
                 3 -> {
                     if (!JumpPanelCode.validName(labelName)) jumpError = "请输入有效的标记名"
                     else if (visualMode && labelName !in availableLabels) jumpError = "请先在当前插件放置该标记"
@@ -1099,7 +1107,7 @@ private fun CommonPage(
                     }
                 }
             }
-            1 -> JumpPanelCode.callSnippet(targetFlowId?.takeIf { id -> targets.any { it.flowId == id } }.orEmpty()).also {
+            1 -> JumpPanelCode.callSnippet(targetFlowId?.takeIf { id -> targets.any { it.flowId == id } }.orEmpty(), callBranches).also {
                 if (it == null) jumpError = "请先创建并选择目标插件"
             }
             2, 4 -> {
@@ -1130,7 +1138,7 @@ private fun CommonPage(
     }, headerHint = if (visualMode) "当前插件内操作" else null, confirmLabel = confirmLabel) {
         when (selected) {
             0 -> {
-                DenseFlowActions(action) {
+                DenseFlowActions(action, visualMode) {
                     if (initialKind != null && it != initialAction) { jumpError = "修改时请保留原积木类型"; return@DenseFlowActions }
                     action = it
                     jumpError = null
@@ -1148,6 +1156,8 @@ private fun CommonPage(
                         else DenseNotice("将创建 $autoLabel；只在当前插件内有效。")
                     }
                     2 -> DenseNotice("结束当前插件，向调用者返回；此前设置的返回参数会一起传回。", "返回上层")
+                    5, 6 -> DenseNotice("结束当前插件，独立返回${if (action == 5) "成功" else "失败"}状态；已设置的返回参数不变。异常、取消不当作失败。", "返回运行状态")
+                    7 -> DenseNotice("跳过最近一层循环的剩余积木，开始下一轮；停止和让步仍然生效。", "结束本次循环")
                     3 -> {
                         DenseTypedValue("标记", labelName, { labelName = it; jumpError = null },
                             if (visualMode) "选择标记" else "") {
@@ -1175,6 +1185,10 @@ private fun CommonPage(
                 }
             }
             1 -> {
+                SegmentedChoice("仅调用", "成功 / 失败分支", callBranches) {
+                    if (initialKind == null) callBranches = it
+                    else if (it != callBranches) jumpError = "修改时保留原子区；请新建分支调用积木"
+                }
                 DenseNotice("先设置调用参数，再加入调用；调用后可读取返回参数。加入调用积木后仍可编辑参数。", "调用顺序")
                 val selectedTarget = targets.firstOrNull { it.flowId == targetFlowId }
                 DenseLabeledRow("目标插件", selectedTarget?.displayName() ?: "未创建", {
@@ -1222,8 +1236,8 @@ private fun CommonPage(
 }
 
 @Composable
-private fun DenseFlowActions(selected: Int, onSelected: (Int) -> Unit) {
-    val actions = listOf("跳出循环", "放置标记", "返回上层", "跳转标记", "等待时间")
+private fun DenseFlowActions(selected: Int, visualMode: Boolean, onSelected: (Int) -> Unit) {
+    val actions = listOf("跳出循环", "放置标记", "返回上层", "跳转标记", "等待时间") + if (visualMode) listOf("返回成功", "返回失败", "结束本次循环") else emptyList()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         actions.chunked(2).forEachIndexed { rowIndex, rowItems ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1328,9 +1342,10 @@ private fun DebugPage(
 ) {
     val tabs = if (initialKind != null) listOf("运行输出") else listOf("运行输出", "提示设置", "弹窗样式", "调试设置", "开发环境")
     var selected by remember { mutableStateOf(0) }
-    val initialOutputMode = when (initialKind) { "task.prompt" -> DebugOutputCode.TOAST; "task.log" -> DebugOutputCode.LOG; "task.comment" -> DebugOutputCode.COMMENT; else -> DebugOutputCode.RUN_PROMPT }
+    val initialOutputMode = when (initialKind) { "task.prompt" -> DebugOutputCode.TOAST; "task.log" -> DebugOutputCode.LOG; "task.comment" -> DebugOutputCode.COMMENT; "task.message" -> DebugOutputCode.expressionOutputMode(initialArguments); else -> DebugOutputCode.RUN_PROMPT }
     var outputMode by remember { mutableStateOf(initialOutputMode) }
-    var outputText by remember { mutableStateOf(initialArguments?.get("message")?.asString.orEmpty()) }
+    var outputText by remember { mutableStateOf(initialArguments?.get(if (initialKind == "task.message") "expression" else "message")?.asString.orEmpty()) }
+    var expressionMode by remember { mutableStateOf(initialKind == "task.message") }
     var outputVariable by remember { mutableStateOf(initialArguments?.get("valueVariable")?.asString) }
     var outputError by remember { mutableStateOf<String?>(null) }
     var runDelayMs by remember(initialSettings) { mutableStateOf(initialSettings.runDelayMs) }
@@ -1351,10 +1366,18 @@ private fun DebugPage(
                     0 -> DebugOutputPanel(
                         outputMode = outputMode,
                         onOutputModeChange = {
-                            if (initialKind == null || it == initialOutputMode) { outputMode = it; outputError = null }
+                            if (initialKind == null || it == initialOutputMode || initialKind == "task.message" && it != DebugOutputCode.COMMENT) {
+                                outputMode = it; outputError = null
+                                if (it == DebugOutputCode.COMMENT) expressionMode = false
+                            }
                             else outputError = "修改时请保留输出类型；其他类型请从调试入口新增"
                         },
                         outputText = outputText,
+                        expressionMode = expressionMode,
+                        expressionAvailable = visualMode && initialKind == null,
+                        onExpressionModeChange = { enabled ->
+                            if (initialKind == null) { expressionMode = enabled; outputVariable = null; outputError = null }
+                        },
                         onOutputTextChange = { outputText = it; outputError = null },
                         selectedVariable = outputVariable,
                         error = outputError,
@@ -1365,7 +1388,14 @@ private fun DebugPage(
                                     title = "选择变量",
                                     options = availableVariables,
                                     selected = outputVariable,
-                                ) { outputVariable = it; outputError = null }
+                                ) {
+                                    if (expressionMode) {
+                                        val appended = DebugOutputCode.appendExpressionVariable(outputText, it)
+                                        if (appended == null) outputError = "表达式超过1024字节或变量无效，原内容保留"
+                                        else { outputText = appended; outputError = null }
+                                    } else outputVariable = it
+                                    if (!expressionMode) outputError = null
+                                }
                             } else {
                                 outputError = "当前没有可用变量，请先创建变量"
                             }
@@ -1413,9 +1443,11 @@ private fun DebugPage(
                             popupStyle = popupStyle,
                         ))
                     } else {
-                        outputError = DebugOutputCode.error(outputMode, outputText, outputVariable)
+                        outputError = if (expressionMode) DebugOutputCode.expressionError(outputMode, outputText, visualMode)
+                            else DebugOutputCode.error(outputMode, outputText, outputVariable)
                         if (outputError == null) {
-                            DebugOutputCode.snippet(outputMode, outputText, outputVariable, visualMode)?.let(onInsert)
+                            if (expressionMode) DebugOutputCode.expressionSnippet(outputMode, outputText, visualMode)?.let(onInsert)
+                            else DebugOutputCode.snippet(outputMode, outputText, outputVariable, visualMode)?.let(onInsert)
                         }
                     }
                 },
@@ -1476,6 +1508,9 @@ private fun DebugOutputPanel(
     outputMode: Int,
     onOutputModeChange: (Int) -> Unit,
     outputText: String,
+    expressionMode: Boolean,
+    expressionAvailable: Boolean,
+    onExpressionModeChange: (Boolean) -> Unit,
     onOutputTextChange: (String) -> Unit,
     selectedVariable: String?,
     error: String?,
@@ -1521,6 +1556,10 @@ private fun DebugOutputPanel(
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("内容来源", fontSize = 11.sp, color = EntryMuted, modifier = Modifier.weight(1f))
+                if (expressionAvailable) {
+                    Text(if (expressionMode) "表达式 ✓" else "表达式", color = EntryAccent, fontSize = 11.sp,
+                        modifier = Modifier.clickable { onExpressionModeChange(!expressionMode) }.padding(horizontal = 6.dp))
+                }
                 if (selectedVariable != null) {
                     Text("改用文字", color = EntryAccent, fontSize = 11.sp,
                         modifier = Modifier.clickable(onClick = onClearVariable).padding(horizontal = 8.dp))
@@ -1541,6 +1580,7 @@ private fun DebugOutputPanel(
                 }
             }
         }
+        if (expressionMode) Text("字符用 .. 连接；数值用 text()。如：\"进度：\" .. text(count)。保存后由编译器验证。", color = EntryMuted, fontSize = 10.sp)
         if (selectedVariable != null && outputMode != DebugOutputCode.COMMENT) {
             Text("将输出变量当前值；下方文字仅用作编辑器中的说明。", color = EntryMuted, fontSize = 10.sp)
         }

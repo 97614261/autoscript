@@ -17,6 +17,8 @@ class NativeEngineBridge private constructor() {
         @JvmStatic external fun nativeCreate(width: Int, height: Int): Long
         @JvmStatic external fun nativeSetWakeListener(handle: Long, listener: Any): Int
         @JvmStatic external fun nativeSetVisionListener(handle: Long, listener: Any): Int
+        @JvmStatic external fun nativeSetScriptUiListener(handle: Long, listener: Any): Int
+        @JvmStatic external fun nativeSetDataFileListener(handle: Long, listener: Any): Int
         @JvmStatic external fun nativeRegisterTemplate(
             handle: Long,
             name: String,
@@ -64,6 +66,8 @@ class NativeEngineBridge private constructor() {
         @JvmStatic external fun nativeDebugSnapshot(handle: Long): String?
         @JvmStatic external fun nativePushUiEvent(handle: Long, id: String, event: String, value: String, dispatch: Boolean): Int
         @JvmStatic external fun nativeInputFeatures(handle: Long): Int
+        @JvmStatic external fun nativeStartRecording(handle: Long, token: Long, width: Int, height: Int, rotation: Int, maxDurationMs: Int, eventBudget: Int): Int
+        @JvmStatic external fun nativeFinishRecording(handle: Long, token: Long, cancel: Boolean, discardCurrentTouch: Boolean): ByteArray?
         @JvmStatic external fun nativeAttachRoot(
             handle: Long,
             socketPath: String,
@@ -74,6 +78,9 @@ class NativeEngineBridge private constructor() {
         @JvmStatic external fun nativeState(handle: Long): Int
         @JvmStatic external fun nativeLastDiagnostic(handle: Long): String?
         @JvmStatic external fun nativeCapturePreview(handle: Long): ByteArray?
+        @JvmStatic external fun nativeTestGlyph(requestId: Long, frameWidth: Int, frameHeight: Int,
+            frameRgba: ByteArray, dictionary: ByteArray, options: IntArray): String?
+        @JvmStatic external fun nativeCancelRecognitionPreview(requestId: Long)
         @JvmStatic external fun nativeTestTemplate(
             frameWidth: Int, frameHeight: Int, frameRgba: ByteArray,
             templateWidth: Int, templateHeight: Int, templateRgba: ByteArray,

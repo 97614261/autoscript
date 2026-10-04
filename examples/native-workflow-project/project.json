@@ -1,0 +1,31 @@
+{
+  "formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.7",
+  "projectId":"native-workflow-public","name":"原生完整流程示例","sourceMode":"visual","entryFlowId":"main",
+  "flows":[
+    {"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root-main","params":[],"returns":null},
+    {"flowId":"worker","path":"visual/flows/worker.jsonl","rootBlockId":"root-worker","params":[],"returns":null}
+  ],
+  "variables":[
+    {"name":"repeatCount","scope":"global","type":"integer"},
+    {"name":"total","scope":"global","type":"integer"},
+    {"name":"summary","scope":"global","type":"string"},
+    {"name":"matches","scope":"flow","flowId":"main","type":"string"},
+    {"name":"matchCount","scope":"flow","flowId":"main","type":"integer"},
+    {"name":"iteration","scope":"flow","flowId":"main","type":"integer"}
+  ],
+  "resources":[{"kind":"image","path":"assets/images/tile.png"}],
+  "capabilities":["core.task","screen.capture","vision.template","ui.control"],
+  "design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"},
+  "debugSettings":{"runDelayMs":0,"showRunPrompts":true,"popupStyle":{"widthPx":360,"heightPx":80,"xPx":-1,"yPx":-1,"backgroundColor":"#CC202938","textColor":"#FFFFFFFF","fontPx":24,"cornerPx":16,"durationMs":1200,"textAlign":"center"}},
+  "runnerUi":{
+    "version":2,"description":"公开示例：仅截图识别与提示，不发送点击/滑动。找不到模板走失败分支。",
+    "pages":[{"id":"main","title":"流程演示","width":480,"height":320,"background":"#FFF7F8FC"}],
+    "fields":[
+      {"id":"title","label":"标题","kind":"text","required":false,"initialValue":"原生流程演示","minimum":null,"maximum":null,"options":[],"ui":{"control":"LABEL","pageId":"main","x":16,"y":12,"width":448,"height":48,"fontPx":24,"textColor":"#FF3768FF","background":"#00000000","alignment":"center","visible":true,"enabled":true,"events":{},"fontBold":true}},
+      {"id":"repeatCount","label":"循环次数（1–5）","kind":"integer","required":true,"initialValue":3,"minimum":1,"maximum":5,"options":[],"ui":{"control":"NUMBER","pageId":"main","x":16,"y":72,"width":448,"height":48,"fontPx":20,"textColor":"#FF202938","background":"#FFFFFFFF","alignment":"center","visible":true,"enabled":true,"binding":"global:repeatCount","events":{},"borderColor":"#FFD4D9E6","borderWidthPx":1,"cornerPx":8}},
+      {"id":"status","label":"执行状态","kind":"text","required":false,"initialValue":"尚未执行","minimum":null,"maximum":null,"options":[],"ui":{"control":"LABEL","pageId":"main","x":16,"y":132,"width":448,"height":48,"fontPx":20,"textColor":"#FF202938","background":"#00000000","alignment":"center","visible":true,"enabled":true,"events":{}}},
+      {"id":"run","label":"运行","kind":"text","required":false,"initialValue":"运行","minimum":null,"maximum":null,"options":[],"ui":{"control":"BUTTON","pageId":"main","x":16,"y":192,"width":448,"height":48,"fontPx":20,"textColor":"#FFFFFFFF","background":"#FF3768FF","alignment":"center","visible":true,"enabled":true,"events":{"click":"run"},"cornerPx":8}},
+      {"id":"close","label":"关闭","kind":"text","required":false,"initialValue":"关闭","minimum":null,"maximum":null,"options":[],"ui":{"control":"BUTTON","pageId":"main","x":16,"y":252,"width":448,"height":48,"fontPx":20,"textColor":"#FF3768FF","background":"#FFFFFFFF","alignment":"center","visible":true,"enabled":true,"events":{"click":"close"},"cornerPx":8}}
+    ]
+  }
+}

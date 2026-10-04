@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.list",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.list/1/files.list.schema.json",
+  "title": "列举项目数据文件",
+  "category": "variable",
+  "summary": "项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。",
+  "searchTerms": [
+    "数据",
+    "文件",
+    "对象",
+    "列举项目数据文件"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "项目私有 data 内相对目录路径；根目录填空字符串。",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "pathVariable",
+      "label": "项目私有 data 内相对目录路径；根目录填空字符串来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "data"
+    }
+  ],
+  "migrations": []
+}

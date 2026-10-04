@@ -109,6 +109,25 @@ fn probe_bytes_with_policy(
     bytes: &[u8],
     require_embedded_release: bool,
 ) -> Result<PackageReport, ProbeError> {
+    probe_bytes_with_abi_policy(bytes, require_embedded_release, false)
+}
+
+/// Explicit phone profile. Default probe functions continue requiring both development ABIs.
+/// # Errors
+/// Rejects malformed packages, missing arm64, x86 entries, signing/layout/release failures.
+pub fn probe_path_arm64(
+    path: &Path,
+    require_embedded_release: bool,
+) -> Result<PackageReport, ProbeError> {
+    let bytes = std::fs::read(path).map_err(|error| ProbeError::Io(error.to_string()))?;
+    probe_bytes_with_abi_policy(&bytes, require_embedded_release, true)
+}
+
+fn probe_bytes_with_abi_policy(
+    bytes: &[u8],
+    require_embedded_release: bool,
+    arm64_only: bool,
+) -> Result<PackageReport, ProbeError> {
     let eocd = find_eocd(bytes).ok_or(ProbeError::EndOfCentralDirectoryMissing)?;
     if read_u16(bytes, eocd + 4)? != 0
         || read_u16(bytes, eocd + 6)? != 0
@@ -134,6 +153,13 @@ fn probe_bytes_with_policy(
     }
 
     let central_entries = parse_central_entries(bytes, central_offset, entries, central_end)?;
+    if arm64_only
+        && central_entries.iter().any(|entry| {
+            entry.name.starts_with("lib/") && !entry.name.starts_with("lib/arm64-v8a/")
+        })
+    {
+        return Err(ProbeError::UnsupportedZipLayout);
+    }
     let release_manifests = central_entries
         .iter()
         .filter(|entry| entry.name == RELEASE_MANIFEST)
@@ -157,7 +183,11 @@ fn probe_bytes_with_policy(
         }
     }
     let mut reports = Vec::with_capacity(REQUIRED_LIBRARIES.len());
-    for (required_name, expected_machine) in REQUIRED_LIBRARIES {
+    for &(required_name, expected_machine) in if arm64_only {
+        &REQUIRED_LIBRARIES[..1]
+    } else {
+        &REQUIRED_LIBRARIES[..]
+    } {
         let matching: Vec<_> = central_entries
             .iter()
             .filter(|entry| entry.name == required_name)
@@ -312,7 +342,8 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, ProbeError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        probe_bytes, probe_bytes_with_policy, ProbeError, APK_SIGNING_MAGIC, PAGE_ALIGNMENT,
+        probe_bytes, probe_bytes_with_abi_policy, probe_bytes_with_policy, ProbeError,
+        APK_SIGNING_MAGIC, PAGE_ALIGNMENT,
     };
 
     fn append_u16(bytes: &mut Vec<u8>, value: u16) {
@@ -371,27 +402,53 @@ mod tests {
     }
 
     fn fixture() -> Vec<u8> {
+        fixture_with_abis(true)
+    }
+
+    fn fixture_with_abis(include_x64: bool) -> Vec<u8> {
         let mut bytes = Vec::new();
         let arm_name = "lib/arm64-v8a/libengine_jni.so";
         let x64_name = "lib/x86_64/libengine_jni.so";
         let arm = append_entry(&mut bytes, arm_name, 183);
-        let x64 = append_entry(&mut bytes, x64_name, 62);
+        let x64 = include_x64.then(|| append_entry(&mut bytes, x64_name, 62));
         bytes.extend_from_slice(&24_u64.to_le_bytes());
         bytes.extend_from_slice(&24_u64.to_le_bytes());
         bytes.extend_from_slice(APK_SIGNING_MAGIC);
         let central_offset = u32::try_from(bytes.len()).expect("central offset");
         append_central(&mut bytes, arm_name, arm.0, arm.1);
-        append_central(&mut bytes, x64_name, x64.0, x64.1);
+        if let Some(x64) = x64 {
+            append_central(&mut bytes, x64_name, x64.0, x64.1);
+        }
         let central_size = u32::try_from(bytes.len()).expect("central end") - central_offset;
         append_u32(&mut bytes, 0x0605_4b50);
         append_u16(&mut bytes, 0);
         append_u16(&mut bytes, 0);
-        append_u16(&mut bytes, 2);
-        append_u16(&mut bytes, 2);
+        append_u16(&mut bytes, if include_x64 { 2 } else { 1 });
+        append_u16(&mut bytes, if include_x64 { 2 } else { 1 });
         append_u32(&mut bytes, central_size);
         append_u32(&mut bytes, central_offset);
         append_u16(&mut bytes, 0);
         bytes
+    }
+
+    #[test]
+    fn explicit_phone_policy_accepts_arm64_without_weakening_default_gate() {
+        let phone = fixture_with_abis(false);
+        assert_eq!(
+            probe_bytes_with_abi_policy(&phone, false, true)
+                .unwrap()
+                .libraries
+                .len(),
+            1
+        );
+        assert_eq!(
+            probe_bytes(&phone),
+            Err(ProbeError::MissingLibrary("lib/x86_64/libengine_jni.so"))
+        );
+        assert_eq!(
+            probe_bytes_with_abi_policy(&fixture(), false, true),
+            Err(ProbeError::UnsupportedZipLayout)
+        );
     }
 
     #[test]

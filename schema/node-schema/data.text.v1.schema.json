@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/data.text/1/data.text.schema.json",
+  "title": "解码 JSON 字符串",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "data.text"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valueJson",
+        "resultVariable"
+      ],
+      "properties": {
+        "valueJson": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "valueJsonVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

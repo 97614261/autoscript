@@ -26,11 +26,11 @@
 <tr><td><code>id</code></td><td>string</td><td>id</td></tr>
 <tr><td><code>value</code></td><td>string</td><td>value</td></tr>
 </table><p><b>返回：</b>void — 设置控件值，不触发用户事件。</p></section>
-<section class="api"><h3><code>UI.command</code></h3><p>白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。</p><p class="meta">opcode 1203 · since 1.7 · ui.control · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<section class="api"><h3><code>UI.command</code></h3><p>白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。</p><p class="meta">opcode 1203 · since 1.7 · ui.control · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>id</code></td><td>string</td><td>id</td></tr>
 <tr><td><code>operation</code></td><td>string</td><td>operation</td></tr>
 <tr><td><code>value</code></td><td>string</td><td>value</td></tr>
-</table><p><b>返回：</b>void — 白名单控件操作：text、visible、enabled、items、progress、page、show、hide、minimize。</p></section>
+</table><p><b>返回：</b>string — get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。</p></section>
 <section class="api"><h3><code>System.getScreenSize</code></h3><p>读取当前Android显示区域的物理像素尺寸。</p><p class="meta">opcode 2000 · since 1.0 · device.display · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 </table><p><b>返回：</b>Size — 包含width和height的尺寸值。</p></section>
 <section class="api"><h3><code>System.elapsedRealtimeMillis</code></h3><p>读取当前任务运行所使用的单调时钟毫秒值。</p><p class="meta">opcode 2001 · since 1.5 · core.task · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
@@ -211,6 +211,23 @@
 <tr><td><code>green</code></td><td>integer</td><td>0至255的绿色通道。</td></tr>
 <tr><td><code>blue</code></td><td>integer</td><td>0至255的蓝色通道。</td></tr>
 </table><p><b>返回：</b>integer — 0xRRGGBB整数颜色。</p></section>
+<section class="api"><h3><code>Screen.findAllImages</code></h3><p>有界多模板多位置识别：按模板优先级和方向枚举，包含重叠位置，共享比较预算。count为保留数量，truncated明确标记额外匹配。非旧Native等价声明。</p><p class="meta">opcode 5114 · since 1.7 · vision.template · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>借用缓存帧。</td></tr>
+<tr><td><code>pathsJson</code></td><td>string</td><td>1–64个已声明模板路径的JSON数组，最多16384字节。</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0–255通道容差。</td></tr>
+<tr><td><code>similarityPermille</code></td><td>integer</td><td>0–1000最低相似度。</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>左边界。</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>上边界。</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>右边界不含。</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>下边界不含。</td></tr>
+<tr><td><code>direction</code></td><td>integer</td><td>0左上、1右上、2左下、3右下、4中心向外。</td></tr>
+<tr><td><code>limit</code></td><td>integer</td><td>最大保留数量1–64。</td></tr>
+</table><p><b>返回：</b>string — 版本1的有界JSON结果集合，最大64KiB；无匹配为count=0/matches=[]。</p></section>
+<section class="api"><h3><code>Screen.matchValue</code></h3><p>读取有界找图结果的白名单属性；返回JSON标量编码，不求值代码。</p><p class="meta">opcode 5115 · since 1.7 · vision.template · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>result</code></td><td>string</td><td>多图结果JSON，最多64KiB。</td></tr>
+<tr><td><code>index</code></td><td>integer</td><td>count/truncated必须0，逐项属性从1开始，越界报错。</td></tr>
+<tr><td><code>field</code></td><td>string</td><td>count/truncated/x/y/width/height/scorePermille/path；truncated为1或0。</td></tr>
+</table><p><b>返回：</b>string — 数字使用int转换，路径用Data.text解码；未知字段拒绝。</p></section>
 <section class="api"><h3><code>Screen.captureSeries</code></h3><p>按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。</p><p class="meta">opcode 5200 · since 1.5 · screen.capture.series · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>maxFrames</code></td><td>integer</td><td>1至120的最大帧数，仍受会话字节预算限制。</td></tr>
 <tr><td><code>durationMs</code></td><td>integer</td><td>1至60000毫秒的最长持续时间。</td></tr>
@@ -243,4 +260,43 @@
 <tr><td><code>bottom</code></td><td>integer</td><td>下边界，不含。</td></tr>
 <tr><td><code>minimumConfidencePermille</code></td><td>integer</td><td>最低逐字置信度0–1000，默认500。</td></tr>
 </table><p><b>返回：</b>AlphanumericResult — text与averageScorePermille，无可信字符为空文本。</p></section>
+<section class="api"><h3><code>Data.length</code></h3><p>JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p><p class="meta">opcode 14000 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>有界 JSON 集合或对象文本。</td></tr>
+</table><p><b>返回：</b>integer — 当前容器的项数。</p></section>
+<section class="api"><h3><code>Data.get</code></h3><p>返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。</p><p class="meta">opcode 14001 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>有界 JSON 集合或对象文本。</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键或从 1 开始的数组索引文本。</td></tr>
+</table><p><b>返回：</b>string — 返回 JSON primitive 编码字符串，缺失键返回 null，集合/对象值拒绝；数字可用 int/float 转换，字符串用 Data.text 解码。</p></section>
+<section class="api"><h3><code>Data.set</code></h3><p>JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p><p class="meta">opcode 14002 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>有界 JSON 集合或对象文本。</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键或已存在的数组索引文本。</td></tr>
+<tr><td><code>valueJson</code></td><td>string</td><td>JSON primitive 编码；拒绝集合或对象。</td></tr>
+</table><p><b>返回：</b>string — JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p></section>
+<section class="api"><h3><code>Data.remove</code></h3><p>JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p><p class="meta">opcode 14003 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>有界 JSON 集合或对象文本。</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键或数组索引文本。</td></tr>
+</table><p><b>返回：</b>string — JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p></section>
+<section class="api"><h3><code>Data.append</code></h3><p>JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p><p class="meta">opcode 14004 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>有界 JSON 数组文本。</td></tr>
+<tr><td><code>valueJson</code></td><td>string</td><td>JSON primitive 编码；拒绝集合或对象。</td></tr>
+</table><p><b>返回：</b>string — JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p></section>
+<section class="api"><h3><code>Data.keys</code></h3><p>JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p><p class="meta">opcode 14005 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>有界 JSON 集合或对象文本。</td></tr>
+</table><p><b>返回：</b>string — JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p></section>
+<section class="api"><h3><code>Data.text</code></h3><p>严格解码 JSON string，不接受数字、布尔、null、集合或对象。</p><p class="meta">opcode 14006 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>valueJson</code></td><td>string</td><td>JSON string 编码。</td></tr>
+</table><p><b>返回：</b>string — 严格解码 JSON string，不接受数字、布尔、null、集合或对象。</p></section>
+<section class="api"><h3><code>Files.read</code></h3><p>项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p><p class="meta">opcode 14100 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>仅项目私有 data 内相对文件路径。</td></tr>
+</table><p><b>返回：</b>string — 项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p></section>
+<section class="api"><h3><code>Files.write</code></h3><p>项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p><p class="meta">opcode 14101 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>仅项目私有 data 内相对文件路径。</td></tr>
+<tr><td><code>text</code></td><td>string</td><td>最多 64 KiB 的 UTF-8 文本。</td></tr>
+</table><p><b>返回：</b>void — 操作完成时返回。</p></section>
+<section class="api"><h3><code>Files.list</code></h3><p>项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p><p class="meta">opcode 14102 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>项目私有 data 内相对目录路径；根目录填空字符串。</td></tr>
+</table><p><b>返回：</b>string — 项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p></section>
+<section class="api"><h3><code>Files.remove</code></h3><p>仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。</p><p class="meta">opcode 14103 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>仅项目私有 data 内相对文件路径；移入有界回收区。</td></tr>
+</table><p><b>返回：</b>void — 操作完成时返回。</p></section>
 </main></body></html>

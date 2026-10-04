@@ -199,6 +199,15 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                             DesignerColor("文字", f.ui.textColor, enabled) { style(f.ui.copy(textColor = it)) }
                             DesignerColor("背景", f.ui.background, enabled) { style(f.ui.copy(background = it)) }
                             DesignerInput("字号 px", f.ui.fontPx.toString(), enabled, numeric = true) { it.toIntOrNull()?.takeIf { n -> n in 8..160 }?.let { n -> style(f.ui.copy(fontPx = n)) } }
+                            Row {
+                                DesignerToggle("粗体", f.ui.fontBold, enabled, Modifier.weight(1f)) { style(f.ui.copy(fontBold = it)) }
+                                DesignerToggle("下划线", f.ui.textUnderline, enabled, Modifier.weight(1f)) { style(f.ui.copy(textUnderline = it)) }
+                            }
+                            DesignerColor("边框", f.ui.borderColor, enabled) { style(f.ui.copy(borderColor = it)) }
+                            Row {
+                                DesignerInput("边框 px", f.ui.borderWidthPx.toString(), enabled, Modifier.weight(1f), numeric = true) { it.toIntOrNull()?.takeIf { n -> n in 0..32 }?.let { n -> style(f.ui.copy(borderWidthPx = n)) } }
+                                DesignerInput("圆角 px", f.ui.cornerPx.toString(), enabled, Modifier.weight(1f), numeric = true) { it.toIntOrNull()?.takeIf { n -> n in 0..512 }?.let { n -> style(f.ui.copy(cornerPx = n)) } }
+                            }
                             DesignerSection("快捷配色")
                             Row { DesignerAction("蓝白", Modifier.weight(1f), enabled) { style(f.ui.copy(background = "#FF386AFF", textColor = "#FFFFFFFF")) }
                                 DesignerAction("浅底", Modifier.weight(1f), enabled) { style(f.ui.copy(background = "#FFF2F5FB", textColor = "#FF27344A")) }

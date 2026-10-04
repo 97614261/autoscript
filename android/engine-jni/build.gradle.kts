@@ -12,6 +12,7 @@ val sdkDirectory = file(requireNotNull(localProperties.getProperty("sdk.dir")))
 val ndkDirectory = sdkDirectory.resolve("ndk/30.0.14904198")
 val llvmBin = ndkDirectory.resolve("toolchains/llvm/prebuilt/windows-x86_64/bin")
 val rustJniRoot = layout.buildDirectory.dir("generated/jniLibs")
+val rustUnstripped = layout.buildDirectory.dir("generated/unstripped")
 
 data class RustAndroidTarget(
     val rustTarget: String,
@@ -41,14 +42,15 @@ val rustTargets = listOf(
     ),
 )
 
-val syncRustLibraries = rustTargets.mapIndexed { index, target ->
+val selectedRustTargets = rustTargets.filter { it.abi in (rootProject.extra["autoscript.abis"] as List<*>) }
+val syncRustLibraries = selectedRustTargets.mapIndexed { index, target ->
     val taskSuffix = target.abi.replace("-", "_").replaceFirstChar(Char::uppercase)
     val cargoOutput = rootProject.layout.projectDirectory.file(
         "target/${target.rustTarget}/debug/libengine_jni.so",
     )
     val buildTask = tasks.register<Exec>("buildRust$taskSuffix") {
         if (index > 0) {
-            val previous = rustTargets[index - 1].abi
+            val previous = selectedRustTargets[index - 1].abi
                 .replace("-", "_")
                 .replaceFirstChar(Char::uppercase)
             dependsOn("buildRust$previous")
@@ -64,10 +66,19 @@ val syncRustLibraries = rustTargets.mapIndexed { index, target ->
         inputs.files(rootProject.file("Cargo.toml"), rootProject.file("Cargo.lock"))
         outputs.file(cargoOutput)
     }
-    tasks.register<Copy>("syncRust$taskSuffix") {
+    val copyTask = tasks.register<Copy>("syncRust$taskSuffix") {
         dependsOn(buildTask)
         from(cargoOutput)
-        into(rustJniRoot.map { it.dir(target.abi) })
+        into(rustUnstripped.map { it.dir(target.abi) })
+    }
+    tasks.register<Exec>("stripRust$taskSuffix") {
+        dependsOn(copyTask)
+        val input = rustUnstripped.get().file("${target.abi}/libengine_jni.so").asFile
+        val output = rustJniRoot.get().file("${target.abi}/libengine_jni.so").asFile
+        inputs.file(input); inputs.file(llvmBin.resolve("llvm-strip.exe"))
+        outputs.file(output)
+        doFirst { output.parentFile.mkdirs() }
+        commandLine(llvmBin.resolve("llvm-strip.exe").absolutePath, "--strip-debug", "-o", output.absolutePath, input.absolutePath)
     }
 }
 

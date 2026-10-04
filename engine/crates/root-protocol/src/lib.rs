@@ -2,6 +2,8 @@
 
 use sha2::{Digest, Sha256};
 
+pub mod recording;
+
 pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAGIC: [u8; 4] = *b"ASRD";
@@ -18,6 +20,7 @@ impl Capabilities {
     pub const CAPTURE_RAW: u64 = 1 << 3;
     pub const INPUT_POINTER_SINGLE: u64 = 1 << 4;
     pub const INPUT_PRIORITY_STOP: u64 = 1 << 5;
+    pub const INPUT_RECORDING: u64 = 1 << 6;
 
     #[must_use]
     pub const fn from_bits(bits: u64) -> Self {
@@ -108,6 +111,8 @@ pub enum Command {
     PointerDown = 12,
     PointerMove = 13,
     PointerUp = 14,
+    RecordingStart = 15,
+    RecordingFinish = 16,
 }
 
 impl Command {
@@ -127,6 +132,8 @@ impl Command {
             12 => Some(Self::PointerDown),
             13 => Some(Self::PointerMove),
             14 => Some(Self::PointerUp),
+            15 => Some(Self::RecordingStart),
+            16 => Some(Self::RecordingFinish),
             _ => None,
         }
     }
@@ -384,6 +391,15 @@ fn validate_command_payload(
         | (FrameKind::Response, StatusCode::Ok, Command::GetWindowBounds) => payload.len() == 16,
         (FrameKind::Response, StatusCode::Ok, Command::Capture) => payload.len() == 32,
         (FrameKind::Response, StatusCode::Ok, Command::CaptureChunk) => !payload.is_empty(),
+        (FrameKind::Request, StatusCode::Ok, Command::RecordingStart) => {
+            recording::RecordingConfig::decode(payload).is_ok()
+        }
+        (FrameKind::Request, StatusCode::Ok, Command::RecordingFinish) => {
+            recording::RecordingFinish::decode(payload).is_ok()
+        }
+        (FrameKind::Response, StatusCode::Ok, Command::RecordingFinish) => {
+            recording::RecordingResult::decode(payload).is_ok()
+        }
         (
             FrameKind::Request,
             StatusCode::Ok,

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1, "kind": "task.message", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.message/1/task.message.schema.json",
+  "title": "动态提示", "category": "task",
+  "summary": "按有界字符表达式输出提示或开发日志，数值需显式text转换；内容不是Lua代码。",
+  "searchTerms": ["动态提示", "表达式", "字符拼接", "进度", "弹出提示", "运行提示", "开发日志"],
+  "requiredCapabilities": ["core.task"], "childBlocks": [],
+  "properties": [
+    {"path": "expression", "label": "字符表达式", "editor": "string", "required": true, "defaultValue": "\"正在执行\""},
+    {"path": "channel", "label": "输出渠道", "editor": "enum", "required": true, "defaultValue": "popup", "choices": ["popup", "output", "console"]}
+  ], "migrations": []
+}

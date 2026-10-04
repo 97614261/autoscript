@@ -33,10 +33,21 @@ pub enum LuaScalar {
 }
 
 #[derive(Debug, Clone)]
+pub struct LuaDebugValue {
+    pub scope: String,
+    pub name: String,
+    pub value: Option<LuaScalar>,
+    pub declared_type: Option<String>,
+    pub unsupported_type: Option<&'static str>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct LuaDebugSnapshot {
     pub flow_id: String,
     pub node_id: String,
-    pub variables: Vec<(String, String, LuaScalar, bool)>,
+    pub variables: Vec<LuaDebugValue>,
+    pub variables_truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,6 +326,8 @@ impl LuaTaskRegistry {
                     Log = {}
                     Prompt = {}
                     UI = {}
+                    Data = {}
+                    Files = {}
 
                     local function integer(value, name, minimum, maximum)
                         if type(value) ~= "number" or value % 1 ~= 0 or value < minimum or value > maximum then
@@ -404,8 +417,27 @@ impl LuaTaskRegistry {
                         if type(id) ~= 'string' or type(operation) ~= 'string' then error('invalid UI command',2) end
                         local kind=type(value)
                         if kind ~= 'string' and kind ~= 'boolean' and kind ~= 'number' then error('UI command value must be scalar',2) end
-                        host(1203,id,operation,tostring(value))
+                        local result=host(1203,id,operation,tostring(value))
+                        if string.sub(operation,1,4) == 'get:' then return result end
                     end
+
+                    local function dataText(value, name)
+                        if type(value) ~= 'string' or #value > 65536 then
+                            error(name .. ' requires at most 65536 bytes of text', 3)
+                        end
+                        return value
+                    end
+                    function Data.length(json) return host(14000,dataText(json,'Data.length')) end
+                    function Data.get(json,key) return host(14001,dataText(json,'Data.get'),dataText(key,'Data.get key')) end
+                    function Data.set(json,key,valueJson) return host(14002,dataText(json,'Data.set'),dataText(key,'Data.set key'),dataText(valueJson,'Data.set value')) end
+                    function Data.remove(json,key) return host(14003,dataText(json,'Data.remove'),dataText(key,'Data.remove key')) end
+                    function Data.append(json,valueJson) return host(14004,dataText(json,'Data.append'),dataText(valueJson,'Data.append value')) end
+                    function Data.keys(json) return host(14005,dataText(json,'Data.keys')) end
+                    function Data.text(valueJson) return host(14006,dataText(valueJson,'Data.text')) end
+                    function Files.read(path) return host(14100,dataText(path,'Files.read path')) end
+                    function Files.write(path,text) host(14101,dataText(path,'Files.write path'),dataText(text,'Files.write text')) end
+                    function Files.list(path) return host(14102,dataText(path,'Files.list path')) end
+                    function Files.remove(path) host(14103,dataText(path,'Files.remove path')) end
 
                     function System.getScreenSize()
                         local ok, width, height, code, message = coroutine.yield(marker, 2000)
@@ -545,6 +577,23 @@ impl LuaTaskRegistry {
                         local x,y,path,score,width,height = host(5107, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction or 0)
                         if x == nil then return nil end
                         return {x=x,y=y,path=path,scorePermille=score,width=width,height=height}
+                    end
+
+                    function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit)
+                        integer(frame, "Screen.findAllImages frame", 1, 9223372036854775807)
+                        if type(pathsJson) ~= "string" or #pathsJson > 16384 then error("bounded JSON paths required", 2) end
+                        integer(tolerance, "Screen.findAllImages tolerance", 0, 255)
+                        integer(similarityPermille, "Screen.findAllImages similarity", 0, 1000)
+                        integer(direction, "Screen.findAllImages direction", 0, 4)
+                        integer(limit, "Screen.findAllImages limit", 1, 64)
+                        searchRegion(left, top, right, bottom, "Screen.findAllImages")
+                        return host(5114, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit)
+                    end
+                    function Screen.matchValue(result, index, field)
+                        if type(result) ~= "string" or #result > 65536 then error("bounded match JSON required", 2) end
+                        integer(index, "Screen.matchValue index", 0, 64)
+                        if type(field) ~= "string" or #field > 32 then error("bounded match property required", 2) end
+                        return host(5115, result, index, field)
                     end
 
                     function Screen.crop(frame, left, top, right, bottom)
@@ -1001,12 +1050,17 @@ impl LuaTaskRegistry {
             .ok()?;
         let read_id = |key| -> Option<String> {
             let value: mlua::LuaString = snapshot.raw_get(key).ok()?;
-            (value.as_bytes().len() <= 128).then(|| value.to_string_lossy())
+            let bytes = value.as_bytes();
+            if bytes.is_empty() || bytes.len() > 128 {
+                return None;
+            }
+            std::str::from_utf8(&bytes).ok().map(str::to_owned)
         };
         let mut result = LuaDebugSnapshot {
             flow_id: read_id("flowId")?,
             node_id: read_id("nodeId")?,
             variables: Vec::new(),
+            variables_truncated: false,
         };
         for (scope, type_key, value_key) in [
             ("local", "localTypes", "locals"),
@@ -1014,35 +1068,87 @@ impl LuaTaskRegistry {
         ] {
             let types: mlua::Table = snapshot.raw_get(type_key).ok()?;
             let values: mlua::Table = snapshot.raw_get(value_key).ok()?;
+            let overrides = if scope == "local" {
+                snapshot
+                    .raw_get::<Option<mlua::Table>>("localOverrides")
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
             let mut names = std::collections::BTreeSet::new();
-            for table in [&types, &values] {
-                for entry in table.clone().pairs::<mlua::LuaString, Value>().take(128) {
-                    let (name, _) = entry.ok()?;
-                    if name.as_bytes().len() <= 128 {
-                        names.insert(name.to_string_lossy());
+            for table in [&types, &values].into_iter().chain(overrides.as_ref()) {
+                for (index, entry) in table.clone().pairs::<Value, Value>().take(129).enumerate() {
+                    if index == 128 {
+                        result.variables_truncated = true;
+                        break;
+                    }
+                    let (Value::String(name), _) = entry.ok()? else {
+                        result.variables_truncated = true;
+                        continue;
+                    };
+                    let bytes = name.as_bytes();
+                    if bytes.is_empty() || bytes.len() > 128 {
+                        result.variables_truncated = true;
+                        continue;
+                    }
+                    if let Ok(name) = std::str::from_utf8(&bytes) {
+                        names.insert(name.to_owned());
+                    } else {
+                        result.variables_truncated = true;
                     }
                 }
             }
             for name in names {
                 if result.variables.len() >= 128 {
+                    result.variables_truncated = true;
                     break;
                 }
-                let value: Value = values.raw_get(name.as_str()).ok()?;
-                let (scalar, truncated) = match value {
+                let mut value: Value = values.raw_get(name.as_str()).ok()?;
+                if let Some(overrides) = &overrides {
+                    let override_value: Value = overrides.raw_get(name.as_str()).ok()?;
+                    if !matches!(override_value, Value::Nil) {
+                        value = override_value;
+                    }
+                }
+                let declared_type = types
+                    .raw_get::<Value>(name.as_str())
+                    .ok()
+                    .and_then(|value| {
+                        let Value::String(kind) = value else {
+                            return None;
+                        };
+                        let bytes = kind.as_bytes();
+                        let kind = std::str::from_utf8(&bytes).ok()?;
+                        matches!(kind, "boolean" | "integer" | "number" | "string" | "image")
+                            .then(|| kind.to_owned())
+                    });
+                let (scalar, truncated, unsupported_type) = match value {
                     Value::String(bytes) => (
-                        LuaScalar::Bytes(
+                        Some(LuaScalar::Bytes(
                             bytes.as_bytes()[..bytes.as_bytes().len().min(1024)].to_vec(),
-                        ),
-                        bytes.as_bytes().len() > 1024,
+                        )),
+                        bytes.as_bytes().len() > 1024
+                            || std::str::from_utf8(&bytes.as_bytes()).is_err(),
+                        None,
                     ),
+                    Value::Number(value) if !value.is_finite() => {
+                        (None, false, Some("non-finite number"))
+                    }
                     other => match lua_scalar(other) {
-                        Ok(value) => (value, false),
-                        Err(_) => continue,
+                        Ok(value) => (Some(value), false, None),
+                        Err(LuaRuntimeError::UnsupportedValue(kind)) => (None, false, Some(kind)),
+                        Err(_) => return None,
                     },
                 };
-                result
-                    .variables
-                    .push((scope.into(), name, scalar, truncated));
+                result.variables.push(LuaDebugValue {
+                    scope: scope.into(),
+                    name,
+                    value: scalar,
+                    declared_type,
+                    unsupported_type,
+                    truncated,
+                });
             }
         }
         Some(result)

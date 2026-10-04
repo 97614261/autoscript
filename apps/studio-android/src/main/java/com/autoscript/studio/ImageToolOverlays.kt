@@ -319,7 +319,7 @@ internal fun BoxScope.ImageToolBar(
                 if (mode == ImageToolMode.CROP) {
                     ImageToolButton("存模板", ButtonGreen, ready, onCropToTemplate)
                 } else {
-                    ImageToolButton("确定", ButtonGreen, ready, onConfirm)
+                    ImageToolButton(if (mode == ImageToolMode.OCR) "取字" else "确定", ButtonGreen, ready, onConfirm)
                 }
             }
             Box(Modifier.size(38.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) {

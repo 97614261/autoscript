@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -53,6 +55,7 @@ val generateFunctionDocumentation by tasks.registering(Exec::class) {
 android {
     namespace = "com.autoscript.studio"
     compileSdk = 36
+    ndkVersion = "30.0.14904198"
 
     defaultConfig {
         applicationId = "com.autoscript.studio"
@@ -60,7 +63,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        @Suppress("UNCHECKED_CAST")
+        ndk { abiFilters += rootProject.extra["autoscript.abis"] as List<String> }
     }
 
     buildFeatures { compose = true }
@@ -74,6 +78,54 @@ android {
 }
 
 tasks.named("preBuild").configure { dependsOn(generateBlockCatalog, generateFunctionDocumentation) }
+
+// Runner is a separate project dependency graph; only its compiled APK is embedded as a template.
+val deviceRunnerAssets = layout.buildDirectory.dir("generated/device-runner-assets")
+val runnerTemplateFile = project(":apps:runner-template-android").layout.buildDirectory.file("outputs/apk/release/runner-template-android-release-unsigned.apk")
+val prepareDeviceRunnerTemplate by tasks.registering(Copy::class) {
+    dependsOn(":apps:runner-template-android:assembleRelease")
+    val template = runnerTemplateFile.get().asFile
+    from(template)
+    into(deviceRunnerAssets.map { it.dir("packaging") })
+    rename { "runner-template.apk" }
+    doFirst {
+        require(!providers.gradleProperty("autoscript.releaseDir").isPresent) { "Studio device packaging requires a pristine Runner template" }
+    }
+    doLast {
+        val digest = MessageDigest.getInstance("SHA-256")
+        template.inputStream().use { input -> val bytes = ByteArray(65536); while (true) {
+            val count = input.read(bytes); if (count < 0) break; digest.update(bytes, 0, count)
+        } }
+        val hash = digest.digest().joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        deviceRunnerAssets.get().file("packaging/runner-template.json").asFile.writeText(
+            """{"formatVersion":1,"applicationId":"com.autoscript.runner","versionCode":1,"versionName":"0.1.0","size":${template.length()},"sha256":"$hash"}""",
+        )
+    }
+}
+android.sourceSets.getByName("main").assets.srcDir(deviceRunnerAssets)
+tasks.named("preBuild").configure { dependsOn(prepareDeviceRunnerTemplate) }
+
+// Host-only verification tools, not runtime dependencies or APK assets.
+val buildDevicePackagingVerifiers by tasks.registering(Exec::class) {
+    workingDir(rootProject.projectDir)
+    commandLine("cargo", "build", "--offline", "-p", "release-packager", "-p", "package-probe")
+    inputs.files(rootProject.fileTree("tools/release-packager"), rootProject.fileTree("tools/package-probe"))
+    val executableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+    outputs.files(rootProject.file("target/debug/release-packager$executableSuffix"), rootProject.file("target/debug/package-probe$executableSuffix"))
+    outputs.upToDateWhen { false }
+}
+val packageTestApkSigner = android.sdkDirectory.resolve("build-tools").listFiles().orEmpty()
+    .map { it.resolve("lib/apksigner.jar") }.filter { it.isFile }.minByOrNull { it.parentFile.parentFile.name }
+android.testOptions.unitTests.all {
+    it.dependsOn(buildDevicePackagingVerifiers)
+    it.systemProperty("autoscript.projectRoot", rootProject.projectDir.absolutePath)
+    it.systemProperty("autoscript.runnerTemplate", runnerTemplateFile.get().asFile.absolutePath)
+    it.systemProperty("autoscript.expectedAbis", (rootProject.extra["autoscript.abis"] as List<*>).joinToString(","))
+    it.systemProperty("autoscript.artifactRoot", rootProject.layout.buildDirectory.get().asFile.resolve(
+        if (providers.gradleProperty("autoscript.abiProfile").getOrElse("development") == "arm64") "profiles/arm64/native-example" else "native-example",
+    ).absolutePath)
+    it.systemProperty("autoscript.apksignerJar", packageTestApkSigner?.absolutePath.orEmpty())
+}
 
 dependencies {
     implementation(project(":android:script-ui"))

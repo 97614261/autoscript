@@ -16,6 +16,7 @@ enum Expr {
     Unary(char, Box<Expr>),
     Binary(&'static str, Box<Expr>, Box<Expr>),
     Convert(String, Box<Expr>),
+    Call(String, Vec<Expr>),
 }
 
 struct Parser<'a> {
@@ -180,14 +181,45 @@ impl Parser<'_> {
                 return Err("变量名过长");
             }
             if self.take("(") {
-                if !matches!(name.as_str(), "int" | "float" | "text") {
-                    return Err("只允许int/float/text类型转换");
+                if !matches!(
+                    name.as_str(),
+                    "int"
+                        | "float"
+                        | "text"
+                        | "len"
+                        | "trim"
+                        | "lower"
+                        | "upper"
+                        | "sub"
+                        | "find"
+                        | "replace"
+                        | "byteLen"
+                        | "byteFind"
+                        | "byteSub"
+                        | "idiv"
+                        | "irem"
+                ) {
+                    return Err("仅允许白名单转换或字符函数");
                 }
                 let value = self.expression(0, depth + 1)?;
-                if !self.take(")") {
-                    return Err("类型转换只能包含一个参数");
+                let mut values = vec![value];
+                while self.take(",") {
+                    if values.len() >= 3 {
+                        return Err("字符函数最多三个参数");
+                    }
+                    values.push(self.expression(0, depth + 1)?);
                 }
-                return Ok(Expr::Convert(name, Box::new(value)));
+                if !self.take(")") {
+                    return Err("函数缺少右括号");
+                }
+                return if matches!(name.as_str(), "int" | "float" | "text") {
+                    if values.len() != 1 {
+                        return Err("类型转换只能包含一个参数");
+                    }
+                    Ok(Expr::Convert(name, Box::new(values.remove(0))))
+                } else {
+                    Ok(Expr::Call(name, values))
+                };
             }
             return Ok(Expr::Variable(name));
         }
@@ -247,6 +279,34 @@ impl Expr {
                     _ => Kind::String,
                 })
             }
+            Self::Call(name, values) => {
+                let kinds = values
+                    .iter()
+                    .map(|v| v.kind(lookup))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let expected: &[Kind] = match name.as_str() {
+                    "sub" => &[Kind::String, Kind::Integer, Kind::Integer],
+                    "find" => &[Kind::String, Kind::String],
+                    "replace" => &[Kind::String, Kind::String, Kind::String],
+                    "byteSub" => &[Kind::String, Kind::Integer, Kind::Integer],
+                    "byteFind" => &[Kind::String, Kind::String, Kind::Integer],
+                    "idiv" | "irem" => &[Kind::Integer, Kind::Integer],
+                    _ => &[Kind::String],
+                };
+                if kinds != expected {
+                    return Err("计算函数参数数量或类型不匹配");
+                }
+                Ok(
+                    if matches!(
+                        name.as_str(),
+                        "len" | "find" | "byteLen" | "byteFind" | "idiv" | "irem"
+                    ) {
+                        Kind::Integer
+                    } else {
+                        Kind::String
+                    },
+                )
+            }
             Self::Binary(op, left, right) => {
                 let left = left.kind(lookup)?;
                 let right = right.kind(lookup)?;
@@ -288,6 +348,16 @@ impl Expr {
                 format!("__calc_binary('{}',{}, {})", op, left.lua(), right.lua())
             }
             Self::Convert(name, value) => format!("__calc_convert('{}',{})", name, value.lua()),
+            Self::Call(name, values) => format!(
+                "{}('{}',{})",
+                if matches!(name.as_str(), "idiv" | "irem") {
+                    "__calc_integer"
+                } else {
+                    "__calc_string"
+                },
+                name,
+                values.iter().map(Self::lua).collect::<Vec<_>>().join(",")
+            ),
         }
     }
 }
@@ -354,6 +424,67 @@ local function __calc_convert(kind,value)
   result=math.tointeger(math.modf(result))
   if result == nil then error('转换整数超出64位范围',0) end
   return result
+end
+local function __calc_string(op,a,b,c)
+  if type(a) ~= 'string' or #a > 4096 then error('字符来源无效或超过4096字节',0) end
+  local count = utf8.len(a)
+  if not count then error('字符来源不是合法UTF-8',0) end
+  if op == 'len' then return count end
+  if op == 'byteLen' then return #a end
+  if op == 'byteFind' then
+    if type(b) ~= 'string' or #b > 4096 or not utf8.len(b) then error('字节查找需要合法UTF-8字符',0) end
+    if math.type(c) ~= 'integer' or c < 0 or c > 4096 then error('字节查找起点为0至4096',0) end
+    if c > #a then return -1 end
+    local position=string.find(a,b,c+1,true)
+    return position and position-1 or -1
+  end
+  if op == 'byteSub' then
+    if math.type(b) ~= 'integer' or math.type(c) ~= 'integer' or b < 0 or b > #a or c < 0 or c > 4096 then error('字节截取起点从0开始且不超出文本，长度为0至4096',0) end
+    local result=string.sub(a,b+1,b+c)
+    if not utf8.len(result) then error('字节截取切断UTF-8字符，请选择完整字符边界',0) end
+    return result
+  end
+  local result
+  if op == 'sub' then
+    if math.type(b) ~= 'integer' or math.type(c) ~= 'integer' or b < 1 or b > count + 1 or c < 0 or c > 4096 then error('截取起点从1开始，长度为0至4096',0) end
+    local start = b == count + 1 and #a + 1 or utf8.offset(a,b)
+    local finish = math.min(count + 1,b + c)
+    local last = finish == count + 1 and #a + 1 or utf8.offset(a,finish)
+    return string.sub(a,start,last - 1)
+  elseif op == 'find' or op == 'replace' then
+    if type(b) ~= 'string' or #b == 0 or #b > 4096 or not utf8.len(b) then error('查找字符不能为空，且必须为合法UTF-8',0) end
+    if op == 'find' then local position=string.find(a,b,1,true); return position and utf8.len(a,1,position-1)+1 or 0 end
+    if type(c) ~= 'string' or #c > 4096 or not utf8.len(c) then error('替换字符无效',0) end
+    local parts,position,size = {},1,0
+    while true do
+      local first,last = string.find(a,b,position,true)
+      local prefix=string.sub(a,position,first and first-1 or #a)
+      size=size+#prefix+(first and #c or 0)
+      if size > 4096 then error('字符结果超过4096字节',0) end
+      parts[#parts+1]=prefix
+      if not first then break end
+      parts[#parts+1]=c; position=last+1
+    end
+    result=table.concat(parts)
+  elseif op == 'trim' then result=string.match(a,'^%s*(.-)%s*$')
+  elseif op == 'lower' then result=string.lower(a)
+  elseif op == 'upper' then result=string.upper(a)
+  else error('未知字符操作',0) end
+  if #result > 4096 then error('字符结果超过4096字节',0) end
+  return result
+end
+local function __calc_integer(op,a,b)
+  if math.type(a) ~= 'integer' or math.type(b) ~= 'integer' then error('整除和整数余数需要64位整数',0) end
+  if b == 0 then error('计算不能除以零',0) end
+  if a == math.mininteger and b == -1 then error('整数计算溢出',0) end
+  local quotient,remainder=a//b,a%b
+  if (a < 0) ~= (b < 0) and remainder ~= 0 then
+    quotient=quotient+1
+    remainder=remainder-b
+  end
+  if op == 'idiv' then return quotient end
+  if op == 'irem' then return remainder end
+  error('未知整数操作',0)
 end
 local function __calc_binary(op,a,b)
   if op == '..' then
@@ -439,5 +570,75 @@ mod tests {
         assert!(parse(&"1+".repeat(200)).is_err());
         assert!(parse(&"a".repeat(1025)).is_err());
         assert!(render("\"中文\\n\\\"\"").is_ok());
+    }
+
+    #[test]
+    fn string_functions_are_typed_not_arbitrary_calls() {
+        for source in ["len(label)", "find(label,\"中\")"] {
+            assert!(validate(source, Some(ProjectVariableType::Integer), lookup).is_ok());
+        }
+        for source in [
+            "sub(label,1,2)",
+            "replace(label,\"a\",\"b\")",
+            "trim(upper(label))",
+        ] {
+            assert!(validate(source, Some(ProjectVariableType::String), lookup).is_ok());
+        }
+        for source in [
+            "len(count)",
+            "sub(label,1.5,2)",
+            "replace(label,1,\"b\")",
+            "trim(label,1)",
+            "eval(label)",
+        ] {
+            assert!(
+                validate(source, Some(ProjectVariableType::String), lookup).is_err(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_byte_and_integer_functions_require_exact_signatures() {
+        for source in [
+            "byteLen(label)",
+            "byteFind(label,\"中\",0)",
+            "idiv(count,-3)",
+            "irem(count,3)",
+        ] {
+            assert!(
+                validate(source, Some(ProjectVariableType::Integer), lookup).is_ok(),
+                "{source}"
+            );
+        }
+        assert!(validate(
+            "byteSub(label,0,3)",
+            Some(ProjectVariableType::String),
+            lookup
+        )
+        .is_ok());
+        for source in [
+            "byteLen(count)",
+            "byteFind(label,1,0)",
+            "byteFind(label,\"a\")",
+            "byteFind(label,\"a\",ratio)",
+            "byteSub(label,ratio,2)",
+            "byteSub(label,0)",
+            "idiv(count,ratio)",
+            "irem(count,1.5)",
+            "idiv(count)",
+            "byteSub(label,0,1,2)",
+        ] {
+            assert!(
+                validate(source, Some(ProjectVariableType::Integer), lookup).is_err(),
+                "{source}"
+            );
+        }
+        assert!(render("idiv(7,3)")
+            .unwrap()
+            .starts_with("__calc_integer('idiv',"));
+        assert!(render("byteLen(\"中文\")")
+            .unwrap()
+            .starts_with("__calc_string('byteLen',"));
     }
 }

@@ -1,0 +1,8 @@
+{
+  "schemaVersion":1,"kind":"flow.status.return","nodeVersion":1,
+  "nodeSchemaId":"https://autoscript.local/schema/node/flow.status.return/1/flow.status.return.schema.json",
+  "title":"返回成功 / 失败","category":"flow",
+  "summary":"结束当前插件并返回独立运行状态，不覆盖返回参数；true成功，false失败。",
+  "searchTerms":["返回成功","返回失败","状态"],"requiredCapabilities":[],"childBlocks":[],
+  "properties":[{"path":"success","label":"返回成功","editor":"boolean","required":true,"defaultValue":"true"}],"migrations":[]
+}

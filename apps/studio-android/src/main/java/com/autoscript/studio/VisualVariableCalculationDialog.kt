@@ -96,6 +96,36 @@ internal fun wrapCalculationConversion(field: TextFieldValue, function: String, 
     return TextFieldValue(result, TextRange(if (content.isBlank()) result.length - 1 else result.length))
 }
 
+internal data class CalculationFunctionOption(val name: String, val label: String, val suffix: String = "")
+
+internal val CHARACTER_CALCULATION_OPTIONS = listOf(
+    CalculationFunctionOption("len", "字符长度"),
+    CalculationFunctionOption("sub", "截取字符 · 起点1", ",1,1"),
+    CalculationFunctionOption("find", "查找字符 · 未找到0", ",\"查找\""),
+    CalculationFunctionOption("replace", "替换字符", ",\"查找\",\"替换\""),
+    CalculationFunctionOption("trim", "去除首尾空白"),
+    CalculationFunctionOption("lower", "英文转小写"),
+    CalculationFunctionOption("upper", "英文转大写"),
+    CalculationFunctionOption("byteLen", "字节长度 · UTF-8"),
+    CalculationFunctionOption("byteFind", "字节查找 · 起点0 / 未找到−1", ",\"查找\",0"),
+    CalculationFunctionOption("byteSub", "字节截取 · 起点0 / 完整字符", ",0,0"),
+)
+internal val INTEGER_CALCULATION_OPTIONS = listOf(
+    CalculationFunctionOption("idiv", "整数除法 · 向零截断", ",1"),
+    CalculationFunctionOption("irem", "整数余数 · 与被除数同号", ",1"),
+)
+
+internal fun wrapCalculationFunction(field: TextFieldValue, function: String, fallback: String): TextFieldValue {
+    val option = (CHARACTER_CALCULATION_OPTIONS + INTEGER_CALCULATION_OPTIONS).single { it.name == function }
+    val selected = if (field.selection.collapsed) field.text.ifBlank { fallback }
+        else field.text.substring(field.selection.min, field.selection.max)
+    val result = insertCalculationToken(
+        if (field.selection.collapsed) field.copy(selection = TextRange(0, field.text.length)) else field,
+        "${option.name}($selected${option.suffix})",
+    )
+    return if (result.text == field.text) field else result
+}
+
 internal fun calculationTypeLabel(type: ProjectVariableType) = when (type) {
     ProjectVariableType.INTEGER -> "整"
     ProjectVariableType.NUMBER -> "浮"
@@ -106,8 +136,9 @@ internal fun calculationTypeLabel(type: ProjectVariableType) = when (type) {
 /** Maintenance-only reference extraction; this is not the expression validator. */
 internal fun calculationReferencedNames(source: String): Set<String> {
     val withoutStrings = Regex("\"(?:[^\"\\\\]|\\\\.)*\"").replace(source.take(1024), " ")
-    return Regex("(?<![A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*").findAll(withoutStrings).map { it.value }
-        .filter { it !in setOf("int", "float", "text") }.toSet()
+    return Regex("(?<![A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*").findAll(withoutStrings)
+        .filter { match -> withoutStrings.substring(match.range.last + 1).trimStart().firstOrNull() != '(' }
+        .map { it.value }.toSet()
 }
 
 /** Shared compact assignment/calculation UI; Rust, not this editor, owns expression semantics. */
@@ -158,6 +189,8 @@ internal fun VisualVariableCalculationDialog(
                             CalculationButton("选择变量") { picker = "来源"; selected = null }
                             CalculationButton("字符常量") { insert("\"\"", replaceDefault = true); expression = expression.copy(selection = TextRange((expression.selection.start - 1).coerceAtLeast(0))) }
                             CalculationButton("类型转换") { picker = "转换" }
+                            CalculationButton("字符处理") { picker = "字符" }
+                            CalculationButton("整数运算") { picker = "整数" }
                         }
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             listOf("+", "-", "*", "/", "//", "%", "..", "(", ")").forEach { token ->
@@ -179,7 +212,7 @@ internal fun VisualVariableCalculationDialog(
                                 .border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).padding(9.dp),
                             decorationBox = { field -> Box { if (expression.text.isBlank()) Text("例如：count + 1 或 int(\"12\")", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp); field() } },
                         )
-                        Text("/ 浮点除法 · // 向下整除 · % 取余 · .. 字符连接\nint 转整数（向零截断） · float 转浮点 · text 转字符", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                        Text("/ 浮点除法 · // 向下整除 · % 取余 · .. 字符连接\nint / float / text 转换；len/sub/find 按字符、起点1、未找到0。byteLen/byteSub/byteFind 按UTF-8字节、起点0、未找到−1，不能截断中文。idiv 向零整除，irem 余数与被除数同号；除零/溢出报错。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                         Text("局部变量仅属于当前插件；图像不参与计算。声明不赋初值：整数/浮点默认为0，字符为空。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                         error?.let { Text(it, color = AutoScriptPalette.Danger, fontSize = 11.sp) }
                     }
@@ -202,6 +235,16 @@ internal fun VisualVariableCalculationDialog(
     if (picker == "转换") {
         EditorOptionDialog("类型转换", listOf("int" to "转整数 · int", "float" to "转浮点 · float", "text" to "转字符 · text"), onDismiss = { picker = null }) { function ->
             expression = wrapCalculationConversion(expression, function, target)
+            expressionEdited = true; error = null; picker = null
+        }
+    } else if (picker in setOf("字符", "整数")) {
+        val stringFunction = picker == "字符"
+        val options = if (stringFunction) CHARACTER_CALCULATION_OPTIONS else INTEGER_CALCULATION_OPTIONS
+        EditorOptionDialog(if (stringFunction) "字符 / 字节处理" else "整数运算", options.map { it.name to it.label }, onDismiss = { picker = null }) { function ->
+            val fallback = choices.firstOrNull { it.type == (if (stringFunction) ProjectVariableType.STRING else ProjectVariableType.INTEGER) }?.name
+                ?: if (stringFunction) "\"示例\"" else "0"
+            val field = if (!expressionEdited && expression.text in setOf("", "0", "\"\"")) TextFieldValue(fallback) else expression
+            expression = wrapCalculationFunction(field, function, fallback)
             expressionEdited = true; error = null; picker = null
         }
     } else if (picker != null) {
