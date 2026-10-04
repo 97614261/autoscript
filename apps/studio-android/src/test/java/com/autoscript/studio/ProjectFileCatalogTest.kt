@@ -22,6 +22,7 @@ class ProjectFileCatalogTest {
                 entryPoint = paths.first(), luaFiles = paths,
             ), luaSource = "return function() end", flowSources = emptyMap())
             assertEquals(paths, projectFileCatalog(snapshot).filter { it.kind == StudioProjectFileKind.LUA }.map { it.path })
+            assertFalse(projectFileCatalog(snapshot).any { it.kind == StudioProjectFileKind.LUA && it.opensEditor })
             assertEquals(listOf(paths.first()), projectFileCatalog(snapshot.copy(manifest = snapshot.manifest.copy(luaFiles = emptyList())))
                 .filter { it.kind == StudioProjectFileKind.LUA }.map { it.path })
         } finally {

@@ -91,6 +91,9 @@ internal fun VisualProjectScreen(
     consoleLines: List<String>,
     active: Boolean,
     initialFlowId: String? = null,
+    initialImageToolBitmap: Bitmap? = null,
+    initialImageToolToken: String? = null,
+    onInitialImageToolConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
     onSnapshotChanged: (ProjectSnapshot) -> Unit,
     onExit: () -> Unit,
@@ -698,6 +701,21 @@ internal fun VisualProjectScreen(
             },
             onBack = { recordingActive = false; recordingTarget = null },
         )
+    }
+
+    // Transfer ownership once: the visual image tool/disposal now owns the decoded frame.
+    LaunchedEffect(initialImageToolToken) {
+        if (initialImageToolToken != null && initialImageToolBitmap != null) {
+            inputPointCaptureJob?.cancel()
+            inputPointRequestId++
+            inputPointBitmap?.recycle()
+            inputPointBitmap = initialImageToolBitmap
+            inputPointMode = ImageToolMode.CROP
+            imageToolRequest = true
+            showingInputPointPicker = true
+            inputPointMessage = "截图已接入图像工具，可裁剪并保存模板"
+            onInitialImageToolConsumed()
+        }
     }
 
     fun openInputFloatingPicker(mode: ImageToolMode) {

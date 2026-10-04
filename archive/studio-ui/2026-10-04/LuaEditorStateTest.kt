@@ -1,3 +1,4 @@
+// Historical editor regression tests, retained for reversible restoration.
 package com.autoscript.studio
 
 import androidx.compose.ui.text.TextRange

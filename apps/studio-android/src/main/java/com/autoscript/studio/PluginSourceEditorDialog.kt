@@ -35,12 +35,21 @@ import com.autoscript.runtime.client.VisualCompileResult
 internal suspend fun applyValidatedPluginSource(
     client: RuntimeClient, projectId: String, flowId: String, editor: VisualEditorState,
     expected: String, replacement: String, canApply: () -> Boolean,
+): String? = applyValidatedPluginSource(editor, expected, replacement, canApply) {
+    withContext(Dispatchers.IO) {
+        client.validateVisualDraft(projectId, flowId, replacement.toByteArray(Charsets.UTF_8))
+    }
+}
+
+/** Validator injection keeps production ordering testable without a Binder connection. */
+internal suspend fun applyValidatedPluginSource(
+    editor: VisualEditorState, expected: String, replacement: String,
+    canApply: () -> Boolean, validate: suspend () -> VisualCompileResult,
 ): String? {
+    currentCoroutineContext().ensureActive()
     if (!canApply() || editor.currentSource != expected) return "编辑上下文已变化，请重新打开源码编辑"
     if (replacement.toByteArray(Charsets.UTF_8).size > 1_048_576) return "源码超过 1 MiB"
-    when (val result = withContext(Dispatchers.IO) {
-        client.validateVisualDraft(projectId, flowId, replacement.toByteArray(Charsets.UTF_8))
-    }) {
+    when (val result = validate()) {
         is VisualCompileResult.Invalid -> return buildString {
             result.diagnostic.nodeId?.let { append("节点 ").append(it).append("：") }
             if (result.diagnostic.nodeId == null) result.diagnostic.line?.let { append("JSONL 第 ").append(it).append(" 行：") }
@@ -49,11 +58,20 @@ internal suspend fun applyValidatedPluginSource(
         is VisualCompileResult.Unavailable -> return result.message
         is VisualCompileResult.Success -> Unit
     }
+    currentCoroutineContext().ensureActive()
     if (!canApply()) return "运行或插件状态已变化，本次修改未应用"
     return editor.replaceRawSource(expected, replacement)
 }
 
 /** Both tabs describe the same draft. Only validated IR is ever submitted to the host. */
+internal fun pluginSourceProblemMessage(document: VisualSourceDocument, message: String): String {
+    val nodeId = Regex("^节点 ([^：]+)：").find(message)?.groupValues?.get(1)
+    val location = nodeId?.let(document.nodes::get)
+        ?: Regex("JSONL 第 (\\d+) 行").find(message)?.groupValues?.get(1)?.toIntOrNull()
+            ?.let { document.nodes.values.elementAtOrNull(it - 1) }
+    return if (location == null) message else "第 ${location.line} 行，第 ${location.column} 列：$message"
+}
+
 @Composable
 internal fun PluginSourceEditorDialog(
     source: String,
@@ -101,12 +119,7 @@ internal fun PluginSourceEditorDialog(
                     parsed = converted
                     if (apply) {
                         val problem = applyLatest(original, converted.text)
-                        error = problem?.let { message ->
-                            val location = converted.nodes.entries.firstOrNull { message.contains(it.key) }?.value
-                                ?: Regex("JSONL 第 (\\d+) 行").find(message)?.groupValues?.get(1)?.toIntOrNull()
-                                    ?.let { converted.nodes.values.elementAtOrNull(it - 1) }
-                            if (location == null) message else "第 ${location.line} 行，第 ${location.column} 列：$message"
-                        }
+                        error = problem?.let { pluginSourceProblemMessage(converted, it) }
                         if (problem == null) onDismiss()
                     } else tab = "积木预览"
                 }

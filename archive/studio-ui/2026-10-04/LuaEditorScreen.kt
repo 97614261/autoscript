@@ -1,3 +1,4 @@
+// Archived after standalone Lua Studio entry removal (ADR 0040).
 package com.autoscript.studio
 
 import android.graphics.Bitmap

@@ -20,6 +20,30 @@ import org.junit.Before
 import org.junit.Test
 
 class ProjectStoreTest {
+    @Test fun historicalLuaBackupRemainsLosslessAlongsideNewVisualProjects() {
+        val legacy = store.createProject("历史源码", ProjectSourceMode.LUA)
+        val projectId = legacy.manifest.projectId
+        val source = "-- arbitrary Lua must be preserved, not converted\nreturn function() local x = 42; return x end\n"
+        store.saveLua(projectId, source, legacy.luaSource)
+        store.createLuaDirectory(projectId, "lua/empty")
+        store.createLuaFile(projectId, "lua/module.lua", "return {value=99}\n")
+        store.importResource(projectId, ProjectResourceKind.IMAGE, "original.png", ByteArrayInputStream(PNG_1X1), emptySet())
+        val before = store.openProject(projectId)
+        val manifestBytes = File(before.directory, "project.json").readBytes()
+        store.createProject("可视化", ProjectSourceMode.VISUAL)
+        val archive = ByteArrayOutputStream().also { store.exportProjectBackup(projectId, it) }
+        val restored = store.importProjectBackup(ByteArrayInputStream(archive.toByteArray()))
+        assertEquals(ProjectSourceMode.LUA, restored.manifest.sourceMode)
+        assertEquals(before.luaSources, restored.luaSources)
+        assertEquals(before.luaDirectories, restored.luaDirectories)
+        assertEquals(before.manifest.resources, restored.manifest.resources)
+        assertTrue(File(restored.directory, "lua/empty").isDirectory)
+        assertTrue(File(restored.directory, "assets/images/original.png").readBytes().contentEquals(PNG_1X1))
+        assertTrue(File(before.directory, "project.json").readBytes().contentEquals(manifestBytes))
+        assertEquals(source, store.openProject(projectId).luaSource)
+        assertEquals(3, store.listProjects().size)
+    }
+
     @Test fun optionalSourceAndVariableListsUseSchemaDefaultsWithoutDroppingData() {
         val created = store.createProject("公开格式默认值", ProjectSourceMode.VISUAL)
         val file = File(created.directory, "project.json")

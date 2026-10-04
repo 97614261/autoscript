@@ -1,3 +1,4 @@
+// Archived with the dedicated Lua editor; not a production source set.
 package com.autoscript.studio
 
 import androidx.compose.ui.text.TextRange

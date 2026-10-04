@@ -23,7 +23,7 @@ internal data class StudioProjectFile(
 internal fun projectFileCatalog(snapshot: ProjectSnapshot): List<StudioProjectFile> = buildList {
     add(projectFile(snapshot.directory, "project.json", StudioProjectFileKind.MANIFEST, opensEditor = false))
     snapshot.manifest.luaFiles.ifEmpty { listOfNotNull(snapshot.manifest.entryPoint) }.forEach { path ->
-        add(projectFile(snapshot.directory, path, StudioProjectFileKind.LUA, opensEditor = true))
+        add(projectFile(snapshot.directory, path, StudioProjectFileKind.LUA, opensEditor = false))
     }
     snapshot.manifest.flows.sortedBy { it.path }.forEach { flow ->
         add(projectFile(snapshot.directory, flow.path, StudioProjectFileKind.FLOW, opensEditor = true))

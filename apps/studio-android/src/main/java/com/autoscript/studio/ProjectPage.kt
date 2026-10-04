@@ -102,7 +102,6 @@ import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.core.model.RuntimeEngineState
 import com.autoscript.runtime.client.RuntimeClient
 import com.autoscript.runtime.client.ScreenshotPreviewResult
-import com.autoscript.runtime.client.ScriptValidationResult
 import com.autoscript.runtime.client.VisualCompileResult
 import com.autoscript.runtime.api.InputPointPickReply
 import com.google.gson.JsonObject
@@ -162,6 +161,7 @@ internal fun ProjectPage(
     var notice by remember { mutableStateOf<String?>(null) }
     var expandedProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showCreate by remember { mutableStateOf(false) }
+    var showHistoricalProjects by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<ProjectSummary?>(null) }
     var settingsSnapshot by remember { mutableStateOf<ProjectSnapshot?>(null) }
@@ -257,8 +257,8 @@ internal fun ProjectPage(
         val result = runCatching {
             withContext(Dispatchers.IO) {
                 val snapshot = store.openProject(handoff.projectId)
-                require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
-                    "截图入口当前只支持 Lua 代码项目"
+                require(StudioProjectPolicy.canOperate(snapshot.manifest.sourceMode)) {
+                    StudioProjectPolicy.historicalMessage
                 }
                 snapshot to decodeCaptureHandoff(context, handoff)
             }
@@ -340,7 +340,10 @@ internal fun ProjectPage(
                     snapshot to store.listProjects()
                 }
             }.onSuccess { (snapshot, refreshed) ->
-                if (openResult && snapshot != null) opened = snapshot
+                if (openResult && snapshot != null) {
+                    if (StudioProjectPolicy.canOperate(snapshot.manifest.sourceMode)) opened = snapshot
+                    else error = StudioProjectPolicy.historicalMessage
+                }
                 projects = refreshed
                 expandedProjectIds = expandedProjectIds.intersect(refreshed.map { it.projectId }.toSet())
                     .ifEmpty { refreshed.firstOrNull()?.let { setOf(it.projectId) }.orEmpty() }
@@ -367,6 +370,10 @@ internal fun ProjectPage(
     }
 
     fun openSettings(project: ProjectSummary) {
+        if (!StudioProjectPolicy.canOperate(project.sourceMode)) {
+            error = StudioProjectPolicy.historicalMessage
+            return
+        }
         if (busyProjectId != null) return
         busyProjectId = project.projectId
         error = null
@@ -395,6 +402,10 @@ internal fun ProjectPage(
     fun runProject(project: ProjectSummary, saveCurrentFlowBeforeRun: Boolean = false, entry: StudioRunEntry = StudioRunEntry.EDITOR,
         uiValues: Map<String, String>? = null, expectedUi: com.google.gson.JsonObject? = null) {
         val singleStep = entry == StudioRunEntry.SINGLE_STEP
+        if (!StudioProjectPolicy.canOperate(project.sourceMode)) {
+            error = StudioProjectPolicy.historicalMessage
+            return
+        }
         if (busyProjectId != null) return
         if (floatingInputJob?.isActive == true || floatingInputRequest != null) { notice = "请先完成或取消选点，再运行"; return }
         if (runtimeState.phase != RuntimeConnectionPhase.CONNECTED) {
@@ -456,13 +467,7 @@ internal fun ProjectPage(
                         if (uiValues != null) require(snapshot.manifest.runnerUi == expectedUi) { "脚本界面已变化，请重新运行" }
                         val plan = when (snapshot.manifest.sourceMode) {
                             ProjectSourceMode.LUA -> {
-                                val source = requireNotNull(snapshot.luaSource) { "Lua项目缺少 main.lua" }
-                                when (val validation = runtimeClient.validateScript(source.toByteArray(Charsets.UTF_8))) {
-                                    ScriptValidationResult.Valid -> Unit
-                                    is ScriptValidationResult.Invalid -> throw IllegalArgumentException(validation.diagnostic)
-                                    is ScriptValidationResult.Unavailable -> throw IllegalStateException(validation.message)
-                                }
-                                RuntimeProjectPlan.fromSnapshot(snapshot, source)
+                                throw IllegalArgumentException(StudioProjectPolicy.historicalMessage)
                             }
                             ProjectSourceMode.VISUAL -> {
                                 val generationId = when (
@@ -760,32 +765,7 @@ internal fun ProjectPage(
             imageToolMessage = if (error == null) "已加入程序树：${snippet.summary}" else error ?: "加入程序树失败"
             return
         }
-        LuaSnippetGate.reject(snippet.code)?.let { reason ->
-            imageToolMessage = reason
-            return
-        }
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val snapshot = store.openProject(project.projectId)
-                    require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
-                        "当前项目不是 Lua 源码项目"
-                    }
-                    val current = snapshot.luaSource.orEmpty()
-                    val separator = if (current.isEmpty() || current.endsWith('\n')) "" else "\n"
-                    store.saveLua(
-                        projectId = project.projectId,
-                        source = current + separator + snippet.code,
-                        expectedSource = current,
-                    )
-                }
-            }.onSuccess {
-                imageToolMessage = "已加入 main.lua：${snippet.summary}"
-                error = null
-            }.onFailure { failure ->
-                imageToolMessage = failure.message ?: "加入 main.lua 失败"
-            }
-        }
+        imageToolMessage = StudioProjectPolicy.historicalMessage
     }
 
     fun openFloatingInputPicker(mode: ImageToolMode) {
@@ -1114,7 +1094,11 @@ internal fun ProjectPage(
                 error = failure.message ?: "读取程序树失败"
                 return@LaunchedEffect
             }
-        // Lua 项目也需要快照：“文件”弹窗要列出 main.lua 和资源。
+        if (!StudioProjectPolicy.canOperate(snapshot.manifest.sourceMode)) {
+            error = StudioProjectPolicy.historicalMessage
+            floatingEditorProject = null
+            return@LaunchedEffect
+        }
         floatingEditorSnapshot = snapshot
         if (project.sourceMode != ProjectSourceMode.VISUAL) return@LaunchedEffect
         val entryFlow = snapshot.manifest.flows.singleOrNull { it.flowId == snapshot.manifest.entryFlowId }
@@ -1229,7 +1213,7 @@ internal fun ProjectPage(
         return
     }
 
-    // 工具页和 Lua 源码页仍是独立页面；可视化编辑直接叠在项目列表上。
+    // 工具页保持独立，可视化编辑直接叠在项目列表上。
     fun leaveOpenedProject() {
         floatingRecognitionInsert = null
         recognitionCaptureActive = false
@@ -1304,30 +1288,6 @@ internal fun ProjectPage(
         return
     }
 
-    val luaProject = opened?.takeIf {
-        editingOpenedProject && it.manifest.sourceMode == ProjectSourceMode.LUA
-    }
-    if (luaProject != null) {
-        LuaEditorScreen(
-            snapshot = luaProject,
-            store = store,
-            runtimeClient = runtimeClient,
-            runtimeState = runtimeState,
-            consoleLines = consoleLines,
-            active = active,
-            initialImageToolBitmap = handoffCaptureBitmap,
-            initialImageToolToken = handoffCaptureToken,
-            modifier = modifier,
-            onSnapshotChanged = { opened = it },
-            onInitialImageToolConsumed = {
-                handoffCaptureBitmap = null
-                handoffCaptureToken = null
-            },
-            onExit = ::leaveOpenedProject,
-        )
-        return
-    }
-
     val visualProject = opened?.takeIf {
         editingOpenedProject && it.manifest.sourceMode == ProjectSourceMode.VISUAL
     }
@@ -1348,7 +1308,7 @@ internal fun ProjectPage(
             ) {
             item {
                 WorkspaceHeader(
-                    projectCount = projects.size,
+                    projectCount = StudioProjectPolicy.active(projects).size,
                     loading = loading,
                     onCreate = { showCreate = true },
                 )
@@ -1359,6 +1319,13 @@ internal fun ProjectPage(
                         WorkspaceShortcut.BACKUP -> workspacePanel = WorkspacePanel.BACKUPS
                         WorkspaceShortcut.LEARNING -> workspacePanel = WorkspacePanel.LEARNING
                         WorkspaceShortcut.BACKEND -> workspacePanel = WorkspacePanel.BACKEND
+                    }
+                }
+            }
+            if (StudioProjectPolicy.historical(projects).isNotEmpty()) {
+                item {
+                    TextButton(onClick = { showHistoricalProjects = true }, modifier = Modifier.padding(horizontal = 12.dp)) {
+                        Text("旧源码项目 (${StudioProjectPolicy.historical(projects).size}) · 保留 / 导出", fontSize = 12.sp)
                     }
                 }
             }
@@ -1392,7 +1359,7 @@ internal fun ProjectPage(
                 )
             }
 
-            if (!loading && projects.isEmpty()) {
+            if (!loading && StudioProjectPolicy.active(projects).isEmpty()) {
                 item {
                     Surface(
                         modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth(),
@@ -1428,7 +1395,7 @@ internal fun ProjectPage(
                 }
             }
 
-            items(projects, key = ProjectSummary::projectId) { project ->
+            items(StudioProjectPolicy.active(projects), key = ProjectSummary::projectId) { project ->
                 val expanded = project.projectId in expandedProjectIds
                 Box(Modifier.padding(horizontal = 12.dp)) {
                     ProjectRow(
@@ -1478,6 +1445,12 @@ internal fun ProjectPage(
                         snapshot = visual, store = store, runtimeClient = runtimeClient,
                         runtimeState = runtimeState, consoleLines = consoleLines, active = active,
                         initialFlowId = requestedFlowId, modifier = Modifier.fillMaxSize(),
+                        initialImageToolBitmap = handoffCaptureBitmap,
+                        initialImageToolToken = handoffCaptureToken,
+                        onInitialImageToolConsumed = {
+                            handoffCaptureBitmap = null
+                            handoffCaptureToken = null
+                        },
                         onSnapshotChanged = { opened = it }, onExit = ::leaveOpenedProject,
                     )
                 }
@@ -1601,30 +1574,8 @@ internal fun ProjectPage(
                                     if (floatingEditorSnapshot?.manifest?.projectId == snapshot.manifest.projectId) {
                                         floatingEditorSnapshot = snapshot
                                     }
-                                    // 存完模板顺手给出能用的找图代码：路径这时才确定，
-                                    // 提前猜路径会生成一段运行时必然失败的调用。
-                                    val snippet = runCatching {
-                                        ImageToolCodeGen.findImage(
-                                            resourcePath = path,
-                                            roi = roi,
-                                            mapping = ImageToolCodeGen.DesignMapping(
-                                                captureWidth = sourceCopy.width,
-                                                captureHeight = sourceCopy.height,
-                                                designWidth = imageToolSnapshot.manifest.design.width,
-                                                designHeight = imageToolSnapshot.manifest.design.height,
-                                                scaleMode = imageToolSnapshot.manifest.design.scaleMode,
-                                            ),
-                                        )
-                                    }.getOrNull()
                                     val name = path.substringAfterLast('/')
-                                    imageToolMessage = if (floatingEditorProject?.sourceMode == ProjectSourceMode.VISUAL) {
-                                        "已存为模板：$name；返回图像面板可直接选择"
-                                    } else if (snippet?.rejection == null && snippet != null) {
-                                        emitImageToolSnippet(snippet)
-                                        imageToolMessage ?: "已存为模板：$name"
-                                    } else {
-                                        "已存为模板：$name"
-                                    }
+                                    imageToolMessage = "已存为模板：$name；返回图像面板可直接选择"
                                     if (recognitionCaptureActive) {
                                         recognitionCaptureTemplatePath = path
                                         recognitionCaptureActive = false
@@ -1738,9 +1689,7 @@ internal fun ProjectPage(
                         val current = visualSnapshot ?: return@EditorDock
                         when (file.kind) {
                             StudioProjectFileKind.LUA -> {
-                                opened = current
-                                editingOpenedProject = true
-                                floatingEditorProject = null
+                                error = StudioProjectPolicy.historicalMessage
                             }
                             StudioProjectFileKind.FLOW -> {
                                 requestedFlowId = current.manifest.flows.singleOrNull { it.path == file.path }?.flowId
@@ -1846,7 +1795,7 @@ internal fun ProjectPage(
                     programSelectedNodeIds = visualEditor?.selectedNodeIds.orEmpty(),
                     onProgramNodeSelectionToggled = { nodeId -> visualEditor?.toggleSelection(nodeId); floatingEditorRevision++ },
                     editingEnabled = editorCanMutate(busyProjectId != null, false, runtimeState.engineState) && (
-                        project.sourceMode == ProjectSourceMode.LUA ||
+                        StudioProjectPolicy.canOperate(project.sourceMode) &&
                             visualEditor?.isReadOnly == false
                         ),
                     programSource = visualEditor?.currentSource,
@@ -1914,7 +1863,7 @@ internal fun ProjectPage(
                     onShowInterface = { showInterfacePreview = true },
                     onProgramCommand = { command ->
                         if (project.sourceMode == ProjectSourceMode.VISUAL) runFloatingCommand(command)
-                        else error = "结构化节点操作仅适用于可视化项目，Lua 请进入源码编辑器"
+                        else error = StudioProjectPolicy.historicalMessage
                     },
                     onStep = {
                         if (project.sourceMode != ProjectSourceMode.VISUAL) error = "单步仅支持可视化插件"
@@ -1950,33 +1899,7 @@ internal fun ProjectPage(
                             }
                             return@insert
                         }
-                        // Lua 项目直接写源码，先过契约守门，不把不存在的 API 写进 main.lua。
-                        LuaSnippetGate.reject(snippet)?.let { reason ->
-                            error = reason
-                            return@insert
-                        }
-                        scope.launch {
-                            runCatching {
-                                withContext(Dispatchers.IO) {
-                                    val snapshot = store.openProject(project.projectId)
-                                    require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
-                                        "可视化项目需要转换为节点后加入，不能直接写入 Lua"
-                                    }
-                                    val current = snapshot.luaSource.orEmpty()
-                                    val separator = if (current.isEmpty() || current.endsWith('\n')) "" else "\n"
-                                    store.saveLua(
-                                        projectId = project.projectId,
-                                        source = current + separator + snippet,
-                                        expectedSource = current,
-                                    )
-                                }
-                            }.onSuccess {
-                                notice = "已加入：${snippet.lineSequence().firstOrNull().orEmpty()}"
-                                error = null
-                            }.onFailure { failure ->
-                                error = failure.message ?: "加入编辑命令失败"
-                            }
-                        }
+                        error = StudioProjectPolicy.historicalMessage
                     },
                 )
                 if (floatingVariablesVisible && visualSnapshot != null) {
@@ -2316,15 +2239,29 @@ internal fun ProjectPage(
         }
     }
 
+    if (showHistoricalProjects) {
+        HistoricalProjectsDialog(
+            projects = StudioProjectPolicy.historical(projects),
+            enabled = !loading && busyProjectId == null && exportTarget == null,
+            message = error ?: notice,
+            onDismiss = { showHistoricalProjects = false },
+            onExport = { project ->
+                error = null
+                notice = null
+                exportTarget = project
+                exportLauncher.launch(backupFileName(project.name))
+            },
+        )
+    }
     if (showCreate) {
         ProjectEditorDialog(
             title = "创建项目",
             initialName = "",
-            allowModeSelection = true,
+            showResolution = true,
             onDismiss = { showCreate = false },
-            onConfirm = { name, mode, width, height ->
+            onConfirm = { name, width, height ->
                 showCreate = false
-                runStoreAction { store.createProject(name, mode, width, height) }
+                runStoreAction { store.createProject(name, StudioProjectPolicy.creationMode, width, height) }
             },
         )
     }
@@ -2332,9 +2269,9 @@ internal fun ProjectPage(
         ProjectEditorDialog(
             title = "重命名项目",
             initialName = project.name,
-            allowModeSelection = false,
+            showResolution = false,
             onDismiss = { renameTarget = null },
-            onConfirm = { name, _, _, _ ->
+            onConfirm = { name, _, _ ->
                 renameTarget = null
                 runStoreAction { store.renameProject(project.projectId, name) }
             },
@@ -2678,12 +2615,11 @@ private fun ProjectCardAction(
 private fun ProjectEditorDialog(
     title: String,
     initialName: String,
-    allowModeSelection: Boolean,
+    showResolution: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (String, ProjectSourceMode, Int, Int) -> Unit,
+    onConfirm: (String, Int, Int) -> Unit,
 ) {
     var name by remember(initialName) { mutableStateOf(initialName) }
-    var mode by remember { mutableStateOf(ProjectSourceMode.VISUAL) }
     var showingHelp by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -2760,11 +2696,7 @@ private fun ProjectEditorDialog(
                     }
                     Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                     if (showingHelp) {
-                        ProjectCreationHelp(
-                            mode = mode,
-                            onModeChanged = { mode = it },
-                            allowModeSelection = allowModeSelection,
-                        )
+                        ProjectCreationHelp()
                     } else {
                         Column(Modifier.padding(12.dp)) {
                             ProjectDialogSection("项目名称") {
@@ -2782,27 +2714,29 @@ private fun ProjectEditorDialog(
                                     },
                                 )
                             }
-                            Spacer(Modifier.height(8.dp))
-                            ProjectDialogSection("基准分辨率") {
-                                ResolutionOption(
-                                    label = "720x1280",
-                                    badge = "推荐",
-                                    selected = selectedOption == 0,
-                                    onClick = { selectedOption = 0 },
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                ResolutionOption(
-                                    label = "1080x1920",
-                                    selected = selectedOption == 1,
-                                    onClick = { selectedOption = 1 },
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                ResolutionOption(
-                                    label = localResolution,
-                                    badge = "本机",
-                                    selected = selectedOption == 2,
-                                    onClick = { selectedOption = 2 },
-                                )
+                            if (showResolution) {
+                                Spacer(Modifier.height(8.dp))
+                                ProjectDialogSection("基准分辨率") {
+                                    ResolutionOption(
+                                        label = "720x1280",
+                                        badge = "推荐",
+                                        selected = selectedOption == 0,
+                                        onClick = { selectedOption = 0 },
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    ResolutionOption(
+                                        label = "1080x1920",
+                                        selected = selectedOption == 1,
+                                        onClick = { selectedOption = 1 },
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    ResolutionOption(
+                                        label = localResolution,
+                                        badge = "本机",
+                                        selected = selectedOption == 2,
+                                        onClick = { selectedOption = 2 },
+                                    )
+                                }
                             }
                         }
                     }
@@ -2821,7 +2755,7 @@ private fun ProjectEditorDialog(
                             fontSize = 13.sp,
                             modifier = Modifier.weight(1f).fillMaxSize().clickable(enabled = valid) {
                                 val parts = selectedResolution.split('x')
-                                onConfirm(name.trim(), mode, parts[0].toInt(), parts[1].toInt())
+                                onConfirm(name.trim(), parts[0].toInt(), parts[1].toInt())
                             }.wrapContentSize(Alignment.Center),
                         )
                     }
@@ -2872,11 +2806,7 @@ private fun ResolutionOption(
 }
 
 @Composable
-private fun ProjectCreationHelp(
-    mode: ProjectSourceMode,
-    onModeChanged: (ProjectSourceMode) -> Unit,
-    allowModeSelection: Boolean,
-) {
+private fun ProjectCreationHelp() {
     Column(Modifier.padding(12.dp)) {
         ProjectDialogSection("如何选择基准分辨率") {
             Text(
@@ -2891,34 +2821,12 @@ private fun ProjectCreationHelp(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
-            if (allowModeSelection) {
-                Spacer(Modifier.height(10.dp))
-                Text("项目编辑方式", color = Color(0xFF1F2937), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Row(Modifier.padding(top = 5.dp)) {
-                    ModeChoice("可视化积木", mode == ProjectSourceMode.VISUAL, Modifier.weight(1f)) { onModeChanged(ProjectSourceMode.VISUAL) }
-                    Spacer(Modifier.width(6.dp))
-                    ModeChoice("Lua 脚本", mode == ProjectSourceMode.LUA, Modifier.weight(1f)) { onModeChanged(ProjectSourceMode.LUA) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ModeChoice(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    Surface(
-        modifier = modifier.height(30.dp).clickable(onClick = onClick),
-        color = if (selected) Color(0xFFEAF0FF) else Color.White,
-        shape = RoundedCornerShape(4.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(label, color = if (selected) WorkspaceAccent else WorkspaceTextSecondary, fontSize = 10.sp)
         }
     }
 }
 
 private fun ProjectSourceMode.displayName(): String =
-    if (this == ProjectSourceMode.LUA) "手写 Lua" else "可视化积木"
+    if (this == ProjectSourceMode.LUA) "旧源码 · 仅导出" else "可视化积木"
 
 private fun shortProjectId(projectId: String): String =
     if (projectId.length <= 8) projectId else "…${projectId.takeLast(8)}"

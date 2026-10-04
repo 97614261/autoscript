@@ -28,7 +28,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 
-/** Shared compact editor panel used by the visual editor and the Lua debug editor. */
+/** Shared compact panel for the visual editor and its plugin source view. */
 @Composable
 internal fun StudioPanelDialog(
     title: String,
