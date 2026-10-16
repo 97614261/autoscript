@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.red",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.red/1/math.red.schema.json",
+  "title": "提取红色通道",
+  "category": "variable",
+  "summary": "从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "提取红色通道"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "rgb",
+      "label": "RGB颜色",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "16711680"
+    },
+    {
+      "path": "rgbVariable",
+      "label": "RGB颜色来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

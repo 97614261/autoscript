@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "screen.seriesframe",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.seriesframe/1/screen.seriesframe.schema.json",
+  "title": "读取系列帧",
+  "category": "screen",
+  "summary": "借用系列第N帧，写入图像变量。句柄属于采集任务；释放系列后不能继续使用，不要单独重复释放。",
+  "searchTerms": [
+    "截图",
+    "帧",
+    "系列",
+    "读取系列帧"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "sourceVariable",
+      "label": "系列结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "series"
+    },
+    {
+      "path": "index",
+      "label": "帧索引 · 1起",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "resultVariable",
+      "label": "借用帧 · 图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "frame"
+    }
+  ],
+  "migrations": []
+}

@@ -7,7 +7,8 @@
     "domainTagUtf8": "AutoScript.FlowDigest.v1",
     "domainTagTerminatorByte": 0,
     "order": "flowId_unsigned_utf8_byte_lexicographic",
-    "payload": ["flowCount", "flowId", "canonicalRelativePath", "exactSavedJsonlBytes"]
+    "payload": ["metadataJsonBytes", "flowCount", "flowId", "canonicalRelativePath", "exactSavedJsonlBytes"],
+    "metadataFields": ["entryFlowId", "flows", "variables", "popupStyle", "traceExecution", "recordVisionMetrics"]
   },
   "generationId": {
     "domainTagUtf8": "AutoScript.GenerationId.v1",

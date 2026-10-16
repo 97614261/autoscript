@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14219,
+  "name": "Text.find",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "Unicode字符索引1起，未找到0；不使用旧字节索引语义。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文本"
+    },
+    {
+      "name": "needle",
+      "type": "string",
+      "required": true,
+      "summary": "查找文本"
+    },
+    {
+      "name": "start",
+      "type": "integer",
+      "required": true,
+      "summary": "起点（字符1起）"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "Unicode字符索引1起，未找到0；不使用旧字节索引语义。"
+  },
+  "legacyAliases": []
+}
+

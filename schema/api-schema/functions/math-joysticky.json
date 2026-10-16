@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1018,
+  "name": "Math.joystickY",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按屏幕Y向下公式计算浮点坐标；不执行触摸。",
+  "params": [
+    {
+      "name": "centerY",
+      "type": "number",
+      "required": true,
+      "summary": "中心Y"
+    },
+    {
+      "name": "angle",
+      "type": "number",
+      "required": true,
+      "summary": "角度"
+    },
+    {
+      "name": "radius",
+      "type": "number",
+      "required": true,
+      "summary": "半径"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "按屏幕Y向下公式计算浮点坐标；不执行触摸。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14117,
+  "name": "Files.readLine",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "严格UTF-8与1起行号；兼容LF/CRLF，越界报错。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "line",
+      "type": "integer",
+      "required": true,
+      "summary": "行号（1起）"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "严格UTF-8与1起行号；兼容LF/CRLF，越界报错。"
+  },
+  "legacyAliases": []
+}
+

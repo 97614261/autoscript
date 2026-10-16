@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.flipangle",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.flipangle/1/math.flipangle.schema.json",
+  "title": "翻转角度",
+  "category": "variable",
+  "summary": "模式1上下翻转、2左右翻转；结果归一化到[-180,180]。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "翻转角度"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "angle",
+      "label": "角度",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "45"
+    },
+    {
+      "path": "angleVariable",
+      "label": "角度来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "mode",
+      "label": "方向",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "modeVariable",
+      "label": "方向来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

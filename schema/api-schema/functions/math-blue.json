@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1021,
+  "name": "Math.blue",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "从0xRRGGBB提取蓝色，返回0～255。",
+  "params": [
+    {
+      "name": "rgb",
+      "type": "integer",
+      "required": true,
+      "summary": "RGB颜色"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "从0xRRGGBB提取蓝色，返回0～255。"
+  },
+  "legacyAliases": []
+}

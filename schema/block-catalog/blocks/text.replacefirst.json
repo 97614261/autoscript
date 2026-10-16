@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.replacefirst",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.replacefirst/1/text.replacefirst.schema.json",
+  "title": "替换首个文本",
+  "category": "variable",
+  "summary": "查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。",
+  "searchTerms": [
+    "工具",
+    "替换首个文本",
+    "Text.replaceFirst"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "needle",
+      "label": "查找文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "例"
+    },
+    {
+      "path": "needleVariable",
+      "label": "查找文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "replacement",
+      "label": "替换文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "新"
+    },
+    {
+      "path": "replacementVariable",
+      "label": "替换文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

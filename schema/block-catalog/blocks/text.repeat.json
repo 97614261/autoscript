@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.repeat",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.repeat/1/text.repeat.schema.json",
+  "title": "重复文本",
+  "category": "variable",
+  "summary": "次数0～1024且输出最多64KiB，超预算明确报错。",
+  "searchTerms": [
+    "工具",
+    "重复文本",
+    "Text.repeatText"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "count",
+      "label": "重复次数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "2"
+    },
+    {
+      "path": "countVariable",
+      "label": "重复次数来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

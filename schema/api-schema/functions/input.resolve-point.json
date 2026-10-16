@@ -1,0 +1,7 @@
+{
+  "schemaVersion":1,"opcode":4008,"name":"Input.resolvePoint","since":"1.8",
+  "capability":"input.basic","execution":"host_sync","cancelMode":"discard_result","sideEffect":"none","timeoutMs":1000,"resourceOwnership":"none",
+  "summary":"只读解析设计坐标或屏幕坐标，返回宿主冻结映射后的实际像素点和屏幕尺寸，不执行触摸。",
+  "params":[{"name":"x","type":"integer","required":true,"summary":"原始X。"},{"name":"y","type":"integer","required":true,"summary":"原始Y。"},{"name":"screenPixels","type":"boolean","required":true,"summary":"true为实际屏幕像素，false为设计坐标。"}],
+  "returns":{"type":"Point","nullable":false,"summary":"包含x、y、width、height、snapshotId的只读坐标信息。"},"legacyAliases":[]
+}

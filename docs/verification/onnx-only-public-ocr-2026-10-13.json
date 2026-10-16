@@ -1,0 +1,111 @@
+{
+  "device": "HONOR PGT-AN20",
+  "sdk": 32,
+  "abis": [
+    "x86_64",
+    "arm64-v8a",
+    "x86",
+    "armeabi-v7a",
+    "armeabi"
+  ],
+  "displayWidth": 720,
+  "displayHeight": 1280,
+  "samples": [
+    {
+      "case": "onnx-alphanumeric",
+      "frame": "518x56",
+      "roi": [
+        0,
+        0,
+        518,
+        56,
+        500
+      ],
+      "coldMs": 204.738449,
+      "warmSamples": 10,
+      "p50Ms": 99.251508,
+      "p95Ms": 103.398712,
+      "p99Ms": 103.398712,
+      "template": "none",
+      "expected": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "actual": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "exactRuns": 10,
+      "measuredRuns": 10,
+      "pass": true
+    },
+    {
+      "case": "onnx-alphanumeric",
+      "frame": "518x56",
+      "roi": [
+        0,
+        0,
+        518,
+        56,
+        500
+      ],
+      "coldMs": 101.839353,
+      "warmSamples": 10,
+      "p50Ms": 99.706862,
+      "p95Ms": 105.921361,
+      "p99Ms": 105.921361,
+      "template": "none",
+      "expected": "abcdefghijklmnopqrstuvwxyz",
+      "actual": "abcdefghijk1mnopqrstuvwxyz",
+      "exactRuns": 0,
+      "measuredRuns": 10,
+      "pass": false
+    },
+    {
+      "case": "onnx-alphanumeric",
+      "frame": "214x56",
+      "roi": [
+        0,
+        0,
+        214,
+        56,
+        500
+      ],
+      "coldMs": 52.748965,
+      "warmSamples": 10,
+      "p50Ms": 55.83599,
+      "p95Ms": 58.06337,
+      "p99Ms": 58.06337,
+      "template": "none",
+      "expected": "0123456789",
+      "actual": "0123456789",
+      "exactRuns": 10,
+      "measuredRuns": 10,
+      "pass": true
+    },
+    {
+      "case": "onnx-alphanumeric",
+      "frame": "176x56",
+      "roi": [
+        0,
+        0,
+        176,
+        56,
+        500
+      ],
+      "coldMs": 49.728239,
+      "warmSamples": 10,
+      "p50Ms": 50.946731,
+      "p95Ms": 53.314103,
+      "p99Ms": 53.314103,
+      "template": "none",
+      "expected": "AaBb09Zz",
+      "actual": "AaBb09Zz",
+      "exactRuns": 10,
+      "measuredRuns": 10,
+      "pass": true
+    },
+    {
+      "case": "closed-adapter",
+      "pass": true
+    }
+  ],
+  "scope": "synthetic adapter test; not end-to-end capture/Input latency",
+  "pass": false,
+  "evidenceDate": "2026-10-13",
+  "deviceKind": "MuMu 0 emulator; device model string is emulator configuration, not a physical HONOR phone"
+}

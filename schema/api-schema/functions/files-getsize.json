@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14140,
+  "name": "Files.getSize",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "读取普通私有数据文件的真实字节数，不跟随链接。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "读取普通私有数据文件的真实字节数，不跟随链接。"
+  },
+  "legacyAliases": []
+}

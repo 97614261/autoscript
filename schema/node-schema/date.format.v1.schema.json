@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/date.format/1/date.format.schema.json",
+  "title": "date.format node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "date.format"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestampMs",
+        "offsetMinutes",
+        "format",
+        "resultVariable"
+      ],
+      "properties": {
+        "timestampMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 253402300799999
+        },
+        "timestampMsVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "offsetMinutes": {
+          "type": "integer",
+          "minimum": -840,
+          "maximum": 840
+        },
+        "offsetMinutesVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "formatVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    }
+  }
+}
+

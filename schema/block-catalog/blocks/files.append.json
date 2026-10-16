@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.append",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.append/1/files.append.schema.json",
+  "title": "追加数据文件文本",
+  "category": "variable",
+  "summary": "文件不存在则创建；原子提交，最多64KiB，返回1。",
+  "searchTerms": [
+    "文件",
+    "追加数据文件文本",
+    "Files.append"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "text",
+      "label": "追加文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "新增"
+    },
+    {
+      "path": "textVariable",
+      "label": "追加文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

@@ -31,31 +31,35 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "rust -> target"
 
       - name: Install Android SDK packages
         shell: pwsh
         run: |
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;30.0.14904198"
-          "sdk.dir=$($env:ANDROID_SDK_ROOT.Replace('\', '\\'))" | Set-Content -Encoding ASCII local.properties
+          "sdk.dir=$($env:ANDROID_SDK_ROOT.Replace('\', '\\'))" | Set-Content -Encoding ASCII android/local.properties
 
       - name: Rust quality gates
         shell: pwsh
         run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          ./scripts/check-rust.ps1
 
-      - name: Contract and generated-output gates
+      - name: Repository layout and documentation links
         shell: pwsh
         run: |
-          cargo run -p schema-check -- .
-          cargo run -p api-codegen -- check .
+          ./scripts/check-repository-layout.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Repository layout gate failed" }
+          ./scripts/apk-output-recovery-test.ps1
+          if ($LASTEXITCODE -ne 0) { throw "APK recovery gate failed" }
 
       - name: Android debug packages and lint
         shell: pwsh
         run: |
-          ./gradlew.bat :apps:studio-android:assembleDebug :apps:runner-template-android:assembleDebug :apps:studio-android:lintDebug :apps:runner-template-android:lintDebug --no-daemon
+          ./gradlew.bat :apps:studio-android:testDebugUnitTest :android:brand-ui:testDebugUnitTest :apps:runner-template-android:testDebugUnitTest :android:script-ui:testDebugUnitTest :android:project-store:testDebugUnitTest :android:runtime-client:testDebugUnitTest :android:runtime-service:testDebugUnitTest :android:vision-spi:testDebugUnitTest :android:vision-components:testDebugUnitTest :apps:studio-android:assembleDebug :apps:runner-template-android:assembleDebug :apps:studio-android:lintDebug :apps:runner-template-android:lintDebug --no-daemon
+          if ($LASTEXITCODE -ne 0) { throw "Android gate failed" }
 
       - name: Runner package invariants
+        working-directory: rust
         shell: pwsh
-        run: cargo run -p package-probe -- apps/runner-template-android/build/outputs/apk/debug/runner-template-android-debug.apk
+        run: cargo run -p package-probe -- ../android/apps/runner-template-android/build/outputs/apk/debug/runner-template-android-debug.apk

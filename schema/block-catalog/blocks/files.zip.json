@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.zip",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.zip/1/files.zip.schema.json",
+  "title": "压缩数据目录",
+  "category": "variable",
+  "summary": "有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。",
+  "searchTerms": [
+    "文件",
+    "ZIP",
+    "压缩数据目录",
+    "Files.zip"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "folder"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "destination",
+      "label": "新ZIP路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "bundle.zip"
+    },
+    {
+      "path": "destinationVariable",
+      "label": "新ZIP路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

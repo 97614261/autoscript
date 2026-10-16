@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/screen.transform/1/screen.transform.schema.json",
+  "title": "图像变换",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "screen.transform"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "mode",
+        "width",
+        "height",
+        "resultVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "rotate90",
+            "rotate180",
+            "rotate270",
+            "flipX",
+            "flipY",
+            "gray",
+            "threshold",
+            "resize"
+          ]
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        },
+        "threshold": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 128
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

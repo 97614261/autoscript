@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5121,
+  "name": "Screen.components",
+  "since": "1.7",
+  "capability": "vision.pixel",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "帧句柄"
+    },
+    {
+      "name": "options",
+      "type": "string",
+      "required": true,
+      "summary": "严格JSON：region、rgb、tolerance、connectivity、min_area、limit。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。"
+  },
+  "legacyAliases": []
+}

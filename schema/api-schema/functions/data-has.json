@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14009,
+  "name": "Data.has",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。",
+  "params": [
+    {
+      "name": "json",
+      "type": "string",
+      "required": true,
+      "summary": "JSON集合或对象"
+    },
+    {
+      "name": "key",
+      "type": "string",
+      "required": true,
+      "summary": "键或1起索引"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。"
+  },
+  "legacyAliases": []
+}
+

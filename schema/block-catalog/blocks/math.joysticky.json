@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.joysticky",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.joysticky/1/math.joysticky.schema.json",
+  "title": "轮盘Y坐标",
+  "category": "variable",
+  "summary": "按屏幕Y向下公式计算浮点坐标；不执行触摸。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "轮盘Y坐标"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "centerY",
+      "label": "中心Y",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "centerYVariable",
+      "label": "中心Y来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "angle",
+      "label": "角度",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "45"
+    },
+    {
+      "path": "angleVariable",
+      "label": "角度来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "radius",
+      "label": "半径",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "80"
+    },
+    {
+      "path": "radiusVariable",
+      "label": "半径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

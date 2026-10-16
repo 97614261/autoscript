@@ -49,6 +49,17 @@ function Assert-Fails {
     Assert-True ($message.Contains($Expected)) "Expected failure: $Expected; actual: $message"
 }
 
+$candidates = @(Get-MuMuManagerCandidates @(
+    [pscustomobject]@{ DisplayName='MuMu'; InstallLocation=''; DisplayIcon='"D:\soft\MuMuPlayer\nx_main\MuMuNxMain.ico",0' },
+    [pscustomobject]@{ DisplayName='MuMuPlayer'; InstallLocation='E:\MuMu Player'; DisplayIcon='' },
+    [pscustomobject]@{ DisplayName='Other'; InstallLocation='F:\other'; DisplayIcon='' }
+))
+Assert-True ($candidates -contains 'D:\soft\MuMuPlayer\nx_main\MuMuManager.exe') 'Custom-drive icon path was not discovered'
+Assert-True ($candidates -contains 'E:\MuMu Player\nx_main\MuMuManager.exe') 'InstallLocation with spaces was not preserved'
+Assert-True (@($candidates | Where-Object { $_ -like 'F:*' }).Count -eq 0) 'Unrelated installation must not be used'
+Assert-Fails { Resolve-BuildTool 'Z:\not-present\MuMuManager.exe' @($PSCommandPath) 'MuMuManager' } 'was not found'
+Write-Host 'PASS: bounded custom-drive registry discovery and explicit-path precedence'
+
 Install-StudioToMuMu $PSCommandPath 'manager' 'adb' 3 10
 $install = @($script:Calls | Where-Object { $_.Arguments -contains 'install' })
 Assert-True ($install.Count -eq 1) 'Expected exactly one installation'

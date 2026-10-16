@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 15003,
+  "name": "Audio.setVolume",
+  "since": "1.7",
+  "capability": "audio.control",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "显式设置Android音乐流相对音量0至100，不自动提升音量。",
+  "params": [
+    {
+      "name": "volume",
+      "type": "integer",
+      "required": true,
+      "summary": "0至100"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "显式设置Android音乐流相对音量0至100，不自动提升音量。"
+  },
+  "legacyAliases": []
+}

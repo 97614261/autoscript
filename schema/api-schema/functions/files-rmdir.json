@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14116,
+  "name": "Files.rmdir",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。"
+  },
+  "legacyAliases": []
+}
+

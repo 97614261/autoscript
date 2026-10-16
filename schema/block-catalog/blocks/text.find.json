@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.find",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.find/1/text.find.schema.json",
+  "title": "查找文本位置",
+  "category": "variable",
+  "summary": "Unicode字符索引1起，未找到0；不使用旧字节索引语义。",
+  "searchTerms": [
+    "工具",
+    "查找文本位置",
+    "Text.find"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "needle",
+      "label": "查找文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "例"
+    },
+    {
+      "path": "needleVariable",
+      "label": "查找文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "start",
+      "label": "起点（字符1起）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "startVariable",
+      "label": "起点（字符1起）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

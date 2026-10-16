@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 16003,
+  "name": "Apps.open",
+  "since": "1.8",
+  "capability": "device.apps",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。",
+  "params": [
+    {
+      "name": "packageName",
+      "type": "string",
+      "required": true,
+      "summary": "App包名"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。"
+  },
+  "legacyAliases": []
+}

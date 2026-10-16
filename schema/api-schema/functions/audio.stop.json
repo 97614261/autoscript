@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 15001,
+  "name": "Audio.stop",
+  "since": "1.7",
+  "capability": "audio.control",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "停止并释放当前播放器，不停止脚本。",
+  "params": [],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "停止并释放当前播放器，不停止脚本。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.logenabled",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.logenabled/1/task.logenabled.schema.json",
+  "title": "脚本日志开关",
+  "category": "task",
+  "summary": "只控制后续脚本Log输出，不清空已有记录，不关闭诊断日志或识图统计；本次运行生效。",
+  "searchTerms": [
+    "控制",
+    "运行",
+    "调试",
+    "脚本日志开关"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "enabled",
+      "label": "启用脚本日志",
+      "editor": "boolean",
+      "required": true,
+      "defaultValue": "true"
+    }
+  ],
+  "migrations": []
+}

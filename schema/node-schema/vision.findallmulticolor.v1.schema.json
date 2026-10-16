@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.findallmulticolor/1/vision.findallmulticolor.schema.json",
+  "title": "批量多点找色",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "vision.findallmulticolor"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "samples",
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "limit",
+        "resultVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "samples": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "bottom": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

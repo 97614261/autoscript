@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "data.getjson",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/data.getjson/1/data.getjson.schema.json",
+  "title": "读取JSON子结构",
+  "category": "variable",
+  "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。",
+  "searchTerms": [
+    "工具",
+    "读取JSON子结构",
+    "Data.getJson"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "json",
+      "label": "JSON集合或对象",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "{\"child\":{}}"
+    },
+    {
+      "path": "jsonVariable",
+      "label": "JSON集合或对象来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "key",
+      "label": "键或1起索引",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "child"
+    },
+    {
+      "path": "keyVariable",
+      "label": "键或1起索引来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

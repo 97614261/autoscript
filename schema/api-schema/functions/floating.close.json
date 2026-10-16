@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 17002,
+  "name": "Floating.close",
+  "since": "1.8",
+  "capability": "ui.floating",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。"
+  },
+  "legacyAliases": []
+}

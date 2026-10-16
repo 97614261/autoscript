@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "screen.seriesrelease",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.seriesrelease/1/screen.seriesrelease.schema.json",
+  "title": "释放系列帧",
+  "category": "screen",
+  "summary": "释放当前任务的系列所有帧并清空系列字符变量。借用的帧变量一并失效；禁止重复释放。",
+  "searchTerms": [
+    "截图",
+    "帧",
+    "系列",
+    "释放系列帧"
+  ],
+  "requiredCapabilities": [
+    "screen.capture",
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "sourceVariable",
+      "label": "系列结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "series"
+    }
+  ],
+  "migrations": []
+}

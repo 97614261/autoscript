@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14122,
+  "name": "Files.kvSet",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "key",
+      "type": "string",
+      "required": true,
+      "summary": "对象键"
+    },
+    {
+      "name": "valueJson",
+      "type": "string",
+      "required": true,
+      "summary": "JSON值"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。"
+  },
+  "legacyAliases": []
+}
+

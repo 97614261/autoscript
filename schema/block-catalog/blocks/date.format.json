@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "date.format",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/date.format/1/date.format.schema.json",
+  "title": "格式化日期时间",
+  "category": "variable",
+  "summary": "固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。",
+  "searchTerms": [
+    "工具",
+    "格式化日期时间",
+    "Date.format"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "timestampMs",
+      "label": "Unix毫秒",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "timestampMsVariable",
+      "label": "Unix毫秒来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "offsetMinutes",
+      "label": "时区偏移分钟",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "offsetMinutesVariable",
+      "label": "时区偏移分钟来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "format",
+      "label": "格式：date/time/datetime",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "datetime"
+    },
+    {
+      "path": "formatVariable",
+      "label": "格式：date/time/datetime来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

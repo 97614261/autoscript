@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14113,
+  "name": "Files.mkdir",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "只创建私有data内目录，遵守总配额；已存在安全目录也返回1。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "只创建私有data内目录，遵守总配额；已存在安全目录也返回1。"
+  },
+  "legacyAliases": []
+}
+

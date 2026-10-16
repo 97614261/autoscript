@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/randomization/1/randomization.schema.json",
+  "$defs": {
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "xPx",
+        "yPx"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "xPx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "yPx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "unit",
+        "min",
+        "max"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "unit": {
+          "enum": [
+            "milliseconds",
+            "percent"
+          ]
+        },
+        "min": {
+          "type": "integer",
+          "minimum": -60000,
+          "maximum": 60000
+        },
+        "max": {
+          "type": "integer",
+          "minimum": -60000,
+          "maximum": 60000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "unit": {
+                "const": "percent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "min": {
+                "minimum": -100,
+                "maximum": 100
+              },
+              "max": {
+                "minimum": -100,
+                "maximum": 100
+              }
+            }
+          }
+        }
+      ]
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "touch",
+        "recognition",
+        "wait"
+      ],
+      "properties": {
+        "touch": {
+          "$ref": "#/$defs/position"
+        },
+        "recognition": {
+          "$ref": "#/$defs/position"
+        },
+        "wait": {
+          "$ref": "#/$defs/wait"
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "position",
+        "wait"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "follow",
+            "disabled",
+            "custom"
+          ]
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "wait": {
+          "$ref": "#/$defs/wait"
+        }
+      }
+    }
+  }
+}

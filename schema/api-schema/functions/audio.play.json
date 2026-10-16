@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 15000,
+  "name": "Audio.play",
+  "since": "1.7",
+  "capability": "audio.control",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "播放声明的项目音频或旧私有data音频；单文件20MiB、最长60秒。旧data路径另需storage.data，拒绝网址。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "项目私有data内wav/mp3/ogg/flac/m4a相对路径"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "单播放器读取项目私有data音频，拒绝网址；需要storage.data，最多20MiB、播放60秒。"
+  },
+  "legacyAliases": []
+}

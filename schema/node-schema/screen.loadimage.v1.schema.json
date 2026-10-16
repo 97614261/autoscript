@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/screen.loadimage/1/screen.loadimage.schema.json",
+  "title": "加载项目图片", "type": "object", "required": ["kind", "nodeVersion", "args"],
+  "properties": {
+    "kind": {"const": "screen.loadimage"}, "nodeVersion": {"const": 1},
+    "args": {"type": "object", "additionalProperties": false, "required": ["imagePath", "resultVariable"],
+      "properties": {
+        "imagePath": {"type": "string", "minLength": 14, "maxLength": 512, "pattern": "^assets/images/[^\\\\]+$"},
+        "resultVariable": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"}
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "audio.getvolume",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/audio.getvolume/1/audio.getvolume.schema.json",
+  "title": "读取音乐音量",
+  "category": "task",
+  "summary": "返回Android音乐流相对音量0至100。",
+  "searchTerms": [
+    "读取音乐音量",
+    "录制",
+    "音频"
+  ],
+  "requiredCapabilities": [
+    "audio.control"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "resultVariable",
+      "label": "结果变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/screen.crop/1/screen.crop.schema.json",
+  "title": "裁剪帧",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "screen.crop"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "resultVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "bottom": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "resultVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

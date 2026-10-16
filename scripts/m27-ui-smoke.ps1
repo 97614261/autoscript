@@ -66,16 +66,16 @@ function Invoke-Adb {
 # 不复位的话后面每一步都会连锁失败，一轮就只能拿到一个真问题。
 function Reset-App {
     try {
-        $before = (Invoke-Adb shell pidof com.autoscript.studio | Out-String).Trim()
-        Invoke-Adb shell am force-stop com.autoscript.studio | Out-Null
-        Invoke-Adb shell am start -n com.autoscript.studio/.MainActivity | Out-Null
+        $before = (Invoke-Adb shell pidof com.zhigou.kaifaban | Out-String).Trim()
+        Invoke-Adb shell am force-stop com.zhigou.kaifaban | Out-Null
+        Invoke-Adb shell am start -n com.zhigou.kaifaban/com.autoscript.studio.MainActivity | Out-Null
         Wait-Text "工作台" 20 | Out-Null
         # 判断"是否真的重启了"必须看进程号，不能看界面状态。
         # 曾经用"项目卡是否仍展开"来判断，前提是"重启后必然收起"——那是错的：
         # ProjectPage.kt 的 LaunchedEffect 会把第一个项目自动展开，所以重启后
         # "打包"本来就在。那版判断会在任何一步失败时必然误报"设备已冻结"，
         # 把真正的失败原因盖掉。之前 8/8 全过、Reset-App 从未执行，才一直没暴露。
-        $after = (Invoke-Adb shell pidof com.autoscript.studio | Out-String).Trim()
+        $after = (Invoke-Adb shell pidof com.zhigou.kaifaban | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($after)) {
             throw "App 重启后进程不存在：可能启动即崩溃，检查 adb logcat"
         }
@@ -312,8 +312,8 @@ if (-not $SkipInstall) {
 }
 
 Invoke-Step "Home carousel and value panel" {
-    Invoke-Adb shell am force-stop com.autoscript.studio | Out-Null
-    Invoke-Adb shell am start -n com.autoscript.studio/.MainActivity | Out-Null
+    Invoke-Adb shell am force-stop com.zhigou.kaifaban | Out-Null
+    Invoke-Adb shell am start -n com.zhigou.kaifaban/com.autoscript.studio.MainActivity | Out-Null
     Wait-Text "工作台" 15 | Out-Null
     Tap-Text "主页"
     $xml = Wait-Text "本机运行"
@@ -494,7 +494,7 @@ $reportPath = Join-Path $directory "m27-ui-device-report.json"
     generatedAt = (Get-Date).ToString("o")
     device = $DeviceSerial
     deviceInfo = $deviceInfo
-    package = "com.autoscript.studio"
+    package = "com.zhigou.kaifaban"
     project = $ProjectName
     screenshots = $shotDirectory
     steps = @($results)

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14141,
+  "name": "Files.getExtension",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6103,
+  "name": "Ocr.findText",
+  "since": "1.7",
+  "capability": "ocr.glyph",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "resourceOwnership": "none",
+  "summary": "仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。",
+  "params": [
+    {
+      "name": "details",
+      "type": "string",
+      "required": true,
+      "summary": "详细结果JSON"
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "目标文字，最多256字节"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。"
+  },
+  "legacyAliases": []
+}

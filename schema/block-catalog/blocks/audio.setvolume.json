@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "audio.setvolume",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/audio.setvolume/1/audio.setvolume.schema.json",
+  "title": "设置音乐音量",
+  "category": "task",
+  "summary": "显式设置Android音乐流相对音量0至100，不自动提升音量。",
+  "searchTerms": [
+    "设置音乐音量",
+    "录制",
+    "音频"
+  ],
+  "requiredCapabilities": [
+    "audio.control"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "volume",
+      "label": "音量(0–100)",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "50"
+    }
+  ],
+  "migrations": []
+}

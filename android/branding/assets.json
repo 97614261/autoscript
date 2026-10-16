@@ -1,0 +1,244 @@
+{
+  "formatVersion": 1,
+  "sourceSha256": "d526bdb9a1b2296ce804f4c3537990924b2ef3b1fc6205489b6fdabe8b1c7b1e",
+  "embeddedPngSha256": "bad37c3110b0def85c7f7591e40886cee9176b3c137d9cce130ec407134247a4",
+  "sourceSize": [
+    1254,
+    1254
+  ],
+  "masterSize": [
+    1024,
+    1024
+  ],
+  "matteOnlyPixels": 1073166,
+  "logoGeometry": "unchanged source coordinates and aspect ratio; no tracing",
+  "appSizes": [
+    256,
+    192,
+    144,
+    96,
+    72,
+    48,
+    36,
+    24,
+    16
+  ],
+  "floatingSizes": [
+    256,
+    128,
+    64,
+    48
+  ],
+  "files": [
+    {
+      "path": "android/modules/brand-ui/src/main/res/drawable-nodpi/zhigou_brand_mark.png",
+      "bytes": 497157,
+      "sha256": "e2f58b096895802c8b54b109bda72265b03d3b2b3bc0a29db8f3905774e6820f"
+    },
+    {
+      "path": "android/branding/exports/master/zhigou-1024-transparent.png",
+      "bytes": 497157,
+      "sha256": "e2f58b096895802c8b54b109bda72265b03d3b2b3bc0a29db8f3905774e6820f"
+    },
+    {
+      "path": "android/branding/exports/floating/logo-pastel-1024.png",
+      "bytes": 182181,
+      "sha256": "a8746376fc073a30d9871b44961eec7f54032e1c5c4be3233f4e2b19e79023cd"
+    },
+    {
+      "path": "android/modules/brand-ui/src/main/res/drawable-nodpi/zhigou_brand_monochrome.png",
+      "bytes": 32193,
+      "sha256": "df0d315812974389eaf07efb9036834105724cef8c1d98be9afd7bd51bcb80fa"
+    },
+    {
+      "path": "android/branding/exports/styles/outline.png",
+      "bytes": 42750,
+      "sha256": "4b1e34ef53af94c795f9cc1a6401372d61c4c7313b6d26bd29e4a67113a13b90"
+    },
+    {
+      "path": "android/branding/exports/styles/monochrome.png",
+      "bytes": 171408,
+      "sha256": "fab7deadf1daecb1bd3c6e2c5ea19b4fd8f5830170462df4a41af5bc30e1f70d"
+    },
+    {
+      "path": "android/branding/exports/app/light/256.png",
+      "bytes": 31450,
+      "sha256": "73fa4dab08cf48c6294bcd9b7f30e3647adfbe1d2efd57860b74b8a985de0b0d"
+    },
+    {
+      "path": "android/branding/exports/transparent/256.png",
+      "bytes": 46839,
+      "sha256": "d0a04228424738334dbe088eba7fc08b02844aca149b61fd86641637636bc5a4"
+    },
+    {
+      "path": "android/branding/exports/app/light/192.png",
+      "bytes": 19873,
+      "sha256": "db5ab8728e8e9135caac00a091f871c3bc40a510f0186bebd4cf93c976f4f7b4"
+    },
+    {
+      "path": "android/branding/exports/transparent/192.png",
+      "bytes": 30202,
+      "sha256": "f1d4434b06f1c21345c3cee0662a78d67ae9ad6f2a5aaeb672749da4e31f5103"
+    },
+    {
+      "path": "android/branding/exports/app/light/144.png",
+      "bytes": 12393,
+      "sha256": "487694cf0d721d4ad71c931178bb233a71c6e985bd38ce0c16ccef6f87c15bd2"
+    },
+    {
+      "path": "android/branding/exports/transparent/144.png",
+      "bytes": 19046,
+      "sha256": "21721fc3e485f25e368bb5b1bee91289d1bc982e7a0508ed0a1ccfdc0844dc16"
+    },
+    {
+      "path": "android/branding/exports/app/light/96.png",
+      "bytes": 6670,
+      "sha256": "fe7d7f5510f8577e7e65c6a302eb7eba6996e9a95c58171bd011e833db2efb13"
+    },
+    {
+      "path": "android/branding/exports/transparent/96.png",
+      "bytes": 10364,
+      "sha256": "b04ba5ceaa9714160c4d10b940cc290afd8574d92016be0e097b9ec40a007eaa"
+    },
+    {
+      "path": "android/branding/exports/app/light/72.png",
+      "bytes": 4242,
+      "sha256": "ef934ae2e622b4936f6bb560105cbdaf4b427dbbc3752131930c314056273d45"
+    },
+    {
+      "path": "android/branding/exports/transparent/72.png",
+      "bytes": 6697,
+      "sha256": "5f26a72a21fd4a101552808467acc886078edf13fcb37eb795d8cd0cad50fbba"
+    },
+    {
+      "path": "android/branding/exports/app/light/48.png",
+      "bytes": 2232,
+      "sha256": "d057aadeb5acfd35f772af3e81ebeac75ef90042a3ed6d269ffb4422fca3c854"
+    },
+    {
+      "path": "android/branding/exports/transparent/48.png",
+      "bytes": 3685,
+      "sha256": "567584d349120fdc0064e8296911fc54f91b79f351b8536d90a8600025742de4"
+    },
+    {
+      "path": "android/branding/exports/app/light/36.png",
+      "bytes": 1415,
+      "sha256": "2706e3c8481fe33f16635394f644ca8eb4a3d7db5199087520b7f936131beadd"
+    },
+    {
+      "path": "android/branding/exports/transparent/36.png",
+      "bytes": 2368,
+      "sha256": "a08a28cd99b9cd7cd79d3948e1b6f91f48fbddb97dde25b2f43c47a0e7ad1ff0"
+    },
+    {
+      "path": "android/branding/exports/app/light/24.png",
+      "bytes": 801,
+      "sha256": "83d5bdb5ff25f5bde4fe8ea5741e488e7426b531c3d9b569793f569121d3a1cf"
+    },
+    {
+      "path": "android/branding/exports/transparent/24.png",
+      "bytes": 1358,
+      "sha256": "3af068268f8745332c4760162a1978cf17debbc2e03a7a2258e99fc6783bb415"
+    },
+    {
+      "path": "android/branding/exports/app/light/16.png",
+      "bytes": 469,
+      "sha256": "6be2f6a0db75617606af40c637446f8f60b8133913d6e93939c7d8ef1e307b09"
+    },
+    {
+      "path": "android/branding/exports/transparent/16.png",
+      "bytes": 772,
+      "sha256": "84b27bbaa51d4bc2caf3c46af984623a4071aa08bb0aa912a8c480c61e4257fa"
+    },
+    {
+      "path": "android/branding/exports/styles/light-512.png",
+      "bytes": 104748,
+      "sha256": "de3ea87749fdf23bbb0b9f773cbcb437248c90936bd2c0e29515ba6a3f65a78a"
+    },
+    {
+      "path": "android/branding/exports/styles/dark-512.png",
+      "bytes": 107613,
+      "sha256": "e2a63b920118a53b3851b781d087f64aa65bf5a42be37a1d08242f22cc4ca8e9"
+    },
+    {
+      "path": "android/branding/exports/styles/circle-512.png",
+      "bytes": 107627,
+      "sha256": "168b79d045f0e67b25ff865ecdb6d7c40eae0347fb6153fb016a91add6361e0e"
+    },
+    {
+      "path": "android/branding/exports/styles/rounded-512.png",
+      "bytes": 104748,
+      "sha256": "de3ea87749fdf23bbb0b9f773cbcb437248c90936bd2c0e29515ba6a3f65a78a"
+    },
+    {
+      "path": "android/branding/exports/styles/purple-512.png",
+      "bytes": 106276,
+      "sha256": "6007a65beb07acff787ae57ff7fc58e2b03c634f487a3584502218553a39d97f"
+    },
+    {
+      "path": "android/branding/exports/styles/gradient-512.png",
+      "bytes": 112194,
+      "sha256": "5aa9dd256ab5677a7804bc65af3f19fc92050a18e3e8d8551401a7dfda8d6d9f"
+    },
+    {
+      "path": "android/branding/exports/floating/256.png",
+      "bytes": 45660,
+      "sha256": "3e889b83fc8fef25b9c14b09c33b87e2c5dcb3afc6909fbe1b880bed1243729c"
+    },
+    {
+      "path": "android/branding/exports/floating/128.png",
+      "bytes": 16717,
+      "sha256": "3196308231453aed36081357cd9752d745d77ccf2b3e1e5b5d64e92f4e97c36d"
+    },
+    {
+      "path": "android/branding/exports/floating/64.png",
+      "bytes": 5672,
+      "sha256": "ceb55ef399ae55fc226438257bceec89337e4ce5334e72f9912689cd754049f5"
+    },
+    {
+      "path": "android/branding/exports/floating/48.png",
+      "bytes": 3812,
+      "sha256": "102efe14d57f7866f2b74aa8a09018caa7d0f759e61a12c636eae61e3cfaddf9"
+    },
+    {
+      "path": "android/branding/exports/states/idle.png",
+      "bytes": 45984,
+      "sha256": "d4ef9d7d543d47ee4a86740886ddb9d877df4c9e321fb890a50e42752801b7a5"
+    },
+    {
+      "path": "android/branding/exports/states/executing.png",
+      "bytes": 49780,
+      "sha256": "771f0b7c3249d235ce99a5bc5c0c749a009938f7d9217d97d91ca6c10f6e0547"
+    },
+    {
+      "path": "android/branding/exports/states/running.png",
+      "bytes": 50651,
+      "sha256": "8e2d2a46ac47d09857c02df963f36d24596bb1a9374e7187cb3bb18435311e0d"
+    },
+    {
+      "path": "android/branding/exports/states/success.png",
+      "bytes": 47758,
+      "sha256": "cb2c34d5e669b0771fd2243783a88afe8c691103be7008a32662c9f65b7387ac"
+    },
+    {
+      "path": "android/branding/exports/animation/idle.gif",
+      "bytes": 370886,
+      "sha256": "363de658510453ea2a25d802580ade07b16596a53bf71d86242131c24291b49a"
+    },
+    {
+      "path": "android/branding/exports/animation/running.gif",
+      "bytes": 472107,
+      "sha256": "0151cf86b72717bd6244d4ddd9b4d549b240a7dedf20476980b7d579adc64e08"
+    },
+    {
+      "path": "android/branding/exports/animation/success.gif",
+      "bytes": 440310,
+      "sha256": "4cb104eb336c008d6200668eea025f54c4ea25e59c9d9998efee81c924fbf68f"
+    },
+    {
+      "path": "android/branding/exports/zhigou-resource-board.png",
+      "bytes": 432618,
+      "sha256": "d1b0ba441f118db94f1f7a52d13cde11e0eae1ee0f2e09e8fee0d7b5ba485bed"
+    }
+  ]
+}

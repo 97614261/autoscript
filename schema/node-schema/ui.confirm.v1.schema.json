@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ui.confirm/1/ui.confirm.schema.json",
+  "title": "确认对话框",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ui.confirm"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "message",
+        "confirmText",
+        "cancelText",
+        "timeoutMs",
+        "resultVariable"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 192
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "confirmText": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "cancelText": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1800000
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

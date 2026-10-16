@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 16001,
+  "name": "Clipboard.setText",
+  "since": "1.8",
+  "capability": "device.clipboard",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文字"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。"
+  },
+  "legacyAliases": []
+}

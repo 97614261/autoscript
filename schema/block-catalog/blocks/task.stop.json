@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.stop",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.stop/1/task.stop.schema.json",
+  "title": "停止整个脚本",
+  "category": "task",
+  "summary": "优先停止整个运行与子任务，并由既有清理链路释放输入和任务资源；不继续执行下一积木。",
+  "searchTerms": [
+    "控制",
+    "运行",
+    "调试",
+    "停止整个脚本"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

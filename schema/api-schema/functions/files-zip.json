@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14145,
+  "name": "Files.zip",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "destination",
+      "type": "string",
+      "required": true,
+      "summary": "新ZIP路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "kind": "screen.crop",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.crop/1/screen.crop.schema.json",
+  "title": "裁剪帧",
+  "category": "screen",
+  "summary": "从已缓存帧按原像素裁剪半开矩形，输出独立图像变量；源与目标不能同名，分别释放。",
+  "searchTerms": [
+    "截图",
+    "帧",
+    "系列",
+    "裁剪帧"
+  ],
+  "requiredCapabilities": [
+    "screen.capture"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "源帧变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "frame"
+    },
+    {
+      "path": "left",
+      "label": "左 · 原像素",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "top",
+      "label": "上 · 原像素",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "right",
+      "label": "右 · 不含",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "bottom",
+      "label": "下 · 不含",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "resultVariable",
+      "label": "输出图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "cropped"
+    }
+  ],
+  "migrations": []
+}

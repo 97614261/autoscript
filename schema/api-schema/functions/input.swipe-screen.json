@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4010,
+  "name": "Input.swipeScreen",
+  "since": "1.8",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 8000,
+  "resourceOwnership": "input_transaction",
+  "summary": "在实际屏幕像素中执行滑动，保持既有取消、后端支持和时长约束。",
+  "params": [
+    {
+      "name": "x1",
+      "type": "integer",
+      "required": true,
+      "summary": "起点X。"
+    },
+    {
+      "name": "y1",
+      "type": "integer",
+      "required": true,
+      "summary": "起点Y。"
+    },
+    {
+      "name": "x2",
+      "type": "integer",
+      "required": true,
+      "summary": "终点X。"
+    },
+    {
+      "name": "y2",
+      "type": "integer",
+      "required": true,
+      "summary": "终点Y。"
+    },
+    {
+      "name": "durationMs",
+      "type": "integer",
+      "required": true,
+      "summary": "1至5000毫秒。"
+    },
+    {
+      "name": "snapshotId",
+      "type": "integer",
+      "required": false,
+      "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "后端确认完成。"
+  },
+  "legacyAliases": []
+}

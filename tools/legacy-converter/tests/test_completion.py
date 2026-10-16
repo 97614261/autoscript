@@ -101,7 +101,7 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual("variable.calculate", nodes[2]["kind"])
         self.assertIn("..", nodes[2]["args"]["expression"])
         self.assertEqual("task.prompt", nodes[4]["kind"])
-        checker = pathlib.Path(__file__).resolve().parents[3] / "target/debug/examples/validate_project.exe"
+        checker = pathlib.Path(__file__).resolve().parents[3] / "rust/target/debug/examples/validate_project.exe"
         if checker.is_file():
             summary = Converter(archive).convert(self.directory / "converted", "main.cj", compiler_gate(checker))
             self.assertEqual("converted", summary["status"])
@@ -119,7 +119,7 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual("task.message", nodes[0]["kind"])
         self.assertEqual("popup", nodes[0]["args"]["channel"])
         self.assertIn("..", nodes[0]["args"]["expression"])
-        checker = pathlib.Path(__file__).resolve().parents[3] / "target/debug/examples/validate_project.exe"
+        checker = pathlib.Path(__file__).resolve().parents[3] / "rust/target/debug/examples/validate_project.exe"
         if checker.is_file():
             result = Converter(archive).convert(self.directory / "converted", "main.cj", compiler_gate(checker))
             self.assertEqual("converted", result["status"])
@@ -189,7 +189,7 @@ class CompletionTests(unittest.TestCase):
             with self.subTest(content=content):
                 nodes = Converter(archive).convert_flow("插件/main.cj", tree(content))
                 self.assertEqual("legacy.unsupported", nodes[0]["kind"])
-        checker = pathlib.Path(__file__).resolve().parents[3] / "target/debug/examples/validate_project.exe"
+        checker = pathlib.Path(__file__).resolve().parents[3] / "rust/target/debug/examples/validate_project.exe"
         if checker.is_file():
             result = Converter(archive).convert(self.directory / "converted", "main.cj", compiler_gate(checker))
             self.assertEqual("converted", result["status"])
@@ -217,7 +217,7 @@ class CompletionTests(unittest.TestCase):
         for expression in ('()', 'text ("b")', '("b"', '"b")', 'text + ()', 'text ++ "b"'):
             with self.assertRaises(Unmapped):
                 converter.string_expression("插件/main.cj", expression)
-        checker = pathlib.Path(__file__).resolve().parents[3] / "target/debug/examples/validate_project.exe"
+        checker = pathlib.Path(__file__).resolve().parents[3] / "rust/target/debug/examples/validate_project.exe"
         if checker.is_file():
             result = Converter(archive).convert(self.directory / "converted", "main.cj", compiler_gate(checker))
             self.assertEqual("converted", result["status"])
@@ -274,7 +274,7 @@ class CompletionTests(unittest.TestCase):
                 self.assertEqual(expected, nodes[0]["args"])
                 self.assertEqual("control.continue", nodes[1]["kind"])
                 self.assertEqual({"success": True}, nodes[2]["args"])
-                checker = pathlib.Path(__file__).resolve().parents[3] / "target/debug/examples/validate_project.exe"
+                checker = pathlib.Path(__file__).resolve().parents[3] / "rust/target/debug/examples/validate_project.exe"
                 if checker.is_file():
                     result = Converter(archive).convert(self.directory / ("cycle-" + str(len(list(self.directory.iterdir())))),
                                                         "main.cj", compiler_gate(checker))
@@ -344,7 +344,7 @@ class CompletionTests(unittest.TestCase):
                        'byteLen(count)', 'text.Length() + arbitrary(1)', 'text.Length() + byteLen(text.Length())'):
             with self.assertRaises(Unmapped):
                 converter.arithmetic("插件/main.cj", source, converter.variable("插件/main.cj", "count"))
-        checker = pathlib.Path(__file__).resolve().parents[3] / "target/debug/examples/validate_project.exe"
+        checker = pathlib.Path(__file__).resolve().parents[3] / "rust/target/debug/examples/validate_project.exe"
         if checker.is_file():
             summary = Converter(archive).convert(self.directory / "native-length", "main.cj", compiler_gate(checker))
             self.assertEqual("converted", summary["status"])

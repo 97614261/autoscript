@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.promptenabled",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.promptenabled/1/task.promptenabled.schema.json",
+  "title": "运行提示开关",
+  "category": "task",
+  "summary": "关闭持续与短时提示，清除当前和迟到显示；开启不重放，不覆盖项目提示总开关，不影响运行控制球。",
+  "searchTerms": [
+    "控制",
+    "运行",
+    "调试",
+    "运行提示开关"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "enabled",
+      "label": "启用运行提示",
+      "editor": "boolean",
+      "required": true,
+      "defaultValue": "true"
+    }
+  ],
+  "migrations": []
+}

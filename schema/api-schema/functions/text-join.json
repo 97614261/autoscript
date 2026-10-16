@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14206,
+  "name": "Text.join",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。",
+  "params": [
+    {
+      "name": "json",
+      "type": "string",
+      "required": true,
+      "summary": "JSON字符数组"
+    },
+    {
+      "name": "separator",
+      "type": "string",
+      "required": true,
+      "summary": "分隔符"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。"
+  },
+  "legacyAliases": []
+}
+

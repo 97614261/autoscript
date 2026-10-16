@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.upper",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.upper/1/text.upper.schema.json",
+  "title": "转大写",
+  "category": "variable",
+  "summary": "Unicode大小写转换，输出预算仍为64KiB。",
+  "searchTerms": [
+    "工具",
+    "转大写",
+    "Text.upper"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

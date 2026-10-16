@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 15002,
+  "name": "Audio.getVolume",
+  "since": "1.7",
+  "capability": "audio.control",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "返回Android音乐流相对音量0至100。",
+  "params": [],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "返回Android音乐流相对音量0至100。"
+  },
+  "legacyAliases": []
+}

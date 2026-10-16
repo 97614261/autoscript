@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.tobase64",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.tobase64/1/files.tobase64.schema.json",
+  "title": "文件转Base64",
+  "category": "variable",
+  "summary": "私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。",
+  "searchTerms": [
+    "文件",
+    "文件转Base64",
+    "Files.toBase64"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.bin"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

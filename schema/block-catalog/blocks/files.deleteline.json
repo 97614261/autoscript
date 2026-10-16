@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.deleteline",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.deleteline/1/files.deleteline.schema.json",
+  "title": "删除数据文件一行",
+  "category": "variable",
+  "summary": "严格1起行号；原子保存，统一LF，返回1。",
+  "searchTerms": [
+    "文件",
+    "删除数据文件一行",
+    "Files.deleteLine"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "line",
+      "label": "行号（1起）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "lineVariable",
+      "label": "行号（1起）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "system.screensize",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/system.screensize/1/system.screensize.schema.json",
+  "title": "读取屏幕尺寸",
+  "category": "variable",
+  "summary": "读取真实Android显示像素宽高，不把设计分辨率当设备尺寸。",
+  "searchTerms": [
+    "工具",
+    "系统",
+    "读取屏幕尺寸"
+  ],
+  "requiredCapabilities": [
+    "device.display"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "widthVariable",
+      "label": "宽度变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "heightVariable",
+      "label": "高度变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

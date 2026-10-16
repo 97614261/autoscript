@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5120,
+  "name": "Screen.findAllMultiColor",
+  "since": "1.7",
+  "capability": "vision.pixel",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "帧句柄"
+    },
+    {
+      "name": "options",
+      "type": "string",
+      "required": true,
+      "summary": "严格JSON：region、samples(dx/dy/rgb/tolerance)、limit。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。"
+  },
+  "legacyAliases": []
+}

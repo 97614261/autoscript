@@ -15,6 +15,14 @@ $artifact = [IO.Path]::GetFullPath($ArtifactRoot)
 [IO.Directory]::CreateDirectory($artifact) | Out-Null
 $results = [System.Collections.Generic.List[object]]::new()
 
+function Invoke-RustCargo {
+    Push-Location (Join-Path $repo "rust")
+    try {
+        & cargo @args
+        if ($LASTEXITCODE -ne 0) { throw "Cargo failed: $LASTEXITCODE" }
+    } finally { Pop-Location }
+}
+
 function Invoke-GateStep {
     param([string]$Name, [scriptblock]$Action)
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -35,11 +43,11 @@ try {
     # M27 改动了 flow-ir 的 Flow 路径策略和 project.schema.json，这两项必须一起验。
     if (-not $SkipRust) {
         Invoke-GateStep "Flow IR tests" {
-            & cargo test -p flow-ir
+            Invoke-RustCargo test -p flow-ir
             if ($LASTEXITCODE -ne 0) { throw "flow-ir 测试失败" }
         }
         Invoke-GateStep "JSON Schema gate" {
-            & cargo run -p schema-check -- .
+            Invoke-RustCargo run -p schema-check -- $repo
             if ($LASTEXITCODE -ne 0) { throw "Schema 门禁失败" }
         }
     }
@@ -64,8 +72,8 @@ try {
 
     Invoke-GateStep "Collect APKs" {
         $apks = @{
-            "studio-debug.apk" = "apps\studio-android\build\outputs\apk\debug\studio-android-debug.apk"
-            "runner-template-debug.apk" = "apps\runner-template-android\build\outputs\apk\debug\runner-template-android-debug.apk"
+            "studio-debug.apk" = "android\apps\studio-android\build\outputs\apk\debug\studio-android-debug.apk"
+            "runner-template-debug.apk" = "android\apps\runner-template-android\build\outputs\apk\debug\runner-template-android-debug.apk"
         }
         foreach ($entry in $apks.GetEnumerator()) {
             $source = Join-Path $repo $entry.Value

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 17003,
+  "name": "Floating.getBounds",
+  "since": "1.8",
+  "capability": "ui.floating",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。"
+  },
+  "legacyAliases": []
+}

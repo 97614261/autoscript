@@ -11,6 +11,80 @@ Math = Math or {}
 ---@return number value 非负距离。
 function Math.distance(x1, y1, x2, y2) end
 
+---端点包含，范围±9007199254740991；非密码学随机，不用于密钥。
+---@param min integer 下限
+---@param max integer 上限
+---@return integer value 端点包含，范围±9007199254740991；非密码学随机，不用于密钥。
+function Math.randInt(min, max) end
+
+---模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。
+---@param length integer 长度
+---@param mode integer 字符模式
+---@return string value 模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。
+function Math.randStr(length, mode) end
+
+---半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。
+---@param value number 数值
+---@return integer value 半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。
+function Math.round(value) end
+
+---下限不大于上限；返回浮点数，不静默转换目标变量。
+---@param value number 数值
+---@param min number 下限
+---@param max number 上限
+---@return number value 下限不大于上限；返回浮点数，不静默转换目标变量。
+function Math.clamp(value, min, max) end
+
+---端点包含，范围内返回1，否则0；无效范围报错。
+---@param value number 数值
+---@param min number 下限
+---@param max number 上限
+---@return integer value 端点包含，范围内返回1，否则0；无效范围报错。
+function Math.inRange(value, min, max) end
+
+---屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。
+---@param x1 number 起点X
+---@param y1 number 起点Y
+---@param x2 number 终点X
+---@param y2 number 终点Y
+---@return number value 屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。
+function Math.angle(x1, y1, x2, y2) end
+
+---模式1上下翻转、2左右翻转；结果归一化到[-180,180]。
+---@param angle number 角度
+---@param mode integer 方向
+---@return number value 模式1上下翻转、2左右翻转；结果归一化到[-180,180]。
+function Math.flipAngle(angle, mode) end
+
+---按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。
+---@param centerX number 中心X
+---@param angle number 角度
+---@param radius number 半径
+---@return number value 按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。
+function Math.joystickX(centerX, angle, radius) end
+
+---按屏幕Y向下公式计算浮点坐标；不执行触摸。
+---@param centerY number 中心Y
+---@param angle number 角度
+---@param radius number 半径
+---@return number value 按屏幕Y向下公式计算浮点坐标；不执行触摸。
+function Math.joystickY(centerY, angle, radius) end
+
+---从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。
+---@param rgb integer RGB颜色
+---@return integer value 从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。
+function Math.red(rgb) end
+
+---从0xRRGGBB提取绿色，返回0～255。
+---@param rgb integer RGB颜色
+---@return integer value 从0xRRGGBB提取绿色，返回0～255。
+function Math.green(rgb) end
+
+---从0xRRGGBB提取蓝色，返回0～255。
+---@param rgb integer RGB颜色
+---@return integer value 从0xRRGGBB提取蓝色，返回0～255。
+function Math.blue(rgb) end
+
 Log = Log or {}
 
 ---向当前 Runner 的有界调试日志写入一条文本。
@@ -20,14 +94,23 @@ function Log.write(level, message) end
 
 Prompt = Prompt or {}
 
----向脚本使用者显示一条运行中的提示信息。
+---按项目样式向脚本使用者显示持续运行提示，停止或结束自动关闭。
 ---@param message string 最多2048字节的 UTF-8 提示文本。
-function Prompt.show(message) end
+---@param styleJson string 可选受限样式 JSON，尺寸位置为屏幕像素；忽略持续时间，缺省使用冻结项目样式。
+function Prompt.show(message, styleJson) end
 
 ---按项目提示样式显示一条短时弹出提示。
 ---@param message string 最多2048字节的 UTF-8 提示文本。
 ---@param styleJson string 可选的受限提示样式 JSON；缺省使用默认样式。
 function Prompt.toast(message, styleJson) end
+
+---只控制后续脚本Log输出，不清空已有记录，不关闭诊断日志或识图统计；本次运行生效。
+---@param enabled boolean 仅true/false，本次运行生效。
+function Log.setEnabled(enabled) end
+
+---关闭持续与短时提示，清除当前和迟到显示；开启不重放，不覆盖项目提示总开关，不影响运行控制球。
+---@param enabled boolean 仅true/false，本次运行生效。
+function Prompt.setEnabled(enabled) end
 
 UI = UI or {}
 
@@ -45,12 +128,31 @@ function UI.getValue(id) end
 ---@param value string value
 function UI.setValue(id, value) end
 
----白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。
+---白名单控件属性与列表操作。itemAdd追加文字，itemInsert/itemSet接受index/text对象，itemRemove为1起索引，itemsClear留空；selectedIndex为1起整数（非必选可0），selectedIndices为JSON索引数组。get:itemCount/selectedIndex/selectedIndices读取对应状态。x/y/width/height/fontPx等为设计像素，颜色#AARRGGBB。新属性和列表操作等待宿主确认，旧写操作保持兼容；不写回设计稿。
 ---@param id string id
 ---@param operation string operation
 ---@param value string value
 ---@return string value get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。
 function UI.command(id, operation, value) end
+
+---显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。
+---@param title string 标题，最多192 UTF-8字节
+---@param message string 内容，最多4096 UTF-8字节
+---@param confirmText string 确定按钮，最多96 UTF-8字节
+---@param cancelText string 取消按钮，最多96 UTF-8字节
+---@param timeoutMs integer 等待1000～1800000ms，默认60000
+---@return string value 显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。
+function UI.confirm(title, message, confirmText, cancelText, timeoutMs) end
+
+---显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。
+---@param pageId string 已保存页面ID
+---@param blockOutside boolean 是否禁止点窗外关闭
+---@param timeoutMs integer 等待1000～1800000ms，默认60000
+---@return string value 显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。
+function UI.showDialogAndWait(pageId, blockOutside, timeoutMs) end
+
+---关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。
+function UI.closeDialog() end
 
 System = System or {}
 
@@ -61,6 +163,26 @@ function System.getScreenSize() end
 ---读取当前任务运行所使用的单调时钟毫秒值。
 ---@return Integer value 自设备启动以来的单调毫秒数。
 function System.elapsedRealtimeMillis() end
+
+---真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。
+---@return integer value 真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。
+function System.getTimeMillis() end
+
+Input = Input or {}
+
+---返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。
+---@param durationMs integer 1000至60000毫秒
+---@param eventBudget integer 128至512原始事件预算
+---@return string value 返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。
+function Input.record(durationMs, eventBudget) end
+
+---整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。
+---@param recordingJson string Input.record返回的完整JSON
+function Input.playRecording(recordingJson) end
+
+---先写入剪贴板，再发送Root系统粘贴键；支持Unicode，最多4096字节。会替换剪贴板，须先聚焦支持粘贴的输入框；不保证目标已接收。
+---@param text string Unicode纯文字，4096 UTF-8字节上限，另需device.clipboard
+function Input.pasteText(text) end
 
 Task = Task or {}
 
@@ -91,7 +213,11 @@ function Timer.every(milliseconds, callback) end
 ---@return boolean value 是否找到所属定时器。
 function Timer.cancel(timer) end
 
-Input = Input or {}
+---优先停止整个运行与子任务，并由既有清理链路释放输入和任务资源；不继续执行下一积木。
+function Task.stop() end
+
+---停止整个运行，认证清理成功后用本次冻结脚本与初值重启；每次外部启动最多10次，主动停止撤销重启。
+function Task.restart() end
 
 ---在设计坐标中执行一次点击，并等待Root输入后端确认。
 ---@param x integer 设计坐标X。
@@ -126,12 +252,36 @@ function Input.pointerUp() end
 ---按原始屏幕像素点击，不再进行设计坐标缩放。
 ---@param x integer 原始屏幕X像素。
 ---@param y integer 原始屏幕Y像素。
-function Input.tapScreen(x, y) end
+---@param snapshotId integer API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。
+function Input.tapScreen(x, y, snapshotId) end
 
 ---按原始屏幕像素按住单触点，使用既有任务触点租约和弹起清理。
 ---@param x integer 原始屏幕X像素。
 ---@param y integer 原始屏幕Y像素。
-function Input.pointerDownScreen(x, y) end
+---@param snapshotId integer API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。
+function Input.pointerDownScreen(x, y, snapshotId) end
+
+---只读解析设计坐标或屏幕坐标，返回宿主冻结映射后的实际像素点和屏幕尺寸，不执行触摸。
+---@param x integer 原始X。
+---@param y integer 原始Y。
+---@param screenPixels boolean true为实际屏幕像素，false为设计坐标。
+---@return Point value 包含x、y、width、height、snapshotId的只读坐标信息。
+function Input.resolvePoint(x, y, screenPixels) end
+
+---移动当前任务持有的单指触点到实际屏幕像素位置；边界和触点所有权继续由宿主校验。
+---@param x integer 屏幕像素X。
+---@param y integer 屏幕像素Y。
+---@param snapshotId integer API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。
+function Input.pointerMoveScreen(x, y, snapshotId) end
+
+---在实际屏幕像素中执行滑动，保持既有取消、后端支持和时长约束。
+---@param x1 integer 起点X。
+---@param y1 integer 起点Y。
+---@param x2 integer 终点X。
+---@param y2 integer 终点Y。
+---@param durationMs integer 1至5000毫秒。
+---@param snapshotId integer API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。
+function Input.swipeScreen(x1, y1, x2, y2, durationMs, snapshotId) end
 
 Screen = Screen or {}
 
@@ -161,6 +311,12 @@ function Screen.loadImage(path) end
 ---@param bottom integer 下边界，不包含。
 ---@return integer value 裁剪图像句柄；任务结束时自动清理。
 function Screen.crop(frame, left, top, right, bottom) end
+
+---返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。阈值模式按加权灰度与0-255阈值比较并保留Alpha；最多4194304像素，源不变。
+---@param frame integer 源帧句柄
+---@param options string 严格JSON：mode、width、height、可选threshold（默认128）。非缩放尺寸为0；threshold为0-255。
+---@return integer value 返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。源不变。
+function Screen.transform(frame, options) end
 
 ---在租用帧的半开ROI内按行优先查找颜色。
 ---@param frame integer 任务持有的帧句柄。
@@ -321,6 +477,26 @@ function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, l
 ---@return string value 数字使用int转换，路径用Data.text解码；未知字段拒绝。
 function Screen.matchValue(result, index, field) end
 
+---批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。
+---@param frame integer 帧句柄
+---@param options string 严格JSON：region、samples(dx/dy/rgb/tolerance)、limit。
+---@return string value 批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。
+function Screen.findAllMultiColor(frame, options) end
+
+---4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。
+---@param frame integer 帧句柄
+---@param options string 严格JSON：region、rgb、tolerance、connectivity、min_area、limit。
+---@return string value 4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。
+function Screen.components(frame, options) end
+
+---读取固定形状识别结果属性，64KiB/2048结果预算，不改变通用Data预算；缺字段/类型/越界明确拒绝，recognized为整数1/0。
+---@param result string 识别JSON，最多64KiB。
+---@param shape string IMAGES/GLYPH_SUMMARY/GLYPH_ITEM/TEXT_ITEM/COLORS/COMPONENTS。
+---@param index integer 总览/数量0，逐项1起，最多2048。
+---@param field string 当前形状的白名单属性，支持centerX/centerY。
+---@return string value JSON标量编码；文字用Data.text解码、数值用tonumber转换。
+function Screen.recognitionValue(result, shape, index, field) end
+
 ---按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。
 ---@param maxFrames integer 1至120的最大帧数，仍受会话字节预算限制。
 ---@param durationMs integer 1至60000毫秒的最长持续时间。
@@ -364,6 +540,26 @@ function Ocr.glyph(frame, dictionary, foregroundRgb, tolerance, similarityPermil
 ---@return AlphanumericResult value text与averageScorePermille，无可信字符为空文本。
 function Ocr.alphanumeric(frame, left, top, right, bottom, minimumConfidencePermille) end
 
+---逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。
+---@param frame integer 帧句柄
+---@param dictionary integer 字库句柄
+---@param foregroundRgb integer RGB
+---@param tolerance integer 0至255
+---@param similarityPermille integer 0至1000
+---@param left integer 左
+---@param top integer 上
+---@param right integer 右，不包含
+---@param bottom integer 下，不包含
+---@param spaceGapColumns integer 插空格列数
+---@return string value 逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。
+function Ocr.glyphDetails(frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns) end
+
+---仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。
+---@param details string 详细结果JSON
+---@param text string 目标文字，最多256字节
+---@return string value 仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。
+function Ocr.findText(details, text) end
+
 Data = Data or {}
 
 ---JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。
@@ -406,6 +602,28 @@ function Data.keys(json) end
 ---@return string value 严格解码 JSON string，不接受数字、布尔、null、集合或对象。
 function Data.text(valueJson) end
 
+---沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+---@param json string JSON文本
+---@return integer value 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+function Data.valid(json) end
+
+---沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+---@param json string JSON文本
+---@return string value 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+function Data.type(json) end
+
+---沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+---@param json string JSON集合或对象
+---@param key string 键或1起索引
+---@return integer value 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+function Data.has(json, key) end
+
+---沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+---@param json string JSON集合或对象
+---@param key string 键或1起索引
+---@return string value 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。
+function Data.getJson(json, key) end
+
 Files = Files or {}
 
 ---项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。
@@ -426,4 +644,390 @@ function Files.list(path) end
 ---仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。
 ---@param path string 仅项目私有 data 内相对文件路径；移入有界回收区。
 function Files.remove(path) end
+
+---文件不存在则创建；原子提交，最多64KiB，返回1。
+---@param path string 私有data路径
+---@param text string 追加文本
+---@return integer value 文件不存在则创建；原子提交，最多64KiB，返回1。
+function Files.append(path, text) end
+
+---普通数据文件存在1，否则0；拒绝目录和不安全路径。
+---@param path string 私有data路径
+---@return integer value 普通数据文件存在1，否则0；拒绝目录和不安全路径。
+function Files.exists(path) end
+
+---数据目录存在1，否则0；拒绝不安全路径。
+---@param path string 私有data路径
+---@return integer value 数据目录存在1，否则0；拒绝不安全路径。
+function Files.isDir(path) end
+
+---只创建私有data内目录，遵守总配额；已存在安全目录也返回1。
+---@param path string 私有data路径
+---@return integer value 只创建私有data内目录，遵守总配额；已存在安全目录也返回1。
+function Files.mkdir(path) end
+
+---复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。
+---@param path string 私有data路径
+---@param destination string 目标相对路径
+---@return integer value 复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。
+function Files.copy(path, destination) end
+
+---同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。
+---@param path string 私有data路径
+---@param destination string 目标相对路径
+---@return integer value 同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。
+function Files.move(path, destination) end
+
+---只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。
+---@param path string 私有data路径
+---@return integer value 只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。
+function Files.rmdir(path) end
+
+---严格UTF-8与1起行号；兼容LF/CRLF，越界报错。
+---@param path string 私有data路径
+---@param line integer 行号（1起）
+---@return string value 严格UTF-8与1起行号；兼容LF/CRLF，越界报错。
+function Files.readLine(path, line) end
+
+---行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。
+---@param path string 私有data路径
+---@param line integer 行号（1起）
+---@param text string 行文本
+---@return integer value 行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。
+function Files.insertLine(path, line, text) end
+
+---严格1起行号；原子保存，统一LF，返回1。
+---@param path string 私有data路径
+---@param line integer 行号（1起）
+---@return integer value 严格1起行号；原子保存，统一LF，返回1。
+function Files.deleteLine(path, line) end
+
+---空文件0行；末尾换行不另计空行，CRLF/LF规则明确。
+---@param path string 私有data路径
+---@return integer value 空文件0行；末尾换行不另计空行，CRLF/LF规则明确。
+function Files.lineCount(path) end
+
+---严格1起行号与单行文本；原子保存，统一LF，返回1。
+---@param path string 私有data路径
+---@param line integer 行号（1起）
+---@param text string 行文本
+---@return integer value 严格1起行号与单行文本；原子保存，统一LF，返回1。
+function Files.writeLine(path, line, text) end
+
+---私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。
+---@param path string 私有data路径
+---@param key string 对象键
+---@param valueJson string JSON值
+---@return integer value 私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。
+function Files.kvSet(path, key, valueJson) end
+
+---返回JSON值文本，缺失返回null；字符串可用Data.text解码。
+---@param path string 私有data路径
+---@param key string 对象键
+---@return string value 返回JSON值文本，缺失返回null；字符串可用Data.text解码。
+function Files.kvGet(path, key) end
+
+---移除指定键并原子保存，返回原键存在1/0；不删除整个文件。
+---@param path string 私有data路径
+---@param key string 对象键
+---@return integer value 移除指定键并原子保存，返回原键存在1/0；不删除整个文件。
+function Files.kvRemove(path, key) end
+
+---返回有序JSON键数组；新对象文件不存在时返回[]。
+---@param path string 私有data路径
+---@return string value 返回有序JSON键数组；新对象文件不存在时返回[]。
+function Files.kvKeys(path) end
+
+---缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。
+---@param path string 私有data路径
+---@param key string 对象键
+---@param delta integer 增加整数
+---@return integer value 缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。
+function Files.kvAdd(path, key, delta) end
+
+---原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。
+---@param frame integer 帧句柄
+---@param path string 私有data相对路径，后缀.png。
+function Screen.savePng(frame, path) end
+
+---读取普通私有数据文件的真实字节数，不跟随链接。
+---@param path string 私有data路径
+---@return integer value 读取普通私有数据文件的真实字节数，不跟随链接。
+function Files.getSize(path) end
+
+---读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。
+---@param path string 私有data路径
+---@return string value 读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。
+function Files.getExtension(path) end
+
+---有界递归统计files、directories和bytes，返回JSON；不含目录本身。
+---@param path string 私有data路径
+---@return string value 有界递归统计files、directories和bytes，返回JSON；不含目录本身。
+function Files.directoryStats(path) end
+
+---私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。
+---@param path string 私有data路径
+---@return string value 私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。
+function Files.toBase64(path) end
+
+---严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。
+---@param path string 私有data路径
+---@param base64 string 标准Base64
+---@return integer value 严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。
+function Files.fromBase64(path, base64) end
+
+---有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。
+---@param path string 私有data路径
+---@param destination string 新ZIP路径
+---@return integer value 有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。
+function Files.zip(path, destination) end
+
+---完整校验ZIP后原子发布到新的私有目录；限制条目、大小和100倍展开比，不覆盖或合并。
+---@param path string 私有data路径
+---@param destination string 新目录
+---@return integer value 完整校验ZIP后原子发布到新的私有目录；限制条目、大小和100倍展开比，不覆盖或合并。
+function Files.unzip(path, destination) end
+
+Text = Text or {}
+
+---Unicode字符数，不是UTF-8字节数。
+---@param text string 文本
+---@return integer value Unicode字符数，不是UTF-8字节数。
+function Text.length(text) end
+
+---包含返回1，否则0；空查找串返回1。
+---@param text string 文本
+---@param needle string 查找文本
+---@return integer value 包含返回1，否则0；空查找串返回1。
+function Text.contains(text, needle) end
+
+---匹配文本开头返回1，否则0。
+---@param text string 文本
+---@param needle string 查找文本
+---@return integer value 匹配文本开头返回1，否则0。
+function Text.startsWith(text, needle) end
+
+---匹配文本结尾返回1，否则0。
+---@param text string 文本
+---@param needle string 查找文本
+---@return integer value 匹配文本结尾返回1，否则0。
+function Text.endsWith(text, needle) end
+
+---统计非重叠匹配；查找串不能为空。
+---@param text string 文本
+---@param needle string 查找文本
+---@return integer value 统计非重叠匹配；查找串不能为空。
+function Text.count(text, needle) end
+
+---返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。
+---@param text string 文本
+---@param separator string 分隔符
+---@return string value 返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。
+function Text.split(text, separator) end
+
+---严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。
+---@param json string JSON字符数组
+---@param separator string 分隔符
+---@return string value 严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。
+function Text.join(json, separator) end
+
+---取前length个Unicode字符，超出末尾截短。
+---@param text string 文本
+---@param length integer 字符数量
+---@return string value 取前length个Unicode字符，超出末尾截短。
+function Text.left(text, length) end
+
+---取后length个Unicode字符，0返回空文本。
+---@param text string 文本
+---@param length integer 字符数量
+---@return string value 取后length个Unicode字符，0返回空文本。
+function Text.right(text, length) end
+
+---字符索引1起，起点最多字符数+1；超出末尾截短。
+---@param text string 文本
+---@param start integer 起点（字符1起）
+---@param length integer 字符数量
+---@return string value 字符索引1起，起点最多字符数+1；超出末尾截短。
+function Text.sub(text, start, length) end
+
+---在1起字符位置插入，字符数+1表示末尾；不执行源码。
+---@param text string 文本
+---@param start integer 起点（字符1起）
+---@param value string 插入文本
+---@return string value 在1起字符位置插入，字符数+1表示末尾；不执行源码。
+function Text.insert(text, start, value) end
+
+---按1起字符位置移除指定长度；不切断UTF-8编码。
+---@param text string 文本
+---@param start integer 起点（字符1起）
+---@param length integer 字符数量
+---@return string value 按1起字符位置移除指定长度；不切断UTF-8编码。
+function Text.remove(text, start, length) end
+
+---查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。
+---@param text string 文本
+---@param needle string 查找文本
+---@param replacement string 替换文本
+---@return string value 查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。
+function Text.replace(text, needle, replacement) end
+
+---查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。
+---@param text string 文本
+---@param needle string 查找文本
+---@param replacement string 替换文本
+---@return string value 查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。
+function Text.replaceFirst(text, needle, replacement) end
+
+---次数0～1024且输出最多64KiB，超预算明确报错。
+---@param text string 文本
+---@param count integer 重复次数
+---@return string value 次数0～1024且输出最多64KiB，超预算明确报错。
+function Text.repeatText(text, count) end
+
+---使用第一个左标记和其后第一个右标记；无匹配返回空字符。
+---@param text string 文本
+---@param left string 左标记
+---@param right string 右标记
+---@return string value 使用第一个左标记和其后第一个右标记；无匹配返回空字符。
+function Text.between(text, left, right) end
+
+---查找串不能为空；无匹配返回空字符。
+---@param text string 文本
+---@param needle string 查找文本
+---@return string value 查找串不能为空；无匹配返回空字符。
+function Text.before(text, needle) end
+
+---查找串不能为空；无匹配返回空字符。
+---@param text string 文本
+---@param needle string 查找文本
+---@return string value 查找串不能为空；无匹配返回空字符。
+function Text.after(text, needle) end
+
+---按Unicode空白去除首尾，不改变中间内容。
+---@param text string 文本
+---@return string value 按Unicode空白去除首尾，不改变中间内容。
+function Text.trim(text) end
+
+---Unicode字符索引1起，未找到0；不使用旧字节索引语义。
+---@param text string 文本
+---@param needle string 查找文本
+---@param start integer 起点（字符1起）
+---@return integer value Unicode字符索引1起，未找到0；不使用旧字节索引语义。
+function Text.find(text, needle, start) end
+
+---Unicode大小写转换，输出预算仍为64KiB。
+---@param text string 文本
+---@return string value Unicode大小写转换，输出预算仍为64KiB。
+function Text.lower(text) end
+
+---Unicode大小写转换，输出预算仍为64KiB。
+---@param text string 文本
+---@return string value Unicode大小写转换，输出预算仍为64KiB。
+function Text.upper(text) end
+
+---有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。
+---@param text string 文本（最多4KiB）
+---@param pattern string 正则（最多128字节）
+---@return integer value 有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。
+function Text.regexMatch(text, pattern) end
+
+---有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。
+---@param text string 文本（最多4KiB）
+---@param pattern string 正则（最多128字节）
+---@return string value 有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。
+function Text.regexExtract(text, pattern) end
+
+---有限自动机正则，不支持反向引用/环视；最多64个完整匹配，超上限报错，不静默截断。
+---@param text string 文本（最多4KiB）
+---@param pattern string 正则（最多128字节）
+---@return string value 有限自动机正则，不支持反向引用/环视；最多64个完整匹配，超上限报错，不静默截断。
+function Text.regexAll(text, pattern) end
+
+Date = Date or {}
+
+---固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。
+---@param timestampMs integer Unix毫秒
+---@param offsetMinutes integer 时区偏移分钟
+---@param format string 格式：date/time/datetime
+---@return string value 固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。
+function Date.format(timestampMs, offsetMinutes, format) end
+
+---每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。
+---@param timestampMs integer Unix毫秒
+---@param days integer 增加天数
+---@return integer value 每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。
+function Date.addDays(timestampMs, days) end
+
+---返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。
+---@param startMs integer 开始Unix毫秒
+---@param endMs integer 结束Unix毫秒
+---@return number value 返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。
+function Date.daysBetween(startMs, endMs) end
+
+Audio = Audio or {}
+
+---播放声明的项目音频或旧私有data音频；单文件20MiB、最长60秒。旧data路径另需storage.data，拒绝网址。
+---@param path string 项目私有data内wav/mp3/ogg/flac/m4a相对路径
+function Audio.play(path) end
+
+---停止并释放当前播放器，不停止脚本。
+function Audio.stop() end
+
+---返回Android音乐流相对音量0至100。
+---@return integer value 返回Android音乐流相对音量0至100。
+function Audio.getVolume() end
+
+---显式设置Android音乐流相对音量0至100，不自动提升音量。
+---@param volume integer 0至100
+function Audio.setVolume(volume) end
+
+Clipboard = Clipboard or {}
+
+---读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。
+---@return string value 读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。
+function Clipboard.getText() end
+
+---显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。
+---@param text string 文字
+function Clipboard.setText(text) end
+
+Apps = Apps or {}
+
+---返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。
+---@param packageName string App包名
+---@return string value 返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。
+function Apps.info(packageName) end
+
+---请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。
+---@param packageName string App包名
+function Apps.open(packageName) end
+
+Floating = Floating or {}
+
+---命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。
+---@param name string 浮窗名称
+---@param x integer X（-1居中）
+---@param y integer Y（-1居中）
+---@param width integer 宽度px
+---@param height integer 高度px
+---@param text string 文字
+---@param fontPx integer 字号px
+---@param textColor string 文字颜色
+---@param background string 背景颜色
+---@param imagePath string 项目图片（可选）
+---@param shapesJson string 绘图JSON
+function Floating.show(name, x, y, width, height, text, fontPx, textColor, background, imagePath, shapesJson) end
+
+---按名称隐藏但保留内容，不改变主配置界面或运行控制球。
+---@param name string 浮窗名称
+function Floating.hide(name) end
+
+---按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。
+---@param name string 浮窗名称
+function Floating.close(name) end
+
+---返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。
+---@param name string 浮窗名称
+---@return string value 返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。
+function Floating.getBounds(name) end
 

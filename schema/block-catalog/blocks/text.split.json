@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.split",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.split/1/text.split.schema.json",
+  "title": "拆分文本",
+  "category": "variable",
+  "summary": "返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。",
+  "searchTerms": [
+    "工具",
+    "拆分文本",
+    "Text.split"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "separator",
+      "label": "分隔符",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ","
+    },
+    {
+      "path": "separatorVariable",
+      "label": "分隔符来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

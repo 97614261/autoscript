@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14125,
+  "name": "Files.kvKeys",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "返回有序JSON键数组；新对象文件不存在时返回[]。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "返回有序JSON键数组；新对象文件不存在时返回[]。"
+  },
+  "legacyAliases": []
+}
+

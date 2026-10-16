@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1016,
+  "name": "Math.flipAngle",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "模式1上下翻转、2左右翻转；结果归一化到[-180,180]。",
+  "params": [
+    {
+      "name": "angle",
+      "type": "number",
+      "required": true,
+      "summary": "角度"
+    },
+    {
+      "name": "mode",
+      "type": "integer",
+      "required": true,
+      "summary": "方向"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "模式1上下翻转、2左右翻转；结果归一化到[-180,180]。"
+  },
+  "legacyAliases": []
+}

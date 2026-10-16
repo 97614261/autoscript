@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1013,
+  "name": "Math.clamp",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "下限不大于上限；返回浮点数，不静默转换目标变量。",
+  "params": [
+    {
+      "name": "value",
+      "type": "number",
+      "required": true,
+      "summary": "数值"
+    },
+    {
+      "name": "min",
+      "type": "number",
+      "required": true,
+      "summary": "下限"
+    },
+    {
+      "name": "max",
+      "type": "number",
+      "required": true,
+      "summary": "上限"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "下限不大于上限；返回浮点数，不静默转换目标变量。"
+  },
+  "legacyAliases": []
+}

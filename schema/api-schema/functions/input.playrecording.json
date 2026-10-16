@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 2201,
+  "name": "Input.playRecording",
+  "since": "1.7",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。",
+  "params": [
+    {
+      "name": "recordingJson",
+      "type": "string",
+      "required": true,
+      "summary": "Input.record返回的完整JSON"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。"
+  },
+  "legacyAliases": []
+}

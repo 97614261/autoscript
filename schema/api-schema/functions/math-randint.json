@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1010,
+  "name": "Math.randInt",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "端点包含，范围±9007199254740991；非密码学随机，不用于密钥。",
+  "params": [
+    {
+      "name": "min",
+      "type": "integer",
+      "required": true,
+      "summary": "下限"
+    },
+    {
+      "name": "max",
+      "type": "integer",
+      "required": true,
+      "summary": "上限"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "端点包含，范围±9007199254740991；非密码学随机，不用于密钥。"
+  },
+  "legacyAliases": []
+}

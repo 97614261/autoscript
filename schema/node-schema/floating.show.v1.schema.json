@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/floating.show/1/floating.show.schema.json",
+  "title": "floating.show node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "floating.show"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "x",
+        "y",
+        "width",
+        "height",
+        "text",
+        "fontPx",
+        "textColor",
+        "background",
+        "imagePath",
+        "shapesJson"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "x": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 8192
+        },
+        "y": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 8192
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "fontPx": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 96
+        },
+        "textColor": {
+          "type": "string",
+          "maxLength": 9
+        },
+        "background": {
+          "type": "string",
+          "maxLength": 9
+        },
+        "imagePath": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "shapesJson": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "textVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    }
+  }
+}

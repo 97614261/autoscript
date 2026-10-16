@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6102,
+  "name": "Ocr.glyphDetails",
+  "since": "1.7",
+  "capability": "ocr.glyph",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame_and_dictionary",
+  "summary": "逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "帧句柄"
+    },
+    {
+      "name": "dictionary",
+      "type": "integer",
+      "required": true,
+      "summary": "字库句柄"
+    },
+    {
+      "name": "foregroundRgb",
+      "type": "integer",
+      "required": true,
+      "summary": "RGB"
+    },
+    {
+      "name": "tolerance",
+      "type": "integer",
+      "required": true,
+      "summary": "0至255"
+    },
+    {
+      "name": "similarityPermille",
+      "type": "integer",
+      "required": true,
+      "summary": "0至1000"
+    },
+    {
+      "name": "left",
+      "type": "integer",
+      "required": true,
+      "summary": "左"
+    },
+    {
+      "name": "top",
+      "type": "integer",
+      "required": true,
+      "summary": "上"
+    },
+    {
+      "name": "right",
+      "type": "integer",
+      "required": true,
+      "summary": "右，不包含"
+    },
+    {
+      "name": "bottom",
+      "type": "integer",
+      "required": true,
+      "summary": "下，不包含"
+    },
+    {
+      "name": "spaceGapColumns",
+      "type": "integer",
+      "required": true,
+      "summary": "插空格列数"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。"
+  },
+  "legacyAliases": []
+}

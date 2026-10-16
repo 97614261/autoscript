@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14118,
+  "name": "Files.insertLine",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "line",
+      "type": "integer",
+      "required": true,
+      "summary": "行号（1起）"
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "行文本"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。"
+  },
+  "legacyAliases": []
+}
+

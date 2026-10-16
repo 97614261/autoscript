@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 2202,
+  "name": "Input.pasteText",
+  "since": "1.8",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "先写入剪贴板，再发送Root系统粘贴键；支持Unicode，最多4096字节。会替换剪贴板，须先聚焦支持粘贴的输入框；不保证目标已接收。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "Unicode纯文字，4096 UTF-8字节上限，另需device.clipboard"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "请求完成，不保证目标App接受文本"
+  },
+  "legacyAliases": []
+}

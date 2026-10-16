@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.join",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.join/1/text.join.schema.json",
+  "title": "拼接文本数组",
+  "category": "variable",
+  "summary": "严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。",
+  "searchTerms": [
+    "工具",
+    "拼接文本数组",
+    "Text.join"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "json",
+      "label": "JSON字符数组",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[\"甲\",\"乙\"]"
+    },
+    {
+      "path": "jsonVariable",
+      "label": "JSON字符数组来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "separator",
+      "label": "分隔符",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ","
+    },
+    {
+      "path": "separatorVariable",
+      "label": "分隔符来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

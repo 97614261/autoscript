@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "kind": "ui.dialogclose",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ui.dialogclose/1/ui.dialogclose.schema.json",
+  "title": "关闭对话框",
+  "category": "task",
+  "summary": "只关闭交互对话框，不停止脚本。",
+  "searchTerms": [
+    "界面",
+    "对话框",
+    "确认",
+    "弹窗"
+  ],
+  "requiredCapabilities": [
+    "ui.control"
+  ],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

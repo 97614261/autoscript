@@ -2,7 +2,7 @@
 
 日期：2026-10-02。状态：实施。
 
-用户要求详细核对并补全。保持ADR0027/0028的独立工具和失效封闭原则；按 docs/legacy-converter-completion-plan.md 分阶段落实，不能因旧Native反编译缺失而自行猜测功能。
+用户要求详细核对并补全。保持ADR0027/0028的独立工具和失效封闭原则；按[转换器补全边界](../reference/legacy-converter-completion-plan.md)分阶段落实，不能因旧Native反编译缺失而自行猜测功能。
 
 将已确认的旧插件分组转换到现有 .studio/source-groups.json，图片目录转换到 .studio/image-directories.json，不把虚拟分组变成真实插件路径。原名字如不符合当前契约则稳定别名并保留报告，不能静默改写。重复归属/缺失插件应阻断，不能抢占第一条。
 

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1015,
+  "name": "Math.angle",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。",
+  "params": [
+    {
+      "name": "x1",
+      "type": "number",
+      "required": true,
+      "summary": "起点X"
+    },
+    {
+      "name": "y1",
+      "type": "number",
+      "required": true,
+      "summary": "起点Y"
+    },
+    {
+      "name": "x2",
+      "type": "number",
+      "required": true,
+      "summary": "终点X"
+    },
+    {
+      "name": "y2",
+      "type": "number",
+      "required": true,
+      "summary": "终点Y"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。"
+  },
+  "legacyAliases": []
+}

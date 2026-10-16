@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1204,
+  "name": "UI.confirm",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "host_sync",
+  "cancelMode": "cooperative",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": 1803000,
+  "resourceOwnership": "none",
+  "summary": "显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。",
+  "params": [
+    {
+      "name": "title",
+      "type": "string",
+      "required": true,
+      "summary": "标题，最多192 UTF-8字节"
+    },
+    {
+      "name": "message",
+      "type": "string",
+      "required": true,
+      "summary": "内容，最多4096 UTF-8字节"
+    },
+    {
+      "name": "confirmText",
+      "type": "string",
+      "required": true,
+      "summary": "确定按钮，最多96 UTF-8字节"
+    },
+    {
+      "name": "cancelText",
+      "type": "string",
+      "required": true,
+      "summary": "取消按钮，最多96 UTF-8字节"
+    },
+    {
+      "name": "timeoutMs",
+      "type": "integer",
+      "required": true,
+      "summary": "等待1000～1800000ms，默认60000"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14210,
+  "name": "Text.insert",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "在1起字符位置插入，字符数+1表示末尾；不执行源码。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文本"
+    },
+    {
+      "name": "start",
+      "type": "integer",
+      "required": true,
+      "summary": "起点（字符1起）"
+    },
+    {
+      "name": "value",
+      "type": "string",
+      "required": true,
+      "summary": "插入文本"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "在1起字符位置插入，字符数+1表示末尾；不执行源码。"
+  },
+  "legacyAliases": []
+}
+

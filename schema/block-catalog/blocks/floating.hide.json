@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.hide",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.hide/1/floating.hide.schema.json",
+  "title": "隐藏浮窗",
+  "category": "task",
+  "summary": "按名称隐藏但保留内容，不改变主配置界面或运行控制球。",
+  "searchTerms": [
+    "隐藏浮窗",
+    "Floating.hide",
+    "绘图",
+    "浮窗"
+  ],
+  "requiredCapabilities": [
+    "ui.floating"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "panel"
+    }
+  ],
+  "migrations": []
+}

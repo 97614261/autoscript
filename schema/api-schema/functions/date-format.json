@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14300,
+  "name": "Date.format",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。",
+  "params": [
+    {
+      "name": "timestampMs",
+      "type": "integer",
+      "required": true,
+      "summary": "Unix毫秒"
+    },
+    {
+      "name": "offsetMinutes",
+      "type": "integer",
+      "required": true,
+      "summary": "时区偏移分钟"
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "required": true,
+      "summary": "格式：date/time/datetime"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。"
+  },
+  "legacyAliases": []
+}
+

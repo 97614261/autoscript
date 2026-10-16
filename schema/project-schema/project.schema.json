@@ -16,6 +16,7 @@
     "design"
   ],
   "properties": {
+    "randomization": { "$ref": "https://autoscript.local/schema/randomization/1/randomization.schema.json#/$defs/project" },
     "formatVersion": {
       "const": 2
     },
@@ -182,7 +183,8 @@
           "kind": {
             "enum": [
               "image",
-              "glyphDictionary"
+                "glyphDictionary",
+                "audio"
             ]
           },
           "path": {
@@ -255,6 +257,14 @@
           "maximum": 60000
         },
         "showRunPrompts": {
+          "type": "boolean",
+          "default": true
+        },
+        "traceExecution": {
+          "type": "boolean",
+          "default": false
+        },
+        "recordVisionMetrics": {
           "type": "boolean",
           "default": true
         },
@@ -543,22 +553,13 @@
           "maxLength": 64
         },
         "kind": {
-          "enum": [
-            "text",
-            "integer",
-            "boolean",
-            "choice"
-          ]
+          "enum": ["text", "integer", "boolean", "choice"]
         },
         "required": {
           "type": "boolean"
         },
         "initialValue": {
-          "type": [
-            "string",
-            "integer",
-            "boolean"
-          ]
+          "type": ["string", "integer", "boolean"]
         },
         "minimum": {
           "type": [
@@ -718,22 +719,13 @@
           "maxLength": 64
         },
         "kind": {
-          "enum": [
-            "text",
-            "integer",
-            "boolean",
-            "choice"
-          ]
+          "enum": ["text", "integer", "boolean", "choice", "number", "multiChoice"]
         },
         "required": {
           "type": "boolean"
         },
         "initialValue": {
-          "type": [
-            "string",
-            "integer",
-            "boolean"
-          ]
+          "type": ["string", "number", "boolean", "array"]
         },
         "minimum": {
           "type": [
@@ -762,6 +754,14 @@
         }
       },
       "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "number" } }, "required": ["kind"] },
+          "then": { "properties": { "initialValue": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 }, "options": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "multiChoice" } }, "required": ["kind"] },
+          "then": { "properties": { "initialValue": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } }, "minimum": { "type": "null" }, "maximum": { "type": "null" }, "options": { "minItems": 1 } } }
+        },
         {
           "if": {
             "properties": {
@@ -930,18 +930,22 @@
           "enum": [
             "INPUT",
             "TEXTAREA",
+            "PASSWORD",
             "LABEL",
             "BUTTON",
             "IMAGE",
             "CONTAINER",
             "NAVIGATION",
             "NUMBER",
+            "DECIMAL",
             "SLIDER",
             "PROGRESS",
             "CHECKBOX",
+            "SWITCH",
             "RADIO",
             "SELECT",
-            "LIST"
+            "LIST",
+            "MULTISELECT"
           ]
         },
         "pageId": {

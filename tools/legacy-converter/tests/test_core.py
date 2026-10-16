@@ -214,7 +214,7 @@ class LegacyProjectTests(unittest.TestCase):
 
     def test_candidates_compile_and_blocked_drafts_fail_closed_with_current_rust(self):
         repo = pathlib.Path(__file__).resolve().parents[3]
-        checker = repo / "target" / "debug" / "examples" / "validate_project.exe"
+        checker = repo / "rust" / "target" / "debug" / "examples" / "validate_project.exe"
         if not checker.is_file():
             self.skipTest("build flow-compiler validate_project example for end-to-end validation")
         for unknown in (False, True):

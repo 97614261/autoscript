@@ -6,17 +6,74 @@
 <tr><td><code>x2</code></td><td>number</td><td>终点X坐标。</td></tr>
 <tr><td><code>y2</code></td><td>number</td><td>终点Y坐标。</td></tr>
 </table><p><b>返回：</b>number — 非负距离。</p></section>
+<section class="api"><h3><code>Math.randInt</code></h3><p>端点包含，范围±9007199254740991；非密码学随机，不用于密钥。</p><p class="meta">opcode 1010 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>min</code></td><td>integer</td><td>下限</td></tr>
+<tr><td><code>max</code></td><td>integer</td><td>上限</td></tr>
+</table><p><b>返回：</b>integer — 端点包含，范围±9007199254740991；非密码学随机，不用于密钥。</p></section>
+<section class="api"><h3><code>Math.randStr</code></h3><p>模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。</p><p class="meta">opcode 1011 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>length</code></td><td>integer</td><td>长度</td></tr>
+<tr><td><code>mode</code></td><td>integer</td><td>字符模式</td></tr>
+</table><p><b>返回：</b>string — 模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。</p></section>
+<section class="api"><h3><code>Math.round</code></h3><p>半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。</p><p class="meta">opcode 1012 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>value</code></td><td>number</td><td>数值</td></tr>
+</table><p><b>返回：</b>integer — 半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。</p></section>
+<section class="api"><h3><code>Math.clamp</code></h3><p>下限不大于上限；返回浮点数，不静默转换目标变量。</p><p class="meta">opcode 1013 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>value</code></td><td>number</td><td>数值</td></tr>
+<tr><td><code>min</code></td><td>number</td><td>下限</td></tr>
+<tr><td><code>max</code></td><td>number</td><td>上限</td></tr>
+</table><p><b>返回：</b>number — 下限不大于上限；返回浮点数，不静默转换目标变量。</p></section>
+<section class="api"><h3><code>Math.inRange</code></h3><p>端点包含，范围内返回1，否则0；无效范围报错。</p><p class="meta">opcode 1014 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>value</code></td><td>number</td><td>数值</td></tr>
+<tr><td><code>min</code></td><td>number</td><td>下限</td></tr>
+<tr><td><code>max</code></td><td>number</td><td>上限</td></tr>
+</table><p><b>返回：</b>integer — 端点包含，范围内返回1，否则0；无效范围报错。</p></section>
+<section class="api"><h3><code>Math.angle</code></h3><p>屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。</p><p class="meta">opcode 1015 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x1</code></td><td>number</td><td>起点X</td></tr>
+<tr><td><code>y1</code></td><td>number</td><td>起点Y</td></tr>
+<tr><td><code>x2</code></td><td>number</td><td>终点X</td></tr>
+<tr><td><code>y2</code></td><td>number</td><td>终点Y</td></tr>
+</table><p><b>返回：</b>number — 屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。</p></section>
+<section class="api"><h3><code>Math.flipAngle</code></h3><p>模式1上下翻转、2左右翻转；结果归一化到[-180,180]。</p><p class="meta">opcode 1016 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>angle</code></td><td>number</td><td>角度</td></tr>
+<tr><td><code>mode</code></td><td>integer</td><td>方向</td></tr>
+</table><p><b>返回：</b>number — 模式1上下翻转、2左右翻转；结果归一化到[-180,180]。</p></section>
+<section class="api"><h3><code>Math.joystickX</code></h3><p>按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。</p><p class="meta">opcode 1017 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>centerX</code></td><td>number</td><td>中心X</td></tr>
+<tr><td><code>angle</code></td><td>number</td><td>角度</td></tr>
+<tr><td><code>radius</code></td><td>number</td><td>半径</td></tr>
+</table><p><b>返回：</b>number — 按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。</p></section>
+<section class="api"><h3><code>Math.joystickY</code></h3><p>按屏幕Y向下公式计算浮点坐标；不执行触摸。</p><p class="meta">opcode 1018 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>centerY</code></td><td>number</td><td>中心Y</td></tr>
+<tr><td><code>angle</code></td><td>number</td><td>角度</td></tr>
+<tr><td><code>radius</code></td><td>number</td><td>半径</td></tr>
+</table><p><b>返回：</b>number — 按屏幕Y向下公式计算浮点坐标；不执行触摸。</p></section>
+<section class="api"><h3><code>Math.red</code></h3><p>从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。</p><p class="meta">opcode 1019 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>RGB颜色</td></tr>
+</table><p><b>返回：</b>integer — 从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。</p></section>
+<section class="api"><h3><code>Math.green</code></h3><p>从0xRRGGBB提取绿色，返回0～255。</p><p class="meta">opcode 1020 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>RGB颜色</td></tr>
+</table><p><b>返回：</b>integer — 从0xRRGGBB提取绿色，返回0～255。</p></section>
+<section class="api"><h3><code>Math.blue</code></h3><p>从0xRRGGBB提取蓝色，返回0～255。</p><p class="meta">opcode 1021 · since 1.7 · core.math · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>rgb</code></td><td>integer</td><td>RGB颜色</td></tr>
+</table><p><b>返回：</b>integer — 从0xRRGGBB提取蓝色，返回0～255。</p></section>
 <section class="api"><h3><code>Log.write</code></h3><p>向当前 Runner 的有界调试日志写入一条文本。</p><p class="meta">opcode 1100 · since 1.5 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>level</code></td><td>integer</td><td>1=info，2=warn，3=error。</td></tr>
 <tr><td><code>message</code></td><td>string</td><td>最多2048字节的 UTF-8 文本。</td></tr>
 </table><p><b>返回：</b>void — 日志接受后立即返回。</p></section>
-<section class="api"><h3><code>Prompt.show</code></h3><p>向脚本使用者显示一条运行中的提示信息。</p><p class="meta">opcode 1101 · since 1.5 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<section class="api"><h3><code>Prompt.show</code></h3><p>按项目样式向脚本使用者显示持续运行提示，停止或结束自动关闭。</p><p class="meta">opcode 1101 · since 1.5 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>message</code></td><td>string</td><td>最多2048字节的 UTF-8 提示文本。</td></tr>
+<tr><td><code>styleJson</code></td><td>string</td><td>可选受限样式 JSON，尺寸位置为屏幕像素；忽略持续时间，缺省使用冻结项目样式。</td></tr>
 </table><p><b>返回：</b>void — 提示已交给 Runner 显示。</p></section>
 <section class="api"><h3><code>Prompt.toast</code></h3><p>按项目提示样式显示一条短时弹出提示。</p><p class="meta">opcode 1102 · since 1.6 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>message</code></td><td>string</td><td>最多2048字节的 UTF-8 提示文本。</td></tr>
 <tr><td><code>styleJson</code></td><td>string</td><td>可选的受限提示样式 JSON；缺省使用默认样式。</td></tr>
 </table><p><b>返回：</b>void — 提示已交给 Runner 显示并会按时长消失。</p></section>
+<section class="api"><h3><code>Log.setEnabled</code></h3><p>只控制后续脚本Log输出，不清空已有记录，不关闭诊断日志或识图统计；本次运行生效。</p><p class="meta">opcode 1104 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>enabled</code></td><td>boolean</td><td>仅true/false，本次运行生效。</td></tr>
+</table><p><b>返回：</b>void — 设置完成，既有项目不修改。</p></section>
+<section class="api"><h3><code>Prompt.setEnabled</code></h3><p>关闭持续与短时提示，清除当前和迟到显示；开启不重放，不覆盖项目提示总开关，不影响运行控制球。</p><p class="meta">opcode 1105 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>enabled</code></td><td>boolean</td><td>仅true/false，本次运行生效。</td></tr>
+</table><p><b>返回：</b>void — 设置完成，既有项目不修改。</p></section>
 <section class="api"><h3><code>UI.waitEvent</code></h3><p>等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。</p><p class="meta">opcode 1200 · since 1.7 · ui.control · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 </table><p><b>返回：</b>string — 等待下一条界面事件；协程挂起，事件唤醒，最多30分钟无交互超时。</p></section>
 <section class="api"><h3><code>UI.getValue</code></h3><p>读取控件字符串值。</p><p class="meta">opcode 1201 · since 1.7 · ui.control · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
@@ -26,15 +83,41 @@
 <tr><td><code>id</code></td><td>string</td><td>id</td></tr>
 <tr><td><code>value</code></td><td>string</td><td>value</td></tr>
 </table><p><b>返回：</b>void — 设置控件值，不触发用户事件。</p></section>
-<section class="api"><h3><code>UI.command</code></h3><p>白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。</p><p class="meta">opcode 1203 · since 1.7 · ui.control · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<section class="api"><h3><code>UI.command</code></h3><p>白名单控件属性与列表操作。itemAdd追加文字，itemInsert/itemSet接受index/text对象，itemRemove为1起索引，itemsClear留空；selectedIndex为1起整数（非必选可0），selectedIndices为JSON索引数组。get:itemCount/selectedIndex/selectedIndices读取对应状态。x/y/width/height/fontPx等为设计像素，颜色#AARRGGBB。新属性和列表操作等待宿主确认，旧写操作保持兼容；不写回设计稿。</p><p class="meta">opcode 1203 · since 1.7 · ui.control · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>id</code></td><td>string</td><td>id</td></tr>
 <tr><td><code>operation</code></td><td>string</td><td>operation</td></tr>
 <tr><td><code>value</code></td><td>string</td><td>value</td></tr>
 </table><p><b>返回：</b>string — get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。</p></section>
+<section class="api"><h3><code>UI.confirm</code></h3><p>显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。</p><p class="meta">opcode 1204 · since 1.7 · ui.control · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>title</code></td><td>string</td><td>标题，最多192 UTF-8字节</td></tr>
+<tr><td><code>message</code></td><td>string</td><td>内容，最多4096 UTF-8字节</td></tr>
+<tr><td><code>confirmText</code></td><td>string</td><td>确定按钮，最多96 UTF-8字节</td></tr>
+<tr><td><code>cancelText</code></td><td>string</td><td>取消按钮，最多96 UTF-8字节</td></tr>
+<tr><td><code>timeoutMs</code></td><td>integer</td><td>等待1000～1800000ms，默认60000</td></tr>
+</table><p><b>返回：</b>string — 显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。</p></section>
+<section class="api"><h3><code>UI.showDialogAndWait</code></h3><p>显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。</p><p class="meta">opcode 1205 · since 1.7 · ui.control · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>pageId</code></td><td>string</td><td>已保存页面ID</td></tr>
+<tr><td><code>blockOutside</code></td><td>boolean</td><td>是否禁止点窗外关闭</td></tr>
+<tr><td><code>timeoutMs</code></td><td>integer</td><td>等待1000～1800000ms，默认60000</td></tr>
+</table><p><b>返回：</b>string — 显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。</p></section>
+<section class="api"><h3><code>UI.closeDialog</code></h3><p>关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。</p><p class="meta">opcode 1206 · since 1.7 · ui.control · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>void — 关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。</p></section>
 <section class="api"><h3><code>System.getScreenSize</code></h3><p>读取当前Android显示区域的物理像素尺寸。</p><p class="meta">opcode 2000 · since 1.0 · device.display · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 </table><p><b>返回：</b>Size — 包含width和height的尺寸值。</p></section>
 <section class="api"><h3><code>System.elapsedRealtimeMillis</code></h3><p>读取当前任务运行所使用的单调时钟毫秒值。</p><p class="meta">opcode 2001 · since 1.5 · core.task · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 </table><p><b>返回：</b>Integer — 自设备启动以来的单调毫秒数。</p></section>
+<section class="api"><h3><code>System.getTimeMillis</code></h3><p>真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。</p><p class="meta">opcode 2002 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>integer — 真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。</p></section>
+<section class="api"><h3><code>Input.record</code></h3><p>返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。</p><p class="meta">opcode 2200 · since 1.7 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>durationMs</code></td><td>integer</td><td>1000至60000毫秒</td></tr>
+<tr><td><code>eventBudget</code></td><td>integer</td><td>128至512原始事件预算</td></tr>
+</table><p><b>返回：</b>string — 返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。</p></section>
+<section class="api"><h3><code>Input.playRecording</code></h3><p>整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。</p><p class="meta">opcode 2201 · since 1.7 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>recordingJson</code></td><td>string</td><td>Input.record返回的完整JSON</td></tr>
+</table><p><b>返回：</b>void — 整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。</p></section>
+<section class="api"><h3><code>Input.pasteText</code></h3><p>先写入剪贴板，再发送Root系统粘贴键；支持Unicode，最多4096字节。会替换剪贴板，须先聚焦支持粘贴的输入框；不保证目标已接收。</p><p class="meta">opcode 2202 · since 1.8 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>Unicode纯文字，4096 UTF-8字节上限，另需device.clipboard</td></tr>
+</table><p><b>返回：</b>void — 请求完成，不保证目标App接受文本</p></section>
 <section class="api"><h3><code>Task.sleep</code></h3><p>挂起当前Lua协程，期间不阻塞调度线程，并响应任务取消。</p><p class="meta">opcode 3000 · since 1.0 · core.task · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>milliseconds</code></td><td>integer</td><td>非负等待毫秒数。</td></tr>
 </table><p><b>返回：</b>void — 正常到期时无返回值。</p></section>
@@ -51,6 +134,10 @@
 <section class="api"><h3><code>Timer.cancel</code></h3><p>取消自己的周期定时器及正在运行的回调。</p><p class="meta">opcode 3004 · since 1.7 · core.task · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>timer</code></td><td>integer</td><td>Timer.every返回的ID。</td></tr>
 </table><p><b>返回：</b>boolean — 是否找到所属定时器。</p></section>
+<section class="api"><h3><code>Task.stop</code></h3><p>优先停止整个运行与子任务，并由既有清理链路释放输入和任务资源；不继续执行下一积木。</p><p class="meta">opcode 3010 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>void — 不返回；认证清理失败仍按真实错误结束。</p></section>
+<section class="api"><h3><code>Task.restart</code></h3><p>停止整个运行，认证清理成功后用本次冻结脚本与初值重启；每次外部启动最多10次，主动停止撤销重启。</p><p class="meta">opcode 3011 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>void — 不返回；清理失败不重启。</p></section>
 <section class="api"><h3><code>Input.tap</code></h3><p>在设计坐标中执行一次点击，并等待Root输入后端确认。</p><p class="meta">opcode 4000 · since 1.1 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>x</code></td><td>integer</td><td>设计坐标X。</td></tr>
 <tr><td><code>y</code></td><td>integer</td><td>设计坐标Y。</td></tr>
@@ -78,11 +165,31 @@
 <section class="api"><h3><code>Input.tapScreen</code></h3><p>按原始屏幕像素点击，不再进行设计坐标缩放。</p><p class="meta">opcode 4006 · since 1.7 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>x</code></td><td>integer</td><td>原始屏幕X像素。</td></tr>
 <tr><td><code>y</code></td><td>integer</td><td>原始屏幕Y像素。</td></tr>
+<tr><td><code>snapshotId</code></td><td>integer</td><td>API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。</td></tr>
 </table><p><b>返回：</b>void — 失败抛出受控错误。</p></section>
 <section class="api"><h3><code>Input.pointerDownScreen</code></h3><p>按原始屏幕像素按住单触点，使用既有任务触点租约和弹起清理。</p><p class="meta">opcode 4007 · since 1.7 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>x</code></td><td>integer</td><td>原始屏幕X像素。</td></tr>
 <tr><td><code>y</code></td><td>integer</td><td>原始屏幕Y像素。</td></tr>
+<tr><td><code>snapshotId</code></td><td>integer</td><td>API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。</td></tr>
 </table><p><b>返回：</b>void — 失败抛出受控错误。</p></section>
+<section class="api"><h3><code>Input.resolvePoint</code></h3><p>只读解析设计坐标或屏幕坐标，返回宿主冻结映射后的实际像素点和屏幕尺寸，不执行触摸。</p><p class="meta">opcode 4008 · since 1.8 · input.basic · HostSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x</code></td><td>integer</td><td>原始X。</td></tr>
+<tr><td><code>y</code></td><td>integer</td><td>原始Y。</td></tr>
+<tr><td><code>screenPixels</code></td><td>boolean</td><td>true为实际屏幕像素，false为设计坐标。</td></tr>
+</table><p><b>返回：</b>Point — 包含x、y、width、height、snapshotId的只读坐标信息。</p></section>
+<section class="api"><h3><code>Input.pointerMoveScreen</code></h3><p>移动当前任务持有的单指触点到实际屏幕像素位置；边界和触点所有权继续由宿主校验。</p><p class="meta">opcode 4009 · since 1.8 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x</code></td><td>integer</td><td>屏幕像素X。</td></tr>
+<tr><td><code>y</code></td><td>integer</td><td>屏幕像素Y。</td></tr>
+<tr><td><code>snapshotId</code></td><td>integer</td><td>API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。</td></tr>
+</table><p><b>返回：</b>void — 后端确认完成。</p></section>
+<section class="api"><h3><code>Input.swipeScreen</code></h3><p>在实际屏幕像素中执行滑动，保持既有取消、后端支持和时长约束。</p><p class="meta">opcode 4010 · since 1.8 · input.basic · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>x1</code></td><td>integer</td><td>起点X。</td></tr>
+<tr><td><code>y1</code></td><td>integer</td><td>起点Y。</td></tr>
+<tr><td><code>x2</code></td><td>integer</td><td>终点X。</td></tr>
+<tr><td><code>y2</code></td><td>integer</td><td>终点Y。</td></tr>
+<tr><td><code>durationMs</code></td><td>integer</td><td>1至5000毫秒。</td></tr>
+<tr><td><code>snapshotId</code></td><td>integer</td><td>API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。</td></tr>
+</table><p><b>返回：</b>void — 后端确认完成。</p></section>
 <section class="api"><h3><code>Screen.capture</code></h3><p>请求一帧屏幕图像，返回短生命周期采集编号。</p><p class="meta">opcode 5000 · since 1.1 · screen.capture · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 </table><p><b>返回：</b>integer — 可传给Screen.cache的采集编号。</p></section>
 <section class="api"><h3><code>Screen.cache</code></h3><p>把当前采集帧固定为任务拥有的不可变识图帧。</p><p class="meta">opcode 5001 · since 1.1 · screen.capture · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
@@ -101,6 +208,10 @@
 <tr><td><code>right</code></td><td>integer</td><td>右边界，不包含。</td></tr>
 <tr><td><code>bottom</code></td><td>integer</td><td>下边界，不包含。</td></tr>
 </table><p><b>返回：</b>integer — 裁剪图像句柄；任务结束时自动清理。</p></section>
+<section class="api"><h3><code>Screen.transform</code></h3><p>返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。阈值模式按加权灰度与0-255阈值比较并保留Alpha；最多4194304像素，源不变。</p><p class="meta">opcode 5010 · since 1.7 · screen.capture · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>源帧句柄</td></tr>
+<tr><td><code>options</code></td><td>string</td><td>严格JSON：mode、width、height、可选threshold（默认128）。非缩放尺寸为0；threshold为0-255。</td></tr>
+</table><p><b>返回：</b>integer — 返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。源不变。</p></section>
 <section class="api"><h3><code>Screen.findColor</code></h3><p>在租用帧的半开ROI内按行优先查找颜色。</p><p class="meta">opcode 5100 · since 1.1 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>frame</code></td><td>integer</td><td>任务持有的帧句柄。</td></tr>
 <tr><td><code>rgb</code></td><td>integer</td><td>0xRRGGBB颜色。</td></tr>
@@ -228,6 +339,20 @@
 <tr><td><code>index</code></td><td>integer</td><td>count/truncated必须0，逐项属性从1开始，越界报错。</td></tr>
 <tr><td><code>field</code></td><td>string</td><td>count/truncated/x/y/width/height/scorePermille/path；truncated为1或0。</td></tr>
 </table><p><b>返回：</b>string — 数字使用int转换，路径用Data.text解码；未知字段拒绝。</p></section>
+<section class="api"><h3><code>Screen.findAllMultiColor</code></h3><p>批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。</p><p class="meta">opcode 5120 · since 1.7 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>帧句柄</td></tr>
+<tr><td><code>options</code></td><td>string</td><td>严格JSON：region、samples(dx/dy/rgb/tolerance)、limit。</td></tr>
+</table><p><b>返回：</b>string — 批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。</p></section>
+<section class="api"><h3><code>Screen.components</code></h3><p>4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。</p><p class="meta">opcode 5121 · since 1.7 · vision.pixel · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>帧句柄</td></tr>
+<tr><td><code>options</code></td><td>string</td><td>严格JSON：region、rgb、tolerance、connectivity、min_area、limit。</td></tr>
+</table><p><b>返回：</b>string — 4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。</p></section>
+<section class="api"><h3><code>Screen.recognitionValue</code></h3><p>读取固定形状识别结果属性，64KiB/2048结果预算，不改变通用Data预算；缺字段/类型/越界明确拒绝，recognized为整数1/0。</p><p class="meta">opcode 5122 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>result</code></td><td>string</td><td>识别JSON，最多64KiB。</td></tr>
+<tr><td><code>shape</code></td><td>string</td><td>IMAGES/GLYPH_SUMMARY/GLYPH_ITEM/TEXT_ITEM/COLORS/COMPONENTS。</td></tr>
+<tr><td><code>index</code></td><td>integer</td><td>总览/数量0，逐项1起，最多2048。</td></tr>
+<tr><td><code>field</code></td><td>string</td><td>当前形状的白名单属性，支持centerX/centerY。</td></tr>
+</table><p><b>返回：</b>string — JSON标量编码；文字用Data.text解码、数值用tonumber转换。</p></section>
 <section class="api"><h3><code>Screen.captureSeries</code></h3><p>按帧数、持续时间和目标FPS采集有界连续帧；启动时预留最坏情况内存。</p><p class="meta">opcode 5200 · since 1.5 · screen.capture.series · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>maxFrames</code></td><td>integer</td><td>1至120的最大帧数，仍受会话字节预算限制。</td></tr>
 <tr><td><code>durationMs</code></td><td>integer</td><td>1至60000毫秒的最长持续时间。</td></tr>
@@ -260,6 +385,22 @@
 <tr><td><code>bottom</code></td><td>integer</td><td>下边界，不含。</td></tr>
 <tr><td><code>minimumConfidencePermille</code></td><td>integer</td><td>最低逐字置信度0–1000，默认500。</td></tr>
 </table><p><b>返回：</b>AlphanumericResult — text与averageScorePermille，无可信字符为空文本。</p></section>
+<section class="api"><h3><code>Ocr.glyphDetails</code></h3><p>逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。</p><p class="meta">opcode 6102 · since 1.7 · ocr.glyph · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>帧句柄</td></tr>
+<tr><td><code>dictionary</code></td><td>integer</td><td>字库句柄</td></tr>
+<tr><td><code>foregroundRgb</code></td><td>integer</td><td>RGB</td></tr>
+<tr><td><code>tolerance</code></td><td>integer</td><td>0至255</td></tr>
+<tr><td><code>similarityPermille</code></td><td>integer</td><td>0至1000</td></tr>
+<tr><td><code>left</code></td><td>integer</td><td>左</td></tr>
+<tr><td><code>top</code></td><td>integer</td><td>上</td></tr>
+<tr><td><code>right</code></td><td>integer</td><td>右，不包含</td></tr>
+<tr><td><code>bottom</code></td><td>integer</td><td>下，不包含</td></tr>
+<tr><td><code>spaceGapColumns</code></td><td>integer</td><td>插空格列数</td></tr>
+</table><p><b>返回：</b>string — 逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。</p></section>
+<section class="api"><h3><code>Ocr.findText</code></h3><p>仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。</p><p class="meta">opcode 6103 · since 1.7 · ocr.glyph · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>details</code></td><td>string</td><td>详细结果JSON</td></tr>
+<tr><td><code>text</code></td><td>string</td><td>目标文字，最多256字节</td></tr>
+</table><p><b>返回：</b>string — 仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。</p></section>
 <section class="api"><h3><code>Data.length</code></h3><p>JSON 总计最多64 KiB、深度16、项数1024；操作返回新文本，不执行表达式或元方法。</p><p class="meta">opcode 14000 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>json</code></td><td>string</td><td>有界 JSON 集合或对象文本。</td></tr>
 </table><p><b>返回：</b>integer — 当前容器的项数。</p></section>
@@ -286,6 +427,20 @@
 <section class="api"><h3><code>Data.text</code></h3><p>严格解码 JSON string，不接受数字、布尔、null、集合或对象。</p><p class="meta">opcode 14006 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>valueJson</code></td><td>string</td><td>JSON string 编码。</td></tr>
 </table><p><b>返回：</b>string — 严格解码 JSON string，不接受数字、布尔、null、集合或对象。</p></section>
+<section class="api"><h3><code>Data.valid</code></h3><p>沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p><p class="meta">opcode 14007 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>JSON文本</td></tr>
+</table><p><b>返回：</b>integer — 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p></section>
+<section class="api"><h3><code>Data.type</code></h3><p>沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p><p class="meta">opcode 14008 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>JSON文本</td></tr>
+</table><p><b>返回：</b>string — 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p></section>
+<section class="api"><h3><code>Data.has</code></h3><p>沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p><p class="meta">opcode 14009 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>JSON集合或对象</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>键或1起索引</td></tr>
+</table><p><b>返回：</b>integer — 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p></section>
+<section class="api"><h3><code>Data.getJson</code></h3><p>沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p><p class="meta">opcode 14010 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>JSON集合或对象</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>键或1起索引</td></tr>
+</table><p><b>返回：</b>string — 沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。</p></section>
 <section class="api"><h3><code>Files.read</code></h3><p>项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p><p class="meta">opcode 14100 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>path</code></td><td>string</td><td>仅项目私有 data 内相对文件路径。</td></tr>
 </table><p><b>返回：</b>string — 项目私有 data 目录内有界 UTF-8 文件操作；拒绝绝对路径、越界与符号链接。</p></section>
@@ -299,4 +454,257 @@
 <section class="api"><h3><code>Files.remove</code></h3><p>仅移除单个项目数据文件，移入有界回收区；不删除目录，不访问源码/密钥。</p><p class="meta">opcode 14103 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>path</code></td><td>string</td><td>仅项目私有 data 内相对文件路径；移入有界回收区。</td></tr>
 </table><p><b>返回：</b>void — 操作完成时返回。</p></section>
+<section class="api"><h3><code>Files.append</code></h3><p>文件不存在则创建；原子提交，最多64KiB，返回1。</p><p class="meta">opcode 14110 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>text</code></td><td>string</td><td>追加文本</td></tr>
+</table><p><b>返回：</b>integer — 文件不存在则创建；原子提交，最多64KiB，返回1。</p></section>
+<section class="api"><h3><code>Files.exists</code></h3><p>普通数据文件存在1，否则0；拒绝目录和不安全路径。</p><p class="meta">opcode 14111 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>integer — 普通数据文件存在1，否则0；拒绝目录和不安全路径。</p></section>
+<section class="api"><h3><code>Files.isDir</code></h3><p>数据目录存在1，否则0；拒绝不安全路径。</p><p class="meta">opcode 14112 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>integer — 数据目录存在1，否则0；拒绝不安全路径。</p></section>
+<section class="api"><h3><code>Files.mkdir</code></h3><p>只创建私有data内目录，遵守总配额；已存在安全目录也返回1。</p><p class="meta">opcode 14113 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>integer — 只创建私有data内目录，遵守总配额；已存在安全目录也返回1。</p></section>
+<section class="api"><h3><code>Files.copy</code></h3><p>复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。</p><p class="meta">opcode 14114 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>destination</code></td><td>string</td><td>目标相对路径</td></tr>
+</table><p><b>返回：</b>integer — 复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。</p></section>
+<section class="api"><h3><code>Files.move</code></h3><p>同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。</p><p class="meta">opcode 14115 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>destination</code></td><td>string</td><td>目标相对路径</td></tr>
+</table><p><b>返回：</b>integer — 同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。</p></section>
+<section class="api"><h3><code>Files.rmdir</code></h3><p>只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。</p><p class="meta">opcode 14116 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>integer — 只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。</p></section>
+<section class="api"><h3><code>Files.readLine</code></h3><p>严格UTF-8与1起行号；兼容LF/CRLF，越界报错。</p><p class="meta">opcode 14117 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>line</code></td><td>integer</td><td>行号（1起）</td></tr>
+</table><p><b>返回：</b>string — 严格UTF-8与1起行号；兼容LF/CRLF，越界报错。</p></section>
+<section class="api"><h3><code>Files.insertLine</code></h3><p>行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。</p><p class="meta">opcode 14118 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>line</code></td><td>integer</td><td>行号（1起）</td></tr>
+<tr><td><code>text</code></td><td>string</td><td>行文本</td></tr>
+</table><p><b>返回：</b>integer — 行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。</p></section>
+<section class="api"><h3><code>Files.deleteLine</code></h3><p>严格1起行号；原子保存，统一LF，返回1。</p><p class="meta">opcode 14119 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>line</code></td><td>integer</td><td>行号（1起）</td></tr>
+</table><p><b>返回：</b>integer — 严格1起行号；原子保存，统一LF，返回1。</p></section>
+<section class="api"><h3><code>Files.lineCount</code></h3><p>空文件0行；末尾换行不另计空行，CRLF/LF规则明确。</p><p class="meta">opcode 14120 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>integer — 空文件0行；末尾换行不另计空行，CRLF/LF规则明确。</p></section>
+<section class="api"><h3><code>Files.writeLine</code></h3><p>严格1起行号与单行文本；原子保存，统一LF，返回1。</p><p class="meta">opcode 14121 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>line</code></td><td>integer</td><td>行号（1起）</td></tr>
+<tr><td><code>text</code></td><td>string</td><td>行文本</td></tr>
+</table><p><b>返回：</b>integer — 严格1起行号与单行文本；原子保存，统一LF，返回1。</p></section>
+<section class="api"><h3><code>Files.kvSet</code></h3><p>私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。</p><p class="meta">opcode 14122 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键</td></tr>
+<tr><td><code>valueJson</code></td><td>string</td><td>JSON值</td></tr>
+</table><p><b>返回：</b>integer — 私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。</p></section>
+<section class="api"><h3><code>Files.kvGet</code></h3><p>返回JSON值文本，缺失返回null；字符串可用Data.text解码。</p><p class="meta">opcode 14123 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键</td></tr>
+</table><p><b>返回：</b>string — 返回JSON值文本，缺失返回null；字符串可用Data.text解码。</p></section>
+<section class="api"><h3><code>Files.kvRemove</code></h3><p>移除指定键并原子保存，返回原键存在1/0；不删除整个文件。</p><p class="meta">opcode 14124 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键</td></tr>
+</table><p><b>返回：</b>integer — 移除指定键并原子保存，返回原键存在1/0；不删除整个文件。</p></section>
+<section class="api"><h3><code>Files.kvKeys</code></h3><p>返回有序JSON键数组；新对象文件不存在时返回[]。</p><p class="meta">opcode 14125 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>string — 返回有序JSON键数组；新对象文件不存在时返回[]。</p></section>
+<section class="api"><h3><code>Files.kvAdd</code></h3><p>缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。</p><p class="meta">opcode 14126 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>对象键</td></tr>
+<tr><td><code>delta</code></td><td>integer</td><td>增加整数</td></tr>
+</table><p><b>返回：</b>integer — 缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。</p></section>
+<section class="api"><h3><code>Screen.savePng</code></h3><p>原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。</p><p class="meta">opcode 14130 · since 1.7 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>frame</code></td><td>integer</td><td>帧句柄</td></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data相对路径，后缀.png。</td></tr>
+</table><p><b>返回：</b>void — 原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。</p></section>
+<section class="api"><h3><code>Files.getSize</code></h3><p>读取普通私有数据文件的真实字节数，不跟随链接。</p><p class="meta">opcode 14140 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>integer — 读取普通私有数据文件的真实字节数，不跟随链接。</p></section>
+<section class="api"><h3><code>Files.getExtension</code></h3><p>读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。</p><p class="meta">opcode 14141 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>string — 读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。</p></section>
+<section class="api"><h3><code>Files.directoryStats</code></h3><p>有界递归统计files、directories和bytes，返回JSON；不含目录本身。</p><p class="meta">opcode 14142 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>string — 有界递归统计files、directories和bytes，返回JSON；不含目录本身。</p></section>
+<section class="api"><h3><code>Files.toBase64</code></h3><p>私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。</p><p class="meta">opcode 14143 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+</table><p><b>返回：</b>string — 私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。</p></section>
+<section class="api"><h3><code>Files.fromBase64</code></h3><p>严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。</p><p class="meta">opcode 14144 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>base64</code></td><td>string</td><td>标准Base64</td></tr>
+</table><p><b>返回：</b>integer — 严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。</p></section>
+<section class="api"><h3><code>Files.zip</code></h3><p>有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。</p><p class="meta">opcode 14145 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>destination</code></td><td>string</td><td>新ZIP路径</td></tr>
+</table><p><b>返回：</b>integer — 有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。</p></section>
+<section class="api"><h3><code>Files.unzip</code></h3><p>完整校验ZIP后原子发布到新的私有目录；限制条目、大小和100倍展开比，不覆盖或合并。</p><p class="meta">opcode 14146 · since 1.8 · storage.data · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>私有data路径</td></tr>
+<tr><td><code>destination</code></td><td>string</td><td>新目录</td></tr>
+</table><p><b>返回：</b>integer — 完整校验ZIP后原子发布到新的私有目录；限制条目、大小和100倍展开比，不覆盖或合并。</p></section>
+<section class="api"><h3><code>Text.length</code></h3><p>Unicode字符数，不是UTF-8字节数。</p><p class="meta">opcode 14200 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+</table><p><b>返回：</b>integer — Unicode字符数，不是UTF-8字节数。</p></section>
+<section class="api"><h3><code>Text.contains</code></h3><p>包含返回1，否则0；空查找串返回1。</p><p class="meta">opcode 14201 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+</table><p><b>返回：</b>integer — 包含返回1，否则0；空查找串返回1。</p></section>
+<section class="api"><h3><code>Text.startsWith</code></h3><p>匹配文本开头返回1，否则0。</p><p class="meta">opcode 14202 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+</table><p><b>返回：</b>integer — 匹配文本开头返回1，否则0。</p></section>
+<section class="api"><h3><code>Text.endsWith</code></h3><p>匹配文本结尾返回1，否则0。</p><p class="meta">opcode 14203 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+</table><p><b>返回：</b>integer — 匹配文本结尾返回1，否则0。</p></section>
+<section class="api"><h3><code>Text.count</code></h3><p>统计非重叠匹配；查找串不能为空。</p><p class="meta">opcode 14204 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+</table><p><b>返回：</b>integer — 统计非重叠匹配；查找串不能为空。</p></section>
+<section class="api"><h3><code>Text.split</code></h3><p>返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。</p><p class="meta">opcode 14205 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>separator</code></td><td>string</td><td>分隔符</td></tr>
+</table><p><b>返回：</b>string — 返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。</p></section>
+<section class="api"><h3><code>Text.join</code></h3><p>严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。</p><p class="meta">opcode 14206 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>json</code></td><td>string</td><td>JSON字符数组</td></tr>
+<tr><td><code>separator</code></td><td>string</td><td>分隔符</td></tr>
+</table><p><b>返回：</b>string — 严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。</p></section>
+<section class="api"><h3><code>Text.left</code></h3><p>取前length个Unicode字符，超出末尾截短。</p><p class="meta">opcode 14207 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>length</code></td><td>integer</td><td>字符数量</td></tr>
+</table><p><b>返回：</b>string — 取前length个Unicode字符，超出末尾截短。</p></section>
+<section class="api"><h3><code>Text.right</code></h3><p>取后length个Unicode字符，0返回空文本。</p><p class="meta">opcode 14208 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>length</code></td><td>integer</td><td>字符数量</td></tr>
+</table><p><b>返回：</b>string — 取后length个Unicode字符，0返回空文本。</p></section>
+<section class="api"><h3><code>Text.sub</code></h3><p>字符索引1起，起点最多字符数+1；超出末尾截短。</p><p class="meta">opcode 14209 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>start</code></td><td>integer</td><td>起点（字符1起）</td></tr>
+<tr><td><code>length</code></td><td>integer</td><td>字符数量</td></tr>
+</table><p><b>返回：</b>string — 字符索引1起，起点最多字符数+1；超出末尾截短。</p></section>
+<section class="api"><h3><code>Text.insert</code></h3><p>在1起字符位置插入，字符数+1表示末尾；不执行源码。</p><p class="meta">opcode 14210 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>start</code></td><td>integer</td><td>起点（字符1起）</td></tr>
+<tr><td><code>value</code></td><td>string</td><td>插入文本</td></tr>
+</table><p><b>返回：</b>string — 在1起字符位置插入，字符数+1表示末尾；不执行源码。</p></section>
+<section class="api"><h3><code>Text.remove</code></h3><p>按1起字符位置移除指定长度；不切断UTF-8编码。</p><p class="meta">opcode 14211 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>start</code></td><td>integer</td><td>起点（字符1起）</td></tr>
+<tr><td><code>length</code></td><td>integer</td><td>字符数量</td></tr>
+</table><p><b>返回：</b>string — 按1起字符位置移除指定长度；不切断UTF-8编码。</p></section>
+<section class="api"><h3><code>Text.replace</code></h3><p>查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。</p><p class="meta">opcode 14212 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+<tr><td><code>replacement</code></td><td>string</td><td>替换文本</td></tr>
+</table><p><b>返回：</b>string — 查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。</p></section>
+<section class="api"><h3><code>Text.replaceFirst</code></h3><p>查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。</p><p class="meta">opcode 14213 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+<tr><td><code>replacement</code></td><td>string</td><td>替换文本</td></tr>
+</table><p><b>返回：</b>string — 查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。</p></section>
+<section class="api"><h3><code>Text.repeatText</code></h3><p>次数0～1024且输出最多64KiB，超预算明确报错。</p><p class="meta">opcode 14214 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>count</code></td><td>integer</td><td>重复次数</td></tr>
+</table><p><b>返回：</b>string — 次数0～1024且输出最多64KiB，超预算明确报错。</p></section>
+<section class="api"><h3><code>Text.between</code></h3><p>使用第一个左标记和其后第一个右标记；无匹配返回空字符。</p><p class="meta">opcode 14215 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>left</code></td><td>string</td><td>左标记</td></tr>
+<tr><td><code>right</code></td><td>string</td><td>右标记</td></tr>
+</table><p><b>返回：</b>string — 使用第一个左标记和其后第一个右标记；无匹配返回空字符。</p></section>
+<section class="api"><h3><code>Text.before</code></h3><p>查找串不能为空；无匹配返回空字符。</p><p class="meta">opcode 14216 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+</table><p><b>返回：</b>string — 查找串不能为空；无匹配返回空字符。</p></section>
+<section class="api"><h3><code>Text.after</code></h3><p>查找串不能为空；无匹配返回空字符。</p><p class="meta">opcode 14217 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+</table><p><b>返回：</b>string — 查找串不能为空；无匹配返回空字符。</p></section>
+<section class="api"><h3><code>Text.trim</code></h3><p>按Unicode空白去除首尾，不改变中间内容。</p><p class="meta">opcode 14218 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+</table><p><b>返回：</b>string — 按Unicode空白去除首尾，不改变中间内容。</p></section>
+<section class="api"><h3><code>Text.find</code></h3><p>Unicode字符索引1起，未找到0；不使用旧字节索引语义。</p><p class="meta">opcode 14219 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+<tr><td><code>needle</code></td><td>string</td><td>查找文本</td></tr>
+<tr><td><code>start</code></td><td>integer</td><td>起点（字符1起）</td></tr>
+</table><p><b>返回：</b>integer — Unicode字符索引1起，未找到0；不使用旧字节索引语义。</p></section>
+<section class="api"><h3><code>Text.lower</code></h3><p>Unicode大小写转换，输出预算仍为64KiB。</p><p class="meta">opcode 14220 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+</table><p><b>返回：</b>string — Unicode大小写转换，输出预算仍为64KiB。</p></section>
+<section class="api"><h3><code>Text.upper</code></h3><p>Unicode大小写转换，输出预算仍为64KiB。</p><p class="meta">opcode 14221 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本</td></tr>
+</table><p><b>返回：</b>string — Unicode大小写转换，输出预算仍为64KiB。</p></section>
+<section class="api"><h3><code>Text.regexMatch</code></h3><p>有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。</p><p class="meta">opcode 14222 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本（最多4KiB）</td></tr>
+<tr><td><code>pattern</code></td><td>string</td><td>正则（最多128字节）</td></tr>
+</table><p><b>返回：</b>integer — 有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。</p></section>
+<section class="api"><h3><code>Text.regexExtract</code></h3><p>有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。</p><p class="meta">opcode 14223 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本（最多4KiB）</td></tr>
+<tr><td><code>pattern</code></td><td>string</td><td>正则（最多128字节）</td></tr>
+</table><p><b>返回：</b>string — 有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。</p></section>
+<section class="api"><h3><code>Text.regexAll</code></h3><p>有限自动机正则，不支持反向引用/环视；最多64个完整匹配，超上限报错，不静默截断。</p><p class="meta">opcode 14224 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文本（最多4KiB）</td></tr>
+<tr><td><code>pattern</code></td><td>string</td><td>正则（最多128字节）</td></tr>
+</table><p><b>返回：</b>string — 有限自动机正则，不支持反向引用/环视；最多64个完整匹配，超上限报错，不静默截断。</p></section>
+<section class="api"><h3><code>Date.format</code></h3><p>固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。</p><p class="meta">opcode 14300 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>timestampMs</code></td><td>integer</td><td>Unix毫秒</td></tr>
+<tr><td><code>offsetMinutes</code></td><td>integer</td><td>时区偏移分钟</td></tr>
+<tr><td><code>format</code></td><td>string</td><td>格式：date/time/datetime</td></tr>
+</table><p><b>返回：</b>string — 固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。</p></section>
+<section class="api"><h3><code>Date.addDays</code></h3><p>每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。</p><p class="meta">opcode 14301 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>timestampMs</code></td><td>integer</td><td>Unix毫秒</td></tr>
+<tr><td><code>days</code></td><td>integer</td><td>增加天数</td></tr>
+</table><p><b>返回：</b>integer — 每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。</p></section>
+<section class="api"><h3><code>Date.daysBetween</code></h3><p>返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。</p><p class="meta">opcode 14302 · since 1.7 · core.task · RustSync</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>startMs</code></td><td>integer</td><td>开始Unix毫秒</td></tr>
+<tr><td><code>endMs</code></td><td>integer</td><td>结束Unix毫秒</td></tr>
+</table><p><b>返回：</b>number — 返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。</p></section>
+<section class="api"><h3><code>Audio.play</code></h3><p>播放声明的项目音频或旧私有data音频；单文件20MiB、最长60秒。旧data路径另需storage.data，拒绝网址。</p><p class="meta">opcode 15000 · since 1.7 · audio.control · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>path</code></td><td>string</td><td>项目私有data内wav/mp3/ogg/flac/m4a相对路径</td></tr>
+</table><p><b>返回：</b>void — 单播放器读取项目私有data音频，拒绝网址；需要storage.data，最多20MiB、播放60秒。</p></section>
+<section class="api"><h3><code>Audio.stop</code></h3><p>停止并释放当前播放器，不停止脚本。</p><p class="meta">opcode 15001 · since 1.7 · audio.control · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>void — 停止并释放当前播放器，不停止脚本。</p></section>
+<section class="api"><h3><code>Audio.getVolume</code></h3><p>返回Android音乐流相对音量0至100。</p><p class="meta">opcode 15002 · since 1.7 · audio.control · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>integer — 返回Android音乐流相对音量0至100。</p></section>
+<section class="api"><h3><code>Audio.setVolume</code></h3><p>显式设置Android音乐流相对音量0至100，不自动提升音量。</p><p class="meta">opcode 15003 · since 1.7 · audio.control · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>volume</code></td><td>integer</td><td>0至100</td></tr>
+</table><p><b>返回：</b>void — 显式设置Android音乐流相对音量0至100，不自动提升音量。</p></section>
+<section class="api"><h3><code>Clipboard.getText</code></h3><p>读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。</p><p class="meta">opcode 16000 · since 1.8 · device.clipboard · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+</table><p><b>返回：</b>string — 读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。</p></section>
+<section class="api"><h3><code>Clipboard.setText</code></h3><p>显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。</p><p class="meta">opcode 16001 · since 1.8 · device.clipboard · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>text</code></td><td>string</td><td>文字</td></tr>
+</table><p><b>返回：</b>void — 显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。</p></section>
+<section class="api"><h3><code>Apps.info</code></h3><p>返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。</p><p class="meta">opcode 16002 · since 1.8 · device.apps · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>packageName</code></td><td>string</td><td>App包名</td></tr>
+</table><p><b>返回：</b>string — 返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。</p></section>
+<section class="api"><h3><code>Apps.open</code></h3><p>请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。</p><p class="meta">opcode 16003 · since 1.8 · device.apps · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>packageName</code></td><td>string</td><td>App包名</td></tr>
+</table><p><b>返回：</b>void — 请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。</p></section>
+<section class="api"><h3><code>Floating.show</code></h3><p>命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。</p><p class="meta">opcode 17000 · since 1.8 · ui.floating · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>name</code></td><td>string</td><td>浮窗名称</td></tr>
+<tr><td><code>x</code></td><td>integer</td><td>X（-1居中）</td></tr>
+<tr><td><code>y</code></td><td>integer</td><td>Y（-1居中）</td></tr>
+<tr><td><code>width</code></td><td>integer</td><td>宽度px</td></tr>
+<tr><td><code>height</code></td><td>integer</td><td>高度px</td></tr>
+<tr><td><code>text</code></td><td>string</td><td>文字</td></tr>
+<tr><td><code>fontPx</code></td><td>integer</td><td>字号px</td></tr>
+<tr><td><code>textColor</code></td><td>string</td><td>文字颜色</td></tr>
+<tr><td><code>background</code></td><td>string</td><td>背景颜色</td></tr>
+<tr><td><code>imagePath</code></td><td>string</td><td>项目图片（可选）</td></tr>
+<tr><td><code>shapesJson</code></td><td>string</td><td>绘图JSON</td></tr>
+</table><p><b>返回：</b>void — 命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。</p></section>
+<section class="api"><h3><code>Floating.hide</code></h3><p>按名称隐藏但保留内容，不改变主配置界面或运行控制球。</p><p class="meta">opcode 17001 · since 1.8 · ui.floating · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>name</code></td><td>string</td><td>浮窗名称</td></tr>
+</table><p><b>返回：</b>void — 按名称隐藏但保留内容，不改变主配置界面或运行控制球。</p></section>
+<section class="api"><h3><code>Floating.close</code></h3><p>按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。</p><p class="meta">opcode 17002 · since 1.8 · ui.floating · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>name</code></td><td>string</td><td>浮窗名称</td></tr>
+</table><p><b>返回：</b>void — 按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。</p></section>
+<section class="api"><h3><code>Floating.getBounds</code></h3><p>返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。</p><p class="meta">opcode 17003 · since 1.8 · ui.floating · AsyncTask</p><table><tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>name</code></td><td>string</td><td>浮窗名称</td></tr>
+</table><p><b>返回：</b>string — 返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。</p></section>
 </main></body></html>

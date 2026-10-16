@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.isdir",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.isdir/1/files.isdir.schema.json",
+  "title": "数据目录是否存在",
+  "category": "variable",
+  "summary": "数据目录存在1，否则0；拒绝不安全路径。",
+  "searchTerms": [
+    "文件",
+    "数据目录是否存在",
+    "Files.isDir"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

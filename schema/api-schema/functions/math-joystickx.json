@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1017,
+  "name": "Math.joystickX",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。",
+  "params": [
+    {
+      "name": "centerX",
+      "type": "number",
+      "required": true,
+      "summary": "中心X"
+    },
+    {
+      "name": "angle",
+      "type": "number",
+      "required": true,
+      "summary": "角度"
+    },
+    {
+      "name": "radius",
+      "type": "number",
+      "required": true,
+      "summary": "半径"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。"
+  },
+  "legacyAliases": []
+}

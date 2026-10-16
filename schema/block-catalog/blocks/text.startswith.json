@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.startswith",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.startswith/1/text.startswith.schema.json",
+  "title": "文本开头判断",
+  "category": "variable",
+  "summary": "匹配文本开头返回1，否则0。",
+  "searchTerms": [
+    "工具",
+    "文本开头判断",
+    "Text.startsWith"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "needle",
+      "label": "查找文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "例"
+    },
+    {
+      "path": "needleVariable",
+      "label": "查找文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

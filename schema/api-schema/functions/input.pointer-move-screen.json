@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4009,
+  "name": "Input.pointerMoveScreen",
+  "since": "1.8",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "task_pointer_lease",
+  "summary": "移动当前任务持有的单指触点到实际屏幕像素位置；边界和触点所有权继续由宿主校验。",
+  "params": [
+    {
+      "name": "x",
+      "type": "integer",
+      "required": true,
+      "summary": "屏幕像素X。"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "required": true,
+      "summary": "屏幕像素Y。"
+    },
+    {
+      "name": "snapshotId",
+      "type": "integer",
+      "required": false,
+      "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "后端确认完成。"
+  },
+  "legacyAliases": []
+}

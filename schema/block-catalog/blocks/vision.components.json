@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "kind": "vision.components",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.components/1/vision.components.schema.json",
+  "title": "颜色连通块",
+  "category": "vision",
+  "summary": "返回色块面积及半开矩形JSON，4或8邻接，最多256块。",
+  "searchTerms": [
+    "颜色连通块",
+    "图像",
+    "工具"
+  ],
+  "requiredCapabilities": [
+    "vision.pixel"
+  ],
+  "childBlocks": [],
+  "migrations": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "来源帧 · 图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "rgb",
+      "label": "RGB颜色整数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "16777215"
+    },
+    {
+      "path": "tolerance",
+      "label": "颜色容差",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "connectivity",
+      "label": "邻接模式",
+      "editor": "integer_enum",
+      "required": true,
+      "defaultValue": "4",
+      "choices": [
+        "4",
+        "8"
+      ]
+    },
+    {
+      "path": "minArea",
+      "label": "最小面积",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "left",
+      "label": "左",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "top",
+      "label": "上",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "right",
+      "label": "右（不包含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "720"
+    },
+    {
+      "path": "bottom",
+      "label": "下（不包含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1280"
+    },
+    {
+      "path": "limit",
+      "label": "最多结果",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "64"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ]
+}

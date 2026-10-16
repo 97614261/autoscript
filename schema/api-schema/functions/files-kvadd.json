@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14126,
+  "name": "Files.kvAdd",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "key",
+      "type": "string",
+      "required": true,
+      "summary": "对象键"
+    },
+    {
+      "name": "delta",
+      "type": "integer",
+      "required": true,
+      "summary": "增加整数"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。"
+  },
+  "legacyAliases": []
+}
+

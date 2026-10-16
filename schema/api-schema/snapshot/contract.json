@@ -49,6 +49,414 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 1010,
+      "name": "Math.randInt",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "端点包含，范围±9007199254740991；非密码学随机，不用于密钥。",
+      "params": [
+        {
+          "name": "min",
+          "type": "integer",
+          "required": true,
+          "summary": "下限"
+        },
+        {
+          "name": "max",
+          "type": "integer",
+          "required": true,
+          "summary": "上限"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "端点包含，范围±9007199254740991；非密码学随机，不用于密钥。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1011,
+      "name": "Math.randStr",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。",
+      "params": [
+        {
+          "name": "length",
+          "type": "integer",
+          "required": true,
+          "summary": "长度"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "required": true,
+          "summary": "字符模式"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1012,
+      "name": "Math.round",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。",
+      "params": [
+        {
+          "name": "value",
+          "type": "number",
+          "required": true,
+          "summary": "数值"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1013,
+      "name": "Math.clamp",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "下限不大于上限；返回浮点数，不静默转换目标变量。",
+      "params": [
+        {
+          "name": "value",
+          "type": "number",
+          "required": true,
+          "summary": "数值"
+        },
+        {
+          "name": "min",
+          "type": "number",
+          "required": true,
+          "summary": "下限"
+        },
+        {
+          "name": "max",
+          "type": "number",
+          "required": true,
+          "summary": "上限"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "下限不大于上限；返回浮点数，不静默转换目标变量。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1014,
+      "name": "Math.inRange",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "端点包含，范围内返回1，否则0；无效范围报错。",
+      "params": [
+        {
+          "name": "value",
+          "type": "number",
+          "required": true,
+          "summary": "数值"
+        },
+        {
+          "name": "min",
+          "type": "number",
+          "required": true,
+          "summary": "下限"
+        },
+        {
+          "name": "max",
+          "type": "number",
+          "required": true,
+          "summary": "上限"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "端点包含，范围内返回1，否则0；无效范围报错。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1015,
+      "name": "Math.angle",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。",
+      "params": [
+        {
+          "name": "x1",
+          "type": "number",
+          "required": true,
+          "summary": "起点X"
+        },
+        {
+          "name": "y1",
+          "type": "number",
+          "required": true,
+          "summary": "起点Y"
+        },
+        {
+          "name": "x2",
+          "type": "number",
+          "required": true,
+          "summary": "终点X"
+        },
+        {
+          "name": "y2",
+          "type": "number",
+          "required": true,
+          "summary": "终点Y"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "屏幕Y向下，向右0°、向下90°；范围[-180,180]，相同点无方向，报错。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1016,
+      "name": "Math.flipAngle",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "模式1上下翻转、2左右翻转；结果归一化到[-180,180]。",
+      "params": [
+        {
+          "name": "angle",
+          "type": "number",
+          "required": true,
+          "summary": "角度"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "required": true,
+          "summary": "方向"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "模式1上下翻转、2左右翻转；结果归一化到[-180,180]。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1017,
+      "name": "Math.joystickX",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。",
+      "params": [
+        {
+          "name": "centerX",
+          "type": "number",
+          "required": true,
+          "summary": "中心X"
+        },
+        {
+          "name": "angle",
+          "type": "number",
+          "required": true,
+          "summary": "角度"
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "required": true,
+          "summary": "半径"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "按屏幕像素公式计算浮点坐标；不执行触摸，也不改变设计坐标映射。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1018,
+      "name": "Math.joystickY",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "按屏幕Y向下公式计算浮点坐标；不执行触摸。",
+      "params": [
+        {
+          "name": "centerY",
+          "type": "number",
+          "required": true,
+          "summary": "中心Y"
+        },
+        {
+          "name": "angle",
+          "type": "number",
+          "required": true,
+          "summary": "角度"
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "required": true,
+          "summary": "半径"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "按屏幕Y向下公式计算浮点坐标；不执行触摸。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1019,
+      "name": "Math.red",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。",
+      "params": [
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "RGB颜色"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "从0xRRGGBB提取红色，返回0～255；不接受含Alpha的颜色。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1020,
+      "name": "Math.green",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "从0xRRGGBB提取绿色，返回0～255。",
+      "params": [
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "RGB颜色"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "从0xRRGGBB提取绿色，返回0～255。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1021,
+      "name": "Math.blue",
+      "since": "1.7",
+      "capability": "core.math",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "从0xRRGGBB提取蓝色，返回0～255。",
+      "params": [
+        {
+          "name": "rgb",
+          "type": "integer",
+          "required": true,
+          "summary": "RGB颜色"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "从0xRRGGBB提取蓝色，返回0～255。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 1100,
       "name": "Log.write",
       "since": "1.5",
@@ -93,13 +501,19 @@
       "sideEffect": "ui_prompt",
       "timeoutMs": null,
       "resourceOwnership": "none",
-      "summary": "向脚本使用者显示一条运行中的提示信息。",
+      "summary": "按项目样式向脚本使用者显示持续运行提示，停止或结束自动关闭。",
       "params": [
         {
           "name": "message",
           "type": "string",
           "required": true,
           "summary": "最多2048字节的 UTF-8 提示文本。"
+        },
+        {
+          "name": "styleJson",
+          "type": "string",
+          "required": false,
+          "summary": "可选受限样式 JSON，尺寸位置为屏幕像素；忽略持续时间，缺省使用冻结项目样式。"
         }
       ],
       "returns": {
@@ -141,6 +555,60 @@
         "type": "void",
         "nullable": false,
         "summary": "提示已交给 Runner 显示并会按时长消失。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1104,
+      "name": "Log.setEnabled",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "log_write",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "只控制后续脚本Log输出，不清空已有记录，不关闭诊断日志或识图统计；本次运行生效。",
+      "params": [
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "required": true,
+          "summary": "仅true/false，本次运行生效。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "设置完成，既有项目不修改。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1105,
+      "name": "Prompt.setEnabled",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "关闭持续与短时提示，清除当前和迟到显示；开启不重放，不覆盖项目提示总开关，不影响运行控制球。",
+      "params": [
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "required": true,
+          "summary": "仅true/false，本次运行生效。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "设置完成，既有项目不修改。"
       },
       "legacyAliases": []
     },
@@ -235,7 +703,7 @@
       "sideEffect": "ui_prompt",
       "timeoutMs": 3000,
       "resourceOwnership": "none",
-      "summary": "白名单控件操作与属性读取。x/y/width/height/fontPx/borderWidthPx/cornerPx为设计像素；fontBold/textUnderline只接受true/false；textColor/background/borderColor为#AARRGGBB。get:属性返回真实字符串。新属性挂起等待宿主，旧写操作保留兼容提示队列。",
+      "summary": "白名单控件属性与列表操作。itemAdd追加文字，itemInsert/itemSet接受index/text对象，itemRemove为1起索引，itemsClear留空；selectedIndex为1起整数（非必选可0），selectedIndices为JSON索引数组。get:itemCount/selectedIndex/selectedIndices读取对应状态。x/y/width/height/fontPx等为设计像素，颜色#AARRGGBB。新属性和列表操作等待宿主确认，旧写操作保持兼容；不写回设计稿。",
       "params": [
         {
           "name": "id",
@@ -260,6 +728,116 @@
         "type": "string",
         "nullable": true,
         "summary": "get:属性返回字符串；写入及窗口操作无返回值。宿主失败或超时抛出错误。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1204,
+      "name": "UI.confirm",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "host_sync",
+      "cancelMode": "cooperative",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": 1803000,
+      "resourceOwnership": "none",
+      "summary": "显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。",
+      "params": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true,
+          "summary": "标题，最多192 UTF-8字节"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "summary": "内容，最多4096 UTF-8字节"
+        },
+        {
+          "name": "confirmText",
+          "type": "string",
+          "required": true,
+          "summary": "确定按钮，最多96 UTF-8字节"
+        },
+        {
+          "name": "cancelText",
+          "type": "string",
+          "required": true,
+          "summary": "取消按钮，最多96 UTF-8字节"
+        },
+        {
+          "name": "timeoutMs",
+          "type": "integer",
+          "required": true,
+          "summary": "等待1000～1800000ms，默认60000"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "显示确认框并等待选择。返回 confirm/cancel/dismiss/timeout；返回或窗外关闭不是确定。无需设计页面。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1205,
+      "name": "UI.showDialogAndWait",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "host_sync",
+      "cancelMode": "cooperative",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": 1803000,
+      "resourceOwnership": "none",
+      "summary": "显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。",
+      "params": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "summary": "已保存页面ID"
+        },
+        {
+          "name": "blockOutside",
+          "type": "boolean",
+          "required": true,
+          "summary": "是否禁止点窗外关闭"
+        },
+        {
+          "name": "timeoutMs",
+          "type": "integer",
+          "required": true,
+          "summary": "等待1000～1800000ms，默认60000"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 1206,
+      "name": "UI.closeDialog",
+      "since": "1.7",
+      "capability": "ui.control",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "ui_prompt",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。",
+      "params": [],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。"
       },
       "legacyAliases": []
     },
@@ -300,6 +878,113 @@
         "type": "Integer",
         "nullable": false,
         "summary": "自设备启动以来的单调毫秒数。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 2002,
+      "name": "System.getTimeMillis",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。",
+      "params": [],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 2200,
+      "name": "Input.record",
+      "since": "1.7",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 71000,
+      "resourceOwnership": "none",
+      "summary": "返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。",
+      "params": [
+        {
+          "name": "durationMs",
+          "type": "integer",
+          "required": true,
+          "summary": "1000至60000毫秒"
+        },
+        {
+          "name": "eventBudget",
+          "type": "integer",
+          "required": true,
+          "summary": "128至512原始事件预算"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 2201,
+      "name": "Input.playRecording",
+      "since": "1.7",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。",
+      "params": [
+        {
+          "name": "recordingJson",
+          "type": "string",
+          "required": true,
+          "summary": "Input.record返回的完整JSON"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 2202,
+      "name": "Input.pasteText",
+      "since": "1.8",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "先写入剪贴板，再发送Root系统粘贴键；支持Unicode，最多4096字节。会替换剪贴板，须先聚焦支持粘贴的输入框；不保证目标已接收。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "Unicode纯文字，4096 UTF-8字节上限，另需device.clipboard"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "请求完成，不保证目标App接受文本"
       },
       "legacyAliases": []
     },
@@ -443,6 +1128,46 @@
         "type": "boolean",
         "nullable": false,
         "summary": "是否找到所属定时器。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3010,
+      "name": "Task.stop",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "task",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "优先停止整个运行与子任务，并由既有清理链路释放输入和任务资源；不继续执行下一积木。",
+      "params": [],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "不返回；认证清理失败仍按真实错误结束。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 3011,
+      "name": "Task.restart",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "task",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "停止整个运行，认证清理成功后用本次冻结脚本与初值重启；每次外部启动最多10次，主动停止撤销重启。",
+      "params": [],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "不返回；清理失败不重启。"
       },
       "legacyAliases": []
     },
@@ -671,6 +1396,12 @@
           "type": "integer",
           "required": true,
           "summary": "原始屏幕Y像素。"
+        },
+        {
+          "name": "snapshotId",
+          "type": "integer",
+          "required": false,
+          "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
         }
       ],
       "returns": {
@@ -704,12 +1435,153 @@
           "type": "integer",
           "required": true,
           "summary": "原始屏幕Y像素。"
+        },
+        {
+          "name": "snapshotId",
+          "type": "integer",
+          "required": false,
+          "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
         }
       ],
       "returns": {
         "type": "void",
         "nullable": false,
         "summary": "失败抛出受控错误。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4008,
+      "name": "Input.resolvePoint",
+      "since": "1.8",
+      "capability": "input.basic",
+      "execution": "host_sync",
+      "cancelMode": "discard_result",
+      "sideEffect": "none",
+      "timeoutMs": 1000,
+      "resourceOwnership": "none",
+      "summary": "只读解析设计坐标或屏幕坐标，返回宿主冻结映射后的实际像素点和屏幕尺寸，不执行触摸。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "原始X。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "原始Y。"
+        },
+        {
+          "name": "screenPixels",
+          "type": "boolean",
+          "required": true,
+          "summary": "true为实际屏幕像素，false为设计坐标。"
+        }
+      ],
+      "returns": {
+        "type": "Point",
+        "nullable": false,
+        "summary": "包含x、y、width、height、snapshotId的只读坐标信息。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4009,
+      "name": "Input.pointerMoveScreen",
+      "since": "1.8",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "task_pointer_lease",
+      "summary": "移动当前任务持有的单指触点到实际屏幕像素位置；边界和触点所有权继续由宿主校验。",
+      "params": [
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "屏幕像素X。"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "屏幕像素Y。"
+        },
+        {
+          "name": "snapshotId",
+          "type": "integer",
+          "required": false,
+          "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "后端确认完成。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 4010,
+      "name": "Input.swipeScreen",
+      "since": "1.8",
+      "capability": "input.basic",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 8000,
+      "resourceOwnership": "input_transaction",
+      "summary": "在实际屏幕像素中执行滑动，保持既有取消、后端支持和时长约束。",
+      "params": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "required": true,
+          "summary": "起点X。"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "required": true,
+          "summary": "起点Y。"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "required": true,
+          "summary": "终点X。"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "required": true,
+          "summary": "终点Y。"
+        },
+        {
+          "name": "durationMs",
+          "type": "integer",
+          "required": true,
+          "summary": "1至5000毫秒。"
+        },
+        {
+          "name": "snapshotId",
+          "type": "integer",
+          "required": false,
+          "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "后端确认完成。"
       },
       "legacyAliases": []
     },
@@ -866,6 +1738,39 @@
         "type": "integer",
         "nullable": false,
         "summary": "裁剪图像句柄；任务结束时自动清理。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5010,
+      "name": "Screen.transform",
+      "since": "1.7",
+      "capability": "screen.capture",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "resource_create",
+      "timeoutMs": 5000,
+      "resourceOwnership": "task_owned_frame",
+      "summary": "返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。阈值模式按加权灰度与0-255阈值比较并保留Alpha；最多4194304像素，源不变。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "源帧句柄"
+        },
+        {
+          "name": "options",
+          "type": "string",
+          "required": true,
+          "summary": "严格JSON：mode、width、height、可选threshold（默认128）。非缩放尺寸为0；threshold为0-255。"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。源不变。"
       },
       "legacyAliases": []
     },
@@ -1790,6 +2695,117 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 5120,
+      "name": "Screen.findAllMultiColor",
+      "since": "1.7",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "帧句柄"
+        },
+        {
+          "name": "options",
+          "type": "string",
+          "required": true,
+          "summary": "严格JSON：region、samples(dx/dy/rgb/tolerance)、limit。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "批量相对多点找色，最多64色点、256结果、1亿比较，返回坐标JSON。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5121,
+      "name": "Screen.components",
+      "since": "1.7",
+      "capability": "vision.pixel",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "帧句柄"
+        },
+        {
+          "name": "options",
+          "type": "string",
+          "required": true,
+          "summary": "严格JSON：region、rgb、tolerance、connectivity、min_area、limit。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "4/8邻接颜色连通块，返回面积和半开矩形JSON，最多256项。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 5122,
+      "name": "Screen.recognitionValue",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "读取固定形状识别结果属性，64KiB/2048结果预算，不改变通用Data预算；缺字段/类型/越界明确拒绝，recognized为整数1/0。",
+      "params": [
+        {
+          "name": "result",
+          "type": "string",
+          "required": true,
+          "summary": "识别JSON，最多64KiB。"
+        },
+        {
+          "name": "shape",
+          "type": "string",
+          "required": true,
+          "summary": "IMAGES/GLYPH_SUMMARY/GLYPH_ITEM/TEXT_ITEM/COLORS/COMPONENTS。"
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "required": true,
+          "summary": "总览/数量0，逐项1起，最多2048。"
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "required": true,
+          "summary": "当前形状的白名单属性，支持centerX/centerY。"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "JSON标量编码；文字用Data.text解码、数值用tonumber转换。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 5200,
       "name": "Screen.captureSeries",
       "since": "1.5",
@@ -2035,6 +3051,120 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 6102,
+      "name": "Ocr.glyphDetails",
+      "since": "1.7",
+      "capability": "ocr.glyph",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame_and_dictionary",
+      "summary": "逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "帧句柄"
+        },
+        {
+          "name": "dictionary",
+          "type": "integer",
+          "required": true,
+          "summary": "字库句柄"
+        },
+        {
+          "name": "foregroundRgb",
+          "type": "integer",
+          "required": true,
+          "summary": "RGB"
+        },
+        {
+          "name": "tolerance",
+          "type": "integer",
+          "required": true,
+          "summary": "0至255"
+        },
+        {
+          "name": "similarityPermille",
+          "type": "integer",
+          "required": true,
+          "summary": "0至1000"
+        },
+        {
+          "name": "left",
+          "type": "integer",
+          "required": true,
+          "summary": "左"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "required": true,
+          "summary": "上"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "required": true,
+          "summary": "右，不包含"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "required": true,
+          "summary": "下，不包含"
+        },
+        {
+          "name": "spaceGapColumns",
+          "type": "integer",
+          "required": true,
+          "summary": "插空格列数"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "逐字结果JSON：文字、矩形、分数、识别状态；最多65536字节。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 6103,
+      "name": "Ocr.findText",
+      "since": "1.7",
+      "capability": "ocr.glyph",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。",
+      "params": [
+        {
+          "name": "details",
+          "type": "string",
+          "required": true,
+          "summary": "详细结果JSON"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "目标文字，最多256字节"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "仅查询已有字库详细结果；同一行连续已识别字形精确匹配，返回矩形JSON。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 14000,
       "name": "Data.length",
       "since": "1.7",
@@ -2254,6 +3384,126 @@
     },
     {
       "schemaVersion": 1,
+      "opcode": 14007,
+      "name": "Data.valid",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "JSON文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14008,
+      "name": "Data.type",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "JSON文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14009,
+      "name": "Data.has",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "JSON集合或对象"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "键或1起索引"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14010,
+      "name": "Data.getJson",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "JSON集合或对象"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "键或1起索引"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "沿用64KiB/16层/1024项限制；getJson允许数组/对象子值，旧Data.get仍只读标量；has区分缺失键与JSON null。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
       "opcode": 14100,
       "name": "Files.read",
       "since": "1.7",
@@ -2363,6 +3613,2106 @@
         "type": "void",
         "nullable": false,
         "summary": "操作完成时返回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14110,
+      "name": "Files.append",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "文件不存在则创建；原子提交，最多64KiB，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "追加文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "文件不存在则创建；原子提交，最多64KiB，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14111,
+      "name": "Files.exists",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "普通数据文件存在1，否则0；拒绝目录和不安全路径。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "普通数据文件存在1，否则0；拒绝目录和不安全路径。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14112,
+      "name": "Files.isDir",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "数据目录存在1，否则0；拒绝不安全路径。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "数据目录存在1，否则0；拒绝不安全路径。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14113,
+      "name": "Files.mkdir",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "只创建私有data内目录，遵守总配额；已存在安全目录也返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "只创建私有data内目录，遵守总配额；已存在安全目录也返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14114,
+      "name": "Files.copy",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "destination",
+          "type": "string",
+          "required": true,
+          "summary": "目标相对路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14115,
+      "name": "Files.move",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "destination",
+          "type": "string",
+          "required": true,
+          "summary": "目标相对路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14116,
+      "name": "Files.rmdir",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "只删除确认为空的目录，不递归删除数据，不允许删除data根，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14117,
+      "name": "Files.readLine",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "严格UTF-8与1起行号；兼容LF/CRLF，越界报错。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true,
+          "summary": "行号（1起）"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "严格UTF-8与1起行号；兼容LF/CRLF，越界报错。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14118,
+      "name": "Files.insertLine",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true,
+          "summary": "行号（1起）"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "行文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14119,
+      "name": "Files.deleteLine",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "严格1起行号；原子保存，统一LF，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true,
+          "summary": "行号（1起）"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "严格1起行号；原子保存，统一LF，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14120,
+      "name": "Files.lineCount",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "空文件0行；末尾换行不另计空行，CRLF/LF规则明确。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "空文件0行；末尾换行不另计空行，CRLF/LF规则明确。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14121,
+      "name": "Files.writeLine",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "严格1起行号与单行文本；原子保存，统一LF，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true,
+          "summary": "行号（1起）"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "行文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "严格1起行号与单行文本；原子保存，统一LF，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14122,
+      "name": "Files.kvSet",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键"
+        },
+        {
+          "name": "valueJson",
+          "type": "string",
+          "required": true,
+          "summary": "JSON值"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "私有JSON对象文件内写入任意有界JSON值，读写原子且同宿主串行，返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14123,
+      "name": "Files.kvGet",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "返回JSON值文本，缺失返回null；字符串可用Data.text解码。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回JSON值文本，缺失返回null；字符串可用Data.text解码。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14124,
+      "name": "Files.kvRemove",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "移除指定键并原子保存，返回原键存在1/0；不删除整个文件。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "移除指定键并原子保存，返回原键存在1/0；不删除整个文件。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14125,
+      "name": "Files.kvKeys",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "返回有序JSON键数组；新对象文件不存在时返回[]。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回有序JSON键数组；新对象文件不存在时返回[]。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14126,
+      "name": "Files.kvAdd",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "summary": "对象键"
+        },
+        {
+          "name": "delta",
+          "type": "integer",
+          "required": true,
+          "summary": "增加整数"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14130,
+      "name": "Screen.savePng",
+      "since": "1.7",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "private_file_write",
+      "timeoutMs": 5000,
+      "resourceOwnership": "borrowed_frame",
+      "summary": "原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。",
+      "params": [
+        {
+          "name": "frame",
+          "type": "integer",
+          "required": true,
+          "summary": "帧句柄"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data相对路径，后缀.png。"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14140,
+      "name": "Files.getSize",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "读取普通私有数据文件的真实字节数，不跟随链接。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "读取普通私有数据文件的真实字节数，不跟随链接。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14141,
+      "name": "Files.getExtension",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14142,
+      "name": "Files.directoryStats",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "有界递归统计files、directories和bytes，返回JSON；不含目录本身。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "有界递归统计files、directories和bytes，返回JSON；不含目录本身。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14143,
+      "name": "Files.toBase64",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_read",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14144,
+      "name": "Files.fromBase64",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "base64",
+          "type": "string",
+          "required": true,
+          "summary": "标准Base64"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14145,
+      "name": "Files.zip",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "destination",
+          "type": "string",
+          "required": true,
+          "summary": "新ZIP路径"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "有界压缩私有data目录到新的ZIP，128条目、4MiB压缩、8MiB展开上限，不覆盖。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14146,
+      "name": "Files.unzip",
+      "since": "1.8",
+      "capability": "storage.data",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "file_write",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "完整校验ZIP后原子发布到新的私有目录；限制条目、大小和100倍展开比，不覆盖或合并。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "私有data路径"
+        },
+        {
+          "name": "destination",
+          "type": "string",
+          "required": true,
+          "summary": "新目录"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "完整校验ZIP后原子发布到新的私有目录；限制条目、大小和100倍展开比，不覆盖或合并。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14200,
+      "name": "Text.length",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "Unicode字符数，不是UTF-8字节数。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "Unicode字符数，不是UTF-8字节数。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14201,
+      "name": "Text.contains",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "包含返回1，否则0；空查找串返回1。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "包含返回1，否则0；空查找串返回1。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14202,
+      "name": "Text.startsWith",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "匹配文本开头返回1，否则0。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "匹配文本开头返回1，否则0。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14203,
+      "name": "Text.endsWith",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "匹配文本结尾返回1，否则0。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "匹配文本结尾返回1，否则0。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14204,
+      "name": "Text.count",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "统计非重叠匹配；查找串不能为空。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "统计非重叠匹配；查找串不能为空。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14205,
+      "name": "Text.split",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "separator",
+          "type": "string",
+          "required": true,
+          "summary": "分隔符"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回JSON字符数组，最多1024项；空分隔符按Unicode字符拆分，非空分隔保留空项。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14206,
+      "name": "Text.join",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。",
+      "params": [
+        {
+          "name": "json",
+          "type": "string",
+          "required": true,
+          "summary": "JSON字符数组"
+        },
+        {
+          "name": "separator",
+          "type": "string",
+          "required": true,
+          "summary": "分隔符"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "严格读取JSON字符数组，不把数字隐式转成文本；输出最多64KiB。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14207,
+      "name": "Text.left",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "取前length个Unicode字符，超出末尾截短。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "required": true,
+          "summary": "字符数量"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "取前length个Unicode字符，超出末尾截短。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14208,
+      "name": "Text.right",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "取后length个Unicode字符，0返回空文本。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "required": true,
+          "summary": "字符数量"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "取后length个Unicode字符，0返回空文本。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14209,
+      "name": "Text.sub",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "字符索引1起，起点最多字符数+1；超出末尾截短。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "required": true,
+          "summary": "起点（字符1起）"
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "required": true,
+          "summary": "字符数量"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "字符索引1起，起点最多字符数+1；超出末尾截短。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14210,
+      "name": "Text.insert",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "在1起字符位置插入，字符数+1表示末尾；不执行源码。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "required": true,
+          "summary": "起点（字符1起）"
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "required": true,
+          "summary": "插入文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "在1起字符位置插入，字符数+1表示末尾；不执行源码。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14211,
+      "name": "Text.remove",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "按1起字符位置移除指定长度；不切断UTF-8编码。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "required": true,
+          "summary": "起点（字符1起）"
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "required": true,
+          "summary": "字符数量"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "按1起字符位置移除指定长度；不切断UTF-8编码。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14212,
+      "name": "Text.replace",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        },
+        {
+          "name": "replacement",
+          "type": "string",
+          "required": true,
+          "summary": "替换文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14213,
+      "name": "Text.replaceFirst",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        },
+        {
+          "name": "replacement",
+          "type": "string",
+          "required": true,
+          "summary": "替换文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "查找串不能为空；结果最多64KiB，不改变原变量，需接收结果。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14214,
+      "name": "Text.repeatText",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "次数0～1024且输出最多64KiB，超预算明确报错。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "count",
+          "type": "integer",
+          "required": true,
+          "summary": "重复次数"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "次数0～1024且输出最多64KiB，超预算明确报错。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14215,
+      "name": "Text.between",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "使用第一个左标记和其后第一个右标记；无匹配返回空字符。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "left",
+          "type": "string",
+          "required": true,
+          "summary": "左标记"
+        },
+        {
+          "name": "right",
+          "type": "string",
+          "required": true,
+          "summary": "右标记"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "使用第一个左标记和其后第一个右标记；无匹配返回空字符。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14216,
+      "name": "Text.before",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "查找串不能为空；无匹配返回空字符。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "查找串不能为空；无匹配返回空字符。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14217,
+      "name": "Text.after",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "查找串不能为空；无匹配返回空字符。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "查找串不能为空；无匹配返回空字符。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14218,
+      "name": "Text.trim",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "按Unicode空白去除首尾，不改变中间内容。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "按Unicode空白去除首尾，不改变中间内容。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14219,
+      "name": "Text.find",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "Unicode字符索引1起，未找到0；不使用旧字节索引语义。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "required": true,
+          "summary": "查找文本"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "required": true,
+          "summary": "起点（字符1起）"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "Unicode字符索引1起，未找到0；不使用旧字节索引语义。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14220,
+      "name": "Text.lower",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "Unicode大小写转换，输出预算仍为64KiB。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "Unicode大小写转换，输出预算仍为64KiB。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14221,
+      "name": "Text.upper",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "Unicode大小写转换，输出预算仍为64KiB。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "Unicode大小写转换，输出预算仍为64KiB。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14222,
+      "name": "Text.regexMatch",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本（最多4KiB）"
+        },
+        {
+          "name": "pattern",
+          "type": "string",
+          "required": true,
+          "summary": "正则（最多128字节）"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14223,
+      "name": "Text.regexExtract",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本（最多4KiB）"
+        },
+        {
+          "name": "pattern",
+          "type": "string",
+          "required": true,
+          "summary": "正则（最多128字节）"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14224,
+      "name": "Text.regexAll",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "有限自动机正则，不支持反向引用/环视；最多64个完整匹配，超上限报错，不静默截断。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文本（最多4KiB）"
+        },
+        {
+          "name": "pattern",
+          "type": "string",
+          "required": true,
+          "summary": "正则（最多128字节）"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "有限自动机正则，不支持反向引用/环视；最多64个完整匹配，超上限报错，不静默截断。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14300,
+      "name": "Date.format",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。",
+      "params": [
+        {
+          "name": "timestampMs",
+          "type": "integer",
+          "required": true,
+          "summary": "Unix毫秒"
+        },
+        {
+          "name": "offsetMinutes",
+          "type": "integer",
+          "required": true,
+          "summary": "时区偏移分钟"
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": true,
+          "summary": "格式：date/time/datetime"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "固定时区格式，不修改系统时间；UTC填0，北京时间480；支持date、time、datetime。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14301,
+      "name": "Date.addDays",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。",
+      "params": [
+        {
+          "name": "timestampMs",
+          "type": "integer",
+          "required": true,
+          "summary": "Unix毫秒"
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "required": true,
+          "summary": "增加天数"
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 14302,
+      "name": "Date.daysBetween",
+      "since": "1.7",
+      "capability": "core.task",
+      "execution": "rust_sync",
+      "cancelMode": "none",
+      "sideEffect": "none",
+      "timeoutMs": null,
+      "resourceOwnership": "none",
+      "summary": "返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。",
+      "params": [
+        {
+          "name": "startMs",
+          "type": "integer",
+          "required": true,
+          "summary": "开始Unix毫秒"
+        },
+        {
+          "name": "endMs",
+          "type": "integer",
+          "required": true,
+          "summary": "结束Unix毫秒"
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "nullable": false,
+        "summary": "返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 15000,
+      "name": "Audio.play",
+      "since": "1.7",
+      "capability": "audio.control",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "播放声明的项目音频或旧私有data音频；单文件20MiB、最长60秒。旧data路径另需storage.data，拒绝网址。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "summary": "项目私有data内wav/mp3/ogg/flac/m4a相对路径"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "单播放器读取项目私有data音频，拒绝网址；需要storage.data，最多20MiB、播放60秒。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 15001,
+      "name": "Audio.stop",
+      "since": "1.7",
+      "capability": "audio.control",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "停止并释放当前播放器，不停止脚本。",
+      "params": [],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "停止并释放当前播放器，不停止脚本。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 15002,
+      "name": "Audio.getVolume",
+      "since": "1.7",
+      "capability": "audio.control",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "返回Android音乐流相对音量0至100。",
+      "params": [],
+      "returns": {
+        "type": "integer",
+        "nullable": false,
+        "summary": "返回Android音乐流相对音量0至100。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 15003,
+      "name": "Audio.setVolume",
+      "since": "1.7",
+      "capability": "audio.control",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "显式设置Android音乐流相对音量0至100，不自动提升音量。",
+      "params": [
+        {
+          "name": "volume",
+          "type": "integer",
+          "required": true,
+          "summary": "0至100"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "显式设置Android音乐流相对音量0至100，不自动提升音量。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 16000,
+      "name": "Clipboard.getText",
+      "since": "1.8",
+      "capability": "device.clipboard",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。",
+      "params": [],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 16001,
+      "name": "Clipboard.setText",
+      "since": "1.8",
+      "capability": "device.clipboard",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文字"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 16002,
+      "name": "Apps.info",
+      "since": "1.8",
+      "capability": "device.apps",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。",
+      "params": [
+        {
+          "name": "packageName",
+          "type": "string",
+          "required": true,
+          "summary": "App包名"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 16003,
+      "name": "Apps.open",
+      "since": "1.8",
+      "capability": "device.apps",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。",
+      "params": [
+        {
+          "name": "packageName",
+          "type": "string",
+          "required": true,
+          "summary": "App包名"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 17000,
+      "name": "Floating.show",
+      "since": "1.8",
+      "capability": "ui.floating",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "summary": "浮窗名称"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "required": true,
+          "summary": "X（-1居中）"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "required": true,
+          "summary": "Y（-1居中）"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "required": true,
+          "summary": "宽度px"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "required": true,
+          "summary": "高度px"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "summary": "文字"
+        },
+        {
+          "name": "fontPx",
+          "type": "integer",
+          "required": true,
+          "summary": "字号px"
+        },
+        {
+          "name": "textColor",
+          "type": "string",
+          "required": true,
+          "summary": "文字颜色"
+        },
+        {
+          "name": "background",
+          "type": "string",
+          "required": true,
+          "summary": "背景颜色"
+        },
+        {
+          "name": "imagePath",
+          "type": "string",
+          "required": true,
+          "summary": "项目图片（可选）"
+        },
+        {
+          "name": "shapesJson",
+          "type": "string",
+          "required": true,
+          "summary": "绘图JSON"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 17001,
+      "name": "Floating.hide",
+      "since": "1.8",
+      "capability": "ui.floating",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "按名称隐藏但保留内容，不改变主配置界面或运行控制球。",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "summary": "浮窗名称"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "按名称隐藏但保留内容，不改变主配置界面或运行控制球。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 17002,
+      "name": "Floating.close",
+      "since": "1.8",
+      "capability": "ui.floating",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "device_input",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "summary": "浮窗名称"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "nullable": false,
+        "summary": "按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。"
+      },
+      "legacyAliases": []
+    },
+    {
+      "schemaVersion": 1,
+      "opcode": 17003,
+      "name": "Floating.getBounds",
+      "since": "1.8",
+      "capability": "ui.floating",
+      "execution": "async_task",
+      "cancelMode": "cooperative",
+      "sideEffect": "none",
+      "timeoutMs": 3000,
+      "resourceOwnership": "none",
+      "summary": "返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "summary": "浮窗名称"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "nullable": false,
+        "summary": "返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。"
       },
       "legacyAliases": []
     }

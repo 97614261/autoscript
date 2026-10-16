@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "required": ["nodeId", "blockId", "parentId", "orderKey", "kind", "nodeVersion", "args"],
   "properties": {
+    "randomization": { "$ref": "https://autoscript.local/schema/randomization/1/randomization.schema.json#/$defs/node" },
     "flowSchemaVersion": { "const": 1 },
     "nodeId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "blockId": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -15,6 +16,15 @@
     "kind": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
     "nodeVersion": { "type": "integer", "minimum": 1 },
     "disabled": { "type": "boolean", "default": false },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alias", "showParameters"],
+      "properties": {
+        "alias": { "type": "string", "maxLength": 80, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$" },
+        "showParameters": { "type": "boolean" }
+      }
+    },
     "childBlocks": {
       "type": "object",
       "propertyNames": { "pattern": "^[a-z][a-zA-Z0-9]*$" },

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14120,
+  "name": "Files.lineCount",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "空文件0行；末尾换行不另计空行，CRLF/LF规则明确。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "空文件0行；末尾换行不另计空行，CRLF/LF规则明确。"
+  },
+  "legacyAliases": []
+}
+

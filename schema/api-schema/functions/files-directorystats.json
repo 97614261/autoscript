@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14142,
+  "name": "Files.directoryStats",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "有界递归统计files、directories和bytes，返回JSON；不含目录本身。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "有界递归统计files、directories和bytes，返回JSON；不含目录本身。"
+  },
+  "legacyAliases": []
+}

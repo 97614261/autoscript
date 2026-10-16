@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14111,
+  "name": "Files.exists",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "普通数据文件存在1，否则0；拒绝目录和不安全路径。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "普通数据文件存在1，否则0；拒绝目录和不安全路径。"
+  },
+  "legacyAliases": []
+}
+

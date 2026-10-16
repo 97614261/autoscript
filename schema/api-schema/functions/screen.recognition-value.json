@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5122,
+  "name": "Screen.recognitionValue",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "读取固定形状识别结果属性，64KiB/2048结果预算，不改变通用Data预算；缺字段/类型/越界明确拒绝，recognized为整数1/0。",
+  "params": [
+    {
+      "name": "result",
+      "type": "string",
+      "required": true,
+      "summary": "识别JSON，最多64KiB。"
+    },
+    {
+      "name": "shape",
+      "type": "string",
+      "required": true,
+      "summary": "IMAGES/GLYPH_SUMMARY/GLYPH_ITEM/TEXT_ITEM/COLORS/COMPONENTS。"
+    },
+    {
+      "name": "index",
+      "type": "integer",
+      "required": true,
+      "summary": "总览/数量0，逐项1起，最多2048。"
+    },
+    {
+      "name": "field",
+      "type": "string",
+      "required": true,
+      "summary": "当前形状的白名单属性，支持centerX/centerY。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "JSON标量编码；文字用Data.text解码、数值用tonumber转换。"
+  },
+  "legacyAliases": []
+}

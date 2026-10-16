@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.directorystats",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.directorystats/1/files.directorystats.schema.json",
+  "title": "数据目录统计",
+  "category": "variable",
+  "summary": "有界递归统计files、directories和bytes，返回JSON；不含目录本身。",
+  "searchTerms": [
+    "文件",
+    "数据目录统计",
+    "Files.directoryStats"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.bin"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

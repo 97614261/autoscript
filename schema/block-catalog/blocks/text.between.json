@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.between",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.between/1/text.between.schema.json",
+  "title": "取两个标记之间",
+  "category": "variable",
+  "summary": "使用第一个左标记和其后第一个右标记；无匹配返回空字符。",
+  "searchTerms": [
+    "工具",
+    "取两个标记之间",
+    "Text.between"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "left",
+      "label": "左标记",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "["
+    },
+    {
+      "path": "leftVariable",
+      "label": "左标记来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "right",
+      "label": "右标记",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "]"
+    },
+    {
+      "path": "rightVariable",
+      "label": "右标记来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

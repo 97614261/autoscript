@@ -2,6 +2,8 @@
 
 状态：已实施并通过主机/打包验证。日期：2026-09-29。
 
+目录更新：2026-10-10按[ADR0056](0056-contained-rust-workspace.md)迁至rust/tools/studio-compiler-jni，本文的依赖边界决策不变。
+
 ## 问题
 
 共享 engine-jni 直接依赖 flow-compiler，导致 Runner 虽然只读取冻结 Lua，仍打包了编辑器编译器。这违反 Runner 不依赖编译工具链的约束。

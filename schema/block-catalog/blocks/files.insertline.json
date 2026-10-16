@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.insertline",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.insertline/1/files.insertline.schema.json",
+  "title": "插入数据文件一行",
+  "category": "variable",
+  "summary": "行文本不能含CR/LF；允许末尾插入，原子保存，统一LF，返回1。",
+  "searchTerms": [
+    "文件",
+    "插入数据文件一行",
+    "Files.insertLine"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "line",
+      "label": "行号（1起）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "lineVariable",
+      "label": "行号（1起）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "text",
+      "label": "行文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "新增"
+    },
+    {
+      "path": "textVariable",
+      "label": "行文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

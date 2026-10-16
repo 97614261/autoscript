@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.playrecording",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.playrecording/1/input.playrecording.schema.json",
+  "title": "回放录制动作",
+  "category": "task",
+  "summary": "整批校验录制JSON和屏幕尺寸方向后，以原像素、精确等待回放；需要core.task。",
+  "searchTerms": [
+    "回放录制动作",
+    "录制",
+    "音频"
+  ],
+  "requiredCapabilities": [
+    "input.basic",
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "recordingVariable",
+      "label": "录制结果变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

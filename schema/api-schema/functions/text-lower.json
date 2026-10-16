@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14220,
+  "name": "Text.lower",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "Unicode大小写转换，输出预算仍为64KiB。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文本"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "Unicode大小写转换，输出预算仍为64KiB。"
+  },
+  "legacyAliases": []
+}
+

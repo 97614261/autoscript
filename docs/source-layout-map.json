@@ -1,0 +1,751 @@
+{
+  "version": 1,
+  "date": "2026-10-10",
+  "packageUnchanged": "com.autoscript.studio",
+  "moves": [
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ApkV2Signer.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/packaging/ApkV2Signer.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/BlockCatalog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/BlockCatalog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/CompactInputArgumentsDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/input/CompactInputArgumentsDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/CompoundConditionEditor.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/CompoundConditionEditor.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/DebugOutputCode.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/DebugOutputCode.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/DeviceApkSigningKey.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/packaging/DeviceApkSigningKey.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/DevicePackagingController.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/packaging/DevicePackagingController.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorActionPolicy.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorActionPolicy.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorDock.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorDock.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorEntryDialogs.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorEntryDialogs.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorOperation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorOperation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorOverlayGeometry.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorOverlayGeometry.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorOverlayLauncher.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorOverlayLauncher.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorOverlayService.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorOverlayService.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorOverlaySession.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorOverlaySession.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorPromptDialogs.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorPromptDialogs.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorRunReturnGate.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorRunReturnGate.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorSystemRequestActivity.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorSystemRequestActivity.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/EditorToolbarModel.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/EditorToolbarModel.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/FrozenPackageFile.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/packaging/FrozenPackageFile.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/FunctionCatalog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/FunctionCatalog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/FunctionLibraryDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/FunctionLibraryDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/HistoricalProjectsDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/HistoricalProjectsDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageRecognitionTestDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageRecognitionTestDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageRecognitionWorkflow.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageRecognitionWorkflow.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageSaveLocation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageSaveLocation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageTemplateSaveDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageTemplateSaveDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolCanvas.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolCanvas.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolCodeGen.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolCodeGen.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolModes.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolModes.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolOcrConfig.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolOcrConfig.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolOcrDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolOcrDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolOverlays.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolOverlays.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolTemplate.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolTemplate.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolViewport.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolViewport.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ImageToolWindow.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/ImageToolWindow.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/InputFeatureSnapshot.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/input/InputFeatureSnapshot.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/InputPointEditing.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/input/InputPointEditing.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/JumpPanelCode.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/JumpPanelCode.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/LuaSnippetGate.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/LuaSnippetGate.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/MainActivity.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/MainActivity.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/PluginFileManagerDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/PluginFileManagerDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/PluginSourceEditorDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/PluginSourceEditorDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/PluginSourceToolchain.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/PluginSourceToolchain.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProfileScreens.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/ProfileScreens.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectBackupSlotsScreen.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectBackupSlotsScreen.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectFileCatalog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectFileCatalog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectInterfacePreview.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/ProjectInterfacePreview.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectPage.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectPage.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectSettingsDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectSettingsDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectSettingsModel.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectSettingsModel.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectSourceFiles.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectSourceFiles.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectToolScreens.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectToolScreens.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RecognitionPreviewConfiguration.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/RecognitionPreviewConfiguration.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RecordingDraft.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/input/RecordingDraft.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RecordingWorkspaceScreen.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/input/RecordingWorkspaceScreen.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ReflectedNodeEdit.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/ReflectedNodeEdit.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerApkArchive.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/packaging/RunnerApkArchive.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerApkSizeReport.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/packaging/RunnerApkSizeReport.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerUiDesignerActions.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/RunnerUiDesignerActions.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerUiDesignerCanvas.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/RunnerUiDesignerCanvas.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerUiDesignerLayout.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/RunnerUiDesignerLayout.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerUiDesignerModel.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/RunnerUiDesignerModel.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerUiDesignerPanels.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/RunnerUiDesignerPanels.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RunnerUiDesignerScreen.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/RunnerUiDesignerScreen.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeConsoleLog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeConsoleLog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeDebugDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeDebugDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeEnvironmentScreen.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeEnvironmentScreen.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeLogClipboard.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeLogClipboard.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeLogDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeLogDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeLogHealth.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeLogHealth.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeLogLoadState.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeLogLoadState.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeLogLocation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeLogLocation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeProjectPlan.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeProjectPlan.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeStatusPresentation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeStatusPresentation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/RuntimeVariableInspectorDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/RuntimeVariableInspectorDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ScriptLaunchOverlayLauncher.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/ScriptLaunchOverlayLauncher.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ScriptLaunchOverlayService.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/ScriptLaunchOverlayService.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/ScriptLaunchSessions.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/ScriptLaunchSessions.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/SelectedNodeSource.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/SelectedNodeSource.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/SelectedNodeSourceEditorDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/SelectedNodeSourceEditorDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/SoftwarePermissions.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/SoftwarePermissions.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioConfirmDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/ui/StudioConfirmDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/ui/StudioDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioEntryModel.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/StudioEntryModel.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioLandingScreens.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/StudioLandingScreens.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioNavigation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/StudioNavigation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioOverlayBall.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/ui/StudioOverlayBall.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioPanelDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/ui/StudioPanelDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioPanelGeometry.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/ui/StudioPanelGeometry.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioProjectPolicy.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/StudioProjectPolicy.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/StudioRunEntry.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/StudioRunEntry.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/TemporaryScreenOrientation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/ui/TemporaryScreenOrientation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisionLogPresentation.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisionLogPresentation.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisionRunComparison.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisionRunComparison.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisionRunStatistics.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisionRunStatistics.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualBlockArguments.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualBlockArguments.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualDebugInspector.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisualDebugInspector.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualEditorState.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualEditorState.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualImageHomeDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/VisualImageHomeDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualImageRecognitionDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/VisualImageRecognitionDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualImageToolBridge.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/image/VisualImageToolBridge.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualInputActionDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/input/VisualInputActionDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualLegacyBlockAdapter.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualLegacyBlockAdapter.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualLoopDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualLoopDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualNodeProjection.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualNodeProjection.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualProjectScreen.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualProjectScreen.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualStepState.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisualStepState.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualUiParameterDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/designer/VisualUiParameterDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualVariableCalculationDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualVariableCalculationDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualVariableManagerDialog.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualVariableManagerDialog.kt"
+    },
+    {
+      "from": "apps/studio-android/src/main/java/com/autoscript/studio/WorkspaceUtilityScreens.kt",
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/WorkspaceUtilityScreens.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/BlockCatalogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/BlockCatalogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/BrandingResourceTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/navigation/BrandingResourceTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/CompoundConditionEditorTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/CompoundConditionEditorTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/DebugOutputCodeTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/DebugOutputCodeTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/DeviceApkPackagingTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/packaging/DeviceApkPackagingTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorBatchTwoTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorBatchTwoTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorOperationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorOperationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorOverlayGeometryTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorOverlayGeometryTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorOverlaySessionTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorOverlaySessionTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorPermissionsImageTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorPermissionsImageTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorRunReturnGateTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorRunReturnGateTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/EditorToolbarModelTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/EditorToolbarModelTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/FrozenPackageFileTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/packaging/FrozenPackageFileTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/FunctionLibraryTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/FunctionLibraryTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageRecognitionWorkflowTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageRecognitionWorkflowTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageTemplatePixelsTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageTemplatePixelsTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageTemplateSaveDialogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageTemplateSaveDialogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageToolCodeGenTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageToolCodeGenTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageToolModesTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageToolModesTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageToolOcrConfigTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageToolOcrConfigTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ImageToolViewportTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/ImageToolViewportTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/InputFeatureSnapshotTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/input/InputFeatureSnapshotTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/InputPointEditingTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/input/InputPointEditingTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/JumpPanelCodeTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/JumpPanelCodeTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/LuaSnippetGateTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/LuaSnippetGateTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/PluginSourceEditingTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/PluginSourceEditingTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/PluginSourcePersistenceTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/PluginSourcePersistenceTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/PluginSourceValidationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/PluginSourceValidationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ProjectFileCatalogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/project/ProjectFileCatalogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ProjectSettingsModelTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/project/ProjectSettingsModelTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ProjectSourceFilesTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/project/ProjectSourceFilesTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RecognitionPreviewConfigurationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/RecognitionPreviewConfigurationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RecordingDraftTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/input/RecordingDraftTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RunnerAbiContentTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/packaging/RunnerAbiContentTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RunnerApkSizeReportTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/packaging/RunnerApkSizeReportTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RunnerUiDesignerLayoutTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/designer/RunnerUiDesignerLayoutTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RunnerUiDesignerModelTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/designer/RunnerUiDesignerModelTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeCompactLogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeCompactLogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeConsoleLogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeConsoleLogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeFailureHintTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeFailureHintTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeLogCleanupTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeLogCleanupTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeLogClipboardTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeLogClipboardTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeLogFilesTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeLogFilesTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeLogHealthTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeLogHealthTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeLogLoadStateTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeLogLoadStateTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeLogLocationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeLogLocationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeProjectPlanTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeProjectPlanTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeRunReliabilityTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeRunReliabilityTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeStatusPresentationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeStatusPresentationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeVariableInspectionTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeVariableInspectionTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/RuntimeVariableReadTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/RuntimeVariableReadTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/ScriptLaunchSessionsTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/ScriptLaunchSessionsTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/SelectedNodeSourceTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/SelectedNodeSourceTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/StudioEntryModelTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/navigation/StudioEntryModelTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/StudioNavigationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/navigation/StudioNavigationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/StudioPanelGeometryTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/ui/StudioPanelGeometryTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/StudioProjectPolicyTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/project/StudioProjectPolicyTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/StudioRunEntryTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/StudioRunEntryTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/TemporaryScreenOrientationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/ui/TemporaryScreenOrientationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/UiArchiveTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/UiArchiveTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/UiCommandArgumentsTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/designer/UiCommandArgumentsTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisionLogPresentationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/VisionLogPresentationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisionRunComparisonTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/VisionRunComparisonTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisionRunStatisticsTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/VisionRunStatisticsTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualImageRecognitionDialogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/VisualImageRecognitionDialogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualImageToolBridgeTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/image/VisualImageToolBridgeTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualInputActionDialogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/input/VisualInputActionDialogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualLoopDialogTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/VisualLoopDialogTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualLuaRoundTripTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/VisualLuaRoundTripTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualProjectStateTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/VisualProjectStateTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualStepStateTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/runtime/VisualStepStateTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualUiParameterTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/designer/VisualUiParameterTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualVariableCalculationTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/VisualVariableCalculationTest.kt"
+    },
+    {
+      "from": "apps/studio-android/src/test/java/com/autoscript/studio/VisualVariableManagerTest.kt",
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/editor/VisualVariableManagerTest.kt"
+    }
+  ]
+}

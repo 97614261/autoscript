@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.components/1/vision.components.schema.json",
+  "title": "颜色连通块",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "vision.components"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "rgb",
+        "tolerance",
+        "connectivity",
+        "minArea",
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "limit",
+        "resultVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "rgb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777215
+        },
+        "tolerance": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "connectivity": {
+          "type": "integer",
+          "enum": [
+            4,
+            8
+          ]
+        },
+        "minArea": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "bottom": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

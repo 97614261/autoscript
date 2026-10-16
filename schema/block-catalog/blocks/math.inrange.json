@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.inrange",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.inrange/1/math.inrange.schema.json",
+  "title": "范围判断",
+  "category": "variable",
+  "summary": "端点包含，范围内返回1，否则0；无效范围报错。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "范围判断"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "value",
+      "label": "数值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "50"
+    },
+    {
+      "path": "valueVariable",
+      "label": "数值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "min",
+      "label": "下限",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "minVariable",
+      "label": "下限来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "max",
+      "label": "上限",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "maxVariable",
+      "label": "上限来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

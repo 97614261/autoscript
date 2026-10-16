@@ -8,6 +8,7 @@ local.properties
 
 # Rust
 /target/
+/rust/target/
 
 # Native generated artifacts
 **/.cxx/
@@ -23,11 +24,15 @@ secrets.properties
 /tools/bench/results/
 /artifacts/local/
 
-# 排查构建/设备问题时用 Tee-Object 落的临时日志（见 docs/m27-manual-acceptance.md）
+# 排查构建/设备问题时落的临时日志；现行日志说明见 docs/guides/runtime-file-logs.md
 *.log
 
 # 参考资料：竞品 APK / JAR / 反编译源码，只作对照用，体积大且不属于本工程，永不入库
 /资料/
+
+# 用户临时截图和本地历史证据不进入代码仓库
+/截图/
+/archive/local-evidence/
 
 # Claude Code 的个人放行列表：含本机绝对路径与带时间戳的产物路径，因人因机而异。
 # 团队级规则在 .claude/settings.json，那个要入库。

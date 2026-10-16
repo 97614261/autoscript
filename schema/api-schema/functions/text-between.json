@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14215,
+  "name": "Text.between",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "使用第一个左标记和其后第一个右标记；无匹配返回空字符。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文本"
+    },
+    {
+      "name": "left",
+      "type": "string",
+      "required": true,
+      "summary": "左标记"
+    },
+    {
+      "name": "right",
+      "type": "string",
+      "required": true,
+      "summary": "右标记"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "使用第一个左标记和其后第一个右标记；无匹配返回空字符。"
+  },
+  "legacyAliases": []
+}
+

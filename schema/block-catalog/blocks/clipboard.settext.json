@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "clipboard.settext",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/clipboard.settext/1/clipboard.settext.schema.json",
+  "title": "写入剪贴板",
+  "category": "task",
+  "summary": "显式写入最多4096字节字符；不记录内容，不在停止后自动撤回。",
+  "searchTerms": [
+    "写入剪贴板",
+    "Clipboard.setText",
+    "系统"
+  ],
+  "requiredCapabilities": [
+    "device.clipboard"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文字",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "textVariable",
+      "label": "文字来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

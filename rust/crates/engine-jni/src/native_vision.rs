@@ -1,0 +1,424 @@
+//! Narrow JNI boundary for owner-validated native vision leases.
+use automation_core::{FrameFormat, FrameView};
+use jni::objects::{GlobalRef, JByteArray, JObject, JValue};
+use jni::{JNIEnv, JavaVM};
+use runtime_executor::{HostCancelListener, HostRequest};
+use runtime_scheduler::{HostResult, RequestId, TaskToken};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+struct Callback {
+    vm: JavaVM,
+    listener: GlobalRef,
+}
+impl std::fmt::Debug for Callback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NativeVisionCallback")
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct VisionHub {
+    callback: Mutex<Option<Arc<Callback>>>,
+    active: Mutex<Option<(RequestId, TaskToken, u64)>>,
+    sequence: AtomicU64,
+    #[cfg(target_os = "android")]
+    root: Mutex<Option<root_client::PriorityStop>>,
+    input_owner: Mutex<Option<(RequestId, TaskToken)>>,
+    cleanup_pending: std::sync::atomic::AtomicBool,
+    cleanup_failed: std::sync::atomic::AtomicBool,
+}
+impl HostCancelListener for VisionHub {
+    fn cancel(&self, request: RequestId, task: TaskToken) {
+        let work = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .filter(|(id, owner, _)| *id == request && *owner == task)
+            .map(|(_, _, work)| work);
+        if let Some(work) = work {
+            self.cancel_work(work);
+        }
+        #[cfg(target_os = "android")]
+        {
+            let owner = self
+                .input_owner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if *owner == Some((request, task)) {
+                if let Some(stop) = self
+                    .root
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_ref()
+                {
+                    stop.request_stop();
+                }
+            }
+        }
+    }
+}
+impl VisionHub {
+    pub fn set(&self, env: &JNIEnv<'_>, listener: JObject<'_>) -> Result<(), String> {
+        let callback = Callback {
+            vm: env.get_java_vm().map_err(|_| "VISION_VM_UNAVAILABLE")?,
+            listener: env
+                .new_global_ref(listener)
+                .map_err(|_| "VISION_LISTENER_INVALID")?,
+        };
+        *self
+            .callback
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(callback));
+        Ok(())
+    }
+    pub fn stop(&self) {
+        let work = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map(|(_, _, work)| work);
+        if let Some(work) = work {
+            self.cancel_work(work);
+        }
+        #[cfg(target_os = "android")]
+        if let Some(stop) = self
+            .root
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            self.cleanup_pending.store(true, Ordering::Release);
+            stop.request_stop();
+        }
+    }
+    #[cfg(target_os = "android")]
+    pub fn attach_root(&self, client: &super::platform_root::Client) {
+        *self
+            .root
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = client.priority_stop();
+        self.cleanup_failed.store(false, Ordering::Release);
+        self.cleanup_pending.store(false, Ordering::Release);
+    }
+    pub fn begin_input(&self, request: &HostRequest) {
+        {
+            *self
+                .input_owner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some((request.request_id, request.task));
+        }
+    }
+    pub fn end_input(&self) {
+        {
+            *self
+                .input_owner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+    }
+    pub fn rearm_input(
+        &self,
+        client: &super::platform_root::Client,
+        global_stop: &std::sync::atomic::AtomicBool,
+    ) -> bool {
+        if self.cleanup_failed.load(Ordering::Acquire) {
+            return false;
+        }
+        #[cfg(target_os = "android")]
+        {
+            if let Some(stop) = client.priority_stop() {
+                if stop.wait_clean(std::time::Duration::from_secs(8)).is_err() {
+                    return false;
+                }
+                // No I/O while holding this lock. Global stop and re-arm are ordered together.
+                let _root = self
+                    .root
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if !global_stop.load(Ordering::Acquire) {
+                    return stop.resume().is_ok();
+                }
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        let _ = (client, global_stop);
+        true
+    }
+    pub fn cleanup_finished(&self, success: bool) {
+        if !success {
+            self.cleanup_failed.store(true, Ordering::Release);
+        }
+        self.cleanup_pending.store(false, Ordering::Release);
+    }
+    pub fn cleanup_status(&self) -> (bool, bool) {
+        #[cfg(target_os = "android")]
+        if self
+            .root
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|stop| stop.status() == root_client::StopStatus::Failed)
+        {
+            return (false, true);
+        }
+        (
+            self.cleanup_pending.load(Ordering::Acquire),
+            self.cleanup_failed.load(Ordering::Acquire),
+        )
+    }
+    pub fn detach_root(&self, clean: bool) {
+        #[cfg(target_os = "android")]
+        {
+            *self
+                .root
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+        self.end_input();
+        self.cleanup_finished(clean);
+    }
+    fn cancel_work(&self, work: u64) {
+        let Ok(work) = i64::try_from(work) else {
+            return;
+        };
+        let callback = self
+            .callback
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(callback) = callback {
+            if let Ok(mut env) = callback.vm.attach_current_thread_as_daemon() {
+                let _ = env.call_method(
+                    callback.listener.as_obj(),
+                    "cancel",
+                    "(J)V",
+                    &[JValue::Long(work)],
+                );
+                let _ = env.exception_clear();
+            }
+        }
+    }
+    pub fn dispatch(
+        &self,
+        request: &HostRequest,
+        context: &super::RootWorkerContext,
+    ) -> HostResult {
+        let result = (|| -> Result<Vec<u8>, String> {
+            let input = request
+                .native_vision
+                .as_ref()
+                .ok_or("VISION_REQUEST_INVALID")?;
+            let callback = self
+                .callback
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+                .ok_or("VISION_ADAPTER_UNAVAILABLE")?;
+            let work = self
+                .sequence
+                .fetch_add(1, Ordering::AcqRel)
+                .checked_add(1)
+                .filter(|value| i64::try_from(*value).is_ok())
+                .ok_or("VISION_ID_EXHAUSTED")?;
+            *self
+                .active
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some((request.request_id, request.task, work));
+            let outcome = (|| {
+                if context.input_stop_requested.load(Ordering::Acquire)
+                    || context
+                        .host_queue
+                        .take_cancellation(request.request_id, request.task)
+                        .is_some()
+                {
+                    return Err("VISION_CANCELLED".to_owned());
+                }
+                invoke_vision_adapter(&callback, input, request.opcode, work)
+            })();
+            *self
+                .active
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            outcome
+        })();
+        match result {
+            Ok(payload) => HostResult::Success(payload),
+            Err(code) => HostResult::Failure {
+                code,
+                message:
+                    "Native vision did not complete; check ROI, budgets and backend availability"
+                        .into(),
+            },
+        }
+    }
+}
+fn invoke_vision_adapter(
+    callback: &Callback,
+    input: &runtime_executor::NativeVisionRequest,
+    opcode: u32,
+    work: u64,
+) -> Result<Vec<u8>, String> {
+    let mut env = callback
+        .vm
+        .attach_current_thread_as_daemon()
+        .map_err(|_| "VISION_VM_UNAVAILABLE")?;
+    env.push_local_frame(32)
+        .map_err(|_| "VISION_BUFFER_FAILED")?;
+    let operation = (|| {
+        // SAFETY: the immutable Arc leases live throughout this synchronous call.
+        // The fixed Java adapter only reads these buffers and never retains them.
+        let buffer = unsafe {
+            env.new_direct_byte_buffer(
+                input.frame.pixels.as_ptr().cast_mut(),
+                input.frame.pixels.len(),
+            )
+        }
+        .map_err(|_| "VISION_BUFFER_FAILED")?;
+        let template = match &input.template {
+            Some(template) => Some(
+                unsafe {
+                    env.new_direct_byte_buffer(
+                        template.pixels.as_ptr().cast_mut(),
+                        template.pixels.len(),
+                    )
+                }
+                .map_err(|_| "VISION_BUFFER_FAILED")?,
+            ),
+            None => None,
+        };
+        let metadata = int_array(&mut env, &frame_metadata(&input.frame)?)?;
+        let template_metadata = int_array(
+            &mut env,
+            &input
+                .template
+                .as_ref()
+                .map(frame_metadata)
+                .transpose()?
+                .unwrap_or_default(),
+        )?;
+        let r = input.region;
+        let options = int_array(
+            &mut env,
+            &[
+                i32::try_from(r.left).map_err(|_| "VISION_REQUEST_INVALID")?,
+                i32::try_from(r.top).map_err(|_| "VISION_REQUEST_INVALID")?,
+                i32::try_from(r.right).map_err(|_| "VISION_REQUEST_INVALID")?,
+                i32::try_from(r.bottom).map_err(|_| "VISION_REQUEST_INVALID")?,
+                i32::from(input.minimum_score),
+            ],
+        )?;
+        let null = JObject::null();
+        let value = env.call_method(
+            callback.listener.as_obj(),
+            "dispatch",
+            "(JILjava/nio/ByteBuffer;[ILjava/nio/ByteBuffer;[I[I)[B",
+            &[
+                JValue::Long(i64::try_from(work).map_err(|_| "VISION_ID_EXHAUSTED")?),
+                JValue::Int(i32::try_from(opcode).map_err(|_| "VISION_REQUEST_INVALID")?),
+                JValue::Object(buffer.as_ref()),
+                JValue::Object(metadata.as_ref()),
+                JValue::Object(template.as_ref().map_or(&null, |buffer| buffer.as_ref())),
+                JValue::Object(template_metadata.as_ref()),
+                JValue::Object(options.as_ref()),
+            ],
+        );
+        let Ok(value) = value else {
+            let _ = env.exception_clear();
+            return Err("VISION_JAVA_FAILED".into());
+        };
+        let array = JByteArray::from(value.l().map_err(|_| "VISION_RESPONSE_INVALID")?);
+        let length = env
+            .get_array_length(&array)
+            .map_err(|_| "VISION_RESPONSE_INVALID")?;
+        if !(1..=2048).contains(&length) {
+            return Err("VISION_RESPONSE_TOO_LARGE".into());
+        }
+        let bytes = env
+            .convert_byte_array(array)
+            .map_err(|_| "VISION_RESPONSE_INVALID")?;
+        decode_vision_response(&bytes)
+    })();
+    let _ = env.exception_clear();
+    // SAFETY: only Rust owned bytes leave this frame, no Java references escape.
+    let _ = unsafe { env.pop_local_frame(&JObject::null()) };
+    operation
+}
+
+fn decode_vision_response(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if !(1..=2048).contains(&bytes.len()) {
+        return Err("VISION_RESPONSE_INVALID".into());
+    }
+    match bytes[0] {
+        0 => Ok(bytes[1..].to_vec()),
+        1 if (1..=64).contains(&bytes[1..].len())
+            && bytes[1..].iter().all(|byte| {
+                byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_'
+            }) =>
+        {
+            String::from_utf8(bytes[1..].to_vec())
+                .map_or_else(|_| Err("VISION_RESPONSE_INVALID".into()), Err)
+        }
+        _ => Err("VISION_RESPONSE_INVALID".into()),
+    }
+}
+
+fn frame_metadata(frame: &FrameView) -> Result<Vec<i32>, String> {
+    let m = frame.metadata;
+    Ok(vec![
+        i32::try_from(m.width).map_err(|_| "VISION_GEOMETRY_INVALID")?,
+        i32::try_from(m.height).map_err(|_| "VISION_GEOMETRY_INVALID")?,
+        i32::try_from(m.row_stride).map_err(|_| "VISION_GEOMETRY_INVALID")?,
+        match m.format {
+            FrameFormat::Rgba8888 => 1,
+            FrameFormat::Bgra8888 => 2,
+        },
+    ])
+}
+fn int_array<'a>(
+    env: &mut JNIEnv<'a>,
+    values: &[i32],
+) -> Result<jni::objects::JIntArray<'a>, String> {
+    let array = env
+        .new_int_array(i32::try_from(values.len()).map_err(|_| "VISION_BUFFER_FAILED")?)
+        .map_err(|_| "VISION_BUFFER_FAILED")?;
+    env.set_int_array_region(&array, 0, values)
+        .map_err(|_| "VISION_BUFFER_FAILED")?;
+    Ok(array)
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::decode_vision_response;
+
+    #[test]
+    fn valid_payload_and_bounded_failure_codes_survive_the_boundary() {
+        assert_eq!(decode_vision_response(&[0]), Ok(vec![]));
+        assert_eq!(decode_vision_response(&[0, 3, 4]), Ok(vec![3, 4]));
+        assert_eq!(
+            decode_vision_response(b"\x01VISION_CANCELLED_OR_TIMEOUT"),
+            Err("VISION_CANCELLED_OR_TIMEOUT".into())
+        );
+    }
+
+    #[test]
+    fn malformed_status_and_arbitrary_java_messages_are_not_error_codes() {
+        for response in [
+            vec![],
+            vec![2],
+            vec![1],
+            vec![1, 255],
+            vec![0; 2049],
+            b"\x01path/user-private-script.lua".to_vec(),
+            b"\x01VISION_FAILED\n".to_vec(),
+            [vec![1], vec![b'A'; 65]].concat(),
+        ] {
+            assert_eq!(
+                decode_vision_response(&response),
+                Err("VISION_RESPONSE_INVALID".into())
+            );
+        }
+    }
+}

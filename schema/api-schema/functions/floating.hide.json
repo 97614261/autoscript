@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 17001,
+  "name": "Floating.hide",
+  "since": "1.8",
+  "capability": "ui.floating",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "按名称隐藏但保留内容，不改变主配置界面或运行控制球。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "按名称隐藏但保留内容，不改变主配置界面或运行控制球。"
+  },
+  "legacyAliases": []
+}

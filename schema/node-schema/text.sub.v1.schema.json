@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/text.sub/1/text.sub.schema.json",
+  "title": "text.sub node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "text.sub"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "start",
+        "length",
+        "resultVariable"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 65536
+        },
+        "textVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65537
+        },
+        "startVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
+        "lengthVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    }
+  }
+}
+

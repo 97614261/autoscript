@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "kind": "ui.dialog",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ui.dialog/1/ui.dialog.schema.json",
+  "title": "布局对话框",
+  "category": "task",
+  "summary": "选择设计好的页面，等待关闭后读取控件值。",
+  "searchTerms": [
+    "界面",
+    "对话框",
+    "确认",
+    "弹窗"
+  ],
+  "requiredCapabilities": [
+    "ui.control"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "pageId",
+      "label": "设计页面",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "main"
+    },
+    {
+      "path": "blockOutside",
+      "label": "禁止窗外关闭",
+      "editor": "boolean",
+      "required": true,
+      "defaultValue": "true"
+    },
+    {
+      "path": "timeoutMs",
+      "label": "等待期限 ms",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "60000"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符，可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

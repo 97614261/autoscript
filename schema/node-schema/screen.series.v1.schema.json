@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/screen.series/1/screen.series.schema.json",
+  "title": "连续截图",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "screen.series"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxFrames",
+        "durationMs",
+        "targetFps",
+        "allowPartial",
+        "resultVariable"
+      ],
+      "properties": {
+        "maxFrames": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "targetFps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "allowPartial": {
+          "type": "boolean"
+        },
+        "resultVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

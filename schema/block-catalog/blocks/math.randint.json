@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.randint",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.randint/1/math.randint.schema.json",
+  "title": "随机整数",
+  "category": "variable",
+  "summary": "端点包含，范围±9007199254740991；非密码学随机，不用于密钥。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "随机整数"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "min",
+      "label": "下限",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "minVariable",
+      "label": "下限来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "max",
+      "label": "上限",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "maxVariable",
+      "label": "上限来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

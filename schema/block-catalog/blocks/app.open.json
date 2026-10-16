@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "app.open",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/app.open/1/app.open.schema.json",
+  "title": "启动App",
+  "category": "task",
+  "summary": "请求系统启动目标App启动器入口；接受请求不保证已经进入前台，后台限制失败明确报错。",
+  "searchTerms": [
+    "启动App",
+    "Apps.open",
+    "系统"
+  ],
+  "requiredCapabilities": [
+    "device.apps"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "packageName",
+      "label": "App包名",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "com.android.settings"
+    }
+  ],
+  "migrations": []
+}

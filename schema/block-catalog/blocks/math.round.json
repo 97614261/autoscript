@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.round",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.round/1/math.round.schema.json",
+  "title": "四舍五入",
+  "category": "variable",
+  "summary": "半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "四舍五入"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "value",
+      "label": "数值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "3.6"
+    },
+    {
+      "path": "valueVariable",
+      "label": "数值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

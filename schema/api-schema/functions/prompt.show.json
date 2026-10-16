@@ -9,9 +9,10 @@
   "sideEffect": "ui_prompt",
   "timeoutMs": null,
   "resourceOwnership": "none",
-  "summary": "向脚本使用者显示一条运行中的提示信息。",
+  "summary": "按项目样式向脚本使用者显示持续运行提示，停止或结束自动关闭。",
   "params": [
-    { "name": "message", "type": "string", "required": true, "summary": "最多2048字节的 UTF-8 提示文本。" }
+    { "name": "message", "type": "string", "required": true, "summary": "最多2048字节的 UTF-8 提示文本。" },
+    { "name": "styleJson", "type": "string", "required": false, "summary": "可选受限样式 JSON，尺寸位置为屏幕像素；忽略持续时间，缺省使用冻结项目样式。" }
   ],
   "returns": { "type": "void", "nullable": false, "summary": "提示已交给 Runner 显示。" },
   "legacyAliases": ["Prompt"]

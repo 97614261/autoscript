@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1104,
+  "name": "Log.setEnabled",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "log_write",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "只控制后续脚本Log输出，不清空已有记录，不关闭诊断日志或识图统计；本次运行生效。",
+  "params": [
+    {
+      "name": "enabled",
+      "type": "boolean",
+      "required": true,
+      "summary": "仅true/false，本次运行生效。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "设置完成，既有项目不修改。"
+  },
+  "legacyAliases": []
+}

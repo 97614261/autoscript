@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14203,
+  "name": "Text.endsWith",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "匹配文本结尾返回1，否则0。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文本"
+    },
+    {
+      "name": "needle",
+      "type": "string",
+      "required": true,
+      "summary": "查找文本"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "匹配文本结尾返回1，否则0。"
+  },
+  "legacyAliases": []
+}
+

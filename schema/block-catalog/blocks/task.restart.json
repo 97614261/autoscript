@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "task.restart",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/task.restart/1/task.restart.schema.json",
+  "title": "重新运行脚本",
+  "category": "task",
+  "summary": "清理当前运行后重新执行已确认的脚本，不读取变更中的项目；最多10次。",
+  "searchTerms": [
+    "重启",
+    "重新运行",
+    "调试"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

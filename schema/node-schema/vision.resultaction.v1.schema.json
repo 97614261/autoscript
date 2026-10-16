@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/vision.resultaction/1/vision.resultaction.schema.json",
+  "title": "识别结果动作",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "vision.resultaction"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceVariable",
+        "shape",
+        "selection",
+        "anchor",
+        "action",
+        "limit",
+        "durationMs",
+        "offsetX",
+        "offsetY",
+        "screenConfirmed"
+      ],
+      "properties": {
+        "sourceVariable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "shape": {
+          "enum": [
+            "IMAGES",
+            "GLYPH_ITEM",
+            "TEXT_ITEM",
+            "COLORS",
+            "COMPONENTS"
+          ]
+        },
+        "selection": {
+          "enum": [
+            "first",
+            "all"
+          ]
+        },
+        "anchor": {
+          "enum": [
+            "center",
+            "topLeft"
+          ]
+        },
+        "action": {
+          "enum": [
+            "tap",
+            "hold",
+            "tapWait",
+            "pressRelease"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000
+        },
+        "offsetX": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "offsetY": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "screenConfirmed": {
+          "const": true
+        }
+      }
+    }
+  }
+}

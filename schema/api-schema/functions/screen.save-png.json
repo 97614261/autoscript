@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14130,
+  "name": "Screen.savePng",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "private_file_write",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "帧句柄"
+    },
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data相对路径，后缀.png。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "原像素无损PNG，保存在项目私有data，拒绝覆盖，最大20MiB。"
+  },
+  "legacyAliases": []
+}

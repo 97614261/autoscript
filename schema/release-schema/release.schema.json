@@ -77,7 +77,7 @@
         "additionalProperties": false,
         "required": ["kind", "logicalPath", "bundlePath", "sha256", "size"],
         "properties": {
-          "kind": { "enum": ["image", "glyphDictionary"] },
+          "kind": { "enum": ["image", "glyphDictionary", "audio"] },
           "logicalPath": { "type": "string", "minLength": 1, "maxLength": 256 },
           "bundlePath": { "type": "string", "pattern": "^payload/[^\\\\]+$", "maxLength": 264 },
           "sha256": { "$ref": "#/$defs/sha256" },

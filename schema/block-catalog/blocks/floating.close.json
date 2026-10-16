@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.close",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.close/1/floating.close.schema.json",
+  "title": "关闭浮窗",
+  "category": "task",
+  "summary": "按名称关闭本轻量浮窗，释放窗口内容，不停止脚本。",
+  "searchTerms": [
+    "关闭浮窗",
+    "Floating.close",
+    "绘图",
+    "浮窗"
+  ],
+  "requiredCapabilities": [
+    "ui.floating"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "panel"
+    }
+  ],
+  "migrations": []
+}

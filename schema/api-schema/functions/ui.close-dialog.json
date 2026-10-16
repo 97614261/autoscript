@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1206,
+  "name": "UI.closeDialog",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。",
+  "params": [],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "关闭当前布局或确认对话框；不停止脚本、不关闭主界面。没有对话框时无操作。"
+  },
+  "legacyAliases": []
+}

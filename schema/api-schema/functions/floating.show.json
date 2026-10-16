@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "opcode": 17000,
+  "name": "Floating.show",
+  "since": "1.8",
+  "capability": "ui.floating",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "required": true,
+      "summary": "X（-1居中）"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "required": true,
+      "summary": "Y（-1居中）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "required": true,
+      "summary": "宽度px"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "required": true,
+      "summary": "高度px"
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "文字"
+    },
+    {
+      "name": "fontPx",
+      "type": "integer",
+      "required": true,
+      "summary": "字号px"
+    },
+    {
+      "name": "textColor",
+      "type": "string",
+      "required": true,
+      "summary": "文字颜色"
+    },
+    {
+      "name": "background",
+      "type": "string",
+      "required": true,
+      "summary": "背景颜色"
+    },
+    {
+      "name": "imagePath",
+      "type": "string",
+      "required": true,
+      "summary": "项目图片（可选）"
+    },
+    {
+      "name": "shapesJson",
+      "type": "string",
+      "required": true,
+      "summary": "绘图JSON"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。"
+  },
+  "legacyAliases": []
+}

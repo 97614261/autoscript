@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.green",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.green/1/math.green.schema.json",
+  "title": "提取绿色通道",
+  "category": "variable",
+  "summary": "从0xRRGGBB提取绿色，返回0～255。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "提取绿色通道"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "rgb",
+      "label": "RGB颜色",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "65280"
+    },
+    {
+      "path": "rgbVariable",
+      "label": "RGB颜色来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

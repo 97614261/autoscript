@@ -22,6 +22,14 @@ if (-not $artifact.StartsWith($buildRoot + [System.IO.Path]::DirectorySeparatorC
 New-Item -ItemType Directory -Path $artifact -Force | Out-Null
 
 $results = [System.Collections.Generic.List[object]]::new()
+function Invoke-RustCargo {
+    Push-Location (Join-Path $repo "rust")
+    try {
+        & cargo @args
+        if ($LASTEXITCODE -ne 0) { throw "Cargo failed: $LASTEXITCODE" }
+    } finally { Pop-Location }
+}
+
 function Invoke-GateStep {
     param([string]$Name, [scriptblock]$Action)
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -41,7 +49,7 @@ function Invoke-GateStep {
 
 function Copy-RunnerArtifact {
     param([string]$Name)
-    $source = Join-Path $repo "apps\runner-template-android\build\outputs\apk\debug\runner-template-android-debug.apk"
+    $source = Join-Path $repo "android\apps\runner-template-android\build\outputs\apk\debug\runner-template-android-debug.apk"
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Runner APK不存在：$source" }
     $target = Join-Path $artifact $Name
     Copy-Item -LiteralPath $source -Destination $target -Force
@@ -49,60 +57,60 @@ function Copy-RunnerArtifact {
 }
 
 if (-not $SkipRustQuality) {
-    Invoke-GateStep "Rust fmt" { cargo fmt --all -- --check }
-    Invoke-GateStep "Rust workspace tests" { cargo test --workspace }
-    Invoke-GateStep "Rust clippy" { cargo clippy --workspace --all-targets -- -D warnings }
+    Invoke-GateStep "Rust fmt" { Invoke-RustCargo fmt --all -- --check }
+    Invoke-GateStep "Rust workspace tests" { Invoke-RustCargo test --workspace }
+    Invoke-GateStep "Rust clippy" { Invoke-RustCargo clippy --workspace --all-targets -- -D warnings }
 }
-Invoke-GateStep "API generated artifacts" { cargo run -p api-codegen -- check . }
-Invoke-GateStep "JSON Schema gate" { cargo run -p schema-check -- . }
+Invoke-GateStep "API generated artifacts" { Invoke-RustCargo run -p api-codegen -- check $repo }
+Invoke-GateStep "JSON Schema gate" { Invoke-RustCargo run -p schema-check -- $repo }
 Invoke-GateStep "Android unit tests and base APKs" {
     .\gradlew.bat testDebugUnitTest :apps:studio-android:assembleDebug :apps:runner-template-android:assembleDebug
 }
 
-$studioSource = Join-Path $repo "apps\studio-android\build\outputs\apk\debug\studio-android-debug.apk"
+$studioSource = Join-Path $repo "android\apps\studio-android\build\outputs\apk\debug\studio-android-debug.apk"
 $studioApk = Join-Path $artifact "studio-debug.apk"
 Copy-Item -LiteralPath $studioSource -Destination $studioApk -Force
 $baseRunnerApk = Copy-RunnerArtifact "runner-template-debug.apk"
-Invoke-GateStep "Studio package probe" { cargo run -p package-probe -- $studioApk }
-Invoke-GateStep "Base Runner package probe" { cargo run -p package-probe -- $baseRunnerApk }
+Invoke-GateStep "Studio package probe" { Invoke-RustCargo run -p package-probe -- $studioApk }
+Invoke-GateStep "Base Runner package probe" { Invoke-RustCargo run -p package-probe -- $baseRunnerApk }
 
 $helloRelease = Join-Path $artifact "release-hello"
 Invoke-GateStep "Prepare Hello Runner release" {
-    cargo run -p release-packager -- prepare examples/hello-project $helloRelease com.autoscript.hello 1 1.0.0
-    cargo run -p release-packager -- verify $helloRelease
+    Invoke-RustCargo run -p release-packager -- prepare (Join-Path $repo "examples/hello-project") $helloRelease com.autoscript.hello 1 1.0.0
+    Invoke-RustCargo run -p release-packager -- verify $helloRelease
 }
 Invoke-GateStep "Build Hello Runner" {
     .\gradlew.bat :apps:runner-template-android:assembleDebug "-Pautoscript.releaseDir=$helloRelease"
 }
 $helloApk = Copy-RunnerArtifact "hello-runner-debug.apk"
 Invoke-GateStep "Hello Runner embedded-release probe" {
-    cargo run -p package-probe -- --require-embedded-release $helloApk
+    Invoke-RustCargo run -p package-probe -- --require-embedded-release $helloApk
 }
 
 $visualRelease = Join-Path $artifact "release-visual"
 Invoke-GateStep "Prepare visual source-map release" {
-    cargo run -p release-packager -- prepare examples/visual-smoke-project $visualRelease com.autoscript.visualsmoke 1 1.0.0
-    cargo run -p release-packager -- verify $visualRelease
+    Invoke-RustCargo run -p release-packager -- prepare (Join-Path $repo "examples/visual-smoke-project") $visualRelease com.autoscript.visualsmoke 1 1.0.0
+    Invoke-RustCargo run -p release-packager -- verify $visualRelease
 }
 Invoke-GateStep "Build visual Runner" {
     .\gradlew.bat :apps:runner-template-android:assembleDebug "-Pautoscript.releaseDir=$visualRelease"
 }
 $visualApk = Copy-RunnerArtifact "visual-runner-debug.apk"
 Invoke-GateStep "Visual Runner embedded source-map probe" {
-    cargo run -p package-probe -- --require-embedded-release $visualApk
+    Invoke-RustCargo run -p package-probe -- --require-embedded-release $visualApk
 }
 
 $errorRelease = Join-Path $artifact "release-visual-error"
 Invoke-GateStep "Prepare source-map error release" {
-    cargo run -p release-packager -- prepare examples/visual-error-project $errorRelease com.autoscript.visualerror 1 1.0.0
-    cargo run -p release-packager -- verify $errorRelease
+    Invoke-RustCargo run -p release-packager -- prepare (Join-Path $repo "examples/visual-error-project") $errorRelease com.autoscript.visualerror 1 1.0.0
+    Invoke-RustCargo run -p release-packager -- verify $errorRelease
 }
 Invoke-GateStep "Build source-map error Runner" {
     .\gradlew.bat :apps:runner-template-android:assembleDebug "-Pautoscript.releaseDir=$errorRelease"
 }
 $errorApk = Copy-RunnerArtifact "visual-error-runner-debug.apk"
 Invoke-GateStep "Error Runner embedded source-map probe" {
-    cargo run -p package-probe -- --require-embedded-release $errorApk
+    Invoke-RustCargo run -p package-probe -- --require-embedded-release $errorApk
 }
 
 $report = [pscustomobject]@{

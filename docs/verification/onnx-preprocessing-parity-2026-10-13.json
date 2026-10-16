@@ -1,0 +1,242 @@
+{
+  "scope": "synthetic preprocessing only; exact tensor bits",
+  "opencvVersion": "4.10.0",
+  "cases": [
+    {
+      "roiWidth": 1,
+      "roiHeight": 1,
+      "format": 1,
+      "stride": 32,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 1,
+      "roiHeight": 1,
+      "format": 2,
+      "stride": 32,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 3,
+      "roiHeight": 2,
+      "format": 1,
+      "stride": 40,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 3,
+      "roiHeight": 2,
+      "format": 2,
+      "stride": 40,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 9,
+      "roiHeight": 6,
+      "format": 1,
+      "stride": 64,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 9,
+      "roiHeight": 6,
+      "format": 2,
+      "stride": 64,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 31,
+      "roiHeight": 17,
+      "format": 1,
+      "stride": 152,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 31,
+      "roiHeight": 17,
+      "format": 2,
+      "stride": 152,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 73,
+      "roiHeight": 48,
+      "format": 1,
+      "stride": 320,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 73,
+      "roiHeight": 48,
+      "format": 2,
+      "stride": 320,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 101,
+      "roiHeight": 96,
+      "format": 1,
+      "stride": 432,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 101,
+      "roiHeight": 96,
+      "format": 2,
+      "stride": 432,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 319,
+      "roiHeight": 49,
+      "format": 1,
+      "stride": 1304,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 319,
+      "roiHeight": 49,
+      "format": 2,
+      "stride": 1304,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 503,
+      "roiHeight": 57,
+      "format": 1,
+      "stride": 2040,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 503,
+      "roiHeight": 57,
+      "format": 2,
+      "stride": 2040,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 641,
+      "roiHeight": 40,
+      "format": 1,
+      "stride": 2592,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 641,
+      "roiHeight": 40,
+      "format": 2,
+      "stride": 2592,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 96,
+      "roiHeight": 96,
+      "format": 1,
+      "stride": 412,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 96,
+      "roiHeight": 96,
+      "format": 2,
+      "stride": 412,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 320,
+      "roiHeight": 96,
+      "format": 1,
+      "stride": 1308,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 320,
+      "roiHeight": 96,
+      "format": 2,
+      "stride": 1308,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 97,
+      "roiHeight": 194,
+      "format": 1,
+      "stride": 416,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 97,
+      "roiHeight": 194,
+      "format": 2,
+      "stride": 416,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 1920,
+      "roiHeight": 1080,
+      "format": 1,
+      "stride": 7708,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 1920,
+      "roiHeight": 1080,
+      "format": 2,
+      "stride": 7708,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 4000,
+      "roiHeight": 200,
+      "format": 1,
+      "stride": 16028,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    },
+    {
+      "roiWidth": 4000,
+      "roiHeight": 200,
+      "format": 2,
+      "stride": 16028,
+      "differentTensorValues": 0,
+      "maxAbsoluteError": 0
+    }
+  ],
+  "pass": true,
+  "sdk": 32,
+  "abis": [
+    "x86_64",
+    "arm64-v8a",
+    "x86",
+    "armeabi-v7a",
+    "armeabi"
+  ],
+  "evidenceDate": "2026-10-13",
+  "device": "MuMu 0",
+  "deviceAcceptanceScope": "MuMu synthetic preprocessing only; not ARM real-device or OCR accuracy acceptance"
+}

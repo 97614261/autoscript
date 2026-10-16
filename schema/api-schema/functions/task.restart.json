@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 3011,
+  "name": "Task.restart",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "task",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "停止整个运行，认证清理成功后用本次冻结脚本与初值重启；每次外部启动最多10次，主动停止撤销重启。",
+  "params": [],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "不返回；清理失败不重启。"
+  },
+  "legacyAliases": []
+}

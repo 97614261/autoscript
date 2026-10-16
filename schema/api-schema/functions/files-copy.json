@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14114,
+  "name": "Files.copy",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "destination",
+      "type": "string",
+      "required": true,
+      "summary": "目标相对路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "复制有界UTF-8文件到不存在的目标，不覆盖，原子保存，返回1。"
+  },
+  "legacyAliases": []
+}
+

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.length",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.length/1/text.length.schema.json",
+  "title": "文本字符数",
+  "category": "variable",
+  "summary": "Unicode字符数，不是UTF-8字节数。",
+  "searchTerms": [
+    "工具",
+    "文本字符数",
+    "Text.length"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

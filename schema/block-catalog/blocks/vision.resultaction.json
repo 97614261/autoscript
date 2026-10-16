@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "kind": "vision.resultaction",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.resultaction/1/vision.resultaction.schema.json",
+  "title": "识别结果动作",
+  "category": "vision",
+  "summary": "明确确认原屏坐标后，对首项或最多64项执行动作；动作前校验全部目标。按下不弹起仅限首项。",
+  "searchTerms": [
+    "识别",
+    "结果",
+    "点击",
+    "中心",
+    "逐项"
+  ],
+  "requiredCapabilities": [
+    "input.basic",
+    "core.task",
+    "device.display"
+  ],
+  "childBlocks": [],
+  "migrations": [],
+  "properties": [
+    {
+      "path": "sourceVariable",
+      "label": "识别集合 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "shape",
+      "label": "结果类型",
+      "editor": "enum",
+      "required": true,
+      "defaultValue": "IMAGES",
+      "choices": [
+        "IMAGES",
+        "GLYPH_ITEM",
+        "TEXT_ITEM",
+        "COLORS",
+        "COMPONENTS"
+      ]
+    },
+    {
+      "path": "selection",
+      "label": "作用结果",
+      "editor": "enum",
+      "required": true,
+      "defaultValue": "first",
+      "choices": [
+        "first",
+        "all"
+      ]
+    },
+    {
+      "path": "anchor",
+      "label": "位置",
+      "editor": "enum",
+      "required": true,
+      "defaultValue": "center",
+      "choices": [
+        "center",
+        "topLeft"
+      ]
+    },
+    {
+      "path": "action",
+      "label": "动作",
+      "editor": "enum",
+      "required": true,
+      "defaultValue": "tap",
+      "choices": [
+        "tap",
+        "hold",
+        "tapWait",
+        "pressRelease"
+      ]
+    },
+    {
+      "path": "limit",
+      "label": "最多处理项",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "durationMs",
+      "label": "动作时长 ms",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "offsetX",
+      "label": "屏幕X偏移",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "offsetY",
+      "label": "屏幕Y偏移",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "screenConfirmed",
+      "label": "已确认结果为原屏坐标",
+      "editor": "boolean",
+      "required": true,
+      "defaultValue": "false"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.getextension",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.getextension/1/files.getextension.schema.json",
+  "title": "数据文件扩展名",
+  "category": "variable",
+  "summary": "读取已存在普通文件的末尾扩展名，不含点；没有扩展名返回空字符。",
+  "searchTerms": [
+    "文件",
+    "数据文件扩展名",
+    "Files.getExtension"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.bin"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "date.daysbetween",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/date.daysbetween/1/date.daysbetween.schema.json",
+  "title": "计算时间差天数",
+  "category": "variable",
+  "summary": "返回（结束−开始）/86400000浮点天数；墙钟差，不用于运行超时。",
+  "searchTerms": [
+    "工具",
+    "计算时间差天数",
+    "Date.daysBetween"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "startMs",
+      "label": "开始Unix毫秒",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "startMsVariable",
+      "label": "开始Unix毫秒来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "endMs",
+      "label": "结束Unix毫秒",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "86400000"
+    },
+    {
+      "path": "endMsVariable",
+      "label": "结束Unix毫秒来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（小数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

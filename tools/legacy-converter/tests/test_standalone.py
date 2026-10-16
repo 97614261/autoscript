@@ -98,7 +98,7 @@ class MappingTests(test_core.LegacyProjectTests):
 
     def test_mapped_if_and_calculation_compile_through_bundled_gate(self):
         repo = pathlib.Path(__file__).resolve().parents[3]
-        checker = repo / "target/debug/examples/validate_project.exe"
+        checker = repo / "rust/target/debug/examples/validate_project.exe"
         if not checker.is_file():
             self.skipTest("compiler checker not built")
         content = "\r\n".join([
@@ -195,7 +195,7 @@ class StandaloneTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.package(root / "bad.zip", root / "missing.exe")
             self.assertFalse((root / "bad.zip").exists())
-            checker = tool.parents[1] / "target/debug/examples/validate_project.exe"
+            checker = tool.parents[1] / "rust/target/debug/examples/validate_project.exe"
             if checker.is_file():
                 compiled_bundle = root / "compiled-tool.zip"
                 module.package(compiled_bundle, checker)

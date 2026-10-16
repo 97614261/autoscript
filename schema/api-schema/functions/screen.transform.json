@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5010,
+  "name": "Screen.transform",
+  "since": "1.7",
+  "capability": "screen.capture",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "resource_create",
+  "timeoutMs": 5000,
+  "resourceOwnership": "task_owned_frame",
+  "summary": "返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。阈值模式按加权灰度与0-255阈值比较并保留Alpha；最多4194304像素，源不变。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "源帧句柄"
+    },
+    {
+      "name": "options",
+      "type": "string",
+      "required": true,
+      "summary": "严格JSON：mode、width、height、可选threshold（默认128）。非缩放尺寸为0；threshold为0-255。"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。源不变。"
+  },
+  "legacyAliases": []
+}

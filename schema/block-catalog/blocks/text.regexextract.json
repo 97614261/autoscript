@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.regexextract",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.regexextract/1/text.regexextract.schema.json",
+  "title": "正则提取首项",
+  "category": "variable",
+  "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。",
+  "searchTerms": [
+    "工具",
+    "正则提取首项",
+    "Text.regexExtract"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本（最多4KiB）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "A12 B34"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本（最多4KiB）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "pattern",
+      "label": "正则（最多128字节）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[0-9]+"
+    },
+    {
+      "path": "patternVariable",
+      "label": "正则（最多128字节）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

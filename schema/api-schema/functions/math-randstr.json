@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1011,
+  "name": "Math.randStr",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。",
+  "params": [
+    {
+      "name": "length",
+      "type": "integer",
+      "required": true,
+      "summary": "长度"
+    },
+    {
+      "name": "mode",
+      "type": "integer",
+      "required": true,
+      "summary": "字符模式"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.randstr",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.randstr/1/math.randstr.schema.json",
+  "title": "随机字符串",
+  "category": "variable",
+  "summary": "模式1小写、2大写、3大小写、4大小写数字、5小写数字；1～1024个ASCII字符，非密码学随机。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "随机字符串"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "length",
+      "label": "长度",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "8"
+    },
+    {
+      "path": "lengthVariable",
+      "label": "长度来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "mode",
+      "label": "字符模式",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "4"
+    },
+    {
+      "path": "modeVariable",
+      "label": "字符模式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

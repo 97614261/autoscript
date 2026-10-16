@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "kind": "ocr.glyphdetails",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ocr.glyphdetails/1/ocr.glyphdetails.schema.json",
+  "title": "字库逐字结果",
+  "category": "ocr",
+  "summary": "返回文字、逐字位置/分数/识别状态JSON，不自动截图。",
+  "searchTerms": [
+    "字库逐字结果",
+    "图像",
+    "工具"
+  ],
+  "requiredCapabilities": [
+    "ocr.glyph"
+  ],
+  "childBlocks": [],
+  "migrations": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "来源帧 · 图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "dictionaryPath",
+      "label": "声明字库路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "dictionaries/main.asglyph"
+    },
+    {
+      "path": "foregroundRgb",
+      "label": "前景RGB",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "16777215"
+    },
+    {
+      "path": "tolerance",
+      "label": "容差",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "similarityPermille",
+      "label": "相似度千分值",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "900"
+    },
+    {
+      "path": "left",
+      "label": "左",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "top",
+      "label": "上",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "right",
+      "label": "右（不包含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "720"
+    },
+    {
+      "path": "bottom",
+      "label": "下（不包含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1280"
+    },
+    {
+      "path": "spaceGapColumns",
+      "label": "空格间距列",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ]
+}

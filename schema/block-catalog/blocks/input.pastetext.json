@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.pastetext",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.pastetext/1/input.pastetext.schema.json",
+  "title": "粘贴文本（含中文）",
+  "category": "task",
+  "summary": "先写入剪贴板，再发送Root系统粘贴键；支持Unicode，最多4096字节。会替换剪贴板，须先聚焦支持粘贴的输入框；不保证目标已接收。",
+  "searchTerms": [
+    "中文",
+    "文字输入",
+    "粘贴",
+    "Input.pasteText"
+  ],
+  "requiredCapabilities": [
+    "input.basic",
+    "device.clipboard"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文字",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "textVariable",
+      "label": "文字来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

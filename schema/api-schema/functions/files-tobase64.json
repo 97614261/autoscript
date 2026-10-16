@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14143,
+  "name": "Files.toBase64",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "私有数据文件最多49152字节，输出标准填充Base64；不改变原文件。"
+  },
+  "legacyAliases": []
+}

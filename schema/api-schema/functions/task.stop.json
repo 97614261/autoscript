@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 3010,
+  "name": "Task.stop",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "task",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "优先停止整个运行与子任务，并由既有清理链路释放输入和任务资源；不继续执行下一积木。",
+  "params": [],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "不返回；认证清理失败仍按真实错误结束。"
+  },
+  "legacyAliases": []
+}

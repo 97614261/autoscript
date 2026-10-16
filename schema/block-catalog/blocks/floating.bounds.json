@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.bounds",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.bounds/1/floating.bounds.schema.json",
+  "title": "读取浮窗位置",
+  "category": "task",
+  "summary": "返回实际屏幕像素x/y/width/height和visible的JSON，不存在名称明确失败。",
+  "searchTerms": [
+    "读取浮窗位置",
+    "Floating.getBounds",
+    "绘图",
+    "浮窗"
+  ],
+  "requiredCapabilities": [
+    "ui.floating"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "panel"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

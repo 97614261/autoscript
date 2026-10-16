@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.show",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.show/1/floating.show.schema.json",
+  "title": "显示/更新浮窗",
+  "category": "task",
+  "summary": "命名独立浮窗：原像素、触摸穿透、文字/声明图片/有界图形；8窗口上限，停止自动清理。",
+  "searchTerms": [
+    "显示/更新浮窗",
+    "Floating.show",
+    "绘图",
+    "浮窗"
+  ],
+  "requiredCapabilities": [
+    "ui.floating"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "panel"
+    },
+    {
+      "path": "x",
+      "label": "X（-1居中）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "-1"
+    },
+    {
+      "path": "y",
+      "label": "Y（-1居中）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "-1"
+    },
+    {
+      "path": "width",
+      "label": "宽度px",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "320"
+    },
+    {
+      "path": "height",
+      "label": "高度px",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "120"
+    },
+    {
+      "path": "text",
+      "label": "文字",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "fontPx",
+      "label": "字号px",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "20"
+    },
+    {
+      "path": "textColor",
+      "label": "文字颜色",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "#FFFFFFFF"
+    },
+    {
+      "path": "background",
+      "label": "背景颜色",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "#C0202938"
+    },
+    {
+      "path": "imagePath",
+      "label": "项目图片（可选）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "shapesJson",
+      "label": "绘图JSON",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[]"
+    },
+    {
+      "path": "textVariable",
+      "label": "文字来源变量（可选）",
+      "editor": "string",
+      "required": false
+    }
+  ],
+  "migrations": []
+}

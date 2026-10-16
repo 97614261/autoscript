@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 2002,
+  "name": "System.getTimeMillis",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。",
+  "params": [],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "真实墙钟Unix时间毫秒；不可用于超时/性能测量，不修改系统时间。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep the colored desktop identity light; themed monochrome is launcher-controlled. -->
+    <color name="zhigou_icon_background">#FFFFFF</color>
+</resources>

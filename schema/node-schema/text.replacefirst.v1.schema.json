@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/text.replacefirst/1/text.replacefirst.schema.json",
+  "title": "text.replacefirst node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "text.replacefirst"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "needle",
+        "replacement",
+        "resultVariable"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 65536
+        },
+        "textVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "needle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 4096
+        },
+        "needleVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "replacement": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 65536
+        },
+        "replacementVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    }
+  }
+}
+

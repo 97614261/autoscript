@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1205,
+  "name": "UI.showDialogAndWait",
+  "since": "1.7",
+  "capability": "ui.control",
+  "execution": "host_sync",
+  "cancelMode": "cooperative",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": 1803000,
+  "resourceOwnership": "none",
+  "summary": "显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。",
+  "params": [
+    {
+      "name": "pageId",
+      "type": "string",
+      "required": true,
+      "summary": "已保存页面ID"
+    },
+    {
+      "name": "blockOutside",
+      "type": "boolean",
+      "required": true,
+      "summary": "是否禁止点窗外关闭"
+    },
+    {
+      "name": "timeoutMs",
+      "type": "integer",
+      "required": true,
+      "summary": "等待1000～1800000ms，默认60000"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "显示已保存页面并等待关闭。blockOutside=true禁止窗外关闭，返回键仍关闭；返回 close/dismiss/timeout；控件值用UI.getValue读取。"
+  },
+  "legacyAliases": []
+}

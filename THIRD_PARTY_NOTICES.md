@@ -4,6 +4,8 @@
 
 | 组件 | 版本 | 许可证 | 用途 |
 |---|---:|---|---|
+| regex / regex-automata / regex-syntax | 1.12.3 / Cargo.lock固定版本 | MIT OR Apache-2.0 | 有界脚本文本正则，不使用回溯扩展 |
+| aho-corasick / memchr | Cargo.lock固定版本 | MIT OR Apache-2.0 / Unlicense OR MIT | regex的有界自动机与字节搜索依赖 |
 | serde / serde_derive | 1.0.229 | MIT OR Apache-2.0 | API Schema反序列化 |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | JSON契约及确定性快照 |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | 生成物与Flow源的SHA-256一致性摘要 |
@@ -14,7 +16,7 @@
 | jni-sys | 0.3.0 | MIT OR Apache-2.0 | JNI原始类型声明（由jni传递引入） |
 | cesu8 | 1.1.0 | MIT OR Apache-2.0 | JNI字符串编码支持（由jni传递引入） |
 | combine | 4.6.7 | MIT | JNI签名解析支持（由jni传递引入） |
-| Gson | 2.11.0 | Apache-2.0 | Android Studio端项目清单JSON编解码 |
+| Gson | 2.11.0 | Apache-2.0 | Android Studio端项目清单及固定视觉组件的严格描述校验（复用既有版本） |
 | kotlinx-coroutines-android | 1.9.0 | Apache-2.0 | Studio端项目文件操作调度到IO线程 |
 
 Gradle、AndroidX与Kotlin依赖的许可证清单将在发布物依赖报告接入后由构建任务生成；新增依赖必须先锁定版本和许可证。

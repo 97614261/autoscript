@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.move",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.move/1/files.move.schema.json",
+  "title": "移动或改名数据文件",
+  "category": "variable",
+  "summary": "同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。",
+  "searchTerms": [
+    "文件",
+    "移动或改名数据文件",
+    "Files.move"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "destination",
+      "label": "目标相对路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "moved.txt"
+    },
+    {
+      "path": "destinationVariable",
+      "label": "目标相对路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

@@ -143,8 +143,8 @@ if (-not $SkipInstall) {
 }
 
 Invoke-SmokeStep "Studio settings scroll and capabilities" {
-    Invoke-Adb shell am force-stop com.autoscript.studio | Out-Null
-    Invoke-Adb shell am start -n com.autoscript.studio/.MainActivity | Out-Null
+    Invoke-Adb shell am force-stop com.zhigou.kaifaban | Out-Null
+    Invoke-Adb shell am start -n com.zhigou.kaifaban/com.autoscript.studio.MainActivity | Out-Null
     Start-Sleep -Seconds 1
     Approve-RootIfRequested
     $xml = Wait-Text "VisualSmoke"

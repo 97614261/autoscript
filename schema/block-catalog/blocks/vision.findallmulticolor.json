@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "kind": "vision.findallmulticolor",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findallmulticolor/1/vision.findallmulticolor.schema.json",
+  "title": "批量多点找色",
+  "category": "vision",
+  "summary": "相对多点模式，返回多个坐标JSON；最多64点、256命中。",
+  "searchTerms": [
+    "批量多点找色",
+    "图像",
+    "工具"
+  ],
+  "requiredCapabilities": [
+    "vision.pixel"
+  ],
+  "childBlocks": [],
+  "migrations": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "来源帧 · 图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "samples",
+      "label": "色点JSON（dx/dy/rgb/tolerance）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[{\"dx\":0,\"dy\":0,\"rgb\":16777215,\"tolerance\":0}]"
+    },
+    {
+      "path": "left",
+      "label": "左",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "top",
+      "label": "上",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "right",
+      "label": "右（不包含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "720"
+    },
+    {
+      "path": "bottom",
+      "label": "下（不包含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1280"
+    },
+    {
+      "path": "limit",
+      "label": "最多结果",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "64"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ]
+}

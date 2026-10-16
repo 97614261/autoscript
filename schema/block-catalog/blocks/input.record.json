@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.record",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.record/1/input.record.schema.json",
+  "title": "录制全局动作",
+  "category": "task",
+  "summary": "返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。",
+  "searchTerms": [
+    "录制全局动作",
+    "录制",
+    "音频"
+  ],
+  "requiredCapabilities": [
+    "input.basic"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "durationMs",
+      "label": "录制时长(ms)",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "10000"
+    },
+    {
+      "path": "eventBudget",
+      "label": "事件预算",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "512"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

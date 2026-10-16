@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ocr.glyphdetails/1/ocr.glyphdetails.schema.json",
+  "title": "字库逐字结果",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ocr.glyphdetails"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "dictionaryPath",
+        "foregroundRgb",
+        "tolerance",
+        "similarityPermille",
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "spaceGapColumns",
+        "resultVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "dictionaryPath": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "foregroundRgb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777215
+        },
+        "tolerance": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "similarityPermille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "bottom": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "spaceGapColumns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "resultVariable": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    }
+  }
+}

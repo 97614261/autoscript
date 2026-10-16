@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "audio.stop",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/audio.stop/1/audio.stop.schema.json",
+  "title": "停止音频",
+  "category": "task",
+  "summary": "停止并释放当前播放器，不停止脚本。",
+  "searchTerms": [
+    "停止音频",
+    "录制",
+    "音频"
+  ],
+  "requiredCapabilities": [
+    "audio.control"
+  ],
+  "childBlocks": [],
+  "properties": [],
+  "migrations": []
+}

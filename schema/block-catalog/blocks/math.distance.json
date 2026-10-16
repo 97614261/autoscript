@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.distance",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.distance/1/math.distance.schema.json",
+  "title": "两点距离",
+  "category": "variable",
+  "summary": "两点欧氏距离，返回非负浮点数。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "两点距离"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "x1",
+      "label": "起点X",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "x1Variable",
+      "label": "起点X来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "y1",
+      "label": "起点Y",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "y1Variable",
+      "label": "起点Y来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "x2",
+      "label": "终点X",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "3"
+    },
+    {
+      "path": "x2Variable",
+      "label": "终点X来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "y2",
+      "label": "终点Y",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "4"
+    },
+    {
+      "path": "y2Variable",
+      "label": "终点Y来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

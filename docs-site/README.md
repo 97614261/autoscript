@@ -5,7 +5,11 @@
 - `generated/api.html`：脚本API能力目录。
 - `glyph-dictionary.html`：基础字库格式、制作和项目接入说明。
 
+从仓库根目录执行：
+
 ```powershell
-cargo run -p api-codegen -- generate .
-cargo run -p api-codegen -- check .
+Push-Location .\rust
+cargo run -p api-codegen -- generate ..
+cargo run -p api-codegen -- check ..
+Pop-Location
 ```

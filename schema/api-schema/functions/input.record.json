@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 2200,
+  "name": "Input.record",
+  "since": "1.7",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 71000,
+  "resourceOwnership": "none",
+  "summary": "返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。",
+  "params": [
+    {
+      "name": "durationMs",
+      "type": "integer",
+      "required": true,
+      "summary": "1000至60000毫秒"
+    },
+    {
+      "name": "eventBudget",
+      "type": "integer",
+      "required": true,
+      "summary": "128至512原始事件预算"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "返回真实Root动作JSON；时长到期或浮动结束按钮完成，期间拒绝普通脚本输入。"
+  },
+  "legacyAliases": []
+}

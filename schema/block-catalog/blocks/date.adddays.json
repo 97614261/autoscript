@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "date.adddays",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/date.adddays/1/date.adddays.schema.json",
+  "title": "日期增加天数",
+  "category": "variable",
+  "summary": "每一天精确86400000毫秒；结果限制1970～9999年，不冒充本地夏令时日历运算。",
+  "searchTerms": [
+    "工具",
+    "日期增加天数",
+    "Date.addDays"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "timestampMs",
+      "label": "Unix毫秒",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "timestampMsVariable",
+      "label": "Unix毫秒来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "days",
+      "label": "增加天数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "daysVariable",
+      "label": "增加天数来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

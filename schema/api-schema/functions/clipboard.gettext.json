@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 16000,
+  "name": "Clipboard.getText",
+  "since": "1.8",
+  "capability": "device.clipboard",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。",
+  "params": [],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。"
+  },
+  "legacyAliases": []
+}

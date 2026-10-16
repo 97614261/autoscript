@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1105,
+  "name": "Prompt.setEnabled",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "关闭持续与短时提示，清除当前和迟到显示；开启不重放，不覆盖项目提示总开关，不影响运行控制球。",
+  "params": [
+    {
+      "name": "enabled",
+      "type": "boolean",
+      "required": true,
+      "summary": "仅true/false，本次运行生效。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "设置完成，既有项目不修改。"
+  },
+  "legacyAliases": []
+}

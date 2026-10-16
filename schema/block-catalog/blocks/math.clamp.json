@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.clamp",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.clamp/1/math.clamp.schema.json",
+  "title": "限制范围",
+  "category": "variable",
+  "summary": "下限不大于上限；返回浮点数，不静默转换目标变量。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "限制范围"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "value",
+      "label": "数值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "50"
+    },
+    {
+      "path": "valueVariable",
+      "label": "数值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "min",
+      "label": "下限",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "minVariable",
+      "label": "下限来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "max",
+      "label": "上限",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "100"
+    },
+    {
+      "path": "maxVariable",
+      "label": "上限来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

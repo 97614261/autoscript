@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "clipboard.gettext",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/clipboard.gettext/1/clipboard.gettext.schema.json",
+  "title": "读取剪贴板",
+  "category": "task",
+  "summary": "读取最多4096字节纯字符剪贴板；后台不可读明确失败，不读取URI或文件。",
+  "searchTerms": [
+    "读取剪贴板",
+    "Clipboard.getText",
+    "系统"
+  ],
+  "requiredCapabilities": [
+    "device.clipboard"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

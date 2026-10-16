@@ -56,7 +56,7 @@ python -m legacy_converter "旧工程.zip" --output "output/新目录" --entry "
 仓库源码开发测试：`python -m unittest discover -s tests -v`。便携打包：
 
 ```powershell
-python package.py --output dist/智构工程转换工具.zip --validator "../../target/debug/examples/validate_project.exe"
+python package.py --output dist/智构工程转换工具.zip --validator "../../rust/target/debug/examples/validate_project.exe"
 ```
 
 打包白名单仅含工具代码、启动脚本、说明和显式检查器，绝不收集 output、报告、用户ZIP、日志或缓存。

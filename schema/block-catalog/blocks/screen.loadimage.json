@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1, "kind": "screen.loadimage", "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.loadimage/1/screen.loadimage.schema.json",
+  "title": "加载项目图片", "category": "screen",
+  "summary": "取得已声明图片的任务级不可变图像句柄；输出须为已声明图像变量，使用后释放。",
+  "searchTerms": ["图片", "加载", "loadImage", "处理来源"],
+  "requiredCapabilities": ["vision.template"], "childBlocks": [], "migrations": [],
+  "properties": [
+    {"path": "imagePath", "label": "项目图片", "editor": "resource", "resourceKind": "image", "required": true},
+    {"path": "resultVariable", "label": "输出图像变量", "editor": "string", "required": true, "defaultValue": ""}
+  ]
+}

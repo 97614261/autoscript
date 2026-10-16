@@ -8,6 +8,18 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "generationId": { "type": "string", "pattern": "^gen-[0-9a-f]{32}$" },
+    "visionRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "components"],
+      "properties": {
+        "version": { "const": 1 },
+        "components": {
+          "type": "array", "maxItems": 2, "uniqueItems": true,
+          "items": { "enum": ["opencv", "onnx"] }
+        }
+      }
+    },
     "entries": {
       "type": "array",
       "items": {

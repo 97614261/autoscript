@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.kvadd",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.kvadd/1/files.kvadd.schema.json",
+  "title": "持久整数值累加",
+  "category": "variable",
+  "summary": "缺失按0，已有值必须整数，64位溢出拒绝；原子保存并返回新整数。",
+  "searchTerms": [
+    "文件",
+    "持久整数值累加",
+    "Files.kvAdd"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "key",
+      "label": "对象键",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "count"
+    },
+    {
+      "path": "keyVariable",
+      "label": "对象键来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "delta",
+      "label": "增加整数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "deltaVariable",
+      "label": "增加整数来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

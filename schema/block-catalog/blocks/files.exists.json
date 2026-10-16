@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.exists",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.exists/1/files.exists.schema.json",
+  "title": "数据文件是否存在",
+  "category": "variable",
+  "summary": "普通数据文件存在1，否则0；拒绝目录和不安全路径。",
+  "searchTerms": [
+    "文件",
+    "数据文件是否存在",
+    "Files.exists"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "notes.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

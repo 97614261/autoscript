@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "app.info",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/app.info/1/app.info.schema.json",
+  "title": "查询App信息",
+  "category": "task",
+  "summary": "返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。",
+  "searchTerms": [
+    "查询App信息",
+    "Apps.info",
+    "系统"
+  ],
+  "requiredCapabilities": [
+    "device.apps"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "packageName",
+      "label": "App包名",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "com.android.settings"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

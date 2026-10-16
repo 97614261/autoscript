@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14144,
+  "name": "Files.fromBase64",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "base64",
+      "type": "string",
+      "required": true,
+      "summary": "标准Base64"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "严格标准填充Base64解码，最多49152字节，原子保存到新文件；目标存在拒绝。"
+  },
+  "legacyAliases": []
+}

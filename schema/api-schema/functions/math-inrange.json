@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1014,
+  "name": "Math.inRange",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "端点包含，范围内返回1，否则0；无效范围报错。",
+  "params": [
+    {
+      "name": "value",
+      "type": "number",
+      "required": true,
+      "summary": "数值"
+    },
+    {
+      "name": "min",
+      "type": "number",
+      "required": true,
+      "summary": "下限"
+    },
+    {
+      "name": "max",
+      "type": "number",
+      "required": true,
+      "summary": "上限"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "端点包含，范围内返回1，否则0；无效范围报错。"
+  },
+  "legacyAliases": []
+}

@@ -1,0 +1,15 @@
+{
+  "scope": "base adapter missing-component rejection; synthetic pixels only",
+  "sdk": 32,
+  "cases": [
+    {
+      "operation": 5108,
+      "pass": true
+    },
+    {
+      "operation": 6101,
+      "pass": true
+    }
+  ],
+  "pass": true
+}

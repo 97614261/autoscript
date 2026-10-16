@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14115,
+  "name": "Files.move",
+  "since": "1.7",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_write",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data路径"
+    },
+    {
+      "name": "destination",
+      "type": "string",
+      "required": true,
+      "summary": "目标相对路径"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "同项目原子移动普通文件，目标必须不存在，不覆盖，返回1。"
+  },
+  "legacyAliases": []
+}
+

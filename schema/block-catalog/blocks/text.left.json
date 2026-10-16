@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.left",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.left/1/text.left.schema.json",
+  "title": "取文本左侧",
+  "category": "variable",
+  "summary": "取前length个Unicode字符，超出末尾截短。",
+  "searchTerms": [
+    "工具",
+    "取文本左侧",
+    "Text.left"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "示例"
+    },
+    {
+      "path": "textVariable",
+      "label": "文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "length",
+      "label": "字符数量",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "lengthVariable",
+      "label": "字符数量来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（字符）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
+

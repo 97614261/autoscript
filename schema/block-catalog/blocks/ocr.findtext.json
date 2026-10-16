@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "ocr.findtext",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ocr.findtext/1/ocr.findtext.schema.json",
+  "title": "从字库结果找文字",
+  "category": "ocr",
+  "summary": "查询已有详细结果，同一行连续字形精确匹配；不重复OCR。",
+  "searchTerms": [
+    "从字库结果找文字",
+    "图像",
+    "工具"
+  ],
+  "requiredCapabilities": [
+    "ocr.glyph"
+  ],
+  "childBlocks": [],
+  "migrations": [],
+  "properties": [
+    {
+      "path": "detailsVariable",
+      "label": "详细结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "text",
+      "label": "目标文字",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "AB"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果 · 字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ]
+}

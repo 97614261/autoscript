@@ -26,6 +26,48 @@ function Resolve-BuildTool {
     throw "$Name was not found. Pass an explicit tool path."
 }
 
+function Get-MuMuManagerCandidates {
+    param([object[]]$InstallRecords = @())
+    # Registry values are paths only, never shell commands. Search a small fixed
+    # set of relative locations instead of recursively scanning every drive.
+    foreach ($record in $InstallRecords) {
+        if ($record.DisplayName -notmatch 'MuMu') { continue }
+        $roots = @()
+        if ($record.InstallLocation) { $roots += ([string]$record.InstallLocation).Trim().Trim('"') }
+        if ($record.DisplayIcon) {
+            $icon = ([string]$record.DisplayIcon).Trim()
+            if ($icon -match '^"([^"]+)"(?:\s*,\s*-?\d+)?$') { $icon = $Matches[1] }
+            else { $icon = $icon -replace ',\s*-?\d+$', '' }
+            if ([IO.Path]::IsPathRooted($icon)) {
+                $iconParent = [IO.Path]::GetDirectoryName($icon)
+                $roots += $iconParent
+                $roots += [IO.Path]::GetDirectoryName($iconParent)
+            }
+        }
+        foreach ($root in ($roots | Select-Object -Unique)) {
+            if (-not $root -or -not [IO.Path]::IsPathRooted($root)) { continue }
+            foreach ($relative in @('MuMuManager.exe', 'nx_main\MuMuManager.exe', 'shell\MuMuManager.exe')) {
+                [IO.Path]::Combine($root, $relative)
+            }
+        }
+    }
+}
+
+function Get-MuMuInstallRecords {
+    Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -match 'MuMu' } |
+        ForEach-Object {
+            # Missing optional registry fields must not fail StrictMode.
+            [pscustomobject]@{
+                DisplayName = $_.DisplayName
+                InstallLocation = if ($_.PSObject.Properties['InstallLocation']) { $_.InstallLocation } else { '' }
+                DisplayIcon = if ($_.PSObject.Properties['DisplayIcon']) { $_.DisplayIcon } else { '' }
+            }
+        }
+}
+
 function Invoke-BoundedCli {
     param([string]$Executable, [string[]]$Arguments, [ValidateRange(1,600)][int]$TimeoutSeconds = 10)
     $info = [System.Diagnostics.ProcessStartInfo]::new()
@@ -72,17 +114,34 @@ function Invoke-CheckedCli {
 
 function Invoke-ProjectBuild {
     param([string]$ProjectRoot, [bool]$RunChecks)
+    . (Join-Path $PSScriptRoot 'apk-output-recovery.ps1')
+    Repair-StudioApkOutput -ProjectRoot $ProjectRoot -Profile development
     $tasks = @()
     if ($RunChecks) {
-        $tasks += @(':apps:studio-android:testDebugUnitTest', ':android:script-ui:testDebugUnitTest',
+        $tasks += @(':apps:studio-android:testDebugUnitTest', ':android:brand-ui:testDebugUnitTest', ':apps:runner-template-android:testDebugUnitTest', ':android:script-ui:testDebugUnitTest',
             ':android:project-store:testDebugUnitTest', ':android:runtime-client:testDebugUnitTest',
-            ':android:runtime-service:testDebugUnitTest', ':apps:studio-android:lintDebug')
+            ':android:runtime-service:testDebugUnitTest', ':android:vision-spi:testDebugUnitTest',
+            ':android:vision-components:testDebugUnitTest', ':apps:studio-android:lintDebug')
     }
     $tasks += ':apps:studio-android:assembleDebug'
     Push-Location -LiteralPath $ProjectRoot
     try {
         & (Join-Path $ProjectRoot 'gradlew.bat') @tasks '-Pautoscript.abiProfile=development' --console=plain
         if ($LASTEXITCODE -ne 0) { throw "Build failed. MuMu installation was not attempted." }
+        # Validate this build's output, not only the previous incremental APK.
+        Repair-StudioApkOutput -ProjectRoot $ProjectRoot -Profile development
+        $candidate = Join-Path $ProjectRoot 'android/apps/studio-android/build/outputs/apk/debug/studio-android-debug.apk'
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            & (Join-Path $ProjectRoot 'gradlew.bat') ':apps:studio-android:assembleDebug' '-Pautoscript.abiProfile=development' --console=plain
+            if ($LASTEXITCODE -ne 0) { throw 'APK-only rebuild failed; verified previous APK remains in backup. Installation was not attempted.' }
+        }
+        Repair-StudioApkOutput -ProjectRoot $ProjectRoot -Profile development -ValidateOnly
+        & (Join-Path $PSScriptRoot 'verify-native-packaging.ps1') -Profile development
+        if (-not $?) { throw 'Native packaging verification failed. Installation was not attempted.' }
+        if ($RunChecks) {
+            & (Join-Path $PSScriptRoot 'check-repository-layout.ps1')
+            if (-not $?) { throw 'Repository layout check failed. MuMu installation was not attempted.' }
+        }
     } finally {
         Pop-Location
     }
@@ -143,12 +202,22 @@ function Invoke-BuildAndInstall {
     param([string]$ProjectRoot, [int]$Index, [string]$ManagerPath, [string]$AdbOverride,
         [int]$TimeoutSeconds, [bool]$RunChecks, [bool]$InstallOnly)
     if (-not $InstallOnly) { Invoke-ProjectBuild $ProjectRoot $RunChecks }
-    $manager = Resolve-BuildTool $ManagerPath @(
+    else {
+        . (Join-Path $PSScriptRoot 'apk-output-recovery.ps1')
+        $candidate = Join-Path $ProjectRoot 'android/apps/studio-android/build/outputs/apk/debug/studio-android-debug.apk'
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw 'APK not found. Installation was not attempted.' }
+        Repair-StudioApkOutput -ProjectRoot $ProjectRoot -Profile development -ValidateOnly
+        & (Join-Path $PSScriptRoot 'verify-native-packaging.ps1') -Profile development
+        if (-not $?) { throw 'Native packaging verification failed. Installation was not attempted.' }
+    }
+    $managerCandidates = @(
         (Join-Path $env:ProgramFiles 'Netease\MuMu\nx_main\MuMuManager.exe'),
         (Join-Path $env:ProgramFiles 'Netease\MuMuPlayer-12.0\shell\MuMuManager.exe')
-    ) 'MuMuManager'
+    )
+    if (-not $ManagerPath) { $managerCandidates += @(Get-MuMuManagerCandidates @(Get-MuMuInstallRecords)) }
+    $manager = Resolve-BuildTool $ManagerPath $managerCandidates 'MuMuManager'
     $sdkRoots = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)
-    $localProperties = Join-Path $ProjectRoot 'local.properties'
+    $localProperties = Join-Path $ProjectRoot 'android/local.properties'
     if (Test-Path -LiteralPath $localProperties) {
         $sdkLine = Get-Content -LiteralPath $localProperties | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
         if ($sdkLine) { $sdkRoots += $sdkLine.Substring(8).Replace('\\', '\').Replace('\:', ':') }
@@ -156,7 +225,7 @@ function Invoke-BuildAndInstall {
     $adbCandidates = @($sdkRoots | Where-Object { $_ } | ForEach-Object { Join-Path $_ 'platform-tools\adb.exe' })
     $adbCandidates += Join-Path (Split-Path -Parent $manager) 'adb.exe'
     $adb = Resolve-BuildTool $AdbOverride $adbCandidates 'ADB'
-    $apk = Join-Path $ProjectRoot 'apps\studio-android\build\outputs\apk\debug\studio-android-debug.apk'
+    $apk = Join-Path $ProjectRoot 'android\apps\studio-android\build\outputs\apk\debug\studio-android-debug.apk'
     Install-StudioToMuMu $apk $manager $adb $Index $TimeoutSeconds
 }
 

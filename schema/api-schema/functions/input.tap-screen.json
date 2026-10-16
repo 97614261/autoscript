@@ -1,7 +1,39 @@
 {
-  "schemaVersion":1,"opcode":4006,"name":"Input.tapScreen","since":"1.7",
-  "capability":"input.basic","execution":"async_task","cancelMode":"cooperative","sideEffect":"input","timeoutMs":5000,
-  "resourceOwnership":"task_input_transaction","summary":"按原始屏幕像素点击，不再进行设计坐标缩放。",
-  "params":[{"name":"x","type":"integer","required":true,"summary":"原始屏幕X像素。"},{"name":"y","type":"integer","required":true,"summary":"原始屏幕Y像素。"}],
-  "returns":{"type":"void","nullable":false,"summary":"失败抛出受控错误。"},"legacyAliases":[]
+  "schemaVersion": 1,
+  "opcode": 4006,
+  "name": "Input.tapScreen",
+  "since": "1.7",
+  "capability": "input.basic",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "input",
+  "timeoutMs": 5000,
+  "resourceOwnership": "task_input_transaction",
+  "summary": "按原始屏幕像素点击，不再进行设计坐标缩放。",
+  "params": [
+    {
+      "name": "x",
+      "type": "integer",
+      "required": true,
+      "summary": "原始屏幕X像素。"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "required": true,
+      "summary": "原始屏幕Y像素。"
+    },
+    {
+      "name": "snapshotId",
+      "type": "integer",
+      "required": false,
+      "summary": "API 1.8：可选映射快照身份，提供时失效快照拒绝输入；省略保持既有像素语义。"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "nullable": false,
+    "summary": "失败抛出受控错误。"
+  },
+  "legacyAliases": []
 }

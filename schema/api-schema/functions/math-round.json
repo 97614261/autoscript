@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1012,
+  "name": "Math.round",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。",
+  "params": [
+    {
+      "name": "value",
+      "type": "number",
+      "required": true,
+      "summary": "数值"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "半值远离零：3.5→4，-3.5→-4；拒绝非有限数值。"
+  },
+  "legacyAliases": []
+}

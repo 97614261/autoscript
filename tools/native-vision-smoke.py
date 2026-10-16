@@ -14,7 +14,7 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageDraw, ImageFont
 
-model = ROOT / "android/runtime-service/src/main/assets/vision/en_PP-OCRv4_rec_mobile.onnx"
+model = ROOT / "android/modules/runtime-service/src/onnx/assets/vision/en_PP-OCRv4_rec_mobile.onnx"
 assert hashlib.sha256(model.read_bytes()).hexdigest() == "e8770c967605983d1570cdf5352041dfb68fa0c21664f49f47b155abd3e0e318"
 options = ort.SessionOptions()
 options.intra_op_num_threads = options.inter_op_num_threads = 1

@@ -1,0 +1,69 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/automation-core",
+    "crates/coordinate",
+    "crates/engine-core",
+    "crates/engine-jni",
+    "crates/flow-ir",
+    "crates/glyph-ocr",
+    "crates/lua-runtime",
+    "crates/pixel-vision",
+    "crates/root-protocol",
+    "crates/root-client",
+    "crates/root-daemon-core",
+    "crates/root-daemon",
+    "crates/runtime-scheduler",
+    "crates/runtime-executor",
+    "crates/script-api",
+    "tools/api-codegen",
+    "tools/flow-compiler",
+    "tools/studio-compiler-jni",
+    "tools/glyph-maker",
+    "tools/schema-check",
+    "tools/package-probe",
+    "tools/release-packager",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.96"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[workspace.dependencies]
+regex = { version = "=1.12.3", default-features = false, features = ["std", "unicode", "perf"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10.9"
+mlua = { version = "0.12.1", default-features = false, features = ["lua54", "vendored"] }
+fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
+jni = { version = "0.21.1", default-features = false }
+
+# Keep developer diagnostics and overflow checks, but do not run the pixel hot loop at opt-level 0.
+# This applies to Studio and the embedded Runner without changing artifact profiles/ABI paths.
+[profile.dev.package.pixel-vision]
+opt-level = 3
+
+# Capture authentication and transfer are also hot paths in the Android Debug build.
+[profile.dev.package.root-protocol]
+opt-level = 3
+[profile.dev.package.root-client]
+opt-level = 3
+[profile.dev.package.root-daemon]
+opt-level = 3
+[profile.dev.package.root-daemon-core]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3
+[profile.dev.package.block-buffer]
+opt-level = 3
+[profile.dev.package.crypto-common]
+opt-level = 3

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 16002,
+  "name": "Apps.info",
+  "since": "1.8",
+  "capability": "device.apps",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。",
+  "params": [
+    {
+      "name": "packageName",
+      "type": "string",
+      "required": true,
+      "summary": "App包名"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "返回可见App版本JSON；visible=false表示不可见或不存在，不能证明未安装。"
+  },
+  "legacyAliases": []
+}

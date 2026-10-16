@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "kind": "screen.transform",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.transform/1/screen.transform.schema.json",
+  "title": "图像变换",
+  "category": "screen",
+  "summary": "旋转、镜像、灰度、阈值二值化、最近邻缩放；输出独立图像变量，源不变。",
+  "searchTerms": [
+    "图像变换",
+    "二值化",
+    "阈值",
+    "图像",
+    "工具"
+  ],
+  "requiredCapabilities": [
+    "screen.capture"
+  ],
+  "childBlocks": [],
+  "migrations": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "来源帧 · 图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "mode",
+      "label": "模式",
+      "editor": "enum",
+      "required": true,
+      "defaultValue": "rotate90",
+      "choices": [
+        "rotate90",
+        "rotate180",
+        "rotate270",
+        "flipX",
+        "flipY",
+        "gray",
+        "threshold",
+        "resize"
+      ]
+    },
+    {
+      "path": "width",
+      "label": "缩放宽度（其他模式为0）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "height",
+      "label": "缩放高度（其他模式为0）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "threshold",
+      "label": "阈值（仅二值化，0-255）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "128"
+    },
+    {
+      "path": "resultVariable",
+      "label": "输出 · 图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ]
+}
