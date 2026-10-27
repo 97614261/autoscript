@@ -15,14 +15,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,12 +30,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectFlow
@@ -170,9 +166,9 @@ internal fun visualKnownVariables(
 ): List<String> = buildSet {
     declared.filter { it.scope == ProjectVariableScope.GLOBAL || it.flowId == currentFlowId }
         .forEach { add(it.name) }
-    editor.rows.forEach { row ->
-        val args = editor.nodeArguments(row.nodeId) ?: return@forEach
-        when (row.kind) {
+    variableCheckNodes(editor.variableCheckInput()).forEach { node ->
+        val args = node.args ?: return@forEach
+        when (node.row.kind) {
             "variable.set", "variable.calculate" -> args.get("name")?.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
             "variable.copy" -> listOf("sourceName", "name").forEach { key ->
                 args.get(key)?.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
@@ -182,7 +178,7 @@ internal fun visualKnownVariables(
             }
         }
     }
-}.filter { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }.sorted()
+}.filter { it.matches(com.autoscript.project.store.ProjectNames.pattern) }.sorted()
 
 
 /**
@@ -218,6 +214,7 @@ internal fun VisualVariableConditionDialog(
     }
     var invalidConditions by remember(contract.kind, inputs) { mutableStateOf(emptySet<String>()) }
     var validationError by remember(contract.kind, inputs) { mutableStateOf<String?>(null) }
+    var fullScreen by remember { mutableStateOf(false) }
     val title = when (contract.kind) {
         "control.if" -> "如果"
         "variable.set" -> "设置变量"
@@ -227,23 +224,10 @@ internal fun VisualVariableConditionDialog(
         "task.comment" -> "添加说明"
         else -> "读取变量"
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(.92f).widthIn(max = 520.dp),
-            color = androidx.compose.ui.graphics.Color.White,
-            shape = RoundedCornerShape(3.dp),
-            shadowElevation = 10.dp,
-        ) {
-            Column {
-                Row(
-                    Modifier.fillMaxWidth().height(40.dp).padding(start = 14.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(title, color = AutoScriptPalette.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("×", color = AutoScriptPalette.TextSecondary, fontSize = 22.sp, modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 8.dp))
-                }
-                HorizontalDivider(color = AutoScriptPalette.Divider)
-                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    StudioPanelDialog(title, onDismiss, showFooter = false, fullScreen = fullScreen,
+        onToggleFullScreen = { fullScreen = !fullScreen }) {
+            Column(if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     when (contract.kind) {
                         "control.if" -> {
                             CompoundConditionEditor(values["condition"].orEmpty(), conditionSeed(values["variable"].orEmpty(), values["operator"].orEmpty(), values["value"].orEmpty(), values["valueVariable"].orEmpty()), knownVariables, { valid -> invalidConditions = if (valid) invalidConditions - "main" else invalidConditions + "main" }) {
@@ -376,7 +360,6 @@ internal fun VisualVariableConditionDialog(
                     }.wrapContentSize(Alignment.Center))
                 }
             }
-        }
     }
 }
 
@@ -448,6 +431,8 @@ internal fun VisualNodeArgumentsDialog(
     knownLabels: List<String> = emptyList(),
     onResourcesUpdated: ((ProjectSnapshot) -> Unit)? = null,
     runtimeClient: com.autoscript.runtime.client.RuntimeClient? = null,
+    projectStore: com.autoscript.project.store.ProjectStore? = null,
+    applyInitialTemplateRegion: Boolean = false,
 ) {
     if (contract.kind == "vision.readresult" && imageProject != null) {
         RecognitionResultReaderDialog(imageProject, currentFlowId, imageDialogVisible, { onManageVariables?.invoke() },
@@ -469,7 +454,7 @@ internal fun VisualNodeArgumentsDialog(
     }
     if (contract.kind in visionExtensionKinds && imageProject != null) {
         VisualVisionExtensionDialog(contract, arguments, imageProject, currentFlowId, onManageVariables, onDismiss, onConfirm, confirmLabel,
-            visible = imageDialogVisible, captureSelection = imageCaptureSelection, onPickFromScreen = onPickImageFromScreen)
+            visible = imageDialogVisible, captureSelection = imageCaptureSelection, onPickFromScreen = onPickImageFromScreen,projectStore=projectStore)
         return
     }
     if (contract.kind in floatingKinds && imageProject!=null) {
@@ -522,6 +507,7 @@ internal fun VisualNodeArgumentsDialog(
             onDismiss = onDismiss, onConfirm = { _, configured -> onConfirm(configured) },
             currentFlowId = currentFlowId, onManageVariables = onManageVariables,
             runtimeClient = runtimeClient,
+            applyInitialTemplateRegion = applyInitialTemplateRegion,
         )
         return
     }
@@ -535,27 +521,14 @@ internal fun VisualNodeArgumentsDialog(
         mutableStateOf(target?.let { flowCallArgumentTexts(it, arguments.getAsJsonObject("arguments")) }.orEmpty())
     }
     var validationError by remember(contract.kind, arguments) { mutableStateOf<String?>(null) }
+    var fullScreen by remember { mutableStateOf(false) }
     val target = targets.firstOrNull { it.flowId == targetFlowId }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(.92f).widthIn(max = 520.dp),
-            color = androidx.compose.ui.graphics.Color.White,
-            shape = RoundedCornerShape(3.dp),
-            shadowElevation = 10.dp,
-        ) {
-            Column {
-                Row(
-                    Modifier.fillMaxWidth().height(40.dp).padding(start = 14.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(contract.title, color = AutoScriptPalette.Accent, fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("×", color = AutoScriptPalette.TextSecondary, fontSize = 22.sp,
-                        modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 8.dp))
-                }
-                HorizontalDivider(color = AutoScriptPalette.Divider)
+    val footerHeight = studioCompactControlHeight(40, LocalDensity.current.fontScale).dp
+    StudioPanelDialog(contract.title, onDismiss, showFooter = false, fullScreen = fullScreen,
+        onToggleFullScreen = { fullScreen = !fullScreen }) {
+            Column(if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                    Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     contract.properties.forEach { property ->
@@ -659,11 +632,11 @@ internal fun VisualNodeArgumentsDialog(
                     validationError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                 }
                 HorizontalDivider(color = AutoScriptPalette.Divider)
-                Row(Modifier.fillMaxWidth().height(40.dp)) {
+                Row(Modifier.fillMaxWidth().height(footerHeight)) {
                     Text("取消", textAlign = TextAlign.Center, color = AutoScriptPalette.TextPrimary,
                         fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize()
                             .clickable(onClick = onDismiss).wrapContentSize(Alignment.Center))
-                    Box(Modifier.size(width = 1.dp, height = 40.dp).background(AutoScriptPalette.Divider))
+                    Box(Modifier.size(width = 1.dp, height = footerHeight).background(AutoScriptPalette.Divider))
                     Text(confirmLabel, textAlign = TextAlign.Center, color = AutoScriptPalette.Accent,
                         fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize()
                             .clickable {
@@ -673,7 +646,6 @@ internal fun VisualNodeArgumentsDialog(
                             }.wrapContentSize(Alignment.Center))
                 }
             }
-        }
     }
 }
 
@@ -844,7 +816,7 @@ internal fun parseBlockArguments(
             }
         }
     }
-    if (uiReading && !inputs["resultVariable"].orEmpty().matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}"))) {
+    if (uiReading && !inputs["resultVariable"].orEmpty().matches(com.autoscript.project.store.ProjectNames.pattern)) {
         return null to "请选择接收属性值的字符变量"
     }
     if (contract.kind == "control.if") {
@@ -865,6 +837,17 @@ internal fun parseBlockArguments(
         return null to "注释内容不能为空"
     }
     if (contract.kind.startsWith("vision.") || contract.kind.startsWith("ocr.")) {
+        if(contract.kind in setOf("ocr.glyph","ocr.glyphdetails")) {
+            val extra = runCatching {com.autoscript.project.store.ProjectGlyphColor.decodeAdditional(arguments["additionalColors"]?.asString.orEmpty(),arguments["foregroundRgb"].asInt)}
+                .getOrElse {return null to "前景色组需为不同的RRGGBB:容差（0–255），总共最多16色"}
+            val area=arguments["region"]?.asJsonObject
+            val left=area?.get("left")?.asLong ?: arguments["left"]?.asLong
+            val top=area?.get("top")?.asLong ?: arguments["top"]?.asLong
+            val right=area?.get("right")?.asLong ?: arguments["right"]?.asLong
+            val bottom=area?.get("bottom")?.asLong ?: arguments["bottom"]?.asLong
+            if(left!=null && top!=null && right!=null && bottom!=null && (right-left)*(bottom-top)*(extra.size+1)>64_000_000L)
+                return null to "前景色比较超过6400万次，请缩小范围或减少颜色"
+        }
         val bounds = mapOf(
             "tolerance" to (0..255),
             "anchorTolerance" to (0..255),

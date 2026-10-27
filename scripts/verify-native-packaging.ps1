@@ -1,5 +1,6 @@
-param([string]$Sdk = '', [ValidateSet('development', 'arm64')][string]$Profile = 'development',
-    [ValidateSet('', 'base', 'opencv', 'onnx', 'full')][string]$VisionProfile = '', [switch]$EmbeddedRunner)
+param([string]$Sdk = '', [ValidateSet('development', 'arm64', 'x86_64')][string]$Profile = 'development',
+    [ValidateSet('', 'base', 'opencv', 'onnx', 'full')][string]$VisionProfile = '', [switch]$EmbeddedRunner,
+    [switch]$Distribution)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -9,21 +10,26 @@ if (-not $Sdk) {
     if (-not $sdkLine) { throw 'Set -Sdk or configure local.properties sdk.dir' }
     $Sdk = $sdkLine.Substring(8).Replace('\\', '\').Replace('\:', ':')
 }
-$expectedAbis = if ($Profile -eq 'arm64') { @('arm64-v8a') } else { @('arm64-v8a', 'x86_64') }
-$profileRoot = if ($Profile -eq 'arm64') { Join-Path $root 'build\profiles\arm64' } else { $root }
+$expectedAbis = switch ($Profile) { 'arm64' { @('arm64-v8a') } 'x86_64' { @('x86_64') } default { @('arm64-v8a', 'x86_64') } }
+$profileRoot = if ($Profile -ne 'development') { Join-Path $root "build/profiles/$Profile" } else { $root }
+if ($Distribution) {
+    if ($VisionProfile) { throw 'Distribution verification requires the default full vision profile' }
+    $profileRoot = Join-Path $root "build/profiles/distribution/$Profile"
+}
 if ($VisionProfile) { $profileRoot = Join-Path $root "build/profiles/components/$Profile/$VisionProfile" }
 $withOpenCv = $VisionProfile -in @('', 'opencv', 'full')
 $withOnnx = $VisionProfile -in @('', 'onnx', 'full')
 function Module-Build([string]$Module) { Join-Path $profileRoot ($Module + '\build') }
 function Module-Output([string]$Module) {
-    if ($Profile -eq 'arm64' -or $VisionProfile) { return Join-Path $profileRoot $Module }
+    if ($Distribution -or $Profile -ne 'development' -or $VisionProfile) { return Join-Path $profileRoot $Module }
     $physical = if ($Module.StartsWith('apps\')) { 'android\'+$Module } else { $Module.Replace('android\','android\modules\') }
     return Module-Build $physical
 }
 $readelf = Join-Path $Sdk 'ndk\30.0.14904198\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readelf.exe'
 if (-not (Test-Path -LiteralPath $readelf)) { throw 'Configured NDK readelf is required' }
-$apkPath = Join-Path (Module-Output 'apps\studio-android') 'outputs\apk\debug\studio-android-debug.apk'
-$audit = if ($Profile -eq 'arm64') { Join-Path $profileRoot 'native-packaging-audit' } else { Join-Path $root 'build\native-packaging-audit' }
+$variant = if ($Distribution) { 'release' } else { 'debug' }
+$apkPath = Join-Path (Module-Output 'apps\studio-android') "outputs/apk/$variant/studio-android-$variant.apk"
+$audit = if ($Distribution -or $Profile -ne 'development' -or $VisionProfile) { Join-Path $profileRoot 'native-packaging-audit' } else { Join-Path $root 'build\native-packaging-audit' }
 [IO.Directory]::CreateDirectory($audit) | Out-Null
 function Hash-Stream([IO.Stream]$Stream) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -72,8 +78,9 @@ try {
         }
     }
     $entry = $apk.GetEntry('assets/vision/en_PP-OCRv4_rec_mobile.onnx')
+    $candidateEntry = $apk.GetEntry('assets/vision/en_PP-OCRv5_rec_mobile.onnx')
     if (-not $withOnnx) {
-        if ($null -ne $entry) { throw 'Non-ONNX profile must not contain the OCR model' }
+        if ($null -ne $entry -or $null -ne $candidateEntry) { throw 'Non-ONNX profile must not contain OCR models' }
         $summary.Add('OCR model: omitted for selected vision profile')
     } else {
     if ($null -eq $entry) { throw 'OCR model missing' }
@@ -82,7 +89,13 @@ try {
     $input = [IO.File]::OpenRead((Join-Path $root 'android\modules\runtime-service\src\onnx\assets\vision\en_PP-OCRv4_rec_mobile.onnx'))
     try { $originalHash = Hash-Stream $input } finally { $input.Dispose() }
     if ($modelHash -ne $originalHash) { throw 'Packaged OCR model changed' }
+    if ($modelHash -ne 'e8770c967605983d1570cdf5352041dfb68fa0c21664f49f47b155abd3e0e318') { throw 'Default OCR hash invalid' }
     $summary.Add("OCR model: $($entry.Length) bytes; original SHA-256 preserved ($modelHash)")
+    if ($null -eq $candidateEntry -or $candidateEntry.Length -ne 7872351) { throw 'Fixed optional OCR candidate missing or invalid' }
+    $input = $candidateEntry.Open()
+    try { $candidateHash = Hash-Stream $input } finally { $input.Dispose() }
+    if ($candidateHash -ne 'c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8') { throw 'Optional OCR candidate hash invalid' }
+    $summary.Add("Optional English OCR: $($candidateEntry.Length) bytes; fixed SHA-256 preserved ($candidateHash)")
     }
     $template = $apk.GetEntry('assets/packaging/runner-template.apk')
     $templateMetadata = $apk.GetEntry('assets/packaging/runner-template.json')

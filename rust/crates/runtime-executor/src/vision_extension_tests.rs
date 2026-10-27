@@ -31,6 +31,79 @@ fn frame(width: u32, pixels: &[u8], format: FrameFormat) -> FrameView {
     pool.view(owner, handle, &registry).unwrap()
 }
 #[test]
+fn comparisons_require_actual_freshness_and_report_only_measured_pixels() {
+    let previous = frame(2, &[255, 0, 0, 255, 0, 0, 0, 0], FrameFormat::Rgba8888);
+    let mut current = frame(2, &[254, 0, 0, 255, 99, 99, 99, 0], FrameFormat::Rgba8888);
+    let mut spec = FrameComparison {
+        region: Region {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        },
+        tolerance: 0,
+    };
+    let result = compare_frames(&current, &previous, &spec, &mut || false).unwrap();
+    assert_eq!(result["changedPixels"], 1);
+    assert_eq!(result["ratioPermille"], 500);
+    assert_eq!(result["fresh"], 0);
+    let mut metadata = current.metadata;
+    metadata.timestamp_nanos = 2;
+    current.origin = Some(std::sync::Arc::new(automation_core::FrameOrigin::capture(
+        metadata,
+    )));
+    spec.tolerance = 1;
+    let result = compare_frames(&current, &previous, &spec, &mut || false).unwrap();
+    assert_eq!(result["fresh"], 1);
+    assert_eq!(result["changedPixels"], 0);
+    current.origin = None;
+    assert_eq!(
+        compare_frames(&current, &previous, &spec, &mut || false).unwrap()["fresh"],
+        0
+    );
+    assert!(compare_frames(&current, &previous, &spec, &mut || true).is_err());
+}
+#[test]
+fn narrow_offset_comparison_checks_cancellation_at_each_row() {
+    let source = frame(128, &[255; 128 * 4 * 4], FrameFormat::Rgba8888);
+    let spec = FrameComparison {
+        region: Region {
+            left: 10,
+            top: 0,
+            right: 11,
+            bottom: 4,
+        },
+        tolerance: 0,
+    };
+    let mut calls = 0;
+    assert!(compare_frames(&source, &source, &spec, &mut || {
+        calls += 1;
+        calls >= 2
+    })
+    .is_err());
+    assert_eq!(calls, 2);
+}
+#[test]
+fn color_filter_cancels_within_a_single_wide_row() {
+    let source = frame(1024, &[255; 4096], FrameFormat::Rgba8888);
+    let spec: Transform = serde_json::from_value(serde_json::json!({
+        "mode":"filter","width":0,"height":0,"filter":{
+            "version":1,"space":"absolute","output":"keep","invert":false,
+            "rules":[{"rgb":16_777_215,"redTolerance":0,"greenTolerance":0,
+                "blueTolerance":0,"exclude":false,"space":"absolute"}]
+        }
+    }))
+    .unwrap();
+    let mut calls = 0;
+    assert!(transform(&source, &spec, &mut || {
+        calls += 1;
+        calls >= 3
+    })
+    .is_err());
+    assert_eq!(calls, 3);
+}
+
+#[test]
 fn transforms_preserve_alpha_and_source_and_reject_bad_dimensions_or_cancel() {
     let source = frame(2, &[10, 20, 30, 40, 50, 60, 70, 80], FrameFormat::Rgba8888);
     let transform_spec = |mode: &str, width, height| Transform {
@@ -38,6 +111,9 @@ fn transforms_preserve_alpha_and_source_and_reject_bad_dimensions_or_cancel() {
         width,
         height,
         threshold: 128,
+        filter: None,
+        mask: None,
+        cleanup: None,
     };
     assert_eq!(
         transform(&source, &transform_spec("rotate90", 0, 0), &mut || false).unwrap(),
@@ -79,6 +155,9 @@ fn editor_preview_golden_vectors_match_existing_runtime_transforms() {
             width,
             height,
             threshold: 128,
+            filter: None,
+            mask: None,
+            cleanup: None,
         };
         let (_, _, pixels) = transform(&input, &spec, &mut || false).unwrap();
         assert_eq!(
@@ -106,6 +185,9 @@ fn editor_preview_golden_vectors_match_existing_runtime_transforms() {
             width: 0,
             height: 0,
             threshold: 128,
+            filter: None,
+            mask: None,
+            cleanup: None,
         },
         &mut || false,
     )
@@ -121,6 +203,9 @@ fn editor_preview_golden_vectors_match_existing_runtime_transforms() {
             width: 0,
             height: 0,
             threshold: 100,
+            filter: None,
+            mask: None,
+            cleanup: None,
         },
         &mut || false,
     )
@@ -129,6 +214,35 @@ fn editor_preview_golden_vectors_match_existing_runtime_transforms() {
         threshold_pixels,
         vec![0, 0, 0, 40, 0, 0, 0, 128, 0, 0, 0, 255, 255, 255, 255, 18]
     );
+}
+
+#[test]
+fn color_filter_uses_the_same_rgba_golden_and_rejects_unused_or_missing_rules() {
+    let input = frame(
+        3,
+        &[255, 0, 0, 128, 0, 0, 0, 255, 255, 0, 0, 0],
+        FrameFormat::Rgba8888,
+    );
+    let rules = r#"{"version":1,"space":"absolute","output":"keep","invert":false,"rules":[{"rgb":16711680,"redTolerance":0,"greenTolerance":0,"blueTolerance":0,"exclude":false,"space":"absolute"}]}"#;
+    let mut spec = Transform {
+        mode: "filter".into(),
+        width: 0,
+        height: 0,
+        threshold: 128,
+        filter: Some(pixel_vision::color_filter::Filter::parse(rules).unwrap()),
+        mask: None,
+        cleanup: None,
+    };
+    assert_eq!(
+        transform(&input, &spec, &mut || false).unwrap().2,
+        vec![255, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert!(transform(&input, &spec, &mut || true).is_err());
+    spec.mode = "gray".into();
+    assert!(transform(&input, &spec, &mut || false).is_err());
+    spec.mode = "filter".into();
+    spec.filter = None;
+    assert!(transform(&input, &spec, &mut || false).is_err());
 }
 
 #[test]

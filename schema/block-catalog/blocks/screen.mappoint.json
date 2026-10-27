@@ -1,0 +1,12 @@
+{
+ "schemaVersion":1,"kind":"screen.mappoint","nodeVersion":1,"nodeSchemaId":"https://autoscript.local/schema/node/screen.mappoint/1/screen.mappoint.schema.json",
+ "title":"还原原屏坐标","category":"screen","summary":"真实截图的处理帧坐标还原。文件图拒绝；只计算不点击，需明确读取和使用结果。",
+ "searchTerms":["原屏","映射","坐标","处理图"],"requiredCapabilities":["screen.capture"],"childBlocks":[],"migrations":[],
+ "properties":[
+   {"path":"frameVariable","label":"处理帧 · 图像变量","editor":"string","required":true,"defaultValue":""},
+   {"path":"x","label":"处理图X · 原像素","editor":"integer","required":true,"defaultValue":"0"},
+   {"path":"y","label":"处理图Y · 原像素","editor":"integer","required":true,"defaultValue":"0"},
+   {"path":"xVariable","label":"X整数变量 · 留空用固定值","editor":"string","required":true,"defaultValue":""},
+   {"path":"yVariable","label":"Y整数变量 · 留空用固定值","editor":"string","required":true,"defaultValue":""},
+   {"path":"resultVariable","label":"原屏坐标 · 字符变量","editor":"string","required":true,"defaultValue":""}]
+}

@@ -518,6 +518,8 @@ pub(crate) struct GlyphOcrArgs {
     pub frame_variable: String,
     pub dictionary_path: String,
     pub foreground_rgb: u32,
+    #[serde(default)]
+    pub additional_colors: String,
     pub tolerance: u8,
     pub similarity_permille: u16,
     pub region: RectArgs,
@@ -525,6 +527,29 @@ pub(crate) struct GlyphOcrArgs {
     pub text_variable: String,
     pub coverage_variable: String,
     pub score_variable: String,
+}
+
+impl GlyphOcrArgs {
+    fn valid_colors(&self) -> bool {
+        let Ok(colors) = glyph_ocr::parse_additional_colors(&self.additional_colors) else {
+            return false;
+        };
+        if glyph_ocr::validate_additional_colors(self.foreground_rgb, &colors).is_err() {
+            return false;
+        }
+        let Ok(width) = u64::try_from(i64::from(self.region.right) - i64::from(self.region.left))
+        else {
+            return false;
+        };
+        let Ok(height) = u64::try_from(i64::from(self.region.bottom) - i64::from(self.region.top))
+        else {
+            return false;
+        };
+        width
+            .checked_mul(height)
+            .and_then(|v| v.checked_mul(colors.len() as u64 + 1))
+            .is_some_and(|work| work <= glyph_ocr::MAX_COLOR_COMPARISONS)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -549,6 +574,8 @@ pub(crate) struct AlphanumericArgs {
     pub minimum_confidence_permille: u16,
     pub text_variable: String,
     pub score_variable: String,
+    #[serde(default)]
+    pub include_symbols: bool,
     #[serde(default = "default_auto_capture")]
     pub auto_capture: bool,
 }
@@ -975,14 +1002,7 @@ fn validate_jump_node(
             .flatten()
             .and_then(Value::as_str)
     });
-    let valid_name = name.is_some_and(|value| {
-        value.len() <= 64
-            && value
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    });
+    let valid_name = name.is_some_and(valid_variable_name);
     let inside_loop = {
         let mut parent_id = node.envelope.parent_id.as_deref();
         let mut found = false;
@@ -1361,7 +1381,7 @@ fn parse_data_ui_arguments(
             serde_json::from_value::<UiArgs>(node.envelope.args.clone())
                 .ok()
                 .filter(|v| {
-                    valid_variable_name(&v.control_id)
+                    valid_control_id(&v.control_id)
                         && v.value.len() <= 8192
                         && v.value_variable.as_deref().is_none_or(valid_variable_name)
                         && if kind == "ui.get"
@@ -1721,6 +1741,8 @@ fn valid_ui_operation(operation: &str) -> bool {
             | "get:maximum"
             | "get:step"
             | "get:config"
+            | "get:pages"
+            | "get:controls"
             | "restoreConfig"
     ) {
         return true;
@@ -2395,6 +2417,23 @@ fn validate_builtin_requirements(
     capabilities: &HashSet<&str>,
     errors: &mut Vec<CompileError>,
 ) {
+    if (matches!(
+        kind,
+        "screen.frameinfo" | "screen.captureregion" | "text.numberat"
+    ) || (kind == "ocr.alphanumeric"
+        && node
+            .envelope
+            .args
+            .get("includeSymbols")
+            .and_then(Value::as_bool)
+            == Some(true))
+        || crate::codec_utility_specs::SPECS
+            .iter()
+            .any(|(name, _)| *name == kind))
+        && !runtime_api_at_least(&manifest.runtime_api, 1, 8)
+    {
+        invalid_arguments(node, "该新增工具需要runtimeApi 1.8", errors);
+    }
     if let Some(spec) = crate::utility_operations::spec(kind) {
         require_capability(node, spec.capability, capabilities, errors);
         validate_leaf(node, errors);
@@ -2409,20 +2448,36 @@ fn validate_builtin_requirements(
             "files.frombase64",
             "files.zip",
             "files.unzip",
+            "files.modifiedtime",
+            "system.info",
+            "system.keepawake",
+            "app.openurl",
+            "network.request",
+            "input.imestatus",
+            "input.imetext",
+            "input.touchdown",
+            "input.touchmove",
+            "input.touchup",
+            "floating.image",
+            "floating.waitevent",
+            "floating.closeimage",
         ]
         .contains(&kind)
             && !runtime_api_at_least(&manifest.runtime_api, 1, 8)
         {
-            invalid_arguments(node, "文件扩展需要runtimeApi 1.8", errors);
+            invalid_arguments(node, "该工具需要runtimeApi 1.8", errors);
         }
     }
     if crate::screen_resources::KINDS.contains(&kind) {
         if kind == "screen.loadimage" {
             require_capability(node, "vision.template", capabilities, errors);
-        } else if kind != "screen.seriesframe" {
+        } else if !matches!(kind, "screen.seriesframe" | "screen.frameinfo") {
             require_capability(node, "screen.capture", capabilities, errors);
         }
-        if !matches!(kind, "screen.crop" | "screen.loadimage") {
+        if !matches!(
+            kind,
+            "screen.crop" | "screen.loadimage" | "screen.captureregion"
+        ) {
             require_capability(node, "core.task", capabilities, errors);
         }
         if kind == "screen.series" {
@@ -2434,6 +2489,14 @@ fn validate_builtin_requirements(
         }
     }
     if crate::vision_extensions::KINDS.contains(&kind) {
+        if kind == "vision.findfeatures" {
+            require_capability(node, "vision.template", capabilities, errors);
+        }
+        if matches!(kind, "vision.findfeatures" | "ocr.alphanumericv5")
+            && !runtime_api_at_least(&manifest.runtime_api, 1, 8)
+        {
+            invalid_arguments(node, "该视觉工具需要runtimeApi 1.8", errors);
+        }
         if kind == "vision.resultaction" {
             require_capability(node, "core.task", capabilities, errors);
             require_capability(node, "device.display", capabilities, errors);
@@ -2597,8 +2660,14 @@ fn validate_builtin_capabilities(
         | "input.swipe" | "input.keyevent" => {
             require_capability(node, "input.basic", capabilities, errors);
         }
-        "screen.capture" | "screen.release" => {
+        "screen.capture" => {
             require_capability(node, "screen.capture", capabilities, errors);
+        }
+        "screen.release" => {
+            // Old projects declared only screen.capture for frame release. Preserve them.
+            if !capabilities.contains("screen.capture") {
+                require_capability(node, "core.task", capabilities, errors);
+            }
         }
         "vision.getcolor"
         | "vision.findcolor"
@@ -2650,6 +2719,13 @@ fn validate_builtin_capabilities(
 }
 
 fn validate_builtin_leaf(kind: &str, node: &flow_ir::FlowNode, errors: &mut Vec<CompileError>) {
+    if ((kind == "vision.findimage" && node.envelope.node_version >= 3)
+        || (kind == "vision.findgray" && node.envelope.node_version >= 2))
+        && !node.envelope.child_blocks.is_empty()
+    {
+        validate_child_blocks(node, &["success", "failure"], errors);
+        return;
+    }
     if matches!(
         kind,
         "task.sleep"
@@ -3023,6 +3099,7 @@ fn parse_ocr_and_gray_node(
             .ok()
             .filter(|value| {
                 value.foreground_rgb <= 0xFF_FFFF
+                    && value.valid_colors()
                     && value.similarity_permille <= 1000
                     && valid_rect(&value.region)
                     && has_resource(
@@ -3242,13 +3319,16 @@ fn is_scalar(value: &Value) -> bool {
 }
 
 pub(crate) fn valid_variable_name(value: &str) -> bool {
+    flow_ir::valid_user_name(value)
+}
+
+fn valid_control_id(value: &str) -> bool {
     let mut bytes = value.bytes();
-    let Some(first) = bytes.next() else {
-        return false;
-    };
     value.len() <= 64
-        && (first.is_ascii_alphabetic() || first == b'_')
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        && bytes
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn validate_leaf(node: &flow_ir::FlowNode, errors: &mut Vec<CompileError>) {
@@ -3379,6 +3459,17 @@ fn validate_ui_command_requirements(
     capabilities: &HashSet<&str>,
     errors: &mut Vec<CompileError>,
 ) {
+    if kind == "ui.command"
+        && node
+            .envelope
+            .args
+            .get("operation")
+            .and_then(Value::as_str)
+            .is_some_and(|op| matches!(op, "get:pages" | "get:controls"))
+        && !runtime_api_at_least(&manifest.runtime_api, 1, 8)
+    {
+        invalid_arguments(node, "界面枚举需要runtimeApi 1.8", errors);
+    }
     if kind.starts_with("ui.") && !matches!(kind, "ui.confirm" | "ui.dialog" | "ui.dialogclose") {
         require_capability(node, "ui.control", capabilities, errors);
         let id = node.envelope.args.get("controlId").and_then(Value::as_str);
@@ -3395,6 +3486,8 @@ fn validate_ui_command_requirements(
                         | "minimize"
                         | "page"
                         | "get:config"
+                        | "get:pages"
+                        | "get:controls"
                         | "restoreConfig"
                         | "windowPosition"
                         | "bubblePosition"

@@ -137,14 +137,6 @@ class VisualImageRecognitionDialogTest {
     }
 
     @Test
-    fun reverseDragClampsToOriginalScreenshotAndPreservesHalfOpenBounds() {
-        assertEquals(listOf("10", "20", "101", "201"), imageRecognitionDragRegion(110.2f, 220.2f, 10.7f, 20.7f, 720, 1280))
-        assertEquals(listOf("0", "0", "720", "1280"), imageRecognitionDragRegion(-10f, -10f, 800f, 1500f, 720, 1280))
-        assertEquals(listOf("719", "1279", "1", "1"), imageRecognitionDragRegion(900f, 1400f, 900f, 1400f, 720, 1280))
-        assertNull(imageRecognitionDragRegion(Float.NaN, 0f, 10f, 10f, 720, 1280))
-    }
-
-    @Test
     fun emptyResourceProjectCanOpenDraftButCannotCommitUndeclaredTemplate() {
         val snapshot = ProjectSnapshot(directory = File("."), manifest = ProjectManifestDocument(
             projectId = "test", name = "test", sourceMode = ProjectSourceMode.VISUAL,
@@ -208,8 +200,9 @@ class VisualImageRecognitionDialogTest {
     fun functionInsertionHasNoImplicitCaptureAndOneUndoRestoresSource() {
         val contract = requireNotNull(BlockCatalog.find("vision.findimage"))
         val editor = VisualEditorState.create("", "root")
-        val request = RecognitionInsertRequest(contract, arguments())
-        assertTrue(insertConfiguredRecognition(editor, request, arguments()))
+        val request = RecognitionInsertRequest(contract, arguments(), editorInsertionContext("project", "main", editor))
+        assertNull(applyConfiguredEditorInsertion(request.context, "project", "main", editor, contract, arguments(),
+            request.position, request.childSlot, contract.requiredCapabilities.toSet(), true))
         assertEquals(listOf("vision.findimage"), editor.rows.map { it.kind })
         editor.undo()
         assertEquals("", editor.currentSource)

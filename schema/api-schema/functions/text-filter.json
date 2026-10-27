@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14227,
+  "name": "Text.filter",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按 Unicode 字符保留/去掉 ASCII 数字、ASCII 字母、ASCII 字母数字、汉字（Unicode Script Han）或 Unicode 空白。其他字符不改写，输入输出最多 64KiB。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": true,
+      "summary": "过滤方式：keepDigits=仅留数字、removeDigits=去掉数字、keepLetters=仅留英文字母、removeLetters=去掉英文字母、keepAlnum=仅留英文和数字、removeAlnum=去掉英文和数字、keepHan=仅留汉字、removeHan=去掉汉字、keepWhitespace=仅留空白、removeWhitespace=去掉空白"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "按 Unicode 字符保留/去掉 ASCII 数字、ASCII 字母、ASCII 字母数字、汉字（Unicode Script Han）或 Unicode 空白。其他字符不改写，输入输出最多 64KiB。"
+  },
+  "legacyAliases": []
+}

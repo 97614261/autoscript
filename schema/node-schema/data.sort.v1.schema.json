@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/data.sort/1/data.sort.schema.json",
+  "title": "data.sort node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "data.sort"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "json",
+        "mode",
+        "resultVariable"
+      ],
+      "properties": {
+        "json": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 65536
+        },
+        "jsonVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 16,
+          "enum": [
+            "numberAsc",
+            "numberDesc",
+            "textAsc",
+            "textDesc"
+          ]
+        },
+        "modeVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

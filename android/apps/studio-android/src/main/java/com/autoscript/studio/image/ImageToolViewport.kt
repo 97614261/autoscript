@@ -2,6 +2,7 @@ package com.autoscript.studio
 
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
@@ -235,24 +236,35 @@ internal fun menuPlacement(
     return left to top
 }
 
-/** 逐像素微调选框边界，对应参考 `handleHandleClick()` 的 `−/−/+/+`。 */
-internal enum class BoxEdge { LEFT, TOP, RIGHT, BOTTOM }
+/** Resize handles and the interior move target share one gesture. */
+internal enum class BoxEdge { LEFT, TOP, RIGHT, BOTTOM, MOVE }
 
-/**
- * 参考 `handleHandleClick()`：左/上边点一下向内收 1px，右/下边点一下向外扩 1px，
- * 且左右两侧都保证不小于 [minSize]、不超出图片边界。
- */
-internal fun nudgeBox(
+internal fun selectionHandleRadius(box: ImageToolCodeGen.Roi, viewport: ImageToolViewport): Float =
+    min(9f, viewport.toViewLength(min(box.width, box.height)) / 3f)
+
+internal fun selectionDragTarget(
     box: ImageToolCodeGen.Roi,
-    edge: BoxEdge,
-    imageWidth: Int,
-    imageHeight: Int,
-    minSize: Int = 1,
-): ImageToolCodeGen.Roi = when (edge) {
-    BoxEdge.LEFT -> if (box.width > minSize) box.copy(left = box.left + 1) else box
-    BoxEdge.TOP -> if (box.height > minSize) box.copy(top = box.top + 1) else box
-    BoxEdge.RIGHT -> box.copy(right = min(imageWidth, box.right + 1))
-    BoxEdge.BOTTOM -> box.copy(bottom = min(imageHeight, box.bottom + 1))
+    viewport: ImageToolViewport,
+    viewX: Float,
+    viewY: Float,
+): BoxEdge? {
+    if (!viewX.isFinite() || !viewY.isFinite()) return null
+    val (left, top) = viewport.toView(box.left, box.top)
+    val width = viewport.toViewLength(box.width)
+    val height = viewport.toViewLength(box.height)
+    val handles = listOf(
+        BoxEdge.LEFT to (left to top + height / 2f),
+        BoxEdge.TOP to (left + width / 2f to top),
+        BoxEdge.RIGHT to (left + width to top + height / 2f),
+        BoxEdge.BOTTOM to (left + width / 2f to top + height),
+    )
+    // No minimum radius: it would cover the entire interior of a thin/downscaled box.
+    val radius = min(48f, min(width, height) / 3f)
+    val nearest = handles.minByOrNull { (_, point) -> hypot(viewX - point.first, viewY - point.second) }
+    if (nearest != null && hypot(viewX - nearest.second.first, viewY - nearest.second.second) <= radius) {
+        return nearest.first
+    }
+    return BoxEdge.MOVE.takeIf { viewX >= left && viewX < left + width && viewY >= top && viewY < top + height }
 }
 
 /**
@@ -269,6 +281,12 @@ internal fun resizeBox(
     imageHeight: Int,
     minSize: Int = 1,
 ): ImageToolCodeGen.Roi {
+    require(scale.isFinite() && scale > 0 && deltaViewX.isFinite() && deltaViewY.isFinite())
+    if (edge == BoxEdge.MOVE) {
+        val dx = (deltaViewX / scale).roundToInt().coerceIn(-box.left, imageWidth - box.right)
+        val dy = (deltaViewY / scale).roundToInt().coerceIn(-box.top, imageHeight - box.bottom)
+        return ImageToolCodeGen.Roi(box.left + dx, box.top + dy, box.right + dx, box.bottom + dy)
+    }
     val dx = (deltaViewX / scale).roundToInt()
     val dy = (deltaViewY / scale).roundToInt()
     var left = box.left
@@ -280,6 +298,7 @@ internal fun resizeBox(
         BoxEdge.RIGHT -> right = (right + dx).coerceIn(left + minSize, imageWidth)
         BoxEdge.TOP -> top = (top + dy).coerceIn(0, bottom - minSize)
         BoxEdge.BOTTOM -> bottom = (bottom + dy).coerceIn(top + minSize, imageHeight)
+        BoxEdge.MOVE -> Unit
     }
     return ImageToolCodeGen.Roi(left, top, right, bottom)
 }

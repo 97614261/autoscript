@@ -3,6 +3,9 @@ package com.autoscript.studio
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -34,14 +37,18 @@ import androidx.compose.ui.unit.sp
 import com.autoscript.runtime.api.RuntimeLogFiles
 import com.autoscript.runtime.api.RuntimeLogEventCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private data class LogLoadedSnapshot(val content: String, val statistics: VisionRunStatistics.Report,
+private data class LogLoadedSnapshot(val events: String, val statistics: VisionRunStatistics.Report,
     val run: RuntimeLogFiles.Run, val locations: List<RuntimeLogLocation>)
+private data class LogConsoleFilter(val lines: List<String>, val query: String, val failuresOnly: Boolean,
+    val channel: RuntimeConsoleChannel)
 
 @Composable
 internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
@@ -53,6 +60,11 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(0) }
+    val overlay = LocalEditorOverlay.current
+    DisposableEffect(overlay, tab) {
+        overlay?.realtimeLogRequested = tab == 0
+        onDispose { overlay?.realtimeLogRequested = false }
+    }
     var fullScreen by rememberSaveable { mutableStateOf(false) }
     var recordingSettings by remember { mutableStateOf(false) }
     if (recordingSettings && debugSettings != null && onSaveDebugSettings != null) {
@@ -65,7 +77,8 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
     var runs by remember { mutableStateOf<List<RuntimeLogFiles.Run>>(emptyList()) }
     var selected by remember { mutableStateOf<String?>(null) }
     var channel by remember { mutableStateOf("script.log") }
-    var text by remember { mutableStateOf("") }
+    var historyLines by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loadedEvents by remember { mutableStateOf<LogLoadedSnapshot?>(null) }
     var locations by remember { mutableStateOf<List<RuntimeLogLocation>>(emptyList()) }
     var locationMessage by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf(VisionRunStatistics.Report(emptyList(), 0, 0, 0)) }
@@ -94,31 +107,46 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
             }
         }
     }
-    LaunchedEffect(revision, projectId) {
+    val historyVisible = tab != 0
+    LaunchedEffect(revision, projectId, historyVisible) {
+        if (!historyVisible) return@LaunchedEffect
         val result = runtimeLogAttempt {
             withContext(Dispatchers.IO) { RuntimeLogFiles.list(context.filesDir).filter { projectId == null || it.metadata["projectId"] == projectId } }
         }
         errors = errors.completed(RuntimeLogOperation.HISTORY, result)
         result.onSuccess { loaded -> runs = loaded; if (selected !in loaded.map { it.id }) selected = loaded.firstOrNull()?.id }
     }
-    LaunchedEffect(selected, channel, revision) {
-        text = ""; locations = emptyList(); locationMessage = null
+    LaunchedEffect(selected, revision, historyVisible) {
+        if (!historyVisible) return@LaunchedEffect
+        loadedEvents = null; historyLines = emptyList(); locations = emptyList(); locationMessage = null
         report = VisionRunStatistics.Report(emptyList(), 0, 0, 0)
         errors = errors.copy(snapshot = null)
         selected?.let { id ->
             val result = runtimeLogAttempt { withContext(Dispatchers.IO) {
-                val snapshot = RuntimeLogFiles.snapshot(context.filesDir, id, channel)
-                val content = if (channel == "events.jsonl") RuntimeLogEventCodec.preview(snapshot.events) else snapshot.text
-                LogLoadedSnapshot(content, VisionRunStatistics.parse(snapshot.events), snapshot.run, RuntimeLogLocation.failures(snapshot.events))
+                val snapshot = RuntimeLogFiles.snapshot(context.filesDir, id, "events.jsonl")
+                LogLoadedSnapshot(snapshot.events, VisionRunStatistics.parse(snapshot.events), snapshot.run, RuntimeLogLocation.failures(snapshot.events))
             } }
             errors = errors.completed(RuntimeLogOperation.SNAPSHOT, result)
             result.onSuccess { loaded ->
-                text = loaded.content; report = loaded.statistics
+                loadedEvents = loaded; report = loaded.statistics
                 val run = loaded.run
                 locations = loaded.locations
                 runs = runs.map { if (it.id == run.id) run else it }
             }
         }
+    }
+    val historyChannel = channel.takeIf { tab == 1 }
+    LaunchedEffect(selected, loadedEvents, historyChannel, revision, historyVisible) {
+        historyLines = emptyList()
+        val loaded = loadedEvents?.takeIf { historyVisible && it.run.id == selected } ?: return@LaunchedEffect
+        val requested = historyChannel ?: return@LaunchedEffect
+        val result = runtimeLogAttempt { withContext(Dispatchers.IO) {
+            val content = if (requested == "events.jsonl") RuntimeLogEventCodec.preview(loaded.events)
+                else RuntimeLogFiles.read(context.filesDir, loaded.run.id, requested)
+            content.lineSequence().filter(String::isNotBlank).toList()
+        } }
+        errors = errors.completed(RuntimeLogOperation.SNAPSHOT, result)
+        result.onSuccess { historyLines = it }
     }
     val active = runs.firstOrNull { it.id == selected }
     val locate: ((RuntimeLogLocation) -> Unit)? = if (onLocate == null) null else { target ->
@@ -151,7 +179,8 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                             cleanupMessage = "已删除 ${removed.deleted.size} 条 · 保留 ${removed.protected.size} 条 · 失败 ${removed.failed.size} 条"
                             runs = runs.filter { it.id !in removed.deleted }
                             if (selected in removed.deleted) {
-                                selected = null; text = ""; report = VisionRunStatistics.Report(emptyList(), 0, 0, 0)
+                                selected = null; loadedEvents = null; historyLines = emptyList()
+                                report = VisionRunStatistics.Report(emptyList(), 0, 0, 0)
                             }
                             comparing = false
                         }.onFailure { cleanupMessage = "清理失败，请刷新后重试；未操作项目或导出文件。" }
@@ -164,15 +193,18 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
     }
     StudioPanelDialog(title = "运行日志", onDismiss = onDismiss, fullScreen = fullScreen, showFooter = false,
         compactHeader = true, onToggleFullScreen = { fullScreen = !fullScreen }) {
-        Column(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else
+        BoxWithConstraints(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else
             Modifier.height(runtimeLogBodyHeightDp(LocalConfiguration.current.screenHeightDp).dp)).padding(horizontal = if (fullScreen) 8.dp else 10.dp)) {
-            Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+            val toolbarBudget = maxHeight * .25f
+            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 30.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                 listOf("实时", "历史", "识图统计").forEachIndexed { index, label ->
-                    LogAction(label, { tab = index }, Modifier.weight(1f), selected = tab == index)
+                    LogAction(label, { tab = index }, selected = tab == index)
                 }
-                LogAction("刷新", { errors = RuntimeLogLoadErrors(); revision++ }, Modifier.width(42.dp))
+                LogAction("刷新", { errors = RuntimeLogLoadErrors(); revision++ })
                 if (tab != 0) Box {
-                    LogAction(if (cleaning) "清理中" else "清理", { cleanupMenu = true }, Modifier.width(42.dp),
+                    LogAction(if (cleaning) "清理中" else "清理", { cleanupMenu = true },
                         enabled = projectId != null && runs.isNotEmpty() && !cleaning && !exporting && exportRun == null)
                     DropdownMenu(cleanupMenu, { cleanupMenu = false }, containerColor = Color.White) {
                         DropdownMenuItem(text = { LogText("删除所选记录") }, enabled = active != null,
@@ -183,28 +215,29 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                 }
             }
             if (tab == 2 || debugSettings != null && onSaveDebugSettings != null)
-                Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 28.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                     if (debugSettings != null && onSaveDebugSettings != null)
-                        LogAction("记录设置", { recordingSettings = true }, Modifier.width(62.dp), enabled = settingsEditable)
-                    Spacer(Modifier.weight(1f))
+                        LogAction("记录设置", { recordingSettings = true }, enabled = settingsEditable)
                     if (tab == 2) {
-                        LogAction("对比", { comparing = true }, Modifier.width(42.dp), enabled = active != null && runs.size > 1)
+                        LogAction("对比", { comparing = true }, enabled = active != null && runs.size > 1)
                         LogAction(if (screenshotOverview) "详情" else "截图总览", {
                             screenshotOverview = !screenshotOverview
                             if (screenshotOverview) fullScreen = true
-                        }, Modifier.width(62.dp), selected = screenshotOverview)
-                        if (screenshotOverview) LogAction(if (exporting) "导出中" else "导出", startExport, Modifier.width(40.dp),
+                        }, selected = screenshotOverview)
+                        if (screenshotOverview) LogAction(if (exporting) "导出中" else "导出", startExport,
                             enabled = active != null && !exporting && exportRun == null)
                     }
                 }
             cleanupMessage?.let { LogText(it, color = Color.Gray, size = 10, maxLines = 2) }
             locationMessage?.let { LogText(it, color = Color.Red, size = 10, maxLines = 2) }
             errors.visible(historyVisible = tab != 0)?.let { LogText(it, color = Color.Red, maxLines = 2) }
+            }
             if (tab == 0) Box(Modifier.weight(1f)) { LogConsolePanel(currentLines) }
             else {
                 if (runs.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     LogText("暂无文件日志，运行一次后刷新", color = Color.Gray)
                 } else {
+                    Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
                     LogRunSelector(runs, selected, onSelect = { selected = it })
                     active?.let { run ->
                         LogText(RuntimeLogHealth.runSummary(run.metadata), size = 9, color = Color.Gray,
@@ -234,12 +267,15 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                                 }
                             }
                         }
-                        Row(Modifier.fillMaxWidth().height(30.dp)) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 30.dp).horizontalScroll(rememberScrollState())) {
                             listOf("script.log" to "脚本", "diagnostic.log" to "状态", "events.jsonl" to "追踪/指标").forEach { (file, label) ->
-                                LogAction(label, { channel = file }, Modifier.weight(1f), selected = channel == file)
+                                LogAction(label, { channel = file }, selected = channel == file)
                             }
                         }
-                        Box(Modifier.weight(1f)) { LogConsolePanel(text.lineSequence().filter(String::isNotBlank).toList(), history = true) }
+                    }
+                    }
+                    if (tab == 1) {
+                        Box(Modifier.weight(1f)) { LogConsolePanel(historyLines, history = true) }
                     } else {
                         LogText(if (screenshotOverview) RuntimeLogHealth.visionSummary(report, active?.metadata.orEmpty()) else
                             "耗时 ms · 工作量按行单位 · 同条件/结果分组", size = 10, color = Color.Gray, modifier = Modifier.padding(vertical = 1.dp))
@@ -257,11 +293,12 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                             }
                         }
                     }
-                    if (!(tab == 2 && screenshotOverview)) Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!(tab == 2 && screenshotOverview)) Row(Modifier.fillMaxWidth().heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically) {
                         LogText("含脚本输出，请注意隐私", color = Color.Gray, size = 10, modifier = Modifier.weight(1f), maxLines = 1)
                         LogAction(if (exporting) "导出中…" else "导出日志", enabled = active != null && !exporting && exportRun == null, onClick = startExport)
                     }
                 }
+            }
             }
         }
     }
@@ -435,22 +472,39 @@ private fun LogConsolePanel(lines: List<String>, history: Boolean = false) {
     var detail by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
     // SnapshotStateList is mutable: using its identity as a remember key freezes the first result.
-    val snapshot = lines.toList()
-    val visible = remember(snapshot, query, failuresOnly, channel, history) {
-        filterRuntimeConsole(snapshot, query, failuresOnly, if (history) RuntimeConsoleChannel.ALL else channel)
+    val snapshot = if (history) lines else lines.toList()
+    val filter = remember(snapshot, query, failuresOnly, channel, history) {
+        LogConsoleFilter(snapshot, query, failuresOnly, if (history) RuntimeConsoleChannel.ALL else channel)
     }
+    val filtered = if (!history) remember(filter) {
+        filterRuntimeConsole(filter.lines, filter.query, filter.failuresOnly, filter.channel)
+    } else {
+        val result by produceState<Pair<LogConsoleFilter, List<String>>?>(null, filter) {
+            val visible = withContext(Dispatchers.Default) {
+                val work = currentCoroutineContext()
+                filterRuntimeConsole(filter.lines, filter.query, filter.failuresOnly, filter.channel) { work.ensureActive() }
+            }
+            value = filter to visible
+        }
+        result?.takeIf { it.first === filter }?.second
+    }
+    val visible = filtered.orEmpty()
     val listState = rememberLazyListState()
     LaunchedEffect(visible.size, visible.lastOrNull(), follow) {
         if (follow && visible.isNotEmpty()) listState.animateScrollToItem(visible.lastIndex)
     }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val toolbarBudget = maxHeight * .5f
     Column(Modifier.fillMaxSize()) {
-        if (!history) Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
+        if (!history) Row(Modifier.fillMaxWidth().heightIn(min = 28.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             RuntimeConsoleChannel.entries.forEach { option ->
-                LogAction(option.label, { channel = option }, Modifier.weight(1f), selected = channel == option)
+                LogAction(option.label, { channel = option }, selected = channel == option)
             }
         }
-        Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), verticalAlignment = Alignment.CenterVertically) {
             LogText("${visible.size} 项", Modifier.weight(1f), size = 10, color = Color.Gray)
+            Row(Modifier.weight(3f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             LogAction("仅错误", { failuresOnly = !failuresOnly }, selected = failuresOnly)
             LogAction(if (follow) "跟随 ✓" else "跟随", { follow = !follow }, selected = follow)
             LogAction(if (copying) "复制中" else "复制", enabled = visible.isNotEmpty() && !copying, onClick = {
@@ -465,19 +519,21 @@ private fun LogConsolePanel(lines: List<String>, history: Boolean = false) {
                     } finally { copying = false }
                 }
             })
+            }
         }
         copyMessage?.let { LogText(it, size = 10, maxLines = 2, color = if (it.startsWith("已")) LogBlue else Color.Red) }
         BasicTextField(query, { query = it.take(128) }, singleLine = true,
             textStyle = TextStyle(fontSize = 11.sp, lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
-            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).height(30.dp)
-                .border(1.dp, LogBorder, RoundedCornerShape(5.dp)).padding(horizontal = 7.dp),
-            decorationBox = { field -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).heightIn(min = 30.dp)
+                .border(1.dp, LogBorder, RoundedCornerShape(5.dp)).padding(horizontal = 7.dp, vertical = 6.dp),
+            decorationBox = { field -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                 if (query.isEmpty()) LogText(if (history) "筛选本次记录" else "筛选实时日志（最近 200 项）", color = Color.Gray, maxLines = 1)
                 field()
             } })
+        }
         if (visible.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-                LogText(if (lines.isEmpty()) "暂无运行记录\n运行提示在独立提示窗显示" else "没有符合筛选的日志", color = Color.Gray, align = TextAlign.Center)
+                LogText(if (filtered == null) "正在筛选…" else if (lines.isEmpty()) "暂无运行记录\n运行提示在独立提示窗显示" else "没有符合筛选的日志", color = Color.Gray, align = TextAlign.Center)
             }
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState) {
@@ -491,6 +547,7 @@ private fun LogConsolePanel(lines: List<String>, history: Boolean = false) {
                 }
             }
         }
+    }
     }
     detail?.let { selectedLine -> LogLineDetailDialog(selectedLine, onDismiss = { detail = null }) }
 }
@@ -513,6 +570,10 @@ private fun LogLineDetailDialog(line: String, onDismiss: () -> Unit) {
                 })
             }
             status?.let { LogText(it, size = 10, maxLines = 2) }
+            remember(line) { editorProblemAdvice(line) }?.let { advice ->
+                LogText(advice.summary, size = 12, color = Color(0xFFC33F46), modifier = Modifier.padding(vertical = 4.dp))
+                LogText(advice.suggestion, size = 11, color = Color.Gray, modifier = Modifier.padding(bottom = 6.dp))
+            }
             SelectionContainer(Modifier.weight(1f, fill = false).fillMaxWidth()) {
                 androidx.compose.foundation.lazy.LazyColumn {
                     item { LogText(line, Modifier.fillMaxWidth().padding(vertical = 4.dp), size = 11) }
@@ -532,7 +593,7 @@ private fun logRunLabel(run: RuntimeLogFiles.Run): String {
 private fun LogRunSelector(runs: List<RuntimeLogFiles.Run>, selected: String?, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val index = runs.indexOfFirst { it.id == selected }
-    Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f)) {
             LogAction(runs.getOrNull(index)?.let(::logRunLabel) ?: "选择运行", { expanded = true }, Modifier.fillMaxWidth(), selected = true, align = TextAlign.Start)
             DropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 240.dp), containerColor = Color.White) {
@@ -562,7 +623,7 @@ private fun LogText(text: String, modifier: Modifier = Modifier, color: Color = 
 private fun LogAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false,
     enabled: Boolean = true, align: TextAlign = TextAlign.Center) {
     Box(modifier.heightIn(min = 28.dp).background(if (selected) Color(0xFFF0F4FF) else Color.Transparent, RoundedCornerShape(5.dp))
-        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 6.dp),
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 6.dp, vertical = 4.dp),
         contentAlignment = if (align == TextAlign.Start) Alignment.CenterStart else Alignment.Center) {
         LogText(label, color = if (!enabled) Color.LightGray else if (selected) LogBlue else Color.Gray,
             maxLines = 1, align = align, bold = selected)

@@ -9,6 +9,8 @@ val compilerSdk = file(requireNotNull(compilerProperties.getProperty("sdk.dir"))
 val compilerLlvm = compilerSdk.resolve("ndk/30.0.14904198/toolchains/llvm/prebuilt/windows-x86_64/bin")
 val compilerLibraries = layout.buildDirectory.dir("generated/jniLibs")
 val compilerUnstripped = layout.buildDirectory.dir("generated/unstripped")
+val nativeProfile = rootProject.extra["autoscript.nativeProfile"] as String
+val nativeOutputProfile = rootProject.extra["autoscript.nativeOutputProfile"] as String
 val compilerTargets = listOf(
     Triple("aarch64-linux-android", "arm64-v8a", "aarch64-linux-android24-clang.cmd"),
     Triple("x86_64-linux-android", "x86_64", "x86_64-linux-android24-clang.cmd"),
@@ -16,14 +18,14 @@ val compilerTargets = listOf(
 val selectedCompilerTargets = compilerTargets.filter { it.second in (rootProject.extra["autoscript.abis"] as List<*>) }
 val compilerSyncTasks = selectedCompilerTargets.mapIndexed { index, (target, abi, clang) ->
     val suffix = abi.replace("-", "_").replaceFirstChar(Char::uppercase)
-    val library = rootProject.layout.projectDirectory.file("../rust/target/$target/debug/libstudio_compiler_jni.so")
+    val library = rootProject.layout.projectDirectory.file("../rust/target/$target/$nativeOutputProfile/libstudio_compiler_jni.so")
     val compileTask = tasks.register<Exec>("buildCompiler$suffix") {
         if (index > 0) {
             val previous = selectedCompilerTargets[index - 1].second.replace("-", "_").replaceFirstChar(Char::uppercase)
             dependsOn("buildCompiler$previous")
         }
         workingDir(rootProject.file("../rust"))
-        commandLine("cargo", "build", "--offline", "-p", "studio-compiler-jni", "--target", target)
+        commandLine("cargo", "build", "--offline", "--profile", nativeProfile, "-p", "studio-compiler-jni", "--target", target)
         environment("CARGO_TARGET_${target.uppercase().replace('-', '_')}_LINKER", compilerLlvm.resolve(clang).absolutePath)
         environment("CC_${target.replace('-', '_')}", compilerLlvm.resolve(clang).absolutePath)
         environment("AR_${target.replace('-', '_')}", compilerLlvm.resolve("llvm-ar.exe").absolutePath)
@@ -35,6 +37,7 @@ val compilerSyncTasks = selectedCompilerTargets.mapIndexed { index, (target, abi
             inputs.files(rootProject.fileTree(module) { include("src/**/*.rs", "Cargo.toml") })
         }
         inputs.files(rootProject.file("../rust/Cargo.toml"), rootProject.file("../rust/Cargo.lock"))
+        inputs.property("nativeProfile", nativeProfile)
         outputs.file(library)
     }
     val copyTask = tasks.register<Copy>("syncCompiler$suffix") {
@@ -65,4 +68,5 @@ tasks.named("preBuild").configure { dependsOn(compilerSyncTasks) }
 
 dependencies {
     implementation(libs.gson)
+    implementation(project(":android:script-ui"))
 }

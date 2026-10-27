@@ -103,7 +103,20 @@ internal fun VariableCheckDialog(
     runtimeClient: RuntimeClient,
     onDismiss: () -> Unit,
 ) {
-    val warnings = remember(editor.currentSource, snapshot, flowId) { visualVariableWarnings(editor, snapshot, flowId) }
+    val input = editor.variableCheckInput()
+    val analysisKey = Triple(input, snapshot, flowId)
+    val analysis by produceState<Pair<Triple<VisualVariableCheckInput, ProjectSnapshot, String>, Pair<List<VisualVariableCheckNode>, List<String>>>?>(null, analysisKey) {
+        value = null
+        val result = withContext(Dispatchers.Default) {
+            val context = currentCoroutineContext()
+            val nodes = variableCheckNodes(input)
+            nodes to visualVariableWarnings(nodes, snapshot, flowId) { context.ensureActive() }
+        }
+        value = analysisKey to result
+    }
+    val currentAnalysis = analysis?.takeIf { it.first == analysisKey }?.second
+    val warnings = currentAnalysis?.second.orEmpty()
+    val rowsById = remember(currentAnalysis) { currentAnalysis?.first.orEmpty().associate { it.row.nodeId to it.row } }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -119,10 +132,11 @@ internal fun VariableCheckDialog(
             else -> true
         } }
         Text("维护检查：${filtered.size} / ${warnings.size} 项", color = AutoScriptPalette.Accent, fontSize = 12.sp)
-        if (warnings.isEmpty()) Text("未发现变量维护警告。")
+        if (currentAnalysis == null) Text("检查中…", fontSize = 11.sp)
+        else if (warnings.isEmpty()) Text("未发现变量维护警告。")
         if (warnings.isNotEmpty() && filtered.isEmpty()) Text("没有符合筛选的结果。", fontSize = 11.sp)
         filtered.forEach { warning ->
-            val node = editor.rows.firstOrNull { warning.startsWith(it.nodeId + " · ") }
+            val node = rowsById[warning.substringBefore(" · ")]
             Surface(color = AutoScriptPalette.PageBackground, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(node?.let { "第 ${it.sourceLine} 行 · ${BlockCatalog.find(it.kind)?.title ?: it.kind}" } ?: "变量维护提示", fontSize = 10.sp, color = AutoScriptPalette.Accent)

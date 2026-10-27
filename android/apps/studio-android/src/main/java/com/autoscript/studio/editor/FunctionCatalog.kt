@@ -92,6 +92,10 @@ internal object FunctionCatalog {
                             if (output.isEmpty()) block.summary else "写入变量：$output"
                         },
                         notes = buildList {
+                            if (block.kind in textRuleKinds) {
+                                add(textRegexResultHint(block.kind))
+                                add("任意文本或文本变量均可作为来源。支持常用规则、自定义正则或变量规则；正则按原样填写，不需额外转义。不支持环视和反向引用；提取返回完整匹配，不单独返回捕获组。")
+                            }
                             if (block.childBlocks.isNotEmpty()) add("包含子积木区：${block.childBlocks.joinToString(" / ") { libraryChildBlockLabel(it) }}。加入后可在子区继续编排。")
                             if (block.kind == "control.cycle") add("每轮让步1～1000毫秒，默认1毫秒；无次数上限，但停止、会话超时和资源保护仍生效。循环指标和continue作用于最近循环；限时在让步后再次检查。")
                             if (block.kind == "control.repeat") add("序号输出从1开始，耗时输出为毫秒。JSON列表遍历可用集合长度写入整数变量，再以该变量限次循环；序号输出转text(index)后作为读取JSON子结构的索引。集合仍为字符变量，不创建隐藏变量，也不自动执行。")

@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.autoscript.core.designsystem.AutoScriptPalette
 
 internal enum class EditorEditTool(val title: String) {
-    PARAMETERS("参数"), ALIAS("别名"), RANDOMIZATION("随机"), COPY("复制"), PASTE("粘贴"),
+    PARAMETERS("参数"), BATCH_PARAMETERS("批量参数"), ALIAS("别名"), RANDOMIZATION("随机"), COPY("复制"), PASTE("粘贴"),
     UNDO("撤销"), REDO("重做"), CUT("剪切"), DELETE("删除"),
     ANNOTATE("添加说明"), TOGGLE_DISABLED("注释执行"), REUSE("以此为模板"),
     MOVE_UP("上移"), MOVE_DOWN("下移"), OUTDENT("减少缩进"), INDENT("增加缩进"),
@@ -39,7 +39,7 @@ internal data class EditorEditButton(
 )
 
 internal fun editorEditColumns(widthDp: Float, fontScale: Float): Int =
-    ((widthDp + 3f) / (60f * fontScale.coerceIn(1f, 2f) + 3f)).toInt().coerceIn(2, 6)
+    ((widthDp + 3f) / (60f * fontScale.coerceIn(1f, 2f) + 3f)).toInt().coerceIn(2, 9)
 
 @Composable
 internal fun EditorEditToolbar(buttons: List<EditorEditButton>, modifier: Modifier = Modifier) {
@@ -59,9 +59,9 @@ internal fun EditorEditToolbar(buttons: List<EditorEditButton>, modifier: Modifi
 }
 
 @Composable
-internal fun EditorEditSelectionButton(title: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun EditorEditSelectionButton(title: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
-    Box(Modifier.clip(shape).background(AutoScriptPalette.AccentSoft)
+    Box(modifier.clip(shape).background(AutoScriptPalette.AccentSoft)
         .clickable(enabled = enabled, onClick = onClick).widthIn(min = 36.dp).heightIn(min = 24.dp)
         .padding(horizontal = 6.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
         Text(title, color = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary.copy(alpha = .5f),

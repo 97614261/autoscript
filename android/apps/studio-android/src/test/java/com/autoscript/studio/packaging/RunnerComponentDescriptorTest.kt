@@ -9,9 +9,13 @@ class RunnerComponentDescriptorTest {
     private val base = """{"formatVersion":1,"kind":"runner-template","componentVersion":$componentVersion,"runtimeProtocol":$protocol,"runtimeApi":"1.8","family":"base","applicationId":"com.zhigou.yunxingban","versionCode":1,"versionName":"0.1.0","minSdk":24,"abis":["arm64-v8a"],"dependencies":{}}"""
     @Test fun exactBaseDescriptorIsAccepted() {
         assertEquals(RunnerComponentDescriptor(RunnerTemplateFamily.BASE, setOf("arm64-v8a")), RunnerComponentDescriptor.parse(base.toByteArray()))
+        assertEquals(setOf("x86_64"), RunnerComponentDescriptor.parse(base.replace("arm64-v8a", "x86_64").toByteArray()).abis)
+        assertEquals(setOf("arm64-v8a", "x86_64"), RunnerComponentDescriptor.parse(
+            base.replace("[\"arm64-v8a\"]", "[\"arm64-v8a\",\"x86_64\"]").toByteArray()).abis)
     }
     @Test fun protocolAbiVersionAndUnknownOrDuplicateKeysAreRejected() {
-        listOf(base.replace("\"runtimeProtocol\":$protocol", "\"runtimeProtocol\":${protocol - 1}"), base.replace("1.8", "1.7"), base.replace("arm64-v8a", "x86_64"),
+        listOf(base.replace("\"runtimeProtocol\":$protocol", "\"runtimeProtocol\":${protocol - 1}"), base.replace("1.8", "1.7"), base.replace("arm64-v8a", "armeabi-v7a"),
+            base.replace("[\"arm64-v8a\"]", "[]"),
             base.replace("\"componentVersion\":$componentVersion", "\"componentVersion\":${componentVersion - 1}"),
             base.replace("\"base\"", "\"full\""), base.replace(":24", ":23"), base.replace("\"componentVersion\":$componentVersion", "\"componentVersion\":$componentVersion,\"unknown\":1"),
             base.replace("\"family\":\"base\"", "\"family\":\"base\",\"family\":\"full\""), base + "{}",

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.formatnumber",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.formatnumber/1/text.formatnumber.schema.json",
+  "title": "数字格式化",
+  "category": "variable",
+  "summary": "固定小数位 0–9、整数部分最少 1–32 位（不足补零，负号在前），半值远离零；不使用千位或本地化分隔符，不产生负零。输入绝对值不超过 10^12。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "数字格式化"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "value",
+      "label": "数值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "12.5"
+    },
+    {
+      "path": "valueVariable",
+      "label": "数值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "digits",
+      "label": "小数位数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "2"
+    },
+    {
+      "path": "digitsVariable",
+      "label": "小数位数来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "minIntegerDigits",
+      "label": "整数最少位数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "4"
+    },
+    {
+      "path": "minIntegerDigitsVariable",
+      "label": "整数最少位数来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

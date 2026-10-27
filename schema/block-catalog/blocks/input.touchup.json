@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.touchup",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.touchup/1/input.touchup.schema.json",
+  "title": "多指弹起",
+  "category": "variable",
+  "summary": "最多5个真实并发触点，由同一任务独占整组手势；设计坐标映射后注入，Root须明确协商多指支持。不支持时拒绝，不降级为单指。暂停/取消/结束/租约超时释放；用等待和逐触点移动组合捏合、旋转、双指拖动。确认返回1，不代表目标App已处理。",
+  "searchTerms": [
+    "多指",
+    "双指",
+    "捏合",
+    "旋转",
+    "Input.touchUp"
+  ],
+  "requiredCapabilities": [
+    "input.multi"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "pointerId",
+      "label": "触点编号0–4",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "pointerIdVariable",
+      "label": "触点编号0–4来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "确认结果（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

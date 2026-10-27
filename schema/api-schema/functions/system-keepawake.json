@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18001,
+  "name": "System.keepScreenAwake",
+  "since": "1.8",
+  "capability": "device.display",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "通过所属运行的透明无触摸窗口持有保持亮屏标志，需系统悬浮授权；0释放，停止/失败/重启自动释放，不修改系统休眠设置、不唤醒或阻止用户手动锁屏。成功返回1。",
+  "params": [
+    {
+      "name": "enabled",
+      "type": "integer",
+      "required": true,
+      "summary": "开启1 / 释放0"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "通过所属运行的透明无触摸窗口持有保持亮屏标志，需系统悬浮授权；0释放，停止/失败/重启自动释放，不修改系统休眠设置、不唤醒或阻止用户手动锁屏。成功返回1。"
+  },
+  "legacyAliases": []
+}

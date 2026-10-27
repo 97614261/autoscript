@@ -96,7 +96,8 @@ internal fun RuntimeVariableObserver(snapshot: ProjectSnapshot, flowId: String, 
     }
     DisposableEffect(inspection) { onDispose { inspection.invalidate(); watch.clear() } }
     val reply = watch.reply
-    val values = watch.values(filter, query, lockedFlow)
+    val changed = watch.changed
+    val values = remember(reply, changed, filter, query, lockedFlow) { watch.values(filter, query, lockedFlow) }
     val activeFlow = if (reply.flowId.isNotEmpty()) reply.flowId else flowId
     fun flowName(id: String) = snapshot.manifest.flows.firstOrNull { it.flowId == id }?.path?.substringAfterLast('/')?.removeSuffix(".jsonl") ?: "插件"
 
@@ -146,7 +147,7 @@ internal fun RuntimeVariableObserver(snapshot: ProjectSnapshot, flowId: String, 
                                 else -> "没有符合筛选的变量"
                             }, fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(8.dp))
                         }
-                        items(values, key = { it.watchKey(reply.flowId) }) { value ->
+                        items(values, key = { it.watchListKey(reply.flowId) }) { value ->
                             val changed = value.watchKey(reply.flowId) in watch.latestChanges
                             Row(Modifier.fillMaxWidth().heightIn(min = 28.dp)
                                 .background(if (changed) Color(0xFFEFF5FF) else Color.Transparent).clickable { details = value }

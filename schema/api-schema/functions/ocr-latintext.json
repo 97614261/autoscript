@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6105,
+  "name": "Ocr.latinText",
+  "since": "1.8",
+  "capability": "ocr.onnx",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "固定V4模型识别单行英文、数字、ASCII常见符号及空格，包括()+-./%[]等；仅保留模型实际识别的字符，不做表达式计算、文字检测或中文识别。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "缓存帧。"
+    },
+    {
+      "name": "left",
+      "type": "integer",
+      "required": true,
+      "summary": "左边界。"
+    },
+    {
+      "name": "top",
+      "type": "integer",
+      "required": true,
+      "summary": "上边界。"
+    },
+    {
+      "name": "right",
+      "type": "integer",
+      "required": true,
+      "summary": "右边界，不含。"
+    },
+    {
+      "name": "bottom",
+      "type": "integer",
+      "required": true,
+      "summary": "下边界，不含。"
+    },
+    {
+      "name": "minimumConfidencePermille",
+      "type": "integer",
+      "required": false,
+      "summary": "最低逐字置信度0–1000，默认500。"
+    }
+  ],
+  "returns": {
+    "type": "AlphanumericResult",
+    "nullable": false,
+    "summary": "text与averageScorePermille，无可信字符为空文本。"
+  },
+  "legacyAliases": []
+}

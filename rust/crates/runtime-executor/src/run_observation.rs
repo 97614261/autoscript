@@ -2,8 +2,8 @@
 use super::{
     Clock, ExecutorError, HostBackend, Instant, LuaInput, LuaScalar, NativeVisionRequest,
     RuntimeExecutor, TaskState, TaskToken, MAX_TEMPLATE_PIXEL_COMPARISONS, OP_SCREEN_CAPTURE,
-    OP_SCREEN_CAPTURE_SERIES_FRAME, OP_SCREEN_FIND_ALL_IMAGES, OP_SCREEN_FIND_IMAGE,
-    OP_SCREEN_FIND_IMAGES,
+    OP_SCREEN_CAPTURE_REGION, OP_SCREEN_CAPTURE_SERIES_FRAME, OP_SCREEN_FIND_ALL_IMAGES,
+    OP_SCREEN_FIND_IMAGE, OP_SCREEN_FIND_IMAGES,
 };
 use serde_json::{json, Value};
 use std::hash::{Hash, Hasher};
@@ -31,6 +31,22 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    /// Attach only a structural host code.  Host messages can contain private Lua text or paths,
+    /// so the persisted event never includes the free-form diagnostic string.
+    pub(super) fn record_failure_code(&mut self, code: &str) {
+        let code = code.split(':').next().unwrap_or_default();
+        if !code.is_empty()
+            && code.len() <= 64
+            && code
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            self.fields["failureCode"] = json!(code);
+        } else {
+            self.fields["failureCode"] = json!("HOST_FAILURE");
+        }
+    }
+
     pub(super) fn record_search_metrics(
         &mut self,
         mut metrics: automation_core::TemplateSearchMetrics,
@@ -226,14 +242,27 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         }
         let algorithm = match opcode {
             OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_SERIES_FRAME => "capture-host-roundtrip",
+            OP_SCREEN_CAPTURE_REGION => "capture-region-host-roundtrip",
             OP_SCREEN_FIND_IMAGE => "rust-rgba-single",
             OP_SCREEN_FIND_IMAGES => "rust-rgba-first",
             OP_SCREEN_FIND_ALL_IMAGES => "rust-rgba-all",
             5108 => "opencv-gray-host-roundtrip",
+            5109 => "opencv-orb-ransac-host-roundtrip",
             6101 => "onnx-ocr-host-roundtrip",
+            6104 => "onnx-en-v5-host-roundtrip",
+            6105 => "onnx-latin-text-host-roundtrip",
             _ => return None,
         };
         let mut fields = json!({"version":1,"kind":"vision","opcode":opcode,"algorithm":algorithm});
+        if opcode == OP_SCREEN_CAPTURE_REGION {
+            fields["captureRegion"] = json!(args
+                .iter()
+                .filter_map(|value| match value {
+                    LuaScalar::Integer(value) => Some(*value),
+                    _ => None,
+                })
+                .collect::<Vec<_>>());
+        }
         if matches!(
             opcode,
             OP_SCREEN_FIND_IMAGE | OP_SCREEN_FIND_IMAGES | OP_SCREEN_FIND_ALL_IMAGES
@@ -307,9 +336,24 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
 }
 pub(super) fn result_status(result: &Result<LuaInput, String>) -> &'static str {
     match result {
-        Err(message) if message.contains("BUDGET_EXCEEDED") => "budget_exceeded",
+        Err(message)
+            if message.contains("BUDGET_EXCEEDED") || message.contains("COMPARISON_BUDGET") =>
+        {
+            "budget_exceeded"
+        }
         Err(message) if message.contains("TIMEOUT") => "timeout",
-        Err(message) if message.contains("Cancelled") => "cancelled",
+        Err(message) if message.contains("Cancelled") || message.contains("CANCELLED") => {
+            "cancelled"
+        }
+        Err(message)
+            if message.contains("SCREEN_CAPTURE_FAILED")
+                || message.contains("CAPTURE_BACKEND_FAILED")
+                || message.contains("CAPTURE_BACKEND_UNAVAILABLE")
+                || message.contains("CAPTURE_CONNECTION_CLOSED") =>
+        {
+            "capture_failed"
+        }
+        Err(message) if message.contains("FRAME_OPERATION_FAILED") => "frame_failed",
         Err(_) => "error",
         Ok(LuaInput::Values(values)) if matches!(values.get(1), Some(LuaScalar::Nil)) => {
             "not_found"
@@ -489,9 +533,12 @@ mod tests {
                         transfer_us: 20,
                         publish_us: 10,
                         streamed: true,
+                        pipelined: false,
                         stages_us: stages,
                         transfer_stages_us: stages.map(|_| [7, 8, 9, 10, 11]),
                         transfer_packets: stages.map(|_| 1),
+                        cache_hit: false,
+                        cache_age_us: None,
                     },
                 );
             }
@@ -526,6 +573,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn explicit_region_is_dispatched_and_observed_separately_and_rejects_invalid_lua_bounds() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut executor = runtime(&clock, CaptureHost);
+        let task=executor.start_entry_chunk(b"return function() local c=Screen.captureRegion(149,407,546,879); assert(c==1); local ok=pcall(Screen.captureRegion,4,0,4,2);assert(not ok) end","region").unwrap();
+        executor.drive().unwrap();
+        assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        let events = executor.drain_run_events();
+        assert_eq!(events.len(), 1);
+        let event: Value = serde_json::from_str(&events[0]).unwrap();
+        assert_eq!(event["opcode"], 5014);
+        assert_eq!(event["algorithm"], "capture-region-host-roundtrip");
+        assert_eq!(
+            event["captureRegion"],
+            serde_json::json!([149, 407, 546, 879])
+        );
     }
 
     #[test]
@@ -638,6 +703,14 @@ mod tests {
         );
         assert_eq!(result_status(&Err("VISION_TIMEOUT".into())), "timeout");
         assert_eq!(result_status(&Err("Vision(Cancelled)".into())), "cancelled");
+        assert_eq!(
+            result_status(&Err("SCREEN_CAPTURE_FAILED: CAPTURE_BACKEND_FAILED".into())),
+            "capture_failed"
+        );
+        assert_eq!(
+            result_status(&Err("FRAME_OPERATION_FAILED".into())),
+            "frame_failed"
+        );
         assert_eq!(
             result_status(&Ok(LuaInput::Values(vec![
                 LuaScalar::Boolean(true),

@@ -89,6 +89,7 @@ internal fun PluginSourceEditorDialog(
     onApply: suspend (String, String) -> String?,
     onDismiss: () -> Unit,
     initialSelectedNodeId: String? = null,
+    allocateIdentity: ((String, Set<String>) -> String)? = null,
 ) {
     val original = remember { source }
     var originalLua by remember { mutableStateOf<String?>(null) }
@@ -135,7 +136,7 @@ internal fun PluginSourceEditorDialog(
     }
     suspend fun parseDraft(): VisualSourceDocument = withContext(Dispatchers.Default) {
         val context = currentCoroutineContext()
-        pluginSourceToolchain.parse(draft.text, original, rootBlockId, variablesLatest) { context.ensureActive() }
+        pluginSourceToolchain.parse(draft.text, original, rootBlockId, variablesLatest, allocateIdentity) { context.ensureActive() }
     }
     fun startValidation(apply: Boolean) {
         if (busy || originalLua == null) return

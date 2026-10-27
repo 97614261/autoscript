@@ -1,6 +1,13 @@
 # Optional vision and standalone Runner execution plan
 
-Date: 2026-10-13. Owner: current development thread. Status: active.
+Date: 2026-10-13. Owner: current development thread. Status: historical staged plan, superseded by the Studio master status.
+
+2026-10-24: this document preserves historical component-stage descriptions and
+their original evidence boundaries; it is not an outstanding-task list. Current
+implemented Studio/component functionality, completed performance work and
+explicitly deferred standalone Runner/download work are tracked in the
+[master plan](studio-first-version-master-plan.md). The newly authorized release
+closeout is [ADR0151](../adr/0151-bounded-test-evidence-and-studio-release-closeout.md).
 
 2026-10-15: current Studio development is consolidated in the [master plan](studio-first-version-master-plan.md) and [177-block matrix](studio-block-coverage.md). Stages 1–3 below are historical component stages, not the newly authorized Studio stages 1–3. No current authorization for tests, APK, installation or Runner work is implied.
 

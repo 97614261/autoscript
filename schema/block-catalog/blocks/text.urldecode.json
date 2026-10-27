@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.urldecode",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.urldecode/1/text.urldecode.schema.json",
+  "title": "URL解码",
+  "category": "variable",
+  "summary": "严格百分号解码为UTF-8；component保留+，form将+解为空格。拒绝残缺转义、非UTF-8和超64KiB。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Text.urlDecode",
+    "URL解码"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "编码文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "%E6%99%BA%E6%9E%84%20A"
+    },
+    {
+      "path": "textVariable",
+      "label": "编码文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "mode",
+      "label": "编码方式",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "component"
+    },
+    {
+      "path": "modeVariable",
+      "label": "编码方式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

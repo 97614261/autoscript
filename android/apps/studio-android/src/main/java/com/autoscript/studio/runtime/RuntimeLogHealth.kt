@@ -5,11 +5,12 @@ internal object RuntimeLogHealth {
     data class Counts(val captures: Int, val found: Int, val notFound: Int, val failed: Int, val cancelled: Int)
 
     fun counts(report: VisionRunStatistics.Report): Counts {
-        val primary = report.groups.filter { it.algorithm == "capture-host-roundtrip" ||
+        fun isCapture(group: VisionRunStatistics.Group) = group.algorithm in setOf("capture-host-roundtrip", "capture-region-host-roundtrip")
+        val primary = report.groups.filter { isCapture(it) ||
             (!it.algorithm.startsWith("capture-") && !it.algorithm.startsWith("match-")) }
         fun count(predicate: (VisionRunStatistics.Group) -> Boolean) = primary.filter(predicate).sumOf { it.count }
         return Counts(
-            count { it.algorithm == "capture-host-roundtrip" && it.status == "completed" },
+            count { isCapture(it) && it.status == "completed" },
             count { it.status == "found" }, count { it.status == "not_found" },
             count { it.status in setOf("error", "failed", "timeout", "budget_exceeded") }, count { it.status == "cancelled" },
         )

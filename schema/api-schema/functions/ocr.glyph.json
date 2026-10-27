@@ -20,7 +20,8 @@
     { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
     { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
     { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" },
-    { "name": "spaceGapColumns", "type": "integer", "required": true, "summary": "插入空格所需的最小连续空列数，0表示不插入。" }
+    { "name": "spaceGapColumns", "type": "integer", "required": true, "summary": "插入空格所需的最小连续空列数，0表示不插入。" },
+    { "name": "additionalColors", "type": "string", "required": false, "summary": "可选附加前景色，默认空。最多15项RRGGBB:容差，用分号分隔（如FF0000:8;00FF00:16）；与主色取并集，RGB不得重复，总颜色比较最多6400万次。" }
   ],
   "returns": { "type": "GlyphOcrResult", "nullable": false, "summary": "包含text、coveragePermille和averageScorePermille的识别结果。" },
   "legacyAliases": ["GlyphOcr"]

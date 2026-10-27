@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.tobase64",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.tobase64/1/text.tobase64.schema.json",
+  "title": "文本转Base64",
+  "category": "variable",
+  "summary": "UTF-8文本转标准带填充Base64，非URL安全变体；输出最多64KiB，不处理文件或任意二进制。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Text.toBase64",
+    "文本转Base64"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "智构"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

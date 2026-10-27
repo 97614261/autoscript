@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "data.encode",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/data.encode/1/data.encode.schema.json",
+  "title": "编码JSON",
+  "category": "variable",
+  "summary": "text 模式把动态文本安全编码为 JSON 字符串（自动转义）；json 模式校验并紧凑序列化已有 JSON 文本，适用于数字/布尔/空值/数组/对象。不解析 Lua 表或执行代码；沿用 64KiB、16 层、1024 项及对象键预算。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "编码JSON"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "value",
+      "label": "待编码内容",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "智构"
+    },
+    {
+      "path": "valueVariable",
+      "label": "待编码内容来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "mode",
+      "label": "编码方式",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "text"
+    },
+    {
+      "path": "modeVariable",
+      "label": "编码方式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

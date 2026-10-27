@@ -1,6 +1,8 @@
 # 文档入口
 
-[Studio首版总账](reference/studio-first-version-master-plan.md) · [177种积木矩阵](reference/studio-block-coverage.md) · [总计划1–3阶段](verification/studio-master-stages-1-3-2026-10-15.md) · [总计划4–6阶段](verification/studio-master-stages-4-6-2026-10-15.md) · [集中验证结果](verification/studio-master-validation-2026-10-15.md) · [集中验收待办](reference/studio-acceptance-checklist.md)
+[Studio首版总账](reference/studio-first-version-master-plan.md) · [积木矩阵](reference/studio-block-coverage.md) · [总计划1–3阶段](verification/studio-master-stages-1-3-2026-10-15.md) · [总计划4–6阶段](verification/studio-master-stages-4-6-2026-10-15.md) · [集中验证结果](verification/studio-master-validation-2026-10-15.md) · [集中验收待办](reference/studio-acceptance-checklist.md)
+
+[当前六项质量交付](verification/studio-quality-1-6-2026-10-20.md)：变量检查、编辑器拆分、固定视觉组件V2、字符评分及同包MuMu性能；ARM和真机仍暂缓。
 
 [Android剩余项修复与实际验收](verification/studio-android-followup-2026-10-15.md)：组件真实清单、快照ART缓存、最大化系统栏、OCR诊断及目标进程重启保护。
 
@@ -14,16 +16,22 @@
 
 ## 使用手册 · guides
 
+- [APK HTTP发布](guides/apk-http-publishing.md)：独立持久下载、Nginx代理及双向HMAC直传，不依赖SSH；小服务更新包、Windows发布命令及后续文档部署。
+
 - [项目与插件组织](guides/project-plugin-organization.md)、[项目存储](guides/project-data-storage.md)、[可视化源码](guides/visual-lua-source.md)
 - [Studio项目设置](guides/studio-project-settings.md)：原始基线、冲突保留、统一保存、重新读取与清理边界。
 - [截图保存](guides/image-save-redesign.md)、[脚本界面](guides/script-interface.md)、[编辑器标题栏](guides/visual-editor-header.md)
 - [可视化积木编辑](guides/visual-block-editing.md)：连续操作、批量选择、共享折叠、粘贴位置与缩进安全检查。
 - [Studio变量与流程](guides/studio-variables-and-flow.md)：变量作用域、循环输出、JSON遍历组合、插件调用和函数库。
 - [Studio图片工作台](guides/studio-image-workbench.md)：原像素保存、二值化预览、测试有效性、整批加入与帧释放。
+- [图像处理与稳定识别](../docs-site/src/guide/image-workbench.md)：模板蒙版、数字清理、图像方案、区域等待、差异分析、坐标还原和多尺度找图。
+- [固定数字字库制作](../docs-site/src/guide/glyph-dictionary.md)：App采样、批量标注、修点、Rust测试及保存为项目字库；不做通用OCR。
 - [Studio调试与提示](guides/studio-debug-and-prompts.md)：草稿关闭保护、透明度、日志分通道/详情与终止清理。
 - [Root录制](guides/root-input-recording.md)、[运行日志](guides/runtime-file-logs.md)、[Runner打包](guides/release-packaging.md)
 - [项目随机化](guides/project-randomization.md)：项目默认策略、单积木覆盖、精确手势与等待边界。
 - [脚本基础工具](guides/script-utilities.md)：计算/系统分类、类型化变量、随机/几何/颜色/时间规则。
+- [脚本能力扩展](guides/script-capability-expansion.md)：文本编码、路径与元数据、HTTP、交互图片浮窗、特征/英文OCR候选、多指和生产输入法；验收状态与API数量分别记录。
+- [能力扩展交付与验收](verification/studio-capability-expansion-2026-10-20.md)：200个API、217种积木、MuMu40项合成验收与输入法恢复；候选OCR及真实设备边界单列。
 - [脚本对话框](guides/script-interface.md#脚本对话框)：确认选择与复用设计页面的布局弹窗，见[ADR0066](adr/0066-script-confirm-and-layout-dialogs.md)。
 - [旧工程转换](guides/legacy-project-conversion.md)、[离线函数参考](../docs-site/generated/api.html)
 
@@ -33,6 +41,7 @@
 
 - [参考源码入口](reference/reference-screen-source-map.md)、[品牌与图标](reference/studio-branding.md)
 - [老版函数库逐项对照](reference/function-library-parity-2026-10-11.md)：一键玩216项与易编已检查的266个静态API条目，区分已覆盖、入口缺口与首版范围外能力。
+- [简单玩公开API逐项对照](reference/jdwan-api-comparison-2026-10-19.md)：325张函数卡片、323个别名的审查基线及数学/文本/数据补强；该批基线为172个API、189种积木，区分能力覆盖与旧调用兼容；后续扩展见下方使用说明。
 - [函数库补强执行计划](reference/function-library-development-plan.md)：五批范围、逐项状态与延期边界。
 - [转换器剩余边界](reference/legacy-converter-completion-plan.md)、[旧视觉兼容](reference/legacy-vision-compat.md)
 - [视觉基准方法](reference/vision-benchmark.md)、[原生依赖审查](reference/vision-native-dependency-review.md)
@@ -40,6 +49,17 @@
 - [Rust 图像二值阈值](verification/rust-image-threshold-2026-10-14.md)
 
 ## 验证记录 · verification
+
+- [签名HTTP直传验证](verification/apk-signed-http-2026-10-21.md)：双向HMAC、挑战防重放、两版PowerShell、真实隔离Nginx及小服务更新包；公网/Linux验收单列。
+- [初版APK发布验证](verification/apk-http-publisher-2026-10-21.md)：历史SSH/Bearer阶段、本地实际验签及完整站点交付，不作为当前传输说明。
+
+- [中文命名与图像选区](verification/chinese-names-image-selection-2026-10-21.md)：中文变量/参数/标签、空插件、矩形拖动、多边形及窄横屏布局，主机与设备证据分开记录。
+
+- [数学文本数据补强](verification/pure-utilities-2026-10-19.md)：九个API/积木、类型与预算、代码检查及MuMu十一项实际验收。
+
+- [图像工具八阶段](verification/image-tools-eight-stages-2026-10-19.md)：本批代码、主机检查与MuMu合成验收。
+
+- [固定数字字库制作](verification/studio-fixed-glyph-maker-2026-10-19.md)：App采样/标注/修点、ASGLYPH互操作及MuMu六项合成流程验证。
 
 - [运行期输入与页面配置](verification/runtime-ui-inputs-config-2026-10-11.md)：占位/范围/步长、参数快照和密码排除、构建安装验证。
 
@@ -68,6 +88,15 @@
 - [历史性能证据](../archive/project-history/2026-10-10/README.md)：保留测量条件和边界，不作为当前完成率。
 
 ## 架构与维护
+
+- [Studio六项质量完善](verification/studio-quality-1-6-2026-10-20.md)：变量检查、编辑器拆分、固定组件V2、字符准确率和同包性能验收。
+
+- [图像工具边界](adr/0130-bounded-image-authoring-and-recognition-tools.md)：有界处理、来源身份、方案格式和验证规则。
+
+- [智构使用与API文档站](../docs-site/README.md)：独立启动/构建的VitePress网站，指南及全部契约生成API，本地搜索，不依赖App或引擎构建。
+- [文档站实现与验证](verification/vitepress-documentation-2026-10-19.md)：全量契约覆盖、构建/安全检查及浏览器视觉验收边界。
+
+- [当前代码与候选交付记录](verification/code-optimization-1-7-2026-10-18.md)：单一系统编辑入口、主机门禁、新APK摘要及未完成的设备/OCR验收；历史包结果不冒充新包。
 
 - [运行期界面、帧资源与脚本控制](guides/runtime-ui-frame-control.md)：背景/位置/组、连续截图借用与释放、停止和输出开关。
 

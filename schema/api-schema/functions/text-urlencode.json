@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14229,
+  "name": "Text.urlEncode",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按UTF-8百分号编码；component保留RFC3986非保留字符，空格为%20；form空格为+。输入/输出最多64KiB，不编码整条URL的结构。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": true,
+      "summary": "编码方式：component=URL组成部分、form=表单（空格用+）"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "按UTF-8百分号编码；component保留RFC3986非保留字符，空格为%20；form空格为+。输入/输出最多64KiB，不编码整条URL的结构。"
+  },
+  "legacyAliases": []
+}

@@ -4,6 +4,41 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StudioPanelGeometryTest {
+    @Test fun outputChoicesUseWholeLabelsAndWrapBeforeLargeFontCanClipThem() {
+        assertEquals(4, debugOutputChoiceColumns(480f, 1f))
+        assertEquals(4, debugOutputChoiceColumns(360f, 1f))
+        assertEquals(2, debugOutputChoiceColumns(280f, 1f))
+        assertEquals(2, debugOutputChoiceColumns(480f, 1.8f))
+        assertEquals(1, debugOutputChoiceColumns(280f, 2f))
+        assertEquals(1, debugOutputChoiceColumns(120f, 1f))
+        assertEquals(1, debugOutputChoiceColumns(Float.NaN, 1f))
+        assertEquals(4, debugOutputChoiceColumns(480f, Float.NaN))
+    }
+    @Test fun shortViewportUsesActualSpaceRatherThanOrientation() {
+        assertTrue(studioShortViewport(180f))
+        assertTrue(studioShortViewport(400f))
+        assertFalse(studioShortViewport(640f))
+        assertFalse(studioShortViewport(Float.POSITIVE_INFINITY))
+        assertFalse(studioShortViewport(Float.NaN))
+    }
+    @Test fun landscapeWorkbenchPreservesCanvasAndAllToolsAtLargeFont() {
+        for (width in listOf(560f, 640f, 800f)) for (scale in listOf(1f, 1.6f, 2f)) {
+            val sidebar = imageWorkbenchSideWidth(width, 280f, scale)
+            assertTrue(sidebar >= 224f)
+            assertTrue(width - sidebar >= width * .58f - .001f)
+        }
+        assertEquals(0f, imageWorkbenchSideWidth(360f, 640f, 1f))
+        assertEquals(0f, imageWorkbenchSideWidth(800f, 500f, 1f))
+        assertEquals(0f, imageWorkbenchSideWidth(Float.NaN, 280f, 1f))
+        assertEquals(224f, imageWorkbenchSideWidth(640f, 280f, Float.NaN))
+    }
+    @Test fun popupPreviewLeavesMostOfAShortKeyboardViewportForInputs() {
+        assertEquals(72f, studioPopupPreviewHeight(600f))
+        assertEquals(38.4f, studioPopupPreviewHeight(160f), .001f)
+        assertEquals(0f, studioPopupPreviewHeight(0f))
+        assertEquals(72f, studioPopupPreviewHeight(Float.NaN))
+        for (height in listOf(60f, 120f, 240f, 360f)) assertTrue(studioPopupPreviewHeight(height) <= height * .24f)
+    }
     @Test fun keyboardAndTinyWindowAlwaysBoundPanel() {
         assertEquals(180f, studioPanelMaxHeight(180f, 640))
         assertEquals(65f, studioPanelMaxHeight(65f, 640))

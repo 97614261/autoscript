@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/input.imestatus/1/input.imestatus.schema.json",
+  "title": "input.imestatus node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "input.imestatus"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resultVariable"
+      ],
+      "properties": {
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

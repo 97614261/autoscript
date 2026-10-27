@@ -11,6 +11,7 @@ class PreparedVisionComponent internal constructor(
     val apk: File,
     val nativeDirectory: File,
     val model: File?,
+    val candidateModel: File?,
     private val digests: Map<File, Pair<Long, String>>,
     private val ownership: VisionSnapshotOwnership,
     private val cleanup: () -> Unit,

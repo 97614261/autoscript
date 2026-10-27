@@ -26,6 +26,29 @@ pub struct MultiTemplateSearch {
     pub limit: usize,
 }
 
+/// One independent first-match query in a bounded same-frame batch.
+///
+/// Queries keep their own search options so batching does not change ROI,
+/// direction, tolerance, similarity, or per-query limits. The batch only
+/// shares the immutable frame view and the total comparison budget.
+#[derive(Debug, Clone)]
+pub struct TemplateBatchQuery {
+    pub paths: Vec<String>,
+    pub options: TemplateOptions,
+}
+
+/// Bounded work submitted by one vision task. This is an internal execution
+/// primitive; the Lua/API surface remains unchanged until compiler integration
+/// proves that adjacent nodes are safe to combine.
+#[derive(Debug, Clone)]
+pub struct TemplateBatchSearch {
+    pub queries: Vec<TemplateBatchQuery>,
+    pub max_pixel_comparisons: u64,
+}
+
+pub const MAX_TEMPLATE_BATCH_QUERIES: usize = 16;
+pub const MAX_TEMPLATE_BATCH_TEMPLATES: usize = 64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameFormat {
     Rgba8888,
@@ -105,6 +128,8 @@ pub enum FrameError {
     FrameBudgetExceeded,
     FrameIdExhausted,
     InvalidTemplateName,
+    TemplateBatchTooLarge,
+    TemplateBatchEmpty,
     DuplicateTemplate(String),
     TemplateBudgetExceeded,
     UnknownFrame(FrameHandle),
@@ -138,6 +163,7 @@ impl From<VisionError> for FrameVisionError {
 
 #[derive(Debug)]
 struct FrameEntry {
+    origin: Option<Arc<crate::FrameOrigin>>,
     capture_timings: Option<FrameCaptureTimings>,
     metadata: FrameMetadata,
     pixels: SharedPixels,
@@ -153,11 +179,16 @@ pub struct FrameCaptureTimings {
     pub transfer_us: u64,
     pub publish_us: u64,
     pub streamed: bool,
+    pub pipelined: bool,
     /// System capture/readback/pixel read/encode/bridge write/overlapping receive, in microseconds.
     pub stages_us: Option<[u64; 6]>,
     /// Sender pack/write and receiver read/verify/append. Sender/receiver overlap.
     pub transfer_stages_us: Option<[u64; 5]>,
     pub transfer_packets: Option<u32>,
+    /// True when the frame pixels were reused from the bounded continuous cache.
+    pub cache_hit: bool,
+    /// Age of a cache hit at the time it was published, in microseconds.
+    pub cache_age_us: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -194,6 +225,7 @@ struct TemplateEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameView {
+    pub origin: Option<Arc<crate::FrameOrigin>>,
     pub handle: FrameHandle,
     pub metadata: FrameMetadata,
     pub pixels: SharedPixels,
@@ -429,6 +461,31 @@ impl FramePool {
         }
     }
 
+    /// Publishes processed pixels without inventing a new screen capture identity.
+    /// # Errors
+    /// Rejects invalid pixels, pool budget or resource ownership conflicts.
+    pub fn insert_transformed(
+        &mut self,
+        task: TaskToken,
+        metadata: FrameMetadata,
+        pixels: Vec<u8>,
+        origin: Option<crate::FrameOrigin>,
+        resources: &mut TaskResourceRegistry,
+    ) -> Result<FrameHandle, FrameError> {
+        let capture = self.publish_owned(metadata, pixels.into(), None, false)?;
+        self.frames
+            .get_mut(&capture.0)
+            .ok_or(FrameError::UnknownCapture(capture))?
+            .origin = origin.map(Arc::new);
+        match self.cache(task, capture, resources) {
+            Ok(handle) => Ok(handle),
+            Err(error) => {
+                self.remove_frame(capture.0);
+                Err(error)
+            }
+        }
+    }
+
     /// Publishes the next unleased capture, recycling only unleased or expired storage.
     ///
     /// # Errors
@@ -464,6 +521,38 @@ impl FramePool {
         pixels: Vec<u8>,
     ) -> Result<CapturedFrameId, FrameError> {
         self.publish_owned(metadata, pixels.into(), None, true)
+    }
+
+    /// Shares immutable capture storage with the freshness cache without a full-frame copy.
+    /// # Errors
+    /// Rejects invalid geometry, byte length or actual allocation capacity outside the budget.
+    pub fn publish_capture_shared(
+        &mut self,
+        metadata: FrameMetadata,
+        pixels: SharedPixels,
+    ) -> Result<CapturedFrameId, FrameError> {
+        self.publish_owned(metadata, pixels, None, true)
+    }
+
+    /// Publishes fresh region storage with original-screen provenance, without copying pixels.
+    /// # Errors
+    /// Rejects invalid provenance, geometry or actual allocation capacity outside the budget.
+    pub fn publish_region_capture(
+        &mut self,
+        metadata: FrameMetadata,
+        pixels: Vec<u8>,
+        screen: (u32, u32),
+        offset: (u32, u32),
+        rotation: Option<u32>,
+    ) -> Result<CapturedFrameId, FrameError> {
+        let origin = crate::FrameOrigin::capture_region(metadata, screen, offset, rotation)
+            .map_err(|_| FrameError::InvalidGeometry)?;
+        let capture = self.publish_owned(metadata, pixels.into(), None, true)?;
+        self.frames
+            .get_mut(&capture.0)
+            .ok_or(FrameError::UnknownCapture(capture))?
+            .origin = Some(Arc::new(origin));
+        Ok(capture)
     }
 
     fn publish_owned(
@@ -509,6 +598,7 @@ impl FramePool {
         self.frames.insert(
             frame_id,
             FrameEntry {
+                origin: track_capture.then(|| Arc::new(crate::FrameOrigin::capture(metadata))),
                 capture_timings: None,
                 metadata,
                 pixels,
@@ -583,6 +673,7 @@ impl FramePool {
             return Err(FrameError::LeaseNotHeld(handle));
         }
         Ok(FrameView {
+            origin: entry.origin.clone(),
             handle,
             metadata: entry.metadata,
             pixels: entry.pixels.clone(),
@@ -927,6 +1018,119 @@ impl FramePool {
         Ok(None)
     }
 
+    /// Runs independent first-match queries against one immutable frame view.
+    ///
+    /// The queries are evaluated in caller order and each result occupies the
+    /// corresponding output slot, including `None` for a miss. Template
+    /// preparation, frame validation and the comparison budget are shared;
+    /// there is no second capture or pixel copy. A cancellation callback is
+    /// checked before every query and also by the pixel matcher, so a timeout
+    /// can interrupt a long batch without introducing a new public API.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty or oversized batch, invalid template lists, stale
+    /// frame ownership, invalid search options, cancellation and an exhausted
+    /// shared comparison budget.
+    pub fn find_named_template_batch_observed(
+        &self,
+        task: TaskToken,
+        screen: FrameHandle,
+        resources: &TaskResourceRegistry,
+        batch: &TemplateBatchSearch,
+        control: SearchControl<'_>,
+    ) -> Result<Vec<Option<NamedTemplateMatch>>, FrameVisionError> {
+        let SearchControl {
+            cancelled,
+            mut metrics,
+        } = control;
+        if batch.queries.is_empty() {
+            return Err(FrameError::TemplateBatchEmpty.into());
+        }
+        if batch.queries.len() > MAX_TEMPLATE_BATCH_QUERIES {
+            return Err(FrameError::TemplateBatchTooLarge.into());
+        }
+        let template_count = batch
+            .queries
+            .iter()
+            .map(|query| query.paths.len())
+            .try_fold(0usize, usize::checked_add)
+            .ok_or(FrameError::TemplateBatchTooLarge)?;
+        if template_count > MAX_TEMPLATE_BATCH_TEMPLATES {
+            return Err(FrameError::TemplateBatchTooLarge.into());
+        }
+
+        // Resolve the lease and validate the frame once for the whole batch.
+        let frame = self.view(task, screen, resources)?;
+        let image = frame.image_view()?;
+        let mut remaining = batch.max_pixel_comparisons;
+        let mut results = Vec::with_capacity(batch.queries.len());
+
+        for query in &batch.queries {
+            if cancelled() {
+                return Err(VisionError::Cancelled.into());
+            }
+            if query.paths.is_empty() || query.paths.len() > MAX_TEMPLATE_BATCH_TEMPLATES {
+                return Err(FrameError::InvalidTemplateName.into());
+            }
+            let mut names = std::collections::BTreeSet::new();
+            for path in &query.paths {
+                if !names.insert(path) || !self.templates.contains_key(path) {
+                    return Err(FrameError::InvalidTemplateName.into());
+                }
+            }
+            if query.options.minimum_match_permille > 1000 {
+                return Err(VisionError::InvalidSimilarity.into());
+            }
+            let roi = query.options.search.roi;
+            if roi.left >= roi.right
+                || roi.top >= roi.bottom
+                || roi.right > frame.metadata.width
+                || roi.bottom > frame.metadata.height
+            {
+                return Err(VisionError::InvalidRoi.into());
+            }
+
+            let mut result = None;
+            for path in &query.paths {
+                if cancelled() {
+                    return Err(VisionError::Cancelled.into());
+                }
+                let template = self
+                    .templates
+                    .get(path)
+                    .ok_or(FrameError::InvalidTemplateName)?;
+                if template.metadata.width > roi.width() || template.metadata.height > roi.height()
+                {
+                    continue;
+                }
+                if let Some(m) = metrics.as_deref_mut() {
+                    m.templates_visited += 1;
+                    m.prepared_cache_hits += 1;
+                }
+                if let Some(matched) = pixel_vision::find_prepared_template_observed(
+                    image,
+                    &template.prepared,
+                    query.options,
+                    &mut remaining,
+                    cancelled,
+                    metrics.as_deref_mut(),
+                )? {
+                    result = Some(NamedTemplateMatch {
+                        path: path.clone(),
+                        matched,
+                        width: template.metadata.width,
+                        height: template.metadata.height,
+                    });
+                    break;
+                }
+            }
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
     /// Collects origins by template priority then search direction. Includes overlapping origins.
     /// Count is retained count, not an unbounded total. One look-ahead detects truncation.
     /// # Errors
@@ -1087,6 +1291,18 @@ impl FramePool {
             ..frame.metadata
         };
         let capture = self.publish_owned(metadata, pixels.into(), None, false)?;
+        self.frames
+            .get_mut(&capture.0)
+            .ok_or(FrameError::UnknownCapture(capture))?
+            .origin = frame
+            .origin
+            .as_ref()
+            .and_then(|origin| {
+                origin
+                    .transformed("crop", metadata.width, metadata.height, Some(roi))
+                    .ok()
+            })
+            .map(Arc::new);
         match self.cache(task, capture, resources) {
             Ok(handle) => Ok(handle),
             Err(error) => {
@@ -1357,6 +1573,7 @@ impl FramePool {
                 prepared_template: None,
                 leased: false,
                 reserved_series_id: Some(handle.series_id),
+                origin: Some(Arc::new(crate::FrameOrigin::capture(metadata))),
             },
         );
         if finished {
@@ -1487,7 +1704,7 @@ mod tests {
 
     use super::{
         FrameError, FrameFormat, FrameMetadata, FramePool, FramePoolConfig, MultiTemplateSearch,
-        Rotation,
+        Rotation, SearchControl, TemplateBatchQuery, TemplateBatchSearch,
     };
     use crate::{CaptureSeriesConfig, CaptureSeriesError, SeriesPublish};
 
@@ -1509,6 +1726,48 @@ mod tests {
             timestamp_nanos: 10,
             snapshot_id: 3,
         }
+    }
+    #[test]
+    fn file_leases_and_processed_files_never_gain_capture_origin() {
+        let mut pool = FramePool::new(FramePoolConfig::default());
+        let mut resources = TaskResourceRegistry::default();
+        pool.register_template("assets/images/public.png", metadata(), Arc::from([255; 16]))
+            .unwrap();
+        let file = pool
+            .lease_template(task(1), "assets/images/public.png", &mut resources)
+            .unwrap();
+        assert!(pool
+            .view(task(1), file, &resources)
+            .unwrap()
+            .origin
+            .is_none());
+        let crop = pool
+            .crop(
+                task(1),
+                file,
+                &mut resources,
+                PixelRect {
+                    left: 0,
+                    top: 0,
+                    right: 1,
+                    bottom: 1,
+                },
+            )
+            .unwrap();
+        assert!(pool
+            .view(task(1), crop, &resources)
+            .unwrap()
+            .origin
+            .is_none());
+        let derived = pool
+            .insert_transformed(task(1), metadata(), vec![255; 16], None, &mut resources)
+            .unwrap();
+        assert!(pool
+            .view(task(1), derived, &resources)
+            .unwrap()
+            .origin
+            .is_none());
+        assert!(pool.view(task(2), file, &resources).is_err());
     }
 
     #[test]
@@ -1756,6 +2015,288 @@ mod tests {
                 &mut || false
             )
             .is_err());
+    }
+
+    #[test]
+    fn template_batch_reuses_one_frame_and_preserves_query_order() {
+        let (pool, resources, screen, paths, options) = named_template_fixture();
+        let batch = TemplateBatchSearch {
+            queries: vec![
+                TemplateBatchQuery {
+                    paths: vec![paths[0].clone()],
+                    options,
+                },
+                TemplateBatchQuery {
+                    paths: vec![paths[1].clone()],
+                    options,
+                },
+            ],
+            max_pixel_comparisons: 100,
+        };
+        let results = pool
+            .find_named_template_batch_observed(
+                task(1),
+                screen,
+                &resources,
+                &batch,
+                SearchControl {
+                    cancelled: &mut || false,
+                    metrics: None,
+                },
+            )
+            .expect("batch search");
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_none());
+        assert_eq!(
+            results[1].as_ref().map(|item| item.path.as_str()),
+            Some(paths[1].as_str())
+        );
+        assert_eq!(
+            results[1]
+                .as_ref()
+                .map(|item| (item.matched.origin.x, item.matched.origin.y)),
+            Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn template_batch_shares_comparison_budget_and_cancellation() {
+        let (pool, resources, screen, paths, options) = named_template_fixture();
+        let batch = TemplateBatchSearch {
+            queries: vec![TemplateBatchQuery {
+                paths: vec![paths[0].clone()],
+                options,
+            }],
+            max_pixel_comparisons: 1,
+        };
+        assert_eq!(
+            pool.find_named_template_batch_observed(
+                task(1),
+                screen,
+                &resources,
+                &batch,
+                SearchControl {
+                    cancelled: &mut || false,
+                    metrics: None,
+                },
+            ),
+            Err(super::FrameVisionError::Vision(
+                pixel_vision::VisionError::ComparisonBudgetExceeded
+            ))
+        );
+
+        let mut checks = 0;
+        let cancelled = &mut || {
+            checks += 1;
+            checks >= 2
+        };
+        assert_eq!(
+            pool.find_named_template_batch_observed(
+                task(1),
+                screen,
+                &resources,
+                &TemplateBatchSearch {
+                    queries: vec![TemplateBatchQuery {
+                        paths: vec![paths[1].clone()],
+                        options,
+                    }],
+                    max_pixel_comparisons: 100,
+                },
+                SearchControl {
+                    cancelled,
+                    metrics: None,
+                },
+            ),
+            Err(super::FrameVisionError::Vision(
+                pixel_vision::VisionError::Cancelled
+            ))
+        );
+    }
+
+    #[test]
+    fn template_batch_rejects_unbounded_or_empty_work() {
+        let (pool, resources, screen, paths, options) = named_template_fixture();
+        let empty = TemplateBatchSearch {
+            queries: Vec::new(),
+            max_pixel_comparisons: 100,
+        };
+        assert_eq!(
+            pool.find_named_template_batch_observed(
+                task(1),
+                screen,
+                &resources,
+                &empty,
+                SearchControl {
+                    cancelled: &mut || false,
+                    metrics: None,
+                },
+            ),
+            Err(super::FrameVisionError::Frame(
+                FrameError::TemplateBatchEmpty
+            ))
+        );
+
+        let oversized = TemplateBatchSearch {
+            queries: vec![
+                TemplateBatchQuery {
+                    paths: vec![paths[0].clone()],
+                    options,
+                };
+                super::MAX_TEMPLATE_BATCH_QUERIES + 1
+            ],
+            max_pixel_comparisons: 100,
+        };
+        assert_eq!(
+            pool.find_named_template_batch_observed(
+                task(1),
+                screen,
+                &resources,
+                &oversized,
+                SearchControl {
+                    cancelled: &mut || false,
+                    metrics: None,
+                },
+            ),
+            Err(super::FrameVisionError::Frame(
+                FrameError::TemplateBatchTooLarge
+            ))
+        );
+    }
+
+    fn batch_benchmark_templates(pool: &mut FramePool, side: u32, count: usize) -> Vec<String> {
+        let template_metadata = FrameMetadata {
+            width: side,
+            height: side,
+            row_stride: side * 4,
+            ..metadata()
+        };
+        (0..count)
+            .map(|index| {
+                let path = format!("assets/images/benchmark-{index}.png");
+                pool.register_template(
+                    &path,
+                    template_metadata,
+                    Arc::from(vec![255; usize::try_from(side * side * 4).unwrap()]),
+                )
+                .expect("template");
+                path
+            })
+            .collect()
+    }
+
+    fn batch_benchmark_options(width: u32, height: u32) -> TemplateOptions {
+        TemplateOptions {
+            search: SearchOptions {
+                roi: PixelRect {
+                    left: 0,
+                    top: 0,
+                    right: width,
+                    bottom: height,
+                },
+                order: pixel_vision::SearchOrder::TopLeftToBottomRight,
+                max_pixel_comparisons: 1_000_000_000,
+                step_x: 1,
+                step_y: 1,
+            },
+            tolerance: ColorTolerance::EXACT,
+            minimum_match_permille: 1000,
+            ignore_transparent_template_pixels: false,
+        }
+    }
+
+    #[test]
+    #[ignore = "explicit synthetic same-frame batch benchmark; not Android screenshot performance"]
+    fn benchmark_same_frame_batch_vs_sequential_template_search() {
+        use std::time::Instant;
+
+        const WIDTH: u32 = 320;
+        const HEIGHT: u32 = 480;
+        const TEMPLATE_SIDE: u32 = 16;
+        const TEMPLATE_COUNT: usize = 4;
+        const WARMUP: usize = 5;
+        const SAMPLES: usize = 30;
+
+        let mut pool = FramePool::new(FramePoolConfig::default());
+        let mut resources = TaskResourceRegistry::default();
+        let owner = task(1);
+        let screen = pool
+            .insert(
+                owner,
+                FrameMetadata {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    row_stride: WIDTH * 4,
+                    ..metadata()
+                },
+                &vec![0; usize::try_from(WIDTH * HEIGHT * 4).unwrap()],
+                &mut resources,
+            )
+            .expect("screen");
+        let paths = batch_benchmark_templates(&mut pool, TEMPLATE_SIDE, TEMPLATE_COUNT);
+        let options = batch_benchmark_options(WIDTH, HEIGHT);
+        let batch = TemplateBatchSearch {
+            queries: paths
+                .iter()
+                .map(|path| TemplateBatchQuery {
+                    paths: vec![path.clone()],
+                    options,
+                })
+                .collect(),
+            max_pixel_comparisons: 1_000_000_000,
+        };
+
+        let sequential_sample = || {
+            let started = Instant::now();
+            for path in &paths {
+                let result = pool
+                    .find_named_templates(
+                        owner,
+                        screen,
+                        &resources,
+                        std::slice::from_ref(path),
+                        options,
+                        &mut || false,
+                    )
+                    .expect("sequential search");
+                std::hint::black_box(result);
+            }
+            started.elapsed().as_micros()
+        };
+        let batch_sample = || {
+            let started = Instant::now();
+            let result = pool
+                .find_named_template_batch_observed(
+                    owner,
+                    screen,
+                    &resources,
+                    &batch,
+                    SearchControl {
+                        cancelled: &mut || false,
+                        metrics: None,
+                    },
+                )
+                .expect("batch search");
+            std::hint::black_box(result);
+            started.elapsed().as_micros()
+        };
+        for _ in 0..WARMUP {
+            std::hint::black_box(sequential_sample());
+            std::hint::black_box(batch_sample());
+        }
+        let mut sequential = (0..SAMPLES)
+            .map(|_| sequential_sample())
+            .collect::<Vec<_>>();
+        let mut batch_times = (0..SAMPLES).map(|_| batch_sample()).collect::<Vec<_>>();
+        sequential.sort_unstable();
+        batch_times.sort_unstable();
+        let p50 = |values: &[u128]| values[values.len() / 2];
+        println!(
+            "same_frame_batch_benchmark samples={SAMPLES} sequential_p50_us={} batch_p50_us={} sequential_p95_us={} batch_p95_us={}",
+            p50(&sequential),
+            p50(&batch_times),
+            sequential[SAMPLES * 95 / 100],
+            batch_times[SAMPLES * 95 / 100],
+        );
     }
 
     #[test]

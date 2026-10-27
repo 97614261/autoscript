@@ -17,6 +17,7 @@
   "childBlocks": [],
   "migrations": [],
   "properties": [
+    { "path": "additionalColors", "label": "附加前景色 RRGGBB:容差;…", "editor": "string", "required": false, "defaultValue": "" },
     {
       "path": "frameVariable",
       "label": "来源帧 · 图像变量",

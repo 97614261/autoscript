@@ -35,7 +35,7 @@ internal fun parseCompoundCondition(text: String): JsonObject? = runCatching {
     fun check(v: JsonElement, depth: Int) {
         require(depth <= 8 && ++count <= 64 && v.isJsonObject)
         val o = v.asJsonObject
-        fun name(key: String) = o.get(key)?.let { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) } == true
+        fun name(key: String) = o.get(key)?.let { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString.matches(com.autoscript.project.store.ProjectNames.pattern) } == true
         when (o.get("type")?.asString) {
             "compare" -> {
                 require(o.keySet().all { it in setOf("type", "variable", "operator", "value", "valueVariable") } && name("variable"))
@@ -88,7 +88,7 @@ private fun ConditionNode(value: JsonObject, depth: Int, variables: List<String>
             }
         }
         if (type == "compare") {
-            ConditionText("左变量", value["variable"].asString, variables, { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }, { onValidity("$path.left", it) }) { edit("variable", JsonPrimitive(it)) }
+            ConditionText("左变量", value["variable"].asString, variables, { it.matches(com.autoscript.project.store.ProjectNames.pattern) }, { onValidity("$path.left", it) }) { edit("variable", JsonPrimitive(it)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 conditionOperators.forEach { (op, label) -> ConditionChoice(if (value["operator"].asString == op) "●$label" else label, Modifier.weight(1f)) {
                     edit("operator", JsonPrimitive(op))
@@ -97,7 +97,7 @@ private fun ConditionNode(value: JsonObject, depth: Int, variables: List<String>
             ConditionText("右值JSON", value["value"].toString(), validator = { raw -> runCatching { JsonParser.parseString(raw) }.getOrNull()?.let { !it.isJsonArray && !it.isJsonObject && (value.has("valueVariable") || value["operator"].asString in setOf("equals", "notEquals") || (it.isJsonPrimitive && (it.asJsonPrimitive.isNumber || it.asJsonPrimitive.isString))) } == true }, onValidity = { onValidity("$path.value", it) }) { raw ->
                 runCatching { JsonParser.parseString(raw) }.getOrNull()?.takeIf { !it.isJsonArray && !it.isJsonObject }?.let { edit("value", it) }
             }
-            ConditionText("右变量", value.get("valueVariable")?.asString.orEmpty(), variables, { it.isBlank() || it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }, { onValidity("$path.right", it) }) {
+            ConditionText("右变量", value.get("valueVariable")?.asString.orEmpty(), variables, { it.isBlank() || it.matches(com.autoscript.project.store.ProjectNames.pattern) }, { onValidity("$path.right", it) }) {
                 onChange(value.deepCopy().apply { if (it.isBlank()) remove("valueVariable") else addProperty("valueVariable", it) })
             }
         } else if (type == "not") ConditionNode(value["condition"].asJsonObject, depth + 1, variables, "$path.not", onValidity) { edit("condition", it) }

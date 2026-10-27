@@ -10,6 +10,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RuntimeVisionResolverTest {
+    @Test fun latinSymbolsRequireV3WithoutBreakingOlderOperations() {
+        for (version in 1..3) {
+            RuntimeVisionResolver(emptySet(), { _, _ -> VisionResolvedBackend("selected", Backend(), version) },
+                { _, _ -> inspection() }).use { resolver ->
+                if (version < 3) assertEquals(NativeVisionAvailabilityState.INCOMPATIBLE,
+                    assertThrows(VisionResolutionFailure::class.java) { resolver.resolve(6105, NativeVisionWork(1)) }.state)
+                else assertNotNull(resolver.resolve(6105, NativeVisionWork(1)))
+                assertNotNull(resolver.resolve(6101, NativeVisionWork(2)))
+            }
+        }
+    }
+    @Test fun v1RejectsExtensionsWithoutPoisoningOriginalAndV2RoutesBoth() {
+        for (version in listOf(1, 2)) {
+            val backend = Backend()
+            RuntimeVisionResolver(emptySet(), { _, _ -> VisionResolvedBackend("selected", backend, version) },
+                { _, _ -> inspection() }).use { resolver ->
+                for ((extended, original) in listOf(5109 to 5108, 6104 to 6101)) {
+                    if (version == 1) assertEquals(NativeVisionAvailabilityState.INCOMPATIBLE,
+                        assertThrows(VisionResolutionFailure::class.java) { resolver.resolve(extended, NativeVisionWork(1)) }.state)
+                    else assertNotNull(resolver.resolve(extended, NativeVisionWork(1)))
+                    assertNotNull(resolver.resolve(original, NativeVisionWork(2)))
+                }
+            }
+        }
+    }
     @Test fun preparationPublishesChangedSelectionAndBlocksAlreadyCachedBackend() {
         val selected = AtomicReference<String?>("selected")
         RuntimeVisionResolver(emptySet(), { _, _ -> VisionResolvedBackend("selected", Backend()) },

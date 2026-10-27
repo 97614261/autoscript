@@ -5,11 +5,14 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/screen.transform/1/screen.transform.schema.json",
   "title": "图像变换",
   "category": "screen",
-  "summary": "旋转、镜像、灰度、阈值二值化、最近邻缩放；输出独立图像变量，源不变。",
+  "summary": "旋转、镜像、灰度、二值化、多组滤色、最近邻缩放；输出独立图像变量，源不变。",
   "searchTerms": [
     "图像变换",
     "二值化",
     "阈值",
+    "滤色",
+    "相对滤色",
+    "透明模板",
     "图像",
     "工具"
   ],
@@ -40,6 +43,8 @@
         "flipY",
         "gray",
         "threshold",
+        "filter",
+        "mask", "despeckle", "erode", "dilate", "open", "close",
         "resize"
       ]
     },
@@ -64,6 +69,14 @@
       "required": true,
       "defaultValue": "128"
     },
+    {
+      "path": "filter",
+      "label": "滤色规则（仅滤色模式）",
+      "editor": "string",
+      "required": false
+    },
+    { "path": "mask", "label": "蒙版规则（仅蒙版模式）", "editor": "string", "required": false },
+    { "path": "cleanup", "label": "二值清理（仅清理模式）", "editor": "string", "required": false },
     {
       "path": "resultVariable",
       "label": "输出 · 图像变量",

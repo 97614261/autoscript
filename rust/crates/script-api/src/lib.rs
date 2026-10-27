@@ -65,7 +65,7 @@ mod tests {
     fn generated_contracts_are_sorted_and_unique() {
         // Keep this snapshot aligned with schema/api-schema/functions (including
         // UI, the bounded Data/Files contracts and Screen.recognitionValue).
-        assert_eq!(API_CONTRACTS.len(), 160);
+        assert_eq!(API_CONTRACTS.len(), 201);
         assert!(API_CONTRACTS
             .windows(2)
             .all(|pair| pair[0].opcode < pair[1].opcode));

@@ -39,7 +39,10 @@
         "GLYPH_ITEM",
         "TEXT_ITEM",
         "COLORS",
-        "COMPONENTS"
+        "COMPONENTS",
+        "FRAME_DIFF",
+        "SCREEN_POINT",
+        "SCALED_IMAGE"
       ]
     },
     {
@@ -75,7 +78,8 @@
         "right",
         "bottom",
         "centerX",
-        "centerY"
+        "centerY",
+        "changedPixels","totalPixels","ratioPermille","fresh","elapsedUs","screenWidth","screenHeight","scalePermille"
       ]
     },
     {

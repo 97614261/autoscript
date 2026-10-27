@@ -88,6 +88,8 @@ internal fun childBlockLabel(name: String): String = when (name) {
     "then" -> "满足"
     "else" -> "否则"
     "body" -> "循环体"
+    "success" -> "成功分支"
+    "failure" -> "失败分支"
     else -> if (name.startsWith("elseIf")) {
         "否则如果 ${name.removePrefix("elseIf").toIntOrNull()?.plus(1) ?: ""}"
     } else name

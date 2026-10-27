@@ -11,6 +11,27 @@ fn compile(
     compile_disabled(kind, args, caps, api, false)
 }
 
+#[test]
+fn latin_symbols_are_explicit_and_keep_legacy_default() {
+    let caps = vec!["ocr.onnx", "screen.capture"];
+    let old = String::from_utf8(
+        compile("ocr.alphanumeric", ocr(), caps.clone(), "1.7")
+            .unwrap()
+            .main_lua,
+    )
+    .unwrap();
+    assert!(old.contains("Ocr.alphanumeric(__f"));
+    let mut args = ocr();
+    args["includeSymbols"] = json!(true);
+    assert!(compile("ocr.alphanumeric", args.clone(), caps.clone(), "1.7").is_err());
+    let bundle = compile("ocr.alphanumeric", args.clone(), caps.clone(), "1.8").unwrap();
+    let lua = String::from_utf8(bundle.main_lua).unwrap();
+    assert!(lua.contains("Ocr.latinText(__f,0,0,320,48,500)"));
+    assert!(lua.contains("Screen.release(__f)"));
+    args["includeSymbols"] = json!("true");
+    assert!(compile("ocr.alphanumeric", args, caps, "1.8").is_err());
+}
+
 fn compile_disabled(
     kind: &str,
     args: Value,

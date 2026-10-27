@@ -23,3 +23,21 @@ visual priority. The persistent view is invisible, not closed or moved; its
 message continues to update and reappears at its original pixel position when
 the tip expires. Non-overlapping prompts remain independently visible. Explicit
 stop still invalidates both channels and cannot reveal a previous run's view.
+
+## 2026-10-24：连续提示原地更新
+
+按用户确认，持续运行提示和短时弹出提示分别复用现有窗口，不排队或叠加。
+短提示以最新文字替换，并撤销旧到期任务、从最新消息重新计时；即使文字相同也续时。
+复用时更新点击所属票据，旧计时器和旧运行不能关闭新消息。无悬浮权限或窗口更新失败时
+清理所属短提示，沿既有系统 Toast 降级，不声称已显示自定义窗口。
+
+文字未变不重新赋值，外观未变不重建背景；窗口几何仅在尺寸/坐标变化时更新。
+仅改变字体、颜色、圆角或短提示时长不会重置持续提示已拖动的位置。
+用户后台隐藏仍保持隐藏，重叠遮蔽、正常结束短提示到期与停止清理保持原语义。
+
+本批 `build.cmd -Verify`（单测、Lint、Debug 构建及 MuMu 0 覆盖安装）通过；
+提示定位/生命周期 12 项单测及 API32 MuMu 实际窗口回归 7 项通过，自有 QA 清理成功。
+精确候选与测试包摘要、窗口身份/续时/点击/隐藏/重叠/停止结果保存在
+`build/verification/prompt-window-reuse-device.log`，构建记录为同目录
+`prompt-window-reuse-build.log` 与 `prompt-window-reuse-test-build.log`。
+本批不连接真机、不运行私人脚本、不改系统设置或发布下载站。

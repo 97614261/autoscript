@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14236,
+  "name": "Text.betweenNth",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "查找第N个不重叠左标记，再取其后第一个右标记之前的文字；不支持嵌套配对，任一标记缺失返回空文本。原文64KiB、标记各1–4096字节。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    },
+    {
+      "name": "left",
+      "type": "string",
+      "required": true,
+      "summary": "左标记"
+    },
+    {
+      "name": "right",
+      "type": "string",
+      "required": true,
+      "summary": "右标记"
+    },
+    {
+      "name": "occurrence",
+      "type": "integer",
+      "required": true,
+      "summary": "第几个左标记"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "查找第N个不重叠左标记，再取其后第一个右标记之前的文字；不支持嵌套配对，任一标记缺失返回空文本。原文64KiB、标记各1–4096字节。"
+  },
+  "legacyAliases": []
+}

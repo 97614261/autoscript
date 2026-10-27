@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14147,
+  "name": "Files.modifiedTime",
+  "since": "1.8",
+  "capability": "storage.data",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "file_read",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "读取普通项目私有data文件的修改时间（Unix毫秒）；不跟随链接或读取任意路径，缺失/不可用报错，不用墙钟时间控制超时。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "私有data相对文件"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "读取普通项目私有data文件的修改时间（Unix毫秒）；不跟随链接或读取任意路径，缺失/不可用报错，不用墙钟时间控制超时。"
+  },
+  "legacyAliases": []
+}

@@ -1,7 +1,10 @@
 //! Deterministic, bounded scalar baseline for pixel color and template search.
 
+pub mod color_filter;
+pub mod image_processing;
 mod legacy;
 mod legacy_compat;
+pub mod scaled_search;
 mod search_metrics;
 mod template_prefilter;
 pub use search_metrics::TemplateSearchMetrics;
@@ -12,6 +15,8 @@ use template_prefilter::{
 mod auxiliary_prefilter_tests;
 #[cfg(test)]
 mod bulk_match_tests;
+#[cfg(test)]
+mod expanded_matrix_tests;
 #[cfg(test)]
 mod performance_matrix_tests;
 #[cfg(test)]
@@ -530,6 +535,7 @@ fn anchor_bucket(color: Color) -> usize {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VisionError {
+    InvalidScaleRange,
     InvalidImage,
     InvalidRoi,
     InvalidStep,
@@ -1037,6 +1043,7 @@ pub fn find_prepared_templates_observed(
             },
             ..options.search
         };
+        let comparison = TemplateComparison::new(image, template, options);
         let mut matches = Vec::new();
         let mut prefilter = None;
         for (index, origin) in SearchPoints::new(candidates).enumerate() {
@@ -1065,7 +1072,7 @@ pub fn find_prepared_templates_observed(
             }
             let score = observed_compare(
                 image,
-                template,
+                &comparison,
                 origin,
                 options,
                 &mut budget,
@@ -1120,6 +1127,7 @@ fn search_prepared_template(
         },
         ..options.search
     };
+    let comparison = TemplateComparison::new(image, template, options);
     let mut prefilter = None;
     for (index, origin) in SearchPoints::new(candidate_options).enumerate() {
         if index == 1 {
@@ -1141,7 +1149,7 @@ fn search_prepared_template(
         }
         let score = observed_compare(
             image,
-            template,
+            &comparison,
             origin,
             options,
             budget,
@@ -1181,20 +1189,49 @@ fn observed_prefilter(
 
 fn observed_compare(
     image: ImageView<'_>,
-    template: &PreparedTemplate,
+    comparison: &TemplateComparison<'_>,
     origin: PixelPoint,
     options: TemplateOptions,
     budget: &mut ComparisonBudget<'_>,
     metrics: Option<&mut TemplateSearchMetrics>,
 ) -> Result<u16, VisionError> {
     let before = budget.remaining;
-    let result = compare_template(image, template, origin, options, budget);
+    let result = compare_template_prepared(image, comparison, origin, options, budget);
     if let Some(m) = metrics {
         m.comparison_pixels += before - budget.remaining;
     }
     result
 }
 
+struct TemplateComparison<'a> {
+    template: &'a PreparedTemplate,
+    relevant: u64,
+    allowed: u64,
+    anchors: [Option<(usize, Color)>; 4],
+    holes: [(u32, u32); 4],
+}
+
+impl<'a> TemplateComparison<'a> {
+    fn new(image: ImageView<'_>, template: &'a PreparedTemplate, options: TemplateOptions) -> Self {
+        let relevant = template.relevant_count(options.ignore_transparent_template_pixels);
+        let anchors = template.anchors(options.ignore_transparent_template_pixels);
+        let mut holes = anchors.map(|a| a.map_or((u32::MAX, u32::MAX), |p| (p.y, p.x)));
+        holes.sort_unstable();
+        Self {
+            template,
+            relevant,
+            allowed: relevant
+                - relevant
+                    .saturating_mul(u64::from(options.minimum_match_permille))
+                    .div_ceil(1000),
+            anchors: anchors
+                .map(|a| a.map(|p| (p.y as usize * image.row_stride + p.x as usize * 4, p.color))),
+            holes,
+        }
+    }
+}
+
+#[cfg(test)]
 fn compare_template(
     image: ImageView<'_>,
     template: &PreparedTemplate,
@@ -1202,59 +1239,75 @@ fn compare_template(
     options: TemplateOptions,
     budget: &mut ComparisonBudget,
 ) -> Result<u16, VisionError> {
+    compare_template_prepared(
+        image,
+        &TemplateComparison::new(image, template, options),
+        origin,
+        options,
+        budget,
+    )
+}
+
+fn compare_template_prepared(
+    image: ImageView<'_>,
+    comparison: &TemplateComparison<'_>,
+    origin: PixelPoint,
+    options: TemplateOptions,
+    budget: &mut ComparisonBudget,
+) -> Result<u16, VisionError> {
+    let template = comparison.template;
     let ignore = options.ignore_transparent_template_pixels
         && template.opaque_count != template.bgra_pixels.len() as u64;
     let exact = options.tolerance == ColorTolerance::EXACT;
     match (image.format, exact, ignore) {
         (PixelFormat::Rgba8888, true, false) => {
-            compare_template_spans::<false, true, false>(image, template, origin, options, budget)
+            compare_template_spans::<false, true, false>(image, comparison, origin, options, budget)
         }
         (PixelFormat::Rgba8888, true, true) => {
-            compare_template_spans::<false, true, true>(image, template, origin, options, budget)
+            compare_template_spans::<false, true, true>(image, comparison, origin, options, budget)
         }
         (PixelFormat::Bgra8888, true, false) => {
-            compare_template_spans::<true, true, false>(image, template, origin, options, budget)
+            compare_template_spans::<true, true, false>(image, comparison, origin, options, budget)
         }
         (PixelFormat::Bgra8888, true, true) => {
-            compare_template_spans::<true, true, true>(image, template, origin, options, budget)
+            compare_template_spans::<true, true, true>(image, comparison, origin, options, budget)
         }
-        (PixelFormat::Rgba8888, false, false) => {
-            compare_template_spans::<false, false, false>(image, template, origin, options, budget)
-        }
+        (PixelFormat::Rgba8888, false, false) => compare_template_spans::<false, false, false>(
+            image, comparison, origin, options, budget,
+        ),
         (PixelFormat::Rgba8888, false, true) => {
-            compare_template_spans::<false, false, true>(image, template, origin, options, budget)
+            compare_template_spans::<false, false, true>(image, comparison, origin, options, budget)
         }
         (PixelFormat::Bgra8888, false, false) => {
-            compare_template_spans::<true, false, false>(image, template, origin, options, budget)
+            compare_template_spans::<true, false, false>(image, comparison, origin, options, budget)
         }
         (PixelFormat::Bgra8888, false, true) => {
-            compare_template_spans::<true, false, true>(image, template, origin, options, budget)
+            compare_template_spans::<true, false, true>(image, comparison, origin, options, budget)
         }
     }
 }
 
 fn compare_template_spans<const BGRA: bool, const EXACT: bool, const IGNORE: bool>(
     image: ImageView<'_>,
-    template: &PreparedTemplate,
+    comparison: &TemplateComparison<'_>,
     origin: PixelPoint,
     options: TemplateOptions,
     budget: &mut ComparisonBudget,
 ) -> Result<u16, VisionError> {
-    let relevant = template.relevant_count(options.ignore_transparent_template_pixels);
+    let template = comparison.template;
+    let relevant = comparison.relevant;
     if relevant == 0 {
         return Err(VisionError::EmptyTemplate);
     }
-    let anchors = template.anchors(options.ignore_transparent_template_pixels);
-    let allowed = relevant
-        - relevant
-            .saturating_mul(u64::from(options.minimum_match_permille))
-            .div_ceil(1_000);
+    let allowed = comparison.allowed;
     let mut mismatches = 0;
-    for pixel in anchors.iter().flatten().copied() {
+    let origin_start = origin.y as usize * image.row_stride + origin.x as usize * 4;
+    for (offset, expected) in comparison.anchors.iter().flatten().copied() {
         budget.consume(1)?;
+        let actual = &image.pixels[origin_start + offset..origin_start + offset + 4];
         if !color_matches(
-            read_pixel(image, origin.x + pixel.x, origin.y + pixel.y),
-            pixel.color,
+            decode_pixel(actual, image.format),
+            expected,
             options.tolerance,
         ) {
             mismatches += 1;
@@ -1263,14 +1316,12 @@ fn compare_template_spans<const BGRA: bool, const EXACT: bool, const IGNORE: boo
             return Ok(0);
         }
     }
-    // At most four sorted holes: compare contiguous row spans without testing anchor membership per pixel.
-    let mut holes = anchors.map(|a| a.map_or((u32::MAX, u32::MAX), |p| (p.y, p.x)));
-    holes.sort_unstable();
+    let holes = &comparison.holes;
     let mut hole = 0;
     let width = template.width as usize;
+    let mut actual_start = origin_start;
     for (y, expected_row) in template.bgra_pixels.chunks_exact(width).enumerate() {
-        let start = (origin.y as usize + y) * image.row_stride + origin.x as usize * 4;
-        let actual_row = &image.pixels[start..start + width * 4];
+        let actual_row = &image.pixels[actual_start..actual_start + width * 4];
         let mut left = 0;
         while hole < holes.len() && holes[hole].0 as usize == y {
             let right = holes[hole].1 as usize;
@@ -1297,6 +1348,7 @@ fn compare_template_spans<const BGRA: bool, const EXACT: bool, const IGNORE: boo
         )? {
             return Ok(0);
         }
+        actual_start += image.row_stride;
     }
     u16::try_from((relevant - mismatches).saturating_mul(1_000) / relevant)
         .map_err(|_| VisionError::InvalidSimilarity)
@@ -1331,7 +1383,11 @@ fn compare_span_mode<
     budget: &mut ComparisonBudget,
 ) -> Result<bool, VisionError> {
     const BLOCK: usize = 32;
-    if !EXACT || IGNORE || expected.len() < BLOCK || allowed - *mismatches < BLOCK as u64 {
+    if !(EXACT || cfg!(test) && WORD_MATCH)
+        || IGNORE
+        || expected.len() < BLOCK
+        || allowed - *mismatches < BLOCK as u64
+    {
         return compare_span_scalar::<BGRA, EXACT, IGNORE>(
             expected, actual, tolerance, allowed, mismatches, budget,
         );
@@ -1356,7 +1412,9 @@ fn compare_span_mode<
             };
             // The alternative is test-only: measurements did not justify a production change.
             #[cfg(test)]
-            let count = if WORD_MATCH {
+            let count = if !EXACT {
+                tolerant_block_mismatches::<BGRA>(colors, bytes, tolerance)
+            } else if WORD_MATCH {
                 packed
                     .iter()
                     .zip(bytes.chunks_exact(4))
@@ -1396,6 +1454,33 @@ fn compare_span_mode<
         mismatches,
         budget,
     )
+}
+
+#[inline]
+#[cfg(test)]
+#[allow(clippy::needless_bitwise_bool)] // All channels must be evaluated to allow bounded block vectorization.
+fn tolerant_block_mismatches<const BGRA: bool>(
+    expected: &[[u8; 4]],
+    actual: &[u8],
+    tolerance: ColorTolerance,
+) -> u64 {
+    expected
+        .iter()
+        .zip(actual.chunks_exact(4))
+        .map(|(color, pixel)| {
+            // No data-dependent early exit: the caller proves this whole block is safe.
+            let blue = pixel[if BGRA { 0 } else { 2 }].abs_diff(color[0]);
+            let green = pixel[1].abs_diff(color[1]);
+            let red = pixel[if BGRA { 2 } else { 0 }].abs_diff(color[2]);
+            let alpha = pixel[3].abs_diff(color[3]);
+            u64::from(
+                (blue > tolerance.blue)
+                    | (green > tolerance.green)
+                    | (red > tolerance.red)
+                    | (alpha > tolerance.alpha),
+            )
+        })
+        .sum()
 }
 
 #[inline]
@@ -1606,6 +1691,8 @@ struct SearchPoints {
     columns: u64,
     rows: u64,
     emitted: u64,
+    corner_column: u64,
+    corner_row: u64,
     center: CenterOutState,
 }
 
@@ -1625,6 +1712,8 @@ impl SearchPoints {
             columns,
             rows,
             emitted: 0,
+            corner_column: 0,
+            corner_row: 0,
             center: CenterOutState {
                 radius: 0,
                 side: 0,
@@ -1652,8 +1741,13 @@ impl SearchPoints {
         if self.emitted >= total {
             return None;
         }
-        let row_index = self.emitted / self.columns;
-        let column_index = self.emitted % self.columns;
+        let row_index = self.corner_row;
+        let column_index = self.corner_column;
+        self.corner_column += 1;
+        if self.corner_column == self.columns {
+            self.corner_column = 0;
+            self.corner_row += 1;
+        }
         self.emitted += 1;
         let (column, row) = match self.options.order {
             SearchOrder::BottomLeftToTopRight => (column_index, self.rows - 1 - row_index),
@@ -2189,6 +2283,75 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn corner_orders_keep_the_legacy_row_major_sequence() {
+        let base = SearchOptions {
+            roi: PixelRect {
+                left: 4,
+                top: 6,
+                right: 13,
+                bottom: 11,
+            },
+            step_x: 2,
+            step_y: 2,
+            order: SearchOrder::TopLeftToBottomRight,
+            max_pixel_comparisons: 1_000,
+        };
+        let expected_top_left = [
+            (4, 6),
+            (6, 6),
+            (8, 6),
+            (10, 6),
+            (12, 6),
+            (4, 8),
+            (6, 8),
+            (8, 8),
+            (10, 8),
+            (12, 8),
+            (4, 10),
+            (6, 10),
+            (8, 10),
+            (10, 10),
+            (12, 10),
+        ];
+        for (order, expected) in [
+            (
+                SearchOrder::TopLeftToBottomRight,
+                expected_top_left.to_vec(),
+            ),
+            (
+                SearchOrder::BottomLeftToTopRight,
+                expected_top_left
+                    .chunks_exact(5)
+                    .rev()
+                    .flat_map(|row| row.iter().copied())
+                    .collect(),
+            ),
+            (
+                SearchOrder::TopRightToBottomLeft,
+                expected_top_left
+                    .chunks_exact(5)
+                    .flat_map(|row| row.iter().rev().copied())
+                    .collect(),
+            ),
+            (
+                SearchOrder::BottomRightToTopLeft,
+                expected_top_left
+                    .chunks_exact(5)
+                    .rev()
+                    .flat_map(|row| row.iter().rev().copied())
+                    .collect(),
+            ),
+        ] {
+            let mut options = base;
+            options.order = order;
+            let actual: Vec<_> = super::SearchPoints::new(options)
+                .map(|point| (point.x, point.y))
+                .collect();
+            assert_eq!(actual, expected);
         }
     }
 

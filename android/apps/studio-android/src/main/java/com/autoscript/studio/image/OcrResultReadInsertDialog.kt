@@ -20,7 +20,8 @@ internal fun OcrResultReadInsertDialog(initial:JsonObject,snapshot:ProjectSnapsh
         onManageVariables=owner.onManageVariables,onDismiss=onDismiss,initial=initial,onConfirm={ blocks ->
             if(projectId!=snapshot.manifest.projectId || owner.flowId!=target.flowId || owner.editor!==target.editor)
                 onMessage("项目或编辑会话已变化，未加入，请重新打开")
-            else request=ImageBlockInsertionRequest.create(projectId,owner.flowId,owner.editor,blocks,ImageInsertionOrigin.PREVIEW)
+            else request=ImageBlockInsertionRequest.create(projectId,owner.flowId,owner.editor,blocks,ImageInsertionOrigin.PREVIEW,
+                preferredChildSlot=owner.preferredChildSlot)
         })
     request?.let { frozen -> if(!busy) ImageInsertionPositionDialog(frozen,owner.editor,onDismiss={request=null},onConfirm={position,slot ->
         busy=true

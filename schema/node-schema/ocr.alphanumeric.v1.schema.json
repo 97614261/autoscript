@@ -28,7 +28,7 @@
       "properties": {
         "frameVariable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "minimumConfidencePermille": {
           "type": "integer",
@@ -68,11 +68,14 @@
         },
         "textVariable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "scoreVariable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+        },
+        "includeSymbols": {
+          "type": "boolean"
         }
       }
     }

@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "kind": "ocr.alphanumericv5",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/ocr.alphanumericv5/1/ocr.alphanumericv5.schema.json",
+  "title": "英文数字识别（v5可选候选）",
+  "category": "ocr",
+  "summary": "显式选择固定PP-OCRv5英文移动ONNX候选，仅输出A-Z/a-z/0-9，不替换默认v4。单行ROI、最多960×48预处理宽度、5秒期限，返回text/averageScorePermille JSON。历史公开合成集v5整行准确率低于v4，不能保证更准或修复l/1。当前需内置full/onnx候选资源；旧外置组件不自动降级到其他模型。",
+  "searchTerms": [
+    "Ocr.alphanumericV5",
+    "ORB",
+    "特征",
+    "英文",
+    "数字",
+    "识图",
+    "新模型"
+  ],
+  "requiredCapabilities": [
+    "ocr.onnx"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "来源图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "left",
+      "label": "左",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "top",
+      "label": "上",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "right",
+      "label": "右（不含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "720"
+    },
+    {
+      "path": "bottom",
+      "label": "下（不含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "128"
+    },
+    {
+      "path": "minimumScorePermille",
+      "label": "最低逐字置信度‰",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "500"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果JSON字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

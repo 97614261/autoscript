@@ -2,6 +2,7 @@
 
 mod backend;
 mod capture_series;
+mod frame_geometry;
 mod frame_pool;
 mod input_arbiter;
 mod shared_pixels;
@@ -9,6 +10,7 @@ mod shared_pixels;
 #[cfg(test)]
 mod capture_storage_tests;
 
+pub use frame_geometry::FrameOrigin;
 pub use shared_pixels::SharedPixels;
 
 pub use backend::{
@@ -23,6 +25,8 @@ pub use frame_pool::{
     CaptureSeriesHandle, CapturedFrameId, FrameCaptureTimings, FrameError, FrameFormat,
     FrameHandle, FrameMetadata, FramePool, FramePoolConfig, FrameView, FrameVisionError,
     MultiTemplateSearch, NamedTemplateMatch, Rotation, SearchControl, SeriesPublish,
+    TemplateBatchQuery, TemplateBatchSearch, MAX_TEMPLATE_BATCH_QUERIES,
+    MAX_TEMPLATE_BATCH_TEMPLATES,
 };
 pub use input_arbiter::{
     InputArbiter, InputArbiterConfig, InputCommand, InputDecision, InputError, InputTransaction,

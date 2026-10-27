@@ -14,10 +14,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectVariableType
+import com.autoscript.project.store.importedResourcePath
 import com.autoscript.studio.generated.BlockContract
 import com.autoscript.studio.generated.BlockPropertyEditor
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -34,24 +36,26 @@ internal fun VisualRuntimeToolsDialog(contract: BlockContract, arguments: JsonOb
     var busy by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val savePrompt = rememberResourceSavePrompt()
     val variables = calculationVariables(project.manifest.variables, flowId, project.manifest.flows)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
+        if (uri != null && !busy) scope.launch {
             busy = true
-            runCatching { withContext(Dispatchers.IO) {
-                val store = com.autoscript.project.store.ProjectStore(requireNotNull(project.directory.parentFile))
-                requireNotNull(context.contentResolver.openInputStream(uri)).use { input ->
-                    store.importResource(project.manifest.projectId, com.autoscript.project.store.ProjectResourceKind.AUDIO,
-                        "sound", input, project.manifest.resources.mapNotNull { it.get("path")?.asString }.toSet())
-                }
-            } }
-                .onSuccess { updated ->
-                    val oldPaths = project.manifest.resources.mapNotNull { it.get("path")?.asString }.toSet()
-                    val added = updated.manifest.resources.single { it.get("path")?.asString !in oldPaths }.get("path").asString
-                    inputs = inputs + ("path" to added); onResourcesUpdated?.invoke(updated); error = null
-                }
-                .onFailure { error = it.message ?: "音频导入失败" }
-            busy = false
+            val oldPaths = project.resourcePaths()
+            try {
+                val (updated, path) = savePrompt.run { mode -> withContext(Dispatchers.IO) {
+                    val store = com.autoscript.project.store.ProjectStore(requireNotNull(project.directory.parentFile))
+                    val name = queryDisplayName(context.contentResolver, uri)
+                    val imported = requireNotNull(context.contentResolver.openInputStream(uri)).use { input ->
+                        store.importResource(project.manifest.projectId, com.autoscript.project.store.ProjectResourceKind.AUDIO,
+                            name, input, oldPaths, mode = mode)
+                    }
+                    imported to importedResourcePath(imported, oldPaths, mode)
+                } }
+                inputs = inputs + ("path" to path); onResourcesUpdated?.invoke(updated); error = null
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = failure.message ?: "音频导入失败" }
+            finally { busy = false }
         }
     }
     fun dismiss() { if (busy) return; if (inputs != initial) discard = true else onDismiss() }

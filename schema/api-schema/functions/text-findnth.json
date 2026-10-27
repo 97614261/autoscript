@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14235,
+  "name": "Text.findNth",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按不重叠匹配查找第1–1024次，返回Unicode字符索引（1起），未找到0；查找串非空，原文64KiB。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    },
+    {
+      "name": "needle",
+      "type": "string",
+      "required": true,
+      "summary": "查找文字"
+    },
+    {
+      "name": "occurrence",
+      "type": "integer",
+      "required": true,
+      "summary": "第几次"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "按不重叠匹配查找第1–1024次，返回Unicode字符索引（1起），未找到0；查找串非空，原文64KiB。"
+  },
+  "legacyAliases": []
+}

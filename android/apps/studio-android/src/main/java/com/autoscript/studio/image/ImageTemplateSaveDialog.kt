@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectStore
+import com.autoscript.project.store.ResourceImportMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,7 +58,7 @@ internal fun ImageTemplateSaveDialog(
     defaultName: String = "template-${System.currentTimeMillis()}.png",
     pixelSize: Pair<Int, Int>? = null,
     onDismiss: () -> Unit,
-    onSave: (folder: String, name: String) -> Unit,
+    onSave: suspend (folder: String, name: String, mode: ResourceImportMode) -> Unit,
 ) {
     var selected by remember(projectId, initialFolder) { mutableStateOf(initialFolder) }
     var storedFolders by remember(projectId) { mutableStateOf<List<String>>(emptyList()) }
@@ -72,8 +73,8 @@ internal fun ImageTemplateSaveDialog(
     }
     var discard by remember(projectId) { mutableStateOf(false) }
     var error by remember(projectId) { mutableStateOf<String?>(null) }
-    var duplicateSave by remember(projectId) { mutableStateOf<Pair<String, String>?>(null) }
     val scope = rememberCoroutineScope()
+    val savePrompt = rememberResourceSavePrompt()
     val folderFocus = remember { FocusRequester() }
     val folders = remember(imagePaths, storedFolders) { (imageResourceFolders(imagePaths) + storedFolders).distinct() }
     val children = imageChildFolders(folders, selected)
@@ -100,11 +101,15 @@ internal fun ImageTemplateSaveDialog(
         if (!enabled || creatingFolder) return
         val name = if (folderOnly) "" else try { imageSaveFileName(imageName.text) }
         catch (failure: IllegalArgumentException) { error = failure.message; return }
-        if (!folderOnly && imageSaveNameExists(selected, name, imagePaths)) {
-            duplicateSave = selected to name
-            return
+        val folder = selected
+        busy = true
+        error = null
+        scope.launch {
+            try { savePrompt.run { mode -> onSave(folder, name, mode) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = failure.message ?: "保存图片失败，名称和位置已保留" }
+            finally { busy = false }
         }
-        onSave(selected, name)
     }
     LaunchedEffect(projectId) {
         try {
@@ -118,19 +123,21 @@ internal fun ImageTemplateSaveDialog(
     StudioDialog(onDismissRequest = ::requestDismiss, properties = DialogProperties(
         usePlatformDefaultWidth = false, dismissOnBackPress = !busy, dismissOnClickOutside = !busy,
     )) {
+        BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
+        val short = studioShortViewport(maxHeight.value)
         Surface(Modifier.widthIn(max = 460.dp).fillMaxWidth(.92f)
-            .heightIn(max = (LocalConfiguration.current.screenHeightDp - 32).coerceAtLeast(120).dp),
+            .heightIn(max = studioPanelMaxHeight(maxHeight.value, LocalConfiguration.current.screenHeightDp, if (short) 8 else 32).dp),
             shape = RoundedCornerShape(4.dp), color = androidx.compose.ui.graphics.Color.White, shadowElevation = 10.dp) {
             Column {
-                Row(Modifier.fillMaxWidth().height(44.dp).padding(start = 14.dp, end = 6.dp),
+                Row(Modifier.fillMaxWidth().heightIn(min = if (short) 32.dp else 44.dp).padding(start = 14.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (folderOnly) "选择图片文件夹" else "保存截图", color = AutoScriptPalette.Accent,
-                        fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(if (folderOnly) "选择图片文件夹" else "保存图片", color = AutoScriptPalette.Accent,
+                        fontSize = if (short) 13.sp else 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     SaveAction("×", !busy, ::requestDismiss)
                 }
                 HorizontalDivider(color = AutoScriptPalette.Divider)
                 Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    .padding(if (short) 8.dp else 12.dp), verticalArrangement = Arrangement.spacedBy(if (short) 5.dp else 8.dp)) {
                     if (!folderOnly) {
                         Text("图片名称", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary)
                         Row(Modifier.fillMaxWidth().height(40.dp)
@@ -195,29 +202,22 @@ internal fun ImageTemplateSaveDialog(
                         "目标：assets/images/${if (selected.isEmpty()) "" else "$selected/"}${fileName ?: "待填写名称.png"}",
                         fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                     Text(if (folderOnly) "新建目录立即生效，空目录也随项目备份。" else
-                        "PNG 原像素保存 · 同名自动编号，不覆盖原图", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                        "PNG 原像素保存 · 同名可覆盖或编号另存", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                     if (!folderOnly) pixelSize?.let { (width,height) ->
                         Text("保存尺寸 ${width}×${height}px · 超预算明确拒绝，不缩小图片",fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
                     }
                     error?.let { Text(it, color = androidx.compose.ui.graphics.Color(0xFFD84949), fontSize = 11.sp) }
                 }
                 HorizontalDivider(color = AutoScriptPalette.Divider)
-                Row(Modifier.fillMaxWidth().height(44.dp)) {
+                Row(Modifier.fillMaxWidth().height(if (short) 36.dp else 44.dp)) {
                     SaveAction("取消", !busy, ::requestDismiss, Modifier.weight(1f).fillMaxHeight())
                     VerticalDivider(color = AutoScriptPalette.Divider)
-                    SaveAction(if (folderOnly) "选择此文件夹" else "保存图片", enabled && !creatingFolder,
+                    SaveAction(if (folderOnly) "选择此文件夹" else if (busy) "保存中…" else "保存图片", enabled && !creatingFolder,
                         ::save, Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
-    }
-    duplicateSave?.let { destination ->
-        StudioConfirmDialog(onDismissRequest = { duplicateSave = null }, title = { Text("同名图片已存在") },
-            text = { Text("${destination.second} 将自动编号保存为新图片，不覆盖原图。也可以返回修改名称。", fontSize = 12.sp) },
-            confirmButton = { androidx.compose.material3.TextButton(enabled = enabled, onClick = {
-                duplicateSave = null; onSave(destination.first, destination.second)
-            }) { Text("编号保存") } },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { duplicateSave = null }) { Text("返回改名") } })
+        }
     }
     if (discard) EditorPromptDialog("放弃图片保存配置？", "本次名称和位置选择将丢弃，不保存新图片、不改原图；已经创建的空目录不会删除。",
         { discard=false }, { discard=false;onDismiss() }, "继续编辑", "放弃")

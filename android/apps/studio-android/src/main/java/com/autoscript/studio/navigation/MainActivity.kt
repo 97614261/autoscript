@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -22,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowInsetsControllerCompat
-import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.core.designsystem.AutoScriptTheme
 import com.autoscript.core.model.RuntimeConnectionPhase
 import com.autoscript.core.model.RuntimeConnectionState
@@ -31,7 +32,6 @@ import com.autoscript.runtime.api.RuntimeProtocol
 import com.autoscript.runtime.client.RuntimeClient
 import com.autoscript.project.store.ProjectStore
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         captureHandoff = intent.toCaptureHandoffOrNull()
-        window.statusBarColor = AndroidColor.rgb(245, 246, 250)
+        window.statusBarColor = AndroidColor.rgb(252, 252, 255)
         window.navigationBarColor = AndroidColor.WHITE
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = true
@@ -50,7 +50,11 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             AutoScriptTheme {
-                StudioApp(captureHandoff, onCaptureHandoffConsumed = { captureHandoff = null })
+                val updateScope = rememberCoroutineScope()
+                val updater = remember { StudioUpdateController(applicationContext, updateScope) }
+                CompositionLocalProvider(LocalStudioUpdater provides updater) {
+                    StudioApp(captureHandoff, onCaptureHandoffConsumed = { captureHandoff = null })
+                }
             }
         }
     }
@@ -64,10 +68,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffConsumed: () -> Unit) {
+    var firstContentLaidOut by rememberSaveable { mutableStateOf(false) }
     val homeSpaceState = rememberHomeSpaceState()
     var navigation by remember { mutableStateOf(StudioNavigationState()) }
     var runtimeEnvironmentVisible by remember { mutableStateOf(false) }
-    var profileSubpage by remember { mutableStateOf<ProfileSubpage?>(null) }
+    var aboutVisible by remember { mutableStateOf(false) }
     var functionDocsVisible by remember { mutableStateOf(false) }
     var workspaceFullScreen by remember { mutableStateOf(false) }
     var workspaceRequest by remember { mutableStateOf<WorkspaceEntryRequest?>(null) }
@@ -75,10 +80,8 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
     var runtimeState by remember { mutableStateOf(RuntimeConnectionState()) }
     var runtimeDebugMessage by remember { mutableStateOf<String?>(null) }
     var runtimeFailureObserved by remember { mutableStateOf(false) }
-    val console = remember { RuntimeConsoleLog() }
     val runtimeClient = rememberRuntimeClient {
         runtimeState = it
-        console.record(it)
     }
     val openSoftwarePermissions = rememberSoftwarePermissionsLauncher(runtimeClient, promptOnFirstLaunch = true)
     var environmentInputFeatures by remember { mutableStateOf<Int?>(null) }
@@ -91,11 +94,13 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
     }
     val context = LocalContext.current
     val projectStore = remember(context) { ProjectStore(File(context.applicationContext.filesDir, "projects")) }
+    StudioUpdateHost(LocalStudioUpdater.current, installAllowed = runtimeState.phase == RuntimeConnectionPhase.CONNECTED &&
+        runtimeState.engineState in setOf(RuntimeEngineState.IDLE, RuntimeEngineState.STOPPED, RuntimeEngineState.FAILED))
 
     fun openWorkspace(action: WorkspaceEntryAction? = null, projectId: String? = null) {
         runtimeEnvironmentVisible = false
         visionComponentsVisible = false
-        profileSubpage = null
+        aboutVisible = false
         workspaceRequest = action?.let { WorkspaceEntryRequest(++requestToken, it, projectId) }
         navigation = navigation.navigateTo(StudioDestination.WORKSPACE)
     }
@@ -109,9 +114,9 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
             StudioEntry.PERMISSIONS -> openSoftwarePermissions()
             StudioEntry.ENVIRONMENT -> runtimeEnvironmentVisible = true
             StudioEntry.DOCS -> functionDocsVisible = true
-            StudioEntry.GUIDE, StudioEntry.ABOUT -> {
+            StudioEntry.ABOUT -> {
                 navigation = navigation.navigateTo(StudioDestination.PROFILE)
-                profileSubpage = if (entry == StudioEntry.GUIDE) ProfileSubpage.GUIDE else ProfileSubpage.UPDATE
+                aboutVisible = true
             }
         }
     }
@@ -128,22 +133,17 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
             runtimeFailureObserved = true
         } else runtimeFailureObserved = false
     }
-    LaunchedEffect(runtimeState.phase) {
-        while (runtimeState.phase == RuntimeConnectionPhase.CONNECTED) {
-            console.recordRemote(withContext(Dispatchers.IO) { runtimeClient.recentRuntimeLogs() })
-            delay(500)
-        }
-    }
-    Scaffold(modifier = Modifier.fillMaxSize(), containerColor = Color(0xFFF5F6FA), bottomBar = {
-        if (!runtimeEnvironmentVisible && !workspaceFullScreen && profileSubpage == null) {
+    Box(Modifier.fillMaxSize()) {
+    Scaffold(modifier = Modifier.fillMaxSize().onGloballyPositioned { firstContentLaidOut = true }, containerColor = StudioPaper, bottomBar = {
+        if (!runtimeEnvironmentVisible && !workspaceFullScreen && !aboutVisible) {
             StudioBottomNavigation(navigation.destination) { destination ->
                 navigation = navigation.navigateTo(destination)
-                profileSubpage = null
+                aboutVisible = false
                 workspaceRequest = null
             }
         }
     }) { padding ->
-        Surface(Modifier.fillMaxSize().padding(padding), color = Color(0xFFF5F6FA)) {
+        Surface(Modifier.fillMaxSize().padding(padding), color = StudioPaper) {
             if (runtimeEnvironmentVisible) RuntimeEnvironmentScreen(
                 state = runtimeState, onBack = { visionComponentsVisible = false; runtimeEnvironmentVisible = false }, onRefresh = {
                     environmentScope.launch {
@@ -151,24 +151,29 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
                         environmentRefreshRevision++
                     }
                 },
-                onShowDebug = { runtimeDebugMessage = it }, onOpenPermissions = openSoftwarePermissions,
+                onShowDebug = { heading -> environmentScope.launch {
+                    val diagnostics = withContext(Dispatchers.IO) { runtimeClient.recentRuntimeLogs() }
+                        .filter { "App诊断" in it }
+                    runtimeDebugMessage = heading + "\n\n" + diagnostics.joinToString("\n").ifBlank { "暂无 App 诊断，请刷新连接后重试截图" }
+                } }, onOpenPermissions = openSoftwarePermissions,
                 onOpenVisionComponents = { visionComponentsVisible = true },
                 inputFeatures = environmentInputFeatures, modifier = Modifier.fillMaxSize(),
             ) else when (navigation.destination) {
                 StudioDestination.HOME -> StudioHomePage(modifier = Modifier.fillMaxSize(), spaceState = homeSpaceState)
                 StudioDestination.WORKSPACE -> ProjectPage(
                     store = projectStore, runtimeClient = runtimeClient, runtimeState = runtimeState,
-                    consoleLines = console.lines, active = true, onFullScreenChanged = { workspaceFullScreen = it },
+                    onFullScreenChanged = { workspaceFullScreen = it },
                     captureHandoff = captureHandoff, onCaptureHandoffConsumed = onCaptureHandoffConsumed,
                     entryRequest = workspaceRequest, onEntryRequestConsumed = { workspaceRequest = null },
-                    onOpenFunctionDocs = { functionDocsVisible = true }, modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize(),
                 )
-                StudioDestination.PROFILE -> profileSubpage?.let { page ->
-                    ProfileSubpageScreen(page, onBack = { profileSubpage = null }, onOpenSubpage = { profileSubpage = it },
-                        onOpenFunctionDocs = { functionDocsVisible = true }, modifier = Modifier.fillMaxSize())
-                } ?: StudioProfilePage(runtimeState, ::openEntry, Modifier.fillMaxSize())
+                StudioDestination.PROFILE -> if (aboutVisible) {
+                    StudioAboutScreen(onBack = { aboutVisible = false }, modifier = Modifier.fillMaxSize())
+                } else StudioProfilePage(runtimeState, ::openEntry, Modifier.fillMaxSize())
             }
         }
+    }
+    if (captureHandoff == null) StudioStartupOverlay(firstContentLaidOut)
     }
     if (runtimeEnvironmentVisible && visionComponentsVisible) VisionProviderManagerDialog(runtimeClient) { visionComponentsVisible = false }
     if (functionDocsVisible) FunctionLibraryDialog(
@@ -193,22 +198,22 @@ private fun Intent?.toCaptureHandoffOrNull(): StudioCaptureHandoff? {
 }
 
 @Composable
-private fun StudioBottomNavigation(selected: StudioDestination, onSelected: (StudioDestination) -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Color.White)) {
-        HorizontalDivider(color = AutoScriptPalette.DividerSoft)
-        Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+internal fun StudioBottomNavigation(selected: StudioDestination, onSelected: (StudioDestination) -> Unit) {
+    Surface(Modifier.fillMaxWidth(), color = Color.White.copy(alpha = .98f), shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+        shadowElevation = 3.dp) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 58.dp).padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             StudioDestination.entries.forEach { destination ->
                 val active = selected == destination
-                val color = if (active) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary
+                val color = if (active) StudioViolet else StudioMuted
                 val icon = when (destination) {
                     StudioDestination.HOME -> R.drawable.nav_home_24
                     StudioDestination.WORKSPACE -> R.drawable.nav_workspace_24
                     StudioDestination.PROFILE -> R.drawable.nav_profile_24
                 }
-                Column(Modifier.weight(1f).fillMaxHeight().clickable { onSelected(destination) },
+                Column(Modifier.weight(1f).clickable { onSelected(destination) }.padding(vertical = 2.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Box(Modifier.size(width = 48.dp, height = 28.dp)
-                        .background(if (active) Color(0xFFEAF0FF) else Color.Transparent, RoundedCornerShape(10.dp)),
+                    Box(Modifier.size(width = 54.dp, height = 27.dp)
+                        .background(if (active) StudioLilac else Color.Transparent, RoundedCornerShape(16.dp)),
                         contentAlignment = Alignment.Center) {
                         Icon(painterResource(icon), destination.label, tint = color, modifier = Modifier.size(20.dp))
                     }

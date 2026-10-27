@@ -20,18 +20,22 @@ import com.autoscript.runtime.api.RecordingReply
 
 /** One bounded I/O worker; MediaPlayer and window ownership stay on the main thread. */
 internal class RuntimeToolsController(
-    context: Context,
+    private val context: Context,
     private val recorder: RuntimeInputRecordingController,
     private val generation: () -> Long,
     private val ready: () -> Boolean,
     private val screen: () -> Pair<Point, Int>,
     private val openAudio: (String) -> FileInputStream,
     private val floatingImages:RuntimeFloatingImages,
+    private val inputFeatures:()->Int={0},
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val platform=RuntimePlatformTools(context)
     private val floating=RuntimeFloatingWindows(context) {screen().first}
+    private val interactive=RuntimeInteractiveImages(context) {screen().first}
+    private val http=RuntimeHttpRequests()
+    private val keepAwake=RuntimeScreenAwakeLease(context)
     private val worker = ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1))
     private val epoch = AtomicLong()
     private var player: MediaPlayer? = null
@@ -44,11 +48,57 @@ internal class RuntimeToolsController(
         val ticket = epoch.get()
         val run = generation()
         fun valid() = epoch.get() == ticket && generation() == run && ready() && !cancelled()
+        val imeTicket=if(operation=="imeText") RuntimeImeConnection.ticket() else null
+        if(operation=="httpRequest") {http.submit(work,value,::valid,::complete);return}
+        if(operation=="imageEvent") {
+            main.post {runCatching {
+                val spec=ProjectDataCommands.parse(value,1024).asJsonObject
+                require(spec.keySet()==setOf("name","timeoutMs"))
+                interactive.await(spec["name"].asString,requireNotNull(spec["timeoutMs"].toString().toLongOrNull()),work,::valid,::complete)
+            }.onFailure {complete(Result.failure(it))}}
+            return
+        }
+        if(operation=="imageClose") {main.post {complete(runCatching {check(valid());interactive.close(value);""})};return}
         runCatching {
             worker.execute {
                 try {
                     check(valid())
                     when (operation) {
+                        "imageShow" -> {
+                            val spec=ProjectDataCommands.parse(value,2048).asJsonObject
+                            val image=floatingImages.bitmap(spec["imagePath"].asString)
+                            check(valid());main.post {complete(runCatching {check(valid());interactive.show(value,image,work);""})}
+                        }
+                        "imeText", "imeStatus" -> main.post {
+                            complete(runCatching {
+                                check(valid())
+                                if(operation=="imeText") {check(RuntimeImeConnection.connected()) {"IME_NOT_CONNECTED"};check(RuntimeImeConnection.commit(imeTicket,value)) {"IME_COMMIT_REJECTED"};""}
+                                else {
+                                    val component=android.content.ComponentName(context,RuntimeInputMethodService::class.java)
+                                    val manager=context.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                                    com.google.gson.JsonObject().apply {
+                                        addProperty("enabled",manager.enabledInputMethodList.any {android.content.ComponentName(it.packageName,it.serviceName)==component})
+                                        addProperty("selected",android.content.ComponentName.unflattenFromString(android.provider.Settings.Secure.getString(context.contentResolver,android.provider.Settings.Secure.DEFAULT_INPUT_METHOD).orEmpty())==component)
+                                        addProperty("connected",RuntimeImeConnection.connected())
+                                    }.toString()
+                                }
+                            })
+                        }
+                        "deviceInfo" -> {
+                            val result=RuntimeDeviceInfo.read(context,value,ready(),inputFeatures())
+                            check(valid());complete(Result.success(result))
+                        }
+                        "openUrl", "keepScreenAwake" -> main.post {
+                            complete(runCatching {
+                                check(valid())
+                                if(operation=="openUrl") {
+                                    val uri=RuntimeHttpSpec.url(value)
+                                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,android.net.Uri.parse(uri.toASCIIString()))
+                                        .addCategory(android.content.Intent.CATEGORY_BROWSABLE).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                                } else {require(value in setOf("0","1"));keepAwake.set(value=="1",work)}
+                                ""
+                            })
+                        }
                         "floatingShow" -> {
                             val spec=FloatingCanvasSpec.parse(value)
                             val image=if(spec.imagePath.isEmpty()) null else floatingImages.bitmap(spec.imagePath)
@@ -169,11 +219,12 @@ internal class RuntimeToolsController(
     }
 
     fun cancel(work: Long) {
+        http.cancel(work)
         recorder.cancel(work, generation())
-        main.post { if (playerWork == work) releasePlayer(); floating.cancel(work) }
+        main.post { if (playerWork == work) releasePlayer(); floating.cancel(work);interactive.cancel(work);keepAwake.cancel(work) }
     }
-    fun reset() { epoch.incrementAndGet(); recorder.abort(); main.post {releasePlayer(); floating.clear(); floatingImages.releaseDecoded()} }
-    fun close() { reset(); worker.shutdownNow(); recorder.close() }
+    fun reset() { epoch.incrementAndGet(); recorder.abort();http.reset(); main.post {releasePlayer(); floating.clear();interactive.clear(); floatingImages.releaseDecoded();keepAwake.clear()} }
+    fun close() { reset();http.close(); worker.shutdownNow(); recorder.close() }
     private fun releasePlayer() {
         releaseTimer?.let(main::removeCallbacks); releaseTimer = null
         player?.let { runCatching { it.release() } }; player = null; playerWork = 0

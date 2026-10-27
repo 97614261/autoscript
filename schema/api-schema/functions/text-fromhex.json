@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14232,
+  "name": "Text.fromHex",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "严格偶数位HEX（大小写均可，无前缀或空白），解码后须为有效UTF-8；输入/输出最多64KiB。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "HEX文本"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "严格偶数位HEX（大小写均可，无前缀或空白），解码后须为有效UTF-8；输入/输出最多64KiB。"
+  },
+  "legacyAliases": []
+}

@@ -29,6 +29,12 @@ class VisionAcceptanceInstrumentation : Instrumentation() {
     private var ocrCandidate = false
     private var providersOnly = false
     private var providerSoak = false
+    private var capabilityExpansion=false
+    private var fixedTextAccuracy=false
+    private var readbackBenchmark = false
+    private var visualPerformance = false
+    private var featureCacheOnly = false
+    private var preprocessingBenchmark = false
     override fun onCreate(arguments: Bundle?) {
         preprocessingOnly = arguments?.getString("preprocessingOnly") == "true"
         missingComponentsOnly = arguments?.getString("missingComponentsOnly") == "true"
@@ -40,10 +46,58 @@ class VisionAcceptanceInstrumentation : Instrumentation() {
         ocrCandidate = arguments?.getString("ocrCandidate") == "true"
         providersOnly = arguments?.getString("providersOnly") == "true"
         providerSoak = arguments?.getString("providerSoak") == "true"
+        capabilityExpansion=arguments?.getString("capabilityExpansion")=="true"
+        fixedTextAccuracy=arguments?.getString("fixedTextAccuracy")=="true"
+        readbackBenchmark = arguments?.getString("readbackBenchmark") == "true"
+        visualPerformance = arguments?.getString("visualPerformance") == "true"
+        featureCacheOnly = arguments?.getString("featureCacheOnly") == "true"
+        preprocessingBenchmark = arguments?.getString("preprocessingBenchmark") == "true"
         super.onCreate(arguments); start()
     }
 
     override fun onStart() {
+        if(preprocessingBenchmark) {
+            val report=try {OnnxPreprocessingBenchmarkFixture.run()} catch(_:Throwable) {JSONObject().put("pass",false).put("code","PREPROCESS_BENCHMARK_FAILED")}
+            finish(if(report.optBoolean("pass")) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply {putString("stream",report.toString(2)+"\n")})
+            return
+        }
+        if (featureCacheOnly) {
+            val report=try {
+                val fixture=Class.forName("com.autoscript.runtime.service.FeatureTemplateCacheFixture")
+                fixture.getMethod("run").invoke(fixture.getDeclaredConstructor().newInstance()) as JSONObject
+            } catch(failure:Throwable) {
+                val cause=(failure as? java.lang.reflect.InvocationTargetException)?.targetException ?: failure
+                JSONObject().put("pass",false).put("code","FEATURE_CACHE_FIXTURE_FAILED").put("failure",cause.javaClass.simpleName)
+            }
+            finish(if(report.optBoolean("pass")) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply {putString("stream",report.toString(2)+"\n")})
+            return
+        }
+        if (visualPerformance) {
+            val report = try { VisualPerformanceFixture.run(targetContext) }
+                catch (_: Throwable) { JSONObject().put("pass", false).put("code", "VISUAL_PERFORMANCE_FAILED") }
+            finish(if (report.optBoolean("pass")) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", report.toString(2) + "\n") })
+            return
+        }
+        if (readbackBenchmark) {
+            val report = CaptureReadbackBenchmarkFixture.run()
+            finish(if (report.optBoolean("pass")) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", report.toString(2) + "\n") })
+            return
+        }
+        if(fixedTextAccuracy) {
+            val report=FixedTextAccuracyFixture.run(targetContext)
+            finish(if(report.optBoolean("pass")) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply {putString("stream",report.toString()+"\n")})
+            return
+        }
+        if(capabilityExpansion) {
+            val report=try {CapabilityVisionAcceptanceFixture.run(targetContext)} catch(_:Throwable) {JSONObject().put("pass",false).put("code","EXPANSION_FIXTURE_FAILED")}
+            finish(if(report.optBoolean("pass")) Activity.RESULT_OK else Activity.RESULT_CANCELED,Bundle().apply {putString("stream",report.toString(2)+"\n")})
+            return
+        }
         if (ocrCandidate) {
             val report = try {
                 val fixture = Class.forName("com.autoscript.runtime.service.OcrCandidateEvaluationFixture")

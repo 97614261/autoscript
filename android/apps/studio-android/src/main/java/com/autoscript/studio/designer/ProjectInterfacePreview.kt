@@ -30,6 +30,7 @@ internal fun ProjectInterfacePreview(definition: JsonObject?, directory: File? =
 internal fun ScriptInterfaceDialog(definition: JsonObject, directory: File?, projectId: String, preview: Boolean = false, onDismiss: () -> Unit, onConfirm: (Map<String, String>) -> Unit) {
     val context = LocalContext.current
     val overlayHost = LocalEditorOverlay.current
+    val promptLayer = LocalStudioPrompt.current
     val configuration = LocalConfiguration.current
     val model = remember(definition) { ScriptUiDefinition.parse(definition.toString()) }
     val dismiss by rememberUpdatedState(onDismiss)
@@ -76,14 +77,14 @@ internal fun ScriptInterfaceDialog(definition: JsonObject, directory: File?, pro
             override fun close() { window.close() }
         }
     }
-    DisposableEffect(managedWindow, overlayHost) {
-        if (overlayHost != null && !overlayHost.registerChild(managedWindow)) unavailable = true
+    DisposableEffect(managedWindow, overlayHost, promptLayer) {
+        if (overlayHost != null && !overlayHost.registerChild(managedWindow, prompt = promptLayer)) unavailable = true
         onDispose {
             if (overlayHost == null) managedWindow.close() else overlayHost.unregisterChild(managedWindow)
         }
     }
     LaunchedEffect(managedWindow, minimized, confirming, overlayHost?.hidden, configuration.screenWidthDp, configuration.screenHeightDp, configuration.orientation) {
-        managedWindow.visibility(overlayHost?.hidden != true && overlayHost?.isClosed != true)
+        if (overlayHost == null) managedWindow.visibility(true) else overlayHost.refreshChild(managedWindow)
     }
     if (minimized && !unavailable && overlayHost?.hidden != true) Popup(alignment = Alignment.BottomEnd, onDismissRequest = { minimized = false }) {
         Button(onClick = { minimized = false }) { Text("恢复脚本界面") }

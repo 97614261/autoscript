@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.regexreplace",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.regexreplace/1/text.regexreplace.schema.json",
+  "title": "正则替换",
+  "category": "variable",
+  "summary": "全部匹配替换为字面文本（$1 等不展开）。原文 4096 字节、表达式 1–128 字节、替换文 4096 字节，最多 1024 次匹配、输出 64KiB；有限自动机，不支持回溯引用和环视。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "正则替换"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "a12b34"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "pattern",
+      "label": "正则表达式",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[0-9]+"
+    },
+    {
+      "path": "patternVariable",
+      "label": "正则表达式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "replacement",
+      "label": "替换为（字面文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "#"
+    },
+    {
+      "path": "replacementVariable",
+      "label": "替换为（字面文本）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

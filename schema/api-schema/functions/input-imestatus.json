@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18004,
+  "name": "Input.imeStatus",
+  "since": "1.8",
+  "capability": "input.ime",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "读取智构输入法是否已启用、已选中以及当前输入连接是否存在的JSON；不枚举其他输入法，不读取输入内容，不自动启用或切换。",
+  "params": [],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "读取智构输入法是否已启用、已选中以及当前输入连接是否存在的JSON；不枚举其他输入法，不读取输入内容，不自动启用或切换。"
+  },
+  "legacyAliases": []
+}

@@ -28,8 +28,9 @@ internal object StudioProjectClosureFixture {
         try {
             case("android-multi-plugin-source-drafts-atomic-save") {
                 snapshot = store.createFlow(id, "qa-worker", snapshot.manifest.flows.map { it.flowId }.toSet())
+                val projectIds = VisualProjectIds(snapshot.flowSources.values, snapshot.manifest.flows.map { it.rootBlockId })
                 val editors = snapshot.manifest.flows.associate { flow ->
-                    flow.flowId to VisualEditorState.create(snapshot.flowSources.getValue(flow.flowId), flow.rootBlockId).apply { insertNoop() }
+                    flow.flowId to VisualEditorState.createProjectScoped(snapshot.flowSources.getValue(flow.flowId), flow.rootBlockId, projectIds).apply { insertNoop() }
                 }
                 for (flow in snapshot.manifest.flows) {
                     val editor = editors.getValue(flow.flowId)

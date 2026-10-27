@@ -12,7 +12,9 @@ internal fun applyReflectedArguments(
     if (editor.rows.none { it.nodeId == nodeId && it.kind == contract.kind }) return false
     if (expectedArguments != null && editor.nodeArguments(nodeId) != expectedArguments) return false
     if (reusePosition == null || reusePosition == EditorInsertPosition.REPLACE) {
-        if (editor.nodeArguments(nodeId) == arguments) return true
+        val needsBranches = contract.kind in setOf("vision.findimage", "vision.findgray") &&
+            editor.childBlockNames(nodeId).isEmpty()
+        if (editor.nodeArguments(nodeId) == arguments && !needsBranches) return true
         return editor.updateArguments(nodeId, arguments)
     }
     if (contract.kind == "control.label" && editor.rows.any {

@@ -694,10 +694,15 @@ fn render_call_and_jump_node<'a>(
                         .ok_or_else(|| {
                             CompileError::Serialization("validated jump name is missing".into())
                         })?;
+                    // Lua labels are ASCII even when the user-facing key is Chinese.
+                    let label = name.as_bytes().iter().fold(String::new(), |mut out, byte| {
+                        let _ = write!(out, "{byte:02x}");
+                        out
+                    });
                     if kind == "control.label" {
-                        format!("::__jump_{name}::")
+                        format!("::__jump_{label}::")
                     } else {
-                        format!("goto __jump_{name}")
+                        format!("goto __jump_{label}")
                     }
                 }
                 _ => unreachable!(),
@@ -862,10 +867,36 @@ fn render_builtin_node<'a>(
     let key = format!("{flow_id}:{}", node.envelope.node_id);
     render_random_policy(project, node, &key, indent, writer);
     let numeric_output = |name: &str| numeric_variable_output(project, flow_id, name);
+    let image_branches = matches!(
+        arguments,
+        BuiltinNodeArgs::FindImage(..) | BuiltinNodeArgs::Gray(..)
+    ) && node.envelope.child_blocks.contains_key("success");
+    let branch_visit = if let BuiltinNodeArgs::FindImage(value) = arguments {
+        image_branches && value.frequency > 1
+    } else {
+        false
+    };
+    if branch_visit {
+        let BuiltinNodeArgs::FindImage(value) = arguments else {
+            unreachable!()
+        };
+        writer.indented(indent, "do");
+        writer.indented(
+            indent,
+            &format!(
+                "local __branch_recognize = __recognition_visit({}, {})",
+                lua_string(&key)?,
+                value.frequency
+            ),
+        );
+    }
     let rendered = match arguments {
-        BuiltinNodeArgs::FindImage(value) => {
-            render_find_image(value, &key, numeric_output(&value.found_variable))?
-        }
+        BuiltinNodeArgs::FindImage(value) => render_find_image_with_visit(
+            value,
+            &key,
+            numeric_output(&value.found_variable),
+            branch_visit.then_some("__branch_recognize"),
+        )?,
         BuiltinNodeArgs::FindColor(value) => {
             render_find_color(value, numeric_output(&value.found_variable))?
         }
@@ -879,6 +910,45 @@ fn render_builtin_node<'a>(
     };
     let rendered = rewrite_random_sleep(rendered, arguments, writer.randomized);
     writer.indented(indent, &rendered);
+    if let BuiltinNodeArgs::FindImage(value) = arguments {
+        writer.indented(
+            indent,
+            &format!(
+                "__autoscript_debug_event(\"imageSearch\", {}, {}, __vars[{}])",
+                lua_string(flow_id)?,
+                lua_string(&value.image_path)?,
+                lua_string(&value.found_variable)?
+            ),
+        );
+    }
+    if image_branches {
+        let found = match arguments {
+            BuiltinNodeArgs::FindImage(value) => &value.found_variable,
+            BuiltinNodeArgs::Gray(value) => &value.found_variable,
+            _ => unreachable!(),
+        };
+        if branch_visit {
+            // The skipped visit still clears stale outputs, but executes neither child block.
+            writer.indented(indent, "if __branch_recognize then");
+            events.push(RenderEvent::Line(indent, "end"));
+            events.push(RenderEvent::Line(indent, "end"));
+        }
+        let found = lua_string(found)?;
+        writer.indented(
+            indent,
+            &format!("if __vars[{found}] == true or __vars[{found}] == 1 then"),
+        );
+        events.push(RenderEvent::Line(indent, "end"));
+        events.push(RenderEvent::Block(
+            child_block(node, "failure")?,
+            indent + 1,
+        ));
+        events.push(RenderEvent::Line(indent, "else"));
+        events.push(RenderEvent::Block(
+            child_block(node, "success")?,
+            indent + 1,
+        ));
+    }
     if let BuiltinNodeArgs::FindAllImages(v) = arguments {
         writer.indented(
             indent,
@@ -924,15 +994,6 @@ fn render_builtin_node<'a>(
                 lua_string(flow_id)?,
                 lua_string(&value.name)?,
                 lua_string(&value.name)?,
-            ),
-        ),
-        BuiltinNodeArgs::FindImage(value) => writer.indented(
-            indent,
-            &format!(
-                "__autoscript_debug_event(\"imageSearch\", {}, {}, __vars[{}])",
-                lua_string(flow_id)?,
-                lua_string(&value.image_path)?,
-                lua_string(&value.found_variable)?,
             ),
         ),
         _ => {}
@@ -1656,7 +1717,12 @@ fn render_recognition(arguments: &BuiltinNodeArgs, key: &str) -> Result<String, 
             } else {
                 format!("__vars[{}]", lua_string(&v.frame_variable)?)
             };
-            Ok(format!("do local __f={frame}; local __r=Ocr.alphanumeric(__f,{},{},{},{},{}); {}; __vars[{}]=__r.text; __vars[{}]=__r.averageScorePermille end",r.left,r.top,r.right,r.bottom,v.minimum_confidence_permille,if v.auto_capture {"Screen.release(__f)"} else {""},lua_string(&v.text_variable)?,lua_string(&v.score_variable)?))
+            let api = if v.include_symbols {
+                "latinText"
+            } else {
+                "alphanumeric"
+            };
+            Ok(format!("do local __f={frame}; local __r=Ocr.{api}(__f,{},{},{},{},{}); {}; __vars[{}]=__r.text; __vars[{}]=__r.averageScorePermille end",r.left,r.top,r.right,r.bottom,v.minimum_confidence_permille,if v.auto_capture {"Screen.release(__f)"} else {""},lua_string(&v.text_variable)?,lua_string(&v.score_variable)?))
         }
         _ => Err(invalid_builtin_variant()),
     }
@@ -1869,6 +1935,15 @@ fn render_find_image(
     key: &str,
     numeric_found: bool,
 ) -> Result<String, CompileError> {
+    render_find_image_with_visit(value, key, numeric_found, None)
+}
+
+fn render_find_image_with_visit(
+    value: &crate::analyze::FindImageArgs,
+    key: &str,
+    numeric_found: bool,
+    visit: Option<&str>,
+) -> Result<String, CompileError> {
     let found_expression = if numeric_found {
         "__point and 1 or 0"
     } else {
@@ -1893,7 +1968,13 @@ fn render_find_image(
         String::new()
     };
     if value.has_extended_options() {
-        return render_extended_find_image(value, key, found_expression, &region_expressions);
+        return render_extended_find_image(
+            value,
+            key,
+            found_expression,
+            &region_expressions,
+            visit,
+        );
     }
 
     Ok(format!(
@@ -1918,6 +1999,7 @@ fn render_extended_find_image(
     key: &str,
     found_expression: &str,
     region_expressions: &[String],
+    visit: Option<&str>,
 ) -> Result<String, CompileError> {
     let paths = if value.image_paths.is_empty() {
         vec![value.image_path.clone()]
@@ -1931,11 +2013,15 @@ fn render_extended_find_image(
     } else {
         format!("__vars[{}]", lua_string(&value.frame_variable)?)
     };
-    let mut result = format!(
-        "do local __recognize = __recognition_visit({}, {});",
-        lua_string(key)?,
-        value.frequency,
-    );
+    let visit = match visit {
+        Some(value) => value.to_owned(),
+        None => format!(
+            "__recognition_visit({}, {})",
+            lua_string(key)?,
+            value.frequency
+        ),
+    };
+    let mut result = format!("do local __recognize = {visit};");
     if let Some(name) = &value.image_variable {
         let variable = lua_string(name)?;
         {
@@ -2012,8 +2098,18 @@ fn render_extended_find_image(
 
 fn render_glyph_ocr(value: &crate::analyze::GlyphOcrArgs) -> Result<String, CompileError> {
     let region = &value.region;
+    let extra = if value.additional_colors.is_empty() {
+        String::new()
+    } else {
+        format!(",{}", lua_string(&value.additional_colors)?)
+    };
+    let guard = if extra.is_empty() {
+        ""
+    } else {
+        "if Ocr.glyphPaletteVersion ~= 1 then error('GLYPH_PALETTE_UNSUPPORTED') end; "
+    };
     Ok(format!(
-        "do local __dictionary = Ocr.loadDictionary({}); local __result = Ocr.glyph(__vars[{}],__dictionary,{},{},{},{},{},{},{},{}); Ocr.releaseDictionary(__dictionary); __vars[{}] = __result.text; __vars[{}] = __result.coveragePermille; __vars[{}] = __result.averageScorePermille end",
+        "do {guard}local __dictionary = Ocr.loadDictionary({}); local __result = Ocr.glyph(__vars[{}],__dictionary,{},{},{},{},{},{},{},{}{extra}); Ocr.releaseDictionary(__dictionary); __vars[{}] = __result.text; __vars[{}] = __result.coveragePermille; __vars[{}] = __result.averageScorePermille end",
         lua_string(&value.dictionary_path)?,
         lua_string(&value.frame_variable)?,
         value.foreground_rgb,

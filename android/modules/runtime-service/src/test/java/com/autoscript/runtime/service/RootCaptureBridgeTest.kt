@@ -9,6 +9,64 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 
 class RootCaptureBridgeTest {
+    @Test fun regionReadbackPreservesExactPixelsAlphaAndPartialRows() {
+        val region = RootCaptureRegion(721, 1280, 11, 17, 212, 140)
+        val source = IntArray(region.screenWidth * region.screenHeight) { it * 104729 xor 0x80445566.toInt() }
+        val output = ByteArrayOutputStream()
+        writeRootCapturePixels(region.width, region.height, output, RootCaptureTransferBuffer()) { pixels, y, rows ->
+            for (row in 0 until rows) {
+                val start = (region.top + y + row) * region.screenWidth + region.left
+                source.copyInto(pixels, row * region.width, start, start + region.width)
+            }
+        }
+        val expected = IntArray(region.width * region.height) { i -> source[(region.top + i / region.width) * region.screenWidth + region.left + i % region.width] }
+        val bytes = ByteArray(expected.size * 4)
+        encodeRootCapturePixels(expected, bytes, expected.size)
+        assertArrayEquals(bytes, output.toByteArray())
+        assertTrue(region.matchesScreen(RootCaptureDisplayGeometry(721, 1280, 0)))
+        assertTrue(!region.matchesScreen(RootCaptureDisplayGeometry(1280, 721, 1)))
+        for (bounds in listOf(intArrayOf(0,0,0,1), intArrayOf(-1,0,1,1), intArrayOf(0,0,722,1), intArrayOf(0,0,1,1281))) {
+            assertThrows(IllegalArgumentException::class.java) { RootCaptureRegion(721,1280,bounds[0],bounds[1],bounds[2],bounds[3]) }
+        }
+    }
+
+    @Test fun experimentalBlockSizesStayBoundedAndPreserveTailAcrossGeometryChanges() {
+        for ((maximumPixels, maximumRows) in listOf(16_384 to 32, 32_768 to 64, 65_536 to 128)) {
+            val buffer = RootCaptureTransferBuffer(maximumPixels, maximumRows)
+            for ((width, height) in listOf(65 to 131, 721 to 53, 1 to 35, 16_384 to 1)) {
+                val colors = IntArray(width * height) { (it * 104729) xor 0x80445566.toInt() }
+                val expected = ByteArray(colors.size * 4)
+                encodeRootCapturePixels(colors, expected, colors.size)
+                val output = ByteArrayOutputStream()
+                writeRootCapturePixels(width, height, output, buffer) { pixels, y, rows ->
+                    colors.copyInto(pixels, 0, y * width, (y + rows) * width)
+                }
+                assertArrayEquals(expected, output.toByteArray())
+                assertTrue(buffer.pixels.size <= maximumPixels)
+                assertTrue(buffer.bytes.size <= maximumPixels * 4)
+                assertTrue(buffer.prepare(width, height) <= maximumRows)
+            }
+        }
+        for ((pixels, rows) in listOf(16_383 to 32, 65_537 to 32, 16_384 to 31, 16_384 to 129)) {
+            assertThrows(IllegalArgumentException::class.java) { RootCaptureTransferBuffer(pixels, rows) }
+        }
+    }
+
+    @Test fun bulkEncodingMatchesReferenceForEveryAlphaAndPartialLastBlock() {
+        val buffer = RootCaptureTransferBuffer()
+        buffer.prepare(721, 1280)
+        val random = java.util.Random(142)
+        buffer.pixels.indices.forEach { buffer.pixels[it] = random.nextInt() }
+        val bytes = buffer.bytes
+        for (count in listOf(0, 1, 721, buffer.pixels.size - 1, buffer.pixels.size)) {
+            val expected = ByteArray(count * 4)
+            encodeRootCapturePixels(buffer.pixels, expected, count)
+            buffer.encode(count)
+            assertArrayEquals(expected, buffer.bytes.copyOf(count * 4))
+            assertSame(bytes, buffer.bytes)
+        }
+        assertThrows(IllegalArgumentException::class.java) { buffer.encode(buffer.pixels.size + 1) }
+    }
     @Test fun timingTrailerIsFixedBigEndianAndTimedPixelsAreIdentical() {
         val timings = RootCaptureStageTimings()
         val output = ByteArrayOutputStream()

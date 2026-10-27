@@ -69,7 +69,8 @@ class FunctionLibraryTest {
             "Input.tapScreen" to "input.tap", "Files.read" to "files.read",
             "Audio.play" to "audio.play", "UI.getValue" to "ui.get",
             "Screen.findImages" to "vision.findimage", "Screen.cache" to "screen.capture",
-            "Text.repeatText" to "text.repeat", "Legacy.duoDianZhaoSe" to "legacy.duodianzhaose"
+            "Text.repeatText" to "text.repeat", "Legacy.duoDianZhaoSe" to "legacy.duodianzhaose",
+            "Text.numberAt" to "text.numberat", "Ocr.latinText" to "ocr.alphanumeric"
         ).forEach { (api, kind) ->
             assertEquals(kind, FunctionCatalog.search(visualGroups, api).first().second.blockKind)
         }
@@ -78,7 +79,8 @@ class FunctionLibraryTest {
         assertTrue(FunctionCatalog.search(visualGroups, "", "文本").all { it.first == "文本" })
         assertEquals("Screen.findGray", FunctionCatalog.search(apiGroups, "灰度 归一化").single().second.apiName)
         assertEquals("Timer.every", FunctionCatalog.search(apiGroups, "TIMER.EVERY").first().second.apiName)
-        assertEquals("Ocr.alphanumeric", FunctionCatalog.search(apiGroups, "最低逐字置信度").single().second.apiName)
+        assertEquals(setOf("Ocr.alphanumeric", "Ocr.latinText"),
+            FunctionCatalog.search(apiGroups, "最低逐字置信度").map { it.second.apiName }.toSet())
     }
 
     @Test fun everyUtilityApiIsSearchableInItsVisualBlock() {
@@ -119,7 +121,8 @@ class FunctionLibraryTest {
         val files = visualGroups.single { it.label == "文件" }
         assertEquals(setOf("文件管理", "目录", "文本文件", "键值存储", "编码与压缩"), files.entries.map { it.section }.toSet())
         assertTrue(FunctionCatalog.search(visualGroups, "键值存储", "文件").all { it.second.blockKind!!.startsWith("files.kv") })
-        assertTrue(files.entries.all { it.notes.contains("文本单文件") && it.notes.contains("各自契约限额") })
+        assertTrue(files.entries.filter {it.blockKind!!.startsWith("files.")}.all { it.notes.contains("文本单文件") && it.notes.contains("各自契约限额") })
+        assertTrue(files.entries.any {it.blockKind=="path.normalize"})
         assertTrue(files.entries.single { it.blockKind == "files.zip" }.detail.contains("MiB"))
     }
 

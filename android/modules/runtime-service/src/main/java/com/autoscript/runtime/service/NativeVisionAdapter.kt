@@ -27,6 +27,7 @@ internal class NativeVisionAdapter(private val source: NativeVisionBackendSource
     }
 
     @Suppress("unused")
+    @JvmOverloads // Preserve the fixed seven-argument JNI descriptor alongside preview's deadline.
     fun dispatch(id: Long, operation: Int, pixels: ByteBuffer, metadata: IntArray,
         templatePixels: ByteBuffer?, templateMetadata: IntArray, options: IntArray, deadlineNanos: Long? = null): ByteArray {
         val work = NativeVisionWork(id)
@@ -41,16 +42,17 @@ internal class NativeVisionAdapter(private val source: NativeVisionBackendSource
             if (lifecycle.isClosed()) work.cancel()
             synchronized(cancelled) { if (cancelled.remove(id)) work.cancel() }
             work.checkActive()
-            require(operation in setOf(5108, 6101) && options.size == 5)
+            require(operation in setOf(5108,5109,6101,6104,6105) && options.size == 5)
             validateVisionBuffer(pixels.capacity(), pixels.remaining(), pixels.isDirect, metadata)
             checkedVisionRect(metadata[0], metadata[1], options)
             require(options[4] in 0..1000)
-            if (operation == 5108) {
+            if (operation in setOf(5108,5109)) {
                 require(templatePixels != null)
                 validateVisionBuffer(templatePixels.capacity(), templatePixels.remaining(), templatePixels.isDirect, templateMetadata)
             }
             val backend = source.resolve(operation, work)
-            val payload = backend.execute(work, pixels, metadata, templatePixels, templateMetadata, options)
+            val selectedOptions=when(operation) {5109->options+intArrayOf(1);6104->options+intArrayOf(2);6105->options+intArrayOf(3);else->options}
+            val payload = backend.execute(work, pixels, metadata, templatePixels, templateMetadata, selectedOptions)
             work.checkActive()
             byteArrayOf(0) + payload
         } catch (error: VisionResolutionFailure) {

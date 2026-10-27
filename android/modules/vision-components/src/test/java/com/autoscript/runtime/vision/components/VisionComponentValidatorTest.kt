@@ -28,7 +28,7 @@ class VisionComponentValidatorTest {
         return setOf(MessageDigest.getInstance("SHA-256").digest(certificate.encoded).hex())
     }
 
-    private fun manifest(kind: VisionComponentKind) = VisionComponentManifest(kind.applicationId, 1, kind.sdkVersion, 24, true, 0, 0)
+    private fun manifest(kind: VisionComponentKind) = VisionComponentManifest(kind.applicationId, 2, kind.sdkVersion, 24, true, 0, 0)
     private fun validate(file: File, kind: VisionComponentKind) =
         VisionComponentValidator.validate(file, trust(), { manifest(kind) }, {})
 
@@ -62,21 +62,28 @@ class VisionComponentValidatorTest {
     }
 
     @Test fun declaredAbiMustMatchActualElf() {
+        val abi = ZipFile(apk("opencv")).use { zip ->
+            zip.getInputStream(requireNotNull(zip.getEntry(VisionComponentDescriptor.PATH))).use {
+                VisionComponentDescriptor.parse(it.readBytes()).abis.first()
+            }
+        }
         val header = ByteArray(20).apply {
             byteArrayOf(0x7f, 69, 76, 70, 2, 1).copyInto(this)
-            this[18] = 62 // x86_64 disguised as arm64.
+            this[18] = (if (abi == "arm64-v8a") 62 else 183).toByte()
         }
-        val changed = rewrite("opencv", mapOf("lib/arm64-v8a/libopencv_java4.so" to header))
+        val changed = rewrite("opencv", mapOf("lib/$abi/libopencv_java4.so" to header))
         assertThrows(IllegalArgumentException::class.java) { validate(changed, VisionComponentKind.OPENCV) }
     }
 
     @Test fun signedModelWithWrongPixelsIsRejectedEvenWhenDescriptorClaimsCorrectHash() {
+        for (path in listOf(VisionComponentDescriptor.MODEL_PATH, VisionComponentDescriptor.V5_PATH)) {
         val model = ZipFile(apk("onnx")).use { zip ->
-            zip.getInputStream(requireNotNull(zip.getEntry(VisionComponentDescriptor.MODEL_PATH))).use { it.readBytes() }
+            zip.getInputStream(requireNotNull(zip.getEntry(path))).use { it.readBytes() }
         }
         model[0] = (model[0].toInt() xor 1).toByte()
-        val changed = rewrite("onnx", mapOf(VisionComponentDescriptor.MODEL_PATH to model))
+        val changed = rewrite("onnx", mapOf(path to model))
         assertThrows(IllegalArgumentException::class.java) { validate(changed, VisionComponentKind.ONNX) }
+        }
     }
 
     @Test fun invalidActualManifestIsNotOverriddenBySignedDescriptor() {

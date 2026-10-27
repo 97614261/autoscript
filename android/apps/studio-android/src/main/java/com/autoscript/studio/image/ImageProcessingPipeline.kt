@@ -26,7 +26,7 @@ internal fun imageProcessingBlocks(pipeline: ImageProcessingPipeline, imagePath:
     resultVariable: String, variables: List<CalculationVariable>, resources: List<JsonObject>): List<Pair<BlockContract, JsonObject>> {
     require(scratchVariable != resultVariable) { "中间帧和结果帧必须使用不同变量" }
     for (name in listOf(scratchVariable, resultVariable)) {
-        require(name.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) && variables.any { it.name == name && it.type == ProjectVariableType.IMAGE }) {
+        require(name.matches(com.autoscript.project.store.ProjectNames.pattern) && variables.any { it.name == name && it.type == ProjectVariableType.IMAGE }) {
             "请选择当前插件可访问的已声明图像变量"
         }
     }
@@ -53,6 +53,9 @@ internal fun imageProcessingBlocks(pipeline: ImageProcessingPipeline, imagePath:
             } else {
                 addProperty("mode", operation.mode); addProperty("width", operation.width); addProperty("height", operation.height)
                 if (operation.mode == "threshold") addProperty("threshold", operation.threshold)
+                operation.filter?.let { addProperty("filter", it.encode()) }
+                operation.mask?.let { addProperty("mask", it.encode()) }
+                operation.cleanup?.let { addProperty("cleanup", it.encode()) }
             }
         }
         add(if (operation.mode == "crop") "screen.crop" else "screen.transform", args)

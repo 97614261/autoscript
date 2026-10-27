@@ -1,6 +1,5 @@
 package com.autoscript.studio
 
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -340,10 +339,3 @@ internal object ImageToolCodeGen {
     private const val DEFAULT_TOLERANCE = 8
     private const val DEFAULT_SIMILARITY_PERMILLE = 900
 }
-
-/** 颜色距离，用于多点取样时提示"这两点颜色太接近，区分度低"。 */
-internal fun channelDistance(lhs: Int, rhs: Int): Int = maxOf(
-    abs(((lhs shr 16) and 0xFF) - ((rhs shr 16) and 0xFF)),
-    abs(((lhs shr 8) and 0xFF) - ((rhs shr 8) and 0xFF)),
-    abs((lhs and 0xFF) - (rhs and 0xFF)),
-)

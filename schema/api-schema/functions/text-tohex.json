@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14231,
+  "name": "Text.toHex",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "将UTF-8字节编码为大写十六进制，无空格/前缀；输出最多64KiB，超限拒绝不截断。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "将UTF-8字节编码为大写十六进制，无空格/前缀；输出最多64KiB，超限拒绝不截断。"
+  },
+  "legacyAliases": []
+}

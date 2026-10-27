@@ -694,7 +694,9 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
     }
 
     pub fn cancel_timer(&mut self, timer: TimerId) -> bool {
-        self.timers.remove(&timer).is_some()
+        let removed = self.timers.remove(&timer).is_some();
+        self.compact_stale_timer_entries();
+        removed
     }
 
     #[must_use]
@@ -1177,7 +1179,8 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
             .extend(released.into_iter().map(SchedulerEvent::ResourceReleased));
     }
 
-    fn ensure_timer_capacity(&self) -> Result<(), ScheduleError> {
+    fn ensure_timer_capacity(&mut self) -> Result<(), ScheduleError> {
+        self.compact_stale_timer_entries();
         if self.timers.len() >= self.config.max_timers {
             Err(ScheduleError::TimerLimitReached {
                 maximum: self.config.max_timers,
@@ -1302,6 +1305,14 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
             .collect();
     }
 
+    fn compact_stale_timer_entries(&mut self) {
+        // Completed host requests and cancelled long timers leave lazy heap entries.
+        // Bound these independently of their deadline without changing live deadlines.
+        if self.timer_heap.len() > self.timers.len().saturating_mul(2).saturating_add(64) {
+            self.rebuild_timer_heap();
+        }
+    }
+
     fn next_live_deadline(&self) -> Option<MonoTime> {
         self.timers.values().map(|timer| timer.deadline).min()
     }
@@ -1357,6 +1368,21 @@ impl<C: Clock, F: TaskFinalizer> Scheduler<C, F> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_long_timers_cannot_accumulate_unbounded_heap_entries() {
+        let (clock, mut scheduler) = scheduler();
+        let owner = scheduler.spawn(None, false).unwrap();
+        let live = scheduler.every(owner, Duration::from_secs(10)).unwrap();
+        for _ in 0..10_000 {
+            let timer = scheduler.every(owner, Duration::from_hours(24)).unwrap();
+            assert!(scheduler.cancel_timer(timer));
+            assert!(scheduler.timer_heap.len() <= scheduler.timers.len() * 2 + 64);
+        }
+        assert!(scheduler.is_interval_timer(live));
+        clock.advance(Duration::from_secs(10));
+        assert!(scheduler.process().iter().any(|event| matches!(event,
+            SchedulerEvent::TimerReady { timer, .. } if *timer == live)));
+    }
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 

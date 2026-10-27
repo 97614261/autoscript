@@ -117,9 +117,17 @@ internal object StudioWorkflowAcceptanceFixture {
             check(compiled is VisualCompileResult.Success) { "QA_WORKFLOW_COMPILE" }
             val frozen = store.openProject(id)
             val plan = RuntimeProjectPlan.fromVisualSnapshot(frozen, compiled.generationId).forEditorRun(frozen)
-            check(runBlocking { withTimeout(20_000) { client.startProject(id, plan.luaSource, plan.resources, plan.capabilities,
+            val started = try { runBlocking { withTimeout(20_000) { client.startProject(id, plan.luaSource, plan.resources, plan.capabilities,
                 plan.designWidth, plan.designHeight, plan.scaleMode, floatingControl = false, scriptUiJson = plan.scriptUiJson,
-                requiresPointerInput = plan.requiresPointerInput, requiredVisionComponents = plan.requiredVisionComponents) } }) { "QA_WORKFLOW_START" }
+                requiresPointerInput = plan.requiresPointerInput, requiredVisionComponents = plan.requiredVisionComponents) } } }
+            catch (failure: kotlinx.coroutines.TimeoutCancellationException) {
+                val state = client.runtimeStates.value
+                instrumentation.sendStatus(1, android.os.Bundle().apply { putString("stream", "QA_WORKFLOW_START_TIMEOUT:" + JSONObject()
+                    .put("phase", state.phase.name).put("root", state.rootState.name).put("engine", state.engineState.name)
+                    .put("editorOpen", EditorOverlaySessions.status.value != null).put("launchOpen", ScriptLaunchSessions.status.value != null) + "\n") })
+                throw failure
+            }
+            check(started) { "QA_WORKFLOW_START" }
             return source
         }
         fun awaitHold(source: String) {
@@ -149,7 +157,16 @@ internal object StudioWorkflowAcceptanceFixture {
             check(proof.status == RuntimeDebugReply.SUCCESS && proof.runRevision > 0 &&
                 proof.sessionGeneration == client.runtimeStates.value.sessionGeneration) { "QA_WORKFLOW_RUN_CHANGED" }
             check(client.requestStop()) { "QA_WORKFLOW_STOP" }
-            runBlocking { withTimeout(8_000) { client.runtimeStates.first { it.engineState == RuntimeEngineState.STOPPED } } }
+            try { runBlocking { withTimeout(8_000) { client.runtimeStates.first { it.engineState == RuntimeEngineState.STOPPED } } } }
+            catch (failure: kotlinx.coroutines.TimeoutCancellationException) {
+                val state = client.runtimeStates.value
+                val actual = client.debugSnapshot(id)
+                instrumentation.sendStatus(1, android.os.Bundle().apply { putString("stream", "QA_WORKFLOW_STOP_TIMEOUT:" + JSONObject()
+                    .put("phase", state.phase.name).put("root", state.rootState.name).put("engine", state.engineState.name)
+                    .put("debugStatus", actual.status).put("nativeState", actual.runtimeState)
+                    .put("sameRun", actual.runRevision == proof.runRevision && actual.sessionGeneration == proof.sessionGeneration) + "\n") })
+                throw failure
+            }
         }
         try {
             case("workflow-monotonic-clock-and-timed-yield") {
@@ -328,8 +345,41 @@ internal object StudioWorkflowAcceptanceFixture {
                         val source = saveAndStart(listOf(set("qaWvalue", (100 + it).toString())))
                         awaitHold(source)
                         val generation = client.runtimeStates.value.sessionGeneration
-                        instrumentation.runOnMainSync { client.unbind(); client.bind() }
-                        runBlocking { withTimeout(8_000) { client.executionPosition.first { it?.projectId == id && it.sessionGeneration == generation } } }
+                        val listenerField = RuntimeClient::class.java.getDeclaredField("stateListener").apply { isAccessible = true }
+                        val staleListener = requireNotNull(listenerField.get(client) as? com.autoscript.runtime.api.IRuntimeStateListener)
+                        instrumentation.runOnMainSync {
+                            // Queue an old terminal callback, then invalidate it before main-thread delivery.
+                            staleListener.onRuntimeStateChanged(requireNotNull(generation),
+                                com.autoscript.runtime.api.RuntimeProtocol.STATE_STOPPED,
+                                com.autoscript.runtime.api.RuntimeProtocol.ROOT_READY, null)
+                            client.unbind(); client.bind()
+                        }
+                        try {
+                            runBlocking { withTimeout(8_000) { client.executionPosition.first { it?.projectId == id && it.sessionGeneration == generation } } }
+                        } catch (failure: kotlinx.coroutines.TimeoutCancellationException) {
+                            val state = client.runtimeStates.value
+                            val position = client.executionPosition.value
+                            val proof = client.debugSnapshot(id)
+                            instrumentation.sendStatus(1, android.os.Bundle().apply { putString("stream", "QA_WORKFLOW_REBIND_TIMEOUT:" + JSONObject()
+                                .put("iteration", it).put("phase", state.phase.name).put("root", state.rootState.name)
+                                .put("engine", state.engineState.name).put("sameGeneration", state.sessionGeneration == generation)
+                                .put("positionPresent", position != null).put("positionSameGeneration", position?.sessionGeneration == generation)
+                                .put("positionSameProject", position?.projectId == id).put("debugStatus", proof.status)
+                                .put("nativeState", proof.runtimeState).put("debugSameGeneration", proof.sessionGeneration == generation) + "\n") })
+                            throw failure
+                        }
+                        val currentPosition = requireNotNull(client.executionPosition.value)
+                        instrumentation.runOnMainSync {
+                            staleListener.onRuntimeStateChanged(requireNotNull(generation),
+                                com.autoscript.runtime.api.RuntimeProtocol.STATE_STOPPED,
+                                com.autoscript.runtime.api.RuntimeProtocol.ROOT_READY, null)
+                            staleListener.onExecutionPosition(currentPosition.sessionGeneration, currentPosition.runRevision + 1,
+                                id, currentPosition.flowId, "qa-stale-node", currentPosition.sampleSequence + 1,
+                                emptyArray(), emptyArray())
+                        }
+                        instrumentation.waitForIdleSync()
+                        check(client.runtimeStates.value.engineState == RuntimeEngineState.RUNNING &&
+                            client.executionPosition.value == currentPosition) { "QA_OLD_BINDING_CALLBACK_ACCEPTED" }
                         check(read()["qaWvalue"] == (100 + it).toString()) { "QA_STALE_RUN_VALUES" }
                         stop()
                         check(client.executionPosition.value == null) { "QA_TERMINAL_POSITION_NOT_CLEARED" }
@@ -368,15 +418,26 @@ internal object StudioWorkflowAcceptanceFixture {
                     awaitHold(source); check(read()["qaWvalue"] == "51") { "QA_CANCELLED_RECORDING_LEFT_BUSY" }; stop()
                 }
                 case("workflow-runtime-log-active-protection-terminal-flush-and-exact-cleanup") {
+                    val previousRuns = com.autoscript.runtime.api.RuntimeLogFiles.list(owner.filesDir).map { it.id }.toSet()
                     val source = saveAndStart(listOf(block("task.log", args("level" to "info", "message" to "PUBLIC_QA_LOG_CLEANUP"))))
                     awaitHold(source)
-                    fun ownRun() = com.autoscript.runtime.api.RuntimeLogFiles.list(owner.filesDir).firstOrNull { it.metadata["projectId"] == id }
+                    fun newRun() = com.autoscript.runtime.api.RuntimeLogFiles.list(owner.filesDir).singleOrNull {
+                        it.metadata["projectId"] == id && it.id !in previousRuns && it.metadata["status"] == "running"
+                    }
                     val end = SystemClock.elapsedRealtime() + 5_000
-                    while (ownRun()?.metadata?.get("status") != "running" && SystemClock.elapsedRealtime() < end) SystemClock.sleep(50)
-                    val run = requireNotNull(ownRun()?.takeIf { it.metadata["status"] == "running" }) { "QA_RUNTIME_LOG_MISSING" }
+                    while (newRun()?.metadata?.get("status") != "running" && SystemClock.elapsedRealtime() < end) SystemClock.sleep(50)
+                    if (newRun() == null) instrumentation.sendStatus(1, android.os.Bundle().apply {
+                        putString("stream", "QA_LOG_VISIBILITY:" + JSONObject().put("ownNewStatuses", org.json.JSONArray(
+                            com.autoscript.runtime.api.RuntimeLogFiles.list(owner.filesDir).filter {
+                                it.metadata["projectId"] == id && it.id !in previousRuns
+                            }.map { it.metadata["status"] ?: "unknown" }))
+                            .put("writerFailure", client.recentRuntimeLogs(16).any { "文件日志保存不完整" in it }) + "\n")
+                    })
+                    val run = requireNotNull(newRun()) { "QA_RUNTIME_LOG_MISSING" }
                     val protected = com.autoscript.runtime.api.RuntimeLogFiles.cleanup(owner.filesDir, id, setOf(run.id))
                     check(protected.protected == setOf(run.id) && protected.deleted.isEmpty()) { "QA_ACTIVE_LOG_DELETED" }
                     stop()
+                    fun ownRun() = com.autoscript.runtime.api.RuntimeLogFiles.list(owner.filesDir).singleOrNull { it.id == run.id }
                     val until = SystemClock.elapsedRealtime() + 5_000
                     while (ownRun()?.metadata?.get("status") !in setOf("stopped", "ended") && SystemClock.elapsedRealtime() < until) SystemClock.sleep(50)
                     check(ownRun()?.id == run.id && ownRun()?.metadata?.get("status") in setOf("stopped", "ended")) { "QA_RUNTIME_LOG_NOT_CLOSED" }
@@ -387,7 +448,7 @@ internal object StudioWorkflowAcceptanceFixture {
                 }
             }
             if (soakMillis > 0L) case("whole-app-capture-match-input-log-soak") {
-                check(soakMillis in 60_000L..900_000L) { "QA_SOAK_DURATION_BUDGET" }
+                check(soakMillis in 60_000L..1_800_000L) { "QA_SOAK_DURATION_BUDGET" }
                 val beforeTaps = taps.get()
                 val loopBody = listOf(
                     block("screen.capture", args("resultVariable" to "qaFrame")),
@@ -423,29 +484,60 @@ internal object StudioWorkflowAcceptanceFixture {
                     previousHits = hits
                     val memory = manager.getProcessMemoryInfo(intArrayOf(runner.pid)).single()
                     check(memory.totalPss > 0) { "QA_SOAK_MEMORY_SAMPLE_UNAVAILABLE" }
+                    check(manager.runningAppProcesses.single { it.processName == runner.processName }.pid == runner.pid) { "QA_SOAK_PROCESS_CHANGED" }
                     val record = JSONObject().put("elapsedMs", SystemClock.elapsedRealtime() - began).put("iterations", hits)
                         .put("runnerPssKiB", memory.totalPss).put("runnerNativePssKiB", memory.nativePss)
+                        .put("runnerDalvikPssKiB", memory.dalvikPss).put("runnerOtherPssKiB", memory.otherPss)
+                        .put("runnerPrivateDirtyKiB", memory.totalPrivateDirty).put("runnerPrivateCleanKiB", memory.totalPrivateClean)
+                        .put("runnerJavaHeapKiB", memory.getMemoryStat("summary.java-heap"))
+                        .put("runnerNativeHeapKiB", memory.getMemoryStat("summary.native-heap"))
+                        .put("runnerGraphicsKiB", memory.getMemoryStat("summary.graphics"))
+                        .put("runnerNativeAccountingAvailable", memory.nativePss > 0)
                         .put("studioNativeHeapBytes", android.os.Debug.getNativeHeapAllocatedSize())
                     samples.put(record)
-                    instrumentation.sendStatus(1, android.os.Bundle().apply { putString("stream", "QA_SOAK_SAMPLE:$record\n") })
+                    // Full accounting is retained once in the final bounded summary.
+                    val progress = JSONObject().put("elapsedMs", record.getLong("elapsedMs")).put("iterations", hits)
+                        .put("runnerPssKiB", memory.totalPss)
+                    instrumentation.sendStatus(1, android.os.Bundle().apply { putString("stream", "QA_SOAK_SAMPLE:$progress\n") })
                 }
                 // This is test observation, not a production execution polling mechanism.
                 while (SystemClock.elapsedRealtime() - began < soakMillis) {
-                    val next = minOf(began + soakMillis, SystemClock.elapsedRealtime() + 15_000)
+                    // At most 60 records even in the 30-minute run; keep the shared report budget.
+                    val next = minOf(began + soakMillis, SystemClock.elapsedRealtime() + 30_000)
                     while (SystemClock.elapsedRealtime() < next) {
+                        if (client.runtimeStates.value.engineState != RuntimeEngineState.RUNNING) {
+                            val terminal = client.runtimeStates.value
+                            instrumentation.sendStatus(1, android.os.Bundle().apply {
+                                putString("stream", "QA_SOAK_TERMINAL:${terminal.engineState}:${terminal.message?.take(1200)}\n")
+                            })
+                        }
                         check(client.runtimeStates.value.engineState == RuntimeEngineState.RUNNING) { "QA_SOAK_UNEXPECTED_TERMINAL" }
                         SystemClock.sleep(minOf(500L, next - SystemClock.elapsedRealtime()).coerceAtLeast(1))
                     }
                     sample()
                 }
+                val loadElapsedMs = SystemClock.elapsedRealtime() - began
                 check(client.requestPause()) { "QA_SOAK_PAUSE_REJECTED" }
                 runBlocking { withTimeout(8_000) { client.runtimeStates.first { it.engineState == RuntimeEngineState.PAUSED } } }
                 val finalHits = requireNotNull(read()["qaWhits"]).toLong()
                 check(kotlin.math.abs(taps.get() - beforeTaps - finalHits) <= 1L && finalHits >= 100) { "QA_SOAK_FINAL_COUNTER_MISMATCH" }
                 val stoppedAt = SystemClock.elapsedRealtime()
                 stop()
+                val stopMs = SystemClock.elapsedRealtime() - stoppedAt
+                val idleSamples = org.json.JSONArray()
+                repeat(4) { index ->
+                    if (index > 0) SystemClock.sleep(20_000)
+                    check(client.runtimeStates.value.engineState == RuntimeEngineState.STOPPED &&
+                        client.runtimeStates.value.sessionGeneration == generation &&
+                        manager.runningAppProcesses.single { it.processName == runner.processName }.pid == runner.pid) { "QA_SOAK_IDLE_IDENTITY_CHANGED" }
+                    val memory = manager.getProcessMemoryInfo(intArrayOf(runner.pid)).single()
+                    check(memory.totalPss > 0) { "QA_SOAK_IDLE_MEMORY_UNAVAILABLE" }
+                    idleSamples.put(JSONObject().put("afterStopMs", SystemClock.elapsedRealtime() - stoppedAt)
+                        .put("runnerPssKiB", memory.totalPss).put("runnerNativePssKiB", memory.nativePss)
+                        .put("runnerJavaHeapKiB", memory.getMemoryStat("summary.java-heap")))
+                }
                 val summary = JSONObject().put("elapsedMs", SystemClock.elapsedRealtime() - began).put("iterations", finalHits)
-                    .put("stopMs", SystemClock.elapsedRealtime() - stoppedAt).put("samples", samples)
+                    .put("loadElapsedMs", loadElapsedMs).put("stopMs", stopMs).put("samples", samples).put("postStopSamples", idleSamples)
                     .put("screen", org.json.JSONArray(listOf(size.x, size.y))).put("roi", org.json.JSONArray(listOf(x, y, x + 20, y + 20)))
                     .put("template", org.json.JSONArray(listOf(12, 12))).put("algorithm", "rust-rgba-first").put("similarityPermille", 1000)
                 instrumentation.sendStatus(1, android.os.Bundle().apply { putString("stream", "QA_SOAK_SUMMARY:$summary\n") })

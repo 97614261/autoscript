@@ -100,13 +100,13 @@ internal object HomeSpaceAcceptanceFixture {
         record("home-three-theme-controls-and-background-swipe") {
             for (label in listOf("星轨", "粒子", "极光")) {
                 click("切换至${label}主题")
-                await { node("智构互动空间")?.stateDescription?.toString() == "${label}主题" }
+                await { node("智构互动空间")?.qaStateDescription?.toString() == "${label}主题" }
                 screenshot("home-space-${when (label) { "星轨" -> "orbits"; "粒子" -> "particles"; else -> "aurora" }}.png")
             }
             val bounds = Rect(); requireNotNull(node("智构互动空间")).getBoundsInScreen(bounds)
             val y = bounds.top + bounds.height() * .2f
             gesture((0..5).map { (bounds.left + bounds.width() * (.82f - it * .11f)) to y })
-            await { node("智构互动空间")?.stateDescription?.toString() == "星轨主题" }
+            await { node("智构互动空间")?.qaStateDescription?.toString() == "星轨主题" }
         }
         record("home-logo-real-drag-and-replay") {
             val initial = Rect(); requireNotNull(node("播放流程演示")).getBoundsInScreen(initial)
@@ -149,8 +149,8 @@ internal object HomeSpaceAcceptanceFixture {
         record("home-visual-blocks-highlight-each-line-and-recent-trail") {
             click("播放流程演示")
             for (index in 1..5) {
-                await { node("演示积木第${index}行")?.stateDescription?.toString() == "演示当前行" }
-                if (index > 1) check(node("演示积木第${index - 1}行")?.stateDescription?.toString() == "演示已经过") { "HOME_PREVIOUS_LINE_TRAIL_MISSING" }
+                await { node("演示积木第${index}行")?.qaStateDescription?.toString() == "演示当前行" }
+                if (index > 1) check(node("演示积木第${index - 1}行")?.qaStateDescription?.toString() == "演示已经过") { "HOME_PREVIOUS_LINE_TRAIL_MISSING" }
                 if (index == 4) { SystemClock.sleep(220); screenshot("home-space-block-highlight.png") }
             }
             await { node("演示完成") != null }
@@ -159,7 +159,7 @@ internal object HomeSpaceAcceptanceFixture {
             test.runOnMainSync { width = 360; height = 250; fontScale = 1.4f }
             await { node("切换至极光主题") != null }
             click("切换至极光主题")
-            await { node("智构互动空间")?.stateDescription?.toString() == "极光主题" }
+            await { node("智构互动空间")?.qaStateDescription?.toString() == "极光主题" }
             for (label in listOf("可视化积木演示", "播放流程演示")) {
                 val b = Rect(); requireNotNull(node(label)).getBoundsInScreen(b)
                 check(b.width() > 0 && b.height() > 0) { "HOME_LANDSCAPE_ELEMENT_MISSING:$label" }
@@ -174,11 +174,11 @@ internal object HomeSpaceAcceptanceFixture {
         }
         record("home-theme-survives-leaving-and-returning-to-scene") {
             click("切换至粒子主题")
-            await { node("智构互动空间")?.stateDescription?.toString() == "粒子主题" }
+            await { node("智构互动空间")?.qaStateDescription?.toString() == "粒子主题" }
             test.runOnMainSync { sceneVisible = false }
             await { node("QA_HOME_AWAY") != null }
             test.runOnMainSync { sceneVisible = true }
-            await { node("智构互动空间")?.stateDescription?.toString() == "粒子主题" }
+            await { node("智构互动空间")?.qaStateDescription?.toString() == "粒子主题" }
         }
         record("home-small-portrait-double-font-keeps-content-and-scroll-gestures") {
             test.runOnMainSync { width = 320; height = 360; fontScale = 2f }
@@ -197,7 +197,7 @@ internal object HomeSpaceAcceptanceFixture {
                 node("智构空间") == null || moved.top < title.top - 10 * density
             }
             click("切换至星轨主题")
-            await { node("智构互动空间")?.stateDescription?.toString() == "星轨主题" }
+            await { node("智构互动空间")?.qaStateDescription?.toString() == "星轨主题" }
             val scrolledBlocks = Rect(); requireNotNull(node("可视化积木演示")).getBoundsInScreen(scrolledBlocks)
             val footer = Rect(); requireNotNull(node("切换至星轨主题")).getBoundsInScreen(footer)
             check(scrolledBlocks.bottom <= footer.top) { "HOME_PORTRAIT_BLOCKS_OVERLAP_THEME_CONTROLS" }

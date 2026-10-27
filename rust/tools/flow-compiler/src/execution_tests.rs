@@ -99,6 +99,65 @@ fn runtime() -> mlua::Lua {
 }
 
 #[test]
+fn chinese_keys_calculations_parameters_jumps_and_empty_plugins_execute() {
+    let mut project = manifest(
+        json!([
+            {"name":"剩余次数","scope":"global","type":"integer"},
+            {"name":"识别结果","scope":"global","type":"string"}
+        ]),
+        json!([{ "name":"输入值", "type":"integer", "required":false }]),
+    );
+    project.runtime_api = "1.8".into();
+    let bundle = sources(
+        &project,
+        &[
+            node("variable.set", json!({"name":"剩余次数","value":5})),
+            node(
+                "variable.calculate",
+                json!({"name":"剩余次数","expression":"剩余次数 - 1"}),
+            ),
+            node("control.goto", json!({"name":"已完成"})),
+            node("variable.set", json!({"name":"剩余次数","value":0})),
+            node("control.label", json!({"name":"已完成"})),
+            node(
+                "task.log",
+                json!({"level":"info","message":"count","valueVariable":"剩余次数"}),
+            ),
+            node(
+                "flow.call",
+                json!({"targetFlowId":"child","arguments":{"输入值":7}}),
+            ),
+        ],
+        &[node(
+            "task.log",
+            json!({"level":"info","message":"parameter","valueVariable":"输入值"}),
+        )],
+    );
+    let lua = runtime();
+    lua.load(bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    assert!(lua
+        .load("return tostring(logs[1])")
+        .eval::<String>()
+        .unwrap()
+        .contains('4'));
+    assert!(lua
+        .load("return tostring(logs[2])")
+        .eval::<String>()
+        .unwrap()
+        .contains('7'));
+    let empty = sources(&manifest(json!([]), json!([])), &[], &[]);
+    lua.load(empty.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+}
+
+#[test]
 fn runtime_recording_and_audio_blocks_compile_and_execute_fixed_wrappers() {
     let mut project = manifest(
         json!([

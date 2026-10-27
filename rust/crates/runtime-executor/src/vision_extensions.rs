@@ -7,6 +7,120 @@ const MAX_PIXELS: u64 = 4 * 1024 * 1024;
 const MAX_RESULTS: usize = 256;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct ScaledSearch {
+    pub region: Region,
+    pub tolerance: u8,
+    pub similarity_permille: u16,
+    pub direction: u8,
+    pub range: pixel_vision::scaled_search::ScaleRange,
+}
+pub(crate) fn scaled_search(
+    current: &FrameView,
+    template: &FrameView,
+    spec: &ScaledSearch,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<Value, String> {
+    spec.region.validate(current)?;
+    let order = match spec.direction {
+        0 => pixel_vision::SearchOrder::TopLeftToBottomRight,
+        1 => pixel_vision::SearchOrder::TopRightToBottomLeft,
+        2 => pixel_vision::SearchOrder::BottomLeftToTopRight,
+        3 => pixel_vision::SearchOrder::BottomRightToTopLeft,
+        4 => pixel_vision::SearchOrder::CenterOut,
+        _ => return Err("invalid scaled direction".into()),
+    };
+    let options = pixel_vision::TemplateOptions {
+        search: pixel_vision::SearchOptions {
+            roi: pixel_vision::PixelRect {
+                left: spec.region.left,
+                top: spec.region.top,
+                right: spec.region.right,
+                bottom: spec.region.bottom,
+            },
+            step_x: 1,
+            step_y: 1,
+            order,
+            max_pixel_comparisons: 100_000_000,
+        },
+        tolerance: pixel_vision::ColorTolerance {
+            red: spec.tolerance,
+            green: spec.tolerance,
+            blue: spec.tolerance,
+            alpha: 255,
+        },
+        minimum_match_permille: spec.similarity_permille,
+        ignore_transparent_template_pixels: true,
+    };
+    let found = pixel_vision::scaled_search::find_scaled(
+        current.image_view().map_err(|_| "invalid source frame")?,
+        template
+            .image_view()
+            .map_err(|_| "invalid template frame")?,
+        spec.range,
+        options,
+        cancelled,
+    )
+    .map_err(|error| format!("SCALED_SEARCH_{error:?}"))?;
+    Ok(json!(found.map(|v|json!({"x":v.matched.origin.x,"y":v.matched.origin.y,"width":v.width,"height":v.height,
+        "scorePermille":v.matched.matched_permille,"scalePermille":v.scale_permille})).into_iter().collect::<Vec<_>>()))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrameComparison {
+    pub region: Region,
+    pub tolerance: u8,
+}
+
+pub(crate) fn compare_frames(
+    current: &FrameView,
+    previous: &FrameView,
+    spec: &FrameComparison,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<Value, String> {
+    let start = std::time::Instant::now();
+    if current.metadata.width != previous.metadata.width
+        || current.metadata.height != previous.metadata.height
+        || current.metadata.rotation != previous.metadata.rotation
+    {
+        return Err("COMPARE_GEOMETRY_MISMATCH".into());
+    }
+    let total = spec.region.validate(current)?;
+    spec.region.validate(previous)?;
+    let mut changed = 0_u64;
+    for y in spec.region.top..spec.region.bottom {
+        if cancelled() {
+            return Err("VISION_CANCELLED".into());
+        }
+        for x in spec.region.left..spec.region.right {
+            if x.trailing_zeros() >= 8 && cancelled() {
+                return Err("VISION_CANCELLED".into());
+            }
+            let a = rgba(current, x, y);
+            let b = rgba(previous, x, y);
+            if (a[3] == 0) != (b[3] == 0)
+                || a[3] != 0 && b[3] != 0 && (0..3).any(|i| a[i].abs_diff(b[i]) > spec.tolerance)
+            {
+                changed += 1;
+            }
+        }
+    }
+    if cancelled() {
+        return Err("VISION_CANCELLED".into());
+    }
+    let fresh = current
+        .origin
+        .as_ref()
+        .zip(previous.origin.as_ref())
+        .is_some_and(|(a, b)| a.is_fresher_than(b));
+    Ok(
+        json!({"changedPixels":changed,"totalPixels":total,"ratioPermille":changed*1000/total as u64,
+        "fresh":u8::from(fresh),"elapsedUs":u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX)}),
+    )
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Transform {
     pub mode: String,
@@ -14,6 +128,12 @@ pub(crate) struct Transform {
     pub height: u32,
     #[serde(default = "default_threshold")]
     pub threshold: u8,
+    #[serde(default)]
+    pub filter: Option<pixel_vision::color_filter::Filter>,
+    #[serde(default)]
+    pub mask: Option<pixel_vision::image_processing::Mask>,
+    #[serde(default)]
+    pub cleanup: Option<pixel_vision::image_processing::Cleanup>,
 }
 
 const fn default_threshold() -> u8 {
@@ -25,7 +145,8 @@ impl Transform {
         let (w, h) = (frame.metadata.width, frame.metadata.height);
         let size = match self.mode.as_str() {
             "rotate90" | "rotate270" => (h, w),
-            "rotate180" | "flipX" | "flipY" | "gray" | "threshold" => (w, h),
+            "rotate180" | "flipX" | "flipY" | "gray" | "threshold" | "filter" | "mask"
+            | "erode" | "dilate" | "open" | "close" | "despeckle" => (w, h),
             "resize" => (self.width, self.height),
             _ => return Err("unknown transform mode".into()),
         };
@@ -34,6 +155,35 @@ impl Transform {
         }
         if size.0 == 0 || size.1 == 0 || u64::from(size.0) * u64::from(size.1) > MAX_PIXELS {
             return Err("transform exceeds pixel budget".into());
+        }
+        match (self.mode.as_str(), &self.filter) {
+            ("filter", Some(filter)) => filter
+                .validate(u64::from(w) * u64::from(h))
+                .map_err(str::to_owned)?,
+            ("filter", None) => return Err("filter rules required".into()),
+            (_, Some(_)) => return Err("filter rules require filter mode".into()),
+            (_, None) => {}
+        }
+        if self.mode == "mask" {
+            self.mask
+                .as_ref()
+                .ok_or("mask rules required")?
+                .validate(w, h)
+                .map_err(str::to_owned)?;
+        } else if self.mask.is_some() {
+            return Err("mask rules require mask mode".into());
+        }
+        if matches!(
+            self.mode.as_str(),
+            "erode" | "dilate" | "open" | "close" | "despeckle"
+        ) {
+            self.cleanup
+                .as_ref()
+                .ok_or("cleanup settings required")?
+                .validate(&self.mode, w, h)
+                .map_err(str::to_owned)?;
+        } else if self.cleanup.is_some() {
+            return Err("cleanup rules require cleanup mode".into());
         }
         Ok(size)
     }
@@ -56,13 +206,45 @@ pub(crate) fn transform(
     cancelled: &mut dyn FnMut() -> bool,
 ) -> Result<(u32, u32, Vec<u8>), String> {
     let (w, h) = spec.dimensions(frame)?;
+    if spec.mask.is_some() || spec.cleanup.is_some() {
+        let mut pixels = Vec::with_capacity(w as usize * h as usize * 4);
+        for y in 0..h {
+            for x in 0..w {
+                if x.trailing_zeros() >= 8 && cancelled() {
+                    return Err("VISION_CANCELLED".into());
+                }
+                pixels.extend_from_slice(&rgba(frame, x, y));
+            }
+        }
+        let result = if let Some(mask) = &spec.mask {
+            pixel_vision::image_processing::mask(&pixels, w, h, mask, cancelled)
+        } else {
+            pixel_vision::image_processing::cleanup(
+                &pixels,
+                w,
+                h,
+                &spec.mode,
+                spec.cleanup.as_ref().expect("validated cleanup"),
+                cancelled,
+            )
+        }
+        .map_err(str::to_owned)?;
+        return Ok((w, h, result));
+    }
     let (sw, sh) = (frame.metadata.width, frame.metadata.height);
+    let filter = spec
+        .filter
+        .as_ref()
+        .map(pixel_vision::color_filter::Filter::prepare);
     let mut output = Vec::with_capacity(w as usize * h as usize * 4);
     for y in 0..h {
         if cancelled() {
             return Err("VISION_CANCELLED".into());
         }
         for x in 0..w {
+            if filter.is_some() && x & 255 == 255 && cancelled() {
+                return Err("VISION_CANCELLED".into());
+            }
             let (sx, sy) = match spec.mode.as_str() {
                 "rotate90" => (y, sh - 1 - x),
                 "rotate180" => (sw - 1 - x, sh - 1 - y),
@@ -78,6 +260,9 @@ pub(crate) fn transform(
                 _ => (x, y),
             };
             let mut pixel = rgba(frame, sx, sy);
+            if let Some(filter) = &filter {
+                pixel = filter.pixel(pixel);
+            }
             if matches!(spec.mode.as_str(), "gray" | "threshold") {
                 let gray = u8::try_from(
                     (u32::from(pixel[0]) * 77

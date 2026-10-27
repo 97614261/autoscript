@@ -293,7 +293,7 @@ fn normalized_arguments(opcode: u32, args: &[LuaScalar]) -> Result<(&str, Cow<'_
 }
 
 fn decode_response(opcode: u32, bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let maximum = if matches!(opcode, 14110..=14126 | 14140..=14146) {
+    let maximum = if matches!(opcode, 14110..=14126 | 14140..=14147) {
         393_729
     } else {
         MAX_BYTES + 1

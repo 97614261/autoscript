@@ -1,0 +1,10 @@
+{
+  "schemaVersion":1,"opcode":5011,"name":"Screen.compareFrames","since":"1.7",
+  "capability":"vision.pixel","execution":"async_task","cancelMode":"cooperative",
+  "sideEffect":"none","timeoutMs":5000,"resourceOwnership":"none",
+  "summary":"比较同尺寸、同方向的两个任务所属帧。按RGB最大通道容差及透明/可见变化统计，不截图、不释放来源。缓存旧屏不能证明稳定。",
+  "params":[{"name":"current","type":"integer","required":true,"summary":"当前帧句柄。"},
+    {"name":"previous","type":"integer","required":true,"summary":"前一帧句柄。"},
+    {"name":"options","type":"string","required":true,"summary":"严格JSON最多1024字节：region={left,top,right,bottom}半开范围，tolerance=0–255；最多4194304像素。"}],
+  "returns":{"type":"string","nullable":false,"summary":"严格JSON：changedPixels、totalPixels、ratioPermille（向下取整）、fresh（1/0）、elapsedUs。fresh要求同一变换链、同屏尺寸、新采集身份及递增非零采集时刻；文件帧或重复缓存为0。"},"legacyAliases":[]
+}

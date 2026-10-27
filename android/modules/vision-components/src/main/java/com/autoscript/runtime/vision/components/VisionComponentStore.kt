@@ -141,9 +141,9 @@ class VisionComponentStore(
         require(prepared.size < MAX_PREPARED && prepared.all { it.canonicalFile == it.absoluteFile && it.isDirectory && it.name.matches(SNAPSHOT_NAME) })
         val existingBytes = prepared.sumOf { snapshotBytes(it) }
         val nativeNames = kind.nativeLibraries.map { "lib/$processAbi/$it" }
-        val modelName = VisionComponentDescriptor.MODEL_PATH.takeIf { kind == VisionComponentKind.ONNX }
+        val models = checked.descriptor.models.associateBy { it.path }
         val requiredBytes = ZipFile(source).use { zip ->
-            checked.bytes + (nativeNames + listOfNotNull(modelName)).sumOf { requireNotNull(zip.getEntry(it)).size }
+            checked.bytes + (nativeNames + models.keys).sumOf { requireNotNull(zip.getEntry(it)).size }
         }
         require(existingBytes + requiredBytes <= MAX_PREPARED_BYTES)
         require(preparedRoot.usableSpace >= requiredBytes + SPACE_RESERVE)
@@ -161,11 +161,14 @@ class VisionComponentStore(
             val digests = linkedMapOf<File, Pair<Long, String>>()
             digests[apk] = checked.bytes to checked.sha256
             var model: File? = null
+            var candidateModel: File? = null
             ZipFile(apk).use { zip ->
-                for (name in nativeNames + listOfNotNull(modelName)) {
+                for (name in nativeNames + models.keys) {
                     checkpoint()
                     val entry = requireNotNull(zip.getEntry(name))
-                    val target = if (name == modelName) File(snapshot, "model.onnx").also { model = it }
+                    val target = if (name in models) File(snapshot, models.getValue(name).snapshotName).also {
+                        if (name == VisionComponentDescriptor.MODEL_PATH) model = it else candidateModel = it
+                    }
                         else File(nativeDirectory, name.substringAfterLast('/'))
                     ownedFiles.add(target)
                     digests[target] = zip.getInputStream(entry).use { copyReadOnly(it, target, entry.size, entry.size, checkpoint) }
@@ -173,7 +176,7 @@ class VisionComponentStore(
             }
             val marker = File(snapshot, COMPLETE_NAME)
             ownedFiles.add(marker)
-            val result = PreparedVisionComponent(checked, processAbi, snapshot, apk, nativeDirectory, model, digests,
+            val result = PreparedVisionComponent(checked, processAbi, snapshot, apk, nativeDirectory, model, candidateModel, digests,
                 snapshotOwner) {
                 locked({}) { cleanupOwnedSnapshot(ownedFiles.toList(), ownedDirectories.toList(), snapshotOwner) }
             }
@@ -264,7 +267,7 @@ class VisionComponentStore(
             if (children.any { it.canonicalFile != it.absoluteFile } || !apk.isFile || apk.canWrite()) return false
             val verified = validate(apk, checkpoint)
             val expectedNames = mutableSetOf("component.apk", "native", COMPLETE_NAME)
-            if (verified.descriptor.kind == VisionComponentKind.ONNX) expectedNames += "model.onnx"
+            expectedNames += verified.descriptor.models.map { it.snapshotName }
             if (children.map { it.name }.toSet() != expectedNames) return false
             val marker = File(snapshot, COMPLETE_NAME)
             if (!marker.isFile || marker.canWrite()) return false
@@ -289,11 +292,11 @@ class VisionComponentStore(
             }
             if (!matchingAbi) return false
 
-            if (verified.descriptor.kind == VisionComponentKind.ONNX) {
-                val model = File(snapshot, "model.onnx")
+            for (fixed in verified.descriptor.models) {
+                val model = File(snapshot, fixed.snapshotName)
                 if (!model.isFile || model.canWrite()) return false
                 ZipFile(apk).use { zip ->
-                    val entry = requireNotNull(zip.getEntry(VisionComponentDescriptor.MODEL_PATH))
+                    val entry = requireNotNull(zip.getEntry(fixed.path))
                     if (model.length() != entry.size) return false
                     val actual = model.inputStream().use { VisionComponentValidator.hash(it, entry.size, checkpoint) }.second
                     val expected = zip.getInputStream(entry).use { VisionComponentValidator.hash(it, entry.size, checkpoint) }.second
@@ -310,7 +313,7 @@ class VisionComponentStore(
     /** Deletes only a snapshot whose top-level shape is fully owned by us. */
     private fun cleanupRecognizedSnapshot(snapshot: File, ownership: VisionSnapshotOwnership?) {
         val children = snapshot.listFiles()?.toList() ?: return
-        val allowed = setOf("component.apk", "native", "model.onnx", COMPLETE_NAME) +
+        val allowed = setOf("component.apk", "native", "model.onnx", "model-v5.onnx", COMPLETE_NAME) +
             if (ownership != null) setOf(VisionSnapshotOwnership.FILE_NAME) else emptySet()
         if (children.any { it.canonicalFile != it.absoluteFile || it.name !in allowed ||
                 if (it.name == "native") !it.isDirectory else !it.isFile }) return

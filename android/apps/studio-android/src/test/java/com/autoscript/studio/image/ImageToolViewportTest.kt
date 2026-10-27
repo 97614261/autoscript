@@ -14,6 +14,44 @@ import org.junit.Test
  * `handleHandleClick()` / `showMagnifier()` / `updateMenuPosition()`。
  */
 class ImageToolViewportTest {
+    @Test fun normalAndTinySelectionInteriorsRemainMovableAtEveryScale() {
+        val viewport = ImageToolViewport.fit(720, 1280, 720f, 1280f)
+        for (scale in listOf(.125f, .5f, 1f, 4f)) {
+            val v = viewport.copy(scale = scale, translateX = 17f, translateY = 23f)
+            for ((width, height) in listOf(200 to 120, 12 to 12, 200 to 1, 1 to 120, 1 to 1)) {
+                val box = Roi(40, 50, 40 + width, 50 + height)
+                val (left, top) = v.toView(box.left, box.top)
+                val w = v.toViewLength(width)
+                val h = v.toViewLength(height)
+                assertEquals("center of $box at $scale", BoxEdge.MOVE, selectionDragTarget(box, v, left + w / 2f, top + h / 2f))
+                for ((edge, point) in listOf(
+                    BoxEdge.LEFT to (left to top + h / 2f),
+                    BoxEdge.TOP to (left + w / 2f to top),
+                    BoxEdge.RIGHT to (left + w to top + h / 2f),
+                    BoxEdge.BOTTOM to (left + w / 2f to top + h),
+                )) assertEquals(edge, selectionDragTarget(box, v, point.first, point.second))
+                assertTrue(selectionHandleRadius(box, v) < minOf(w, h) / 2f)
+            }
+        }
+    }
+
+    @Test fun selectionDragIgnoresOutsideAndNonFinitePointsButKeepsNearestHandlePriority() {
+        val v = ImageToolViewport.fit(720, 1280, 720f, 1280f)
+        val box = Roi(100, 100, 300, 220)
+        assertEquals(BoxEdge.LEFT, selectionDragTarget(box, v, 95f, 160f))
+        assertEquals(BoxEdge.TOP, selectionDragTarget(box, v, 200f, 105f))
+        assertNull(selectionDragTarget(box, v, 50f, 50f))
+        assertNull(selectionDragTarget(box, v, Float.NaN, 160f))
+        assertNull(selectionDragTarget(box, v, 200f, Float.POSITIVE_INFINITY))
+    }
+
+    @Test fun interiorMoveRetainsSizeAndClampsAgainstEveryImageBoundary() {
+        val box=Roi(10,20,40,60)
+        assertEquals(Roi(20,30,50,70),resizeBox(box,BoxEdge.MOVE,5f,5f,.5f,100,100))
+        assertEquals(Roi(0,0,30,40),resizeBox(box,BoxEdge.MOVE,-1000f,-1000f,.5f,100,100))
+        assertEquals(Roi(70,60,100,100),resizeBox(box,BoxEdge.MOVE,1000f,1000f,.5f,100,100))
+        assertThrows(IllegalArgumentException::class.java) {resizeBox(box,BoxEdge.MOVE,Float.NaN,0f,1f,100,100)}
+    }
 
     /** 720×1280 的图放进 720×1280 的视图：fitScale 正好 1，居中即原点。 */
     private fun sameSize() = ImageToolViewport.fit(720, 1280, 720f, 1280f)
@@ -218,30 +256,6 @@ class ImageToolViewportTest {
     }
 
     // ---- 选框微调与拖边 ----
-
-    /** 参考 handleHandleClick()：左/上向内收，右/下向外扩，各 1 像素。 */
-    @Test
-    fun nudgeMovesOneImagePixelPerTap() {
-        val box = Roi(10, 20, 110, 220)
-        assertEquals(Roi(11, 20, 110, 220), nudgeBox(box, BoxEdge.LEFT, 720, 1280))
-        assertEquals(Roi(10, 21, 110, 220), nudgeBox(box, BoxEdge.TOP, 720, 1280))
-        assertEquals(Roi(10, 20, 111, 220), nudgeBox(box, BoxEdge.RIGHT, 720, 1280))
-        assertEquals(Roi(10, 20, 110, 221), nudgeBox(box, BoxEdge.BOTTOM, 720, 1280))
-    }
-
-    @Test
-    fun nudgeStopsAtMinimumSize() {
-        val thin = Roi(10, 10, 11, 11)
-        assertEquals(thin, nudgeBox(thin, BoxEdge.LEFT, 720, 1280))
-        assertEquals(thin, nudgeBox(thin, BoxEdge.TOP, 720, 1280))
-    }
-
-    @Test
-    fun nudgeStopsAtImageEdge() {
-        val edge = Roi(700, 1270, 720, 1280)
-        assertEquals(edge, nudgeBox(edge, BoxEdge.RIGHT, 720, 1280))
-        assertEquals(edge, nudgeBox(edge, BoxEdge.BOTTOM, 720, 1280))
-    }
 
     /** 参考 handleResizeMove()：屏幕位移按 delta/scale 折算成图片整数像素。 */
     @Test

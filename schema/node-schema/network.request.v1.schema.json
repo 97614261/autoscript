@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/network.request/1/network.request.schema.json",
+  "title": "network.request node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "network.request"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "url",
+        "headersJson",
+        "body",
+        "timeoutMs",
+        "maxResponseBytes",
+        "resultVariable"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8,
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+"OPTIONS",
+            "DELETE",
+            "HEAD"
+          ]
+        },
+        "methodVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "urlVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "headersJson": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096
+        },
+        "headersJsonVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 8192
+        },
+        "bodyVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 30000
+        },
+        "timeoutMsVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "maxResponseBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        },
+        "maxResponseBytesVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

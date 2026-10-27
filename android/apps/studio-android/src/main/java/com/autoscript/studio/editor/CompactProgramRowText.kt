@@ -9,7 +9,16 @@ internal data class CompactProgramRowText(
     val branch: String?,
     val disabled: Boolean,
     val inheritedDisabled: Boolean = false,
+    val branchHasHeading: Boolean = false,
 )
+
+/** Standalone headings and body indentation already identify these slots. */
+internal fun compactProgramBranchLabel(branch: String?, hasHeading: Boolean = false): String? = if (hasHeading) null else when (branch) {
+    null, "循环体" -> null
+    "成功分支" -> if (hasHeading) null else "成功"
+    "失败分支" -> if (hasHeading) null else "失败"
+    else -> branch.replace("否则如果 ", "否则若")
+}
 
 /** Presentation only; never parse these labels back into executable arguments. */
 internal fun compactProgramRowText(label: String): CompactProgramRowText {
@@ -28,10 +37,12 @@ internal fun compactProgramRowText(label: String): CompactProgramRowText {
 }
 
 internal fun displayProgramRowText(defaultLabel: String, settings: com.autoscript.studio.compiler.NodeDisplaySettings,
-    branch: String?, disabled: Boolean, inheritedDisabled: Boolean): CompactProgramRowText = CompactProgramRowText(
+    branch: String?, disabled: Boolean, inheritedDisabled: Boolean,
+    branchHasHeading: Boolean = false): CompactProgramRowText = CompactProgramRowText(
     title = settings.alias.takeIf(String::isNotBlank) ?: defaultLabel.substringBefore(" · "),
     details = if (settings.alias.isNotBlank() && !settings.showParameters) "" else defaultLabel.substringAfter(" · ", ""),
     branch = branch,
     disabled = disabled || inheritedDisabled,
     inheritedDisabled = !disabled && inheritedDisabled,
+    branchHasHeading = branchHasHeading,
 )

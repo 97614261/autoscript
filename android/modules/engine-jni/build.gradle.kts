@@ -13,6 +13,8 @@ val ndkDirectory = sdkDirectory.resolve("ndk/30.0.14904198")
 val llvmBin = ndkDirectory.resolve("toolchains/llvm/prebuilt/windows-x86_64/bin")
 val rustJniRoot = layout.buildDirectory.dir("generated/jniLibs")
 val rustUnstripped = layout.buildDirectory.dir("generated/unstripped")
+val nativeProfile = rootProject.extra["autoscript.nativeProfile"] as String
+val nativeOutputProfile = rootProject.extra["autoscript.nativeOutputProfile"] as String
 
 data class RustAndroidTarget(
     val rustTarget: String,
@@ -46,7 +48,7 @@ val selectedRustTargets = rustTargets.filter { it.abi in (rootProject.extra["aut
 val syncRustLibraries = selectedRustTargets.mapIndexed { index, target ->
     val taskSuffix = target.abi.replace("-", "_").replaceFirstChar(Char::uppercase)
     val cargoOutput = rootProject.layout.projectDirectory.file(
-        "../rust/target/${target.rustTarget}/debug/libengine_jni.so",
+        "../rust/target/${target.rustTarget}/$nativeOutputProfile/libengine_jni.so",
     )
     val buildTask = tasks.register<Exec>("buildRust$taskSuffix") {
         if (index > 0) {
@@ -57,13 +59,14 @@ val syncRustLibraries = selectedRustTargets.mapIndexed { index, target ->
         }
         workingDir(rootProject.file("../rust"))
         commandLine(
-            "cargo", "build", "--offline", "-p", "engine-jni", "--target", target.rustTarget,
+            "cargo", "build", "--offline", "--profile", nativeProfile, "-p", "engine-jni", "--target", target.rustTarget,
         )
         environment(target.ccEnvironment, llvmBin.resolve(target.clang).absolutePath)
         environment(target.arEnvironment, llvmBin.resolve("llvm-ar.exe").absolutePath)
         environment(target.linkerEnvironment, llvmBin.resolve(target.clang).absolutePath)
         inputs.files(rootProject.fileTree("../rust/crates") { include("**/*.rs", "**/Cargo.toml") })
         inputs.files(rootProject.file("../rust/Cargo.toml"), rootProject.file("../rust/Cargo.lock"))
+        inputs.property("nativeProfile", nativeProfile)
         outputs.file(cargoOutput)
     }
     val copyTask = tasks.register<Copy>("syncRust$taskSuffix") {

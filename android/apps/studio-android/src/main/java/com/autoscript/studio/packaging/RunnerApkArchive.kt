@@ -25,7 +25,7 @@ internal object RunnerApkArchive {
     internal fun hasRuntimeContent(names: Set<String>, family: RunnerTemplateFamily = RunnerTemplateFamily.FULL): Boolean {
         if (!names.containsAll(REQUIRED)) return false
         val abis = names.filter { it.startsWith("lib/") }.map { it.split('/').getOrNull(1) }.toSet()
-        if ("arm64-v8a" !in abis || abis.any { it !in setOf("arm64-v8a", "x86_64") }) return false
+        if (abis.isEmpty() || abis.any { it !in setOf("arm64-v8a", "x86_64") }) return false
         val cv = family == RunnerTemplateFamily.OPENCV || family == RunnerTemplateFamily.FULL
         val onnx = family == RunnerTemplateFamily.ONNX || family == RunnerTemplateFamily.FULL
         val required = buildSet {

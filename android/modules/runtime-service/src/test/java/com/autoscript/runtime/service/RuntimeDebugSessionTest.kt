@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RuntimeDebugSessionTest {
+    @Test fun runtimeValuesAcceptTheFullChineseNameBudgetWithoutExpandingIdentityIds() {
+        val name="字".repeat(64)
+        assertEquals(192,name.toByteArray(Charsets.UTF_8).size)
+        assertEquals(name,com.autoscript.runtime.api.RuntimeDebugValue("global",name,"integer","1").name)
+        assertThrows(IllegalArgumentException::class.java) {
+            com.autoscript.runtime.api.RuntimeDebugValue("global",name+"字","integer","1")
+        }
+    }
     @Test fun readRequiresTheRunningProjectHandleAndConnection() {
         val session = RuntimeDebugSession()
         session.started(7, 42, "project")

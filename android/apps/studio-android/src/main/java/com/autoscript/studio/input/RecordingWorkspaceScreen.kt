@@ -6,7 +6,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.background
 import com.autoscript.core.designsystem.AutoScriptPalette
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -137,6 +136,10 @@ internal fun RecordingWorkspaceScreen(
         fullScreen = fullScreen, onToggleFullScreen = { fullScreen = !fullScreen }) {
             Column((if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(max = 440.dp))
                 .padding(8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                // Status/help and results share one scroll budget; joining stays outside it.
+                LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                item(key = "recording-controls") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
                     Text(when { working -> "处理中"; recordingId != null -> "录制中"; reply != null -> "结果预览"; else -> "准备录制" },
                         fontSize = 11.sp, color = AutoScriptPalette.Accent, modifier=Modifier.weight(1f))
@@ -178,13 +181,18 @@ internal fun RecordingWorkspaceScreen(
                     RecordingSmallButton("清空", enabled = !working) { selected=emptySet() }
                     RecordingCheck("保留间隔", keepIntervals, !working) { keepIntervals=it }
                 }
-                LazyColumn(Modifier.weight(1f).fillMaxWidth().background(AutoScriptPalette.PageBackground)) {
+                }
+                }
+                }
+                if (reply != null) {
                     itemsIndexed(actions) { index,action ->
                         RecordingCheck("${index+1}. ${action.label}", index in selected, !working, Modifier.fillMaxWidth()) { chosen ->
                             selected=if (chosen) selected+index else selected-index
                         }
                     }
                 }
+                }
+                if (reply != null) {
                 if (selected.isNotEmpty()) {
                     draft.exceptionOrNull()?.message?.let { Text(it,color=MaterialTheme.colorScheme.error,fontSize = 11.sp,
                         modifier = Modifier.heightIn(max = 48.dp).verticalScroll(rememberScrollState())) }

@@ -46,7 +46,7 @@ internal class SelectedNodeSource private constructor(
             actual["randomization"]?.let { add("randomization", it.deepCopy()) }
         }
         val result = try {
-            pluginSourceToolchain.parse("--@node $identity\n$text", "$detached\n", root, variables, checkCancelled)
+            pluginSourceToolchain.parse("--@node $identity\n$text", "$detached\n", root, variables, checkCancelled = checkCancelled)
         } catch (error: VisualSourceException) {
             throw VisualSourceException(error.location.copy(line = (error.location.line - 1).coerceAtLeast(1)),
                 error.message.orEmpty().substringAfter('：'))

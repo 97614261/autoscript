@@ -76,12 +76,14 @@ adb -s 127.0.0.1:16384 shell run-as com.autoscript.vision.acceptance cat files/v
 
 `run-studio-overlay-acceptance.ps1 -DeviceSerial <明确设备>`仅调用已安装的Studio androidTest APK，创建并清理自己新建的QA项目，使用Android UiAutomation触摸实际观测到的测试控件。**Instrumentation会重启目标Studio进程**：已有进程默认拒绝；先保存/关闭用户窗口，再明确传`-ConfirmTargetRestart`。测试内部继续拒绝其他编辑、配置或活动运行；不会代点权限、停止私人脚本、清数据或重启设备。总宿主上限150秒。不要把这个命令加入日常自动打包安装链。
 
+优化后的Studio包另有仅系统API的Java启动检查入口：构建同架构的`:apps:studio-android:assembleDebugAndroidTest`时显式传`-Pautoscript.acceptanceSuite=release-smoke`，安装测试APK后调用`com.zhigou.kaifaban.acceptance/com.autoscript.studio.StudioReleaseSmokeInstrumentation`，必须提供`expectedTargetApkSha256`和`expectedVersionCode`。其设备期限90秒，只核对安装身份及真实首页/项目/我的/文档开关，不修改项目或运行脚本；不能代替完整流程回归。默认不传该属性仍生成原完整检查入口，二者报告及测试包摘要分别记录。不可直接让依赖未压缩Kotlin/AndroidX类的Debug测试入口在R8目标上运行，也不为测试放宽生产混淆或添加生产keep规则（ADR0151）。
+
 明确追加`-FinalClosure`扩展到20项自有工程验收：多插件可逆源码/组合草稿保存/陈旧拒绝、图片同名/原像素、全部控件保存/设计恢复、备份及空目录、实际工作台生成链执行、设计器加页撤销及方向返回、配置启动/读参/停止返回、日志/函数库全屏和客户端重连。设备期限240秒、宿主300秒；没有放宽原9项断言。它不代表177种积木所有参数、所有图像等待或权限/系统回收/键盘/视觉矩阵全覆盖；失败报告保持pass=false，清理不能证明所有权时保留对象。
 
 外置Provider使用独立base测试包：构建`:android:runtime-service:assembleDebugAndroidTest -Pautoscript.abiProfile=development -Pautoscript.visionProfile=base -Pautoscript.acceptanceProviders=true`，并传base对应的绝对`--project-cache-dir`。该开关只把同签名固定组件加入测试资产，非base明确拒绝；正式App资产和默认full不变。手动保留数据安装测试APK后，用`run-studio-device-acceptance.ps1 -DeviceSerial <明确设备> -Suite providers`。真实导入/选择/准备/加载只在测试包私有沙箱，钉住快照保留到进程退出，下一进程按已有租约恢复规则处理，不删除活动或未知文件。扩展`-Suite provider-soak`固定20000灰度/2000OCR调用，设备期限7分钟、宿主上限8分钟，保持原图案/模型/算法并只报告采样内存，不冒充任意长期业务或历史峰值。`-Suite ocr-diagnostics`需full测试包，保留原准确率失败，不与Provider套件混用。
 
 升级前导出备份；更新安装保留数据。公开工程：编辑插件/变量/界面→保存→导出→在新项目目录恢复→核对入口、变量作用域、图片实际目录和虚拟分组、界面绑定，再运行。不要用删除原工程或清数据作迁移。
 
-用手机打包入口从公开工程导出 Runner，检查能力校验、冻结 Lua/资源和 V2 签名。Runner 只能显示已设计界面/执行，不应出现项目列表、编辑器或 Flow 草稿。主机打包回归产物 `native-workflow-runner.apk` 用一次性测试身份，仅验签测试，不能当正式签名发布。
+用手机打包入口从公开工程导出 Runner，检查能力校验、冻结 Lua/资源和 V2 签名。Runner 只能显示已设计界面/执行，不应出现项目列表、编辑器或 Flow 草稿。主机打包回归使用一次性测试身份，仅验签测试，不能当正式签名发布；APK在测试后清理，保留`packaging-test-evidence/`中的摘要和验证报告，不再依赖常驻`native-workflow-runner.apk`。
 
 旧一键玩转换工具继续独立；未确认等价的节点仍保留并阻断编译，不用空操作清零。新版这批交付不能代表旧工程兼容百分比。

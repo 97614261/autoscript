@@ -56,7 +56,7 @@ internal data class RunnerComponentDescriptor(val family: RunnerTemplateFamily, 
             require(abiValues.size() in 1..2 && abiValues.all { it.isJsonPrimitive && it.asJsonPrimitive.isString })
             val abis = abiValues.map { it.asString }.toSet()
             require(abis.size == abiValues.size())
-            compatible("arm64-v8a" in abis && abis.all { it in setOf("arm64-v8a", "x86_64") })
+            compatible(abis.all { it in setOf("arm64-v8a", "x86_64") })
             val dependencies = root.get("dependencies").also { require(it.isJsonObject) }.asJsonObject
             val cv = family in setOf(RunnerTemplateFamily.OPENCV, RunnerTemplateFamily.FULL)
             val onnx = family in setOf(RunnerTemplateFamily.ONNX, RunnerTemplateFamily.FULL)

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "system.keepawake",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/system.keepawake/1/system.keepawake.schema.json",
+  "title": "运行期间保持亮屏",
+  "category": "variable",
+  "summary": "通过所属运行的透明无触摸窗口持有保持亮屏标志，需系统悬浮授权；0释放，停止/失败/重启自动释放，不修改系统休眠设置、不唤醒或阻止用户手动锁屏。成功返回1。",
+  "searchTerms": [
+    "系统",
+    "网络",
+    "文件",
+    "System.keepScreenAwake",
+    "运行期间保持亮屏"
+  ],
+  "requiredCapabilities": [
+    "device.display"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "enabled",
+      "label": "开启1 / 释放0",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "enabledVariable",
+      "label": "开启1 / 释放0来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

@@ -3,7 +3,12 @@ use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use glyph_ocr::{decode_dictionary, recognize_cancellable, GlyphOcrError, GlyphOcrOptions};
+#[cfg(test)]
+use glyph_ocr::recognize_cancellable;
+use glyph_ocr::{
+    decode_dictionary, recognize_palette_cancellable, GlyphColorRule, GlyphOcrError,
+    GlyphOcrOptions,
+};
 use pixel_vision::{Color, ColorTolerance, ImageView, PixelRect};
 use serde::Serialize;
 
@@ -69,7 +74,8 @@ pub(crate) fn recognize(
     let cancelled = || is_cancelled(id) || start.elapsed() >= Duration::from_secs(5);
     let result = (|| {
         if id <= 0
-            || options.len() != 8
+            || !(8..=38).contains(&options.len())
+            || !options.len().is_multiple_of(2)
             || image.width > 4096
             || image.height > 4096
             || u64::from(image.width) * u64::from(image.height) > 4_194_304
@@ -88,7 +94,8 @@ pub(crate) fn recognize(
             decode_dictionary(dictionary).map_err(|_| GlyphOcrError::InvalidOptions)?;
         let foreground = values[5];
         let tolerance = u8::try_from(values[6]).map_err(|_| GlyphOcrError::InvalidOptions)?;
-        recognize_cancellable(
+        let extra = preview_colors(&values)?;
+        recognize_palette_cancellable(
             image,
             &dictionary,
             GlyphOcrOptions {
@@ -108,13 +115,14 @@ pub(crate) fn recognize(
                     red: tolerance,
                     green: tolerance,
                     blue: tolerance,
-                    alpha: 255,
+                    alpha: 0,
                 },
                 minimum_similarity_permille: u16::try_from(values[4])
                     .map_err(|_| GlyphOcrError::InvalidOptions)?,
                 space_gap_columns: u16::try_from(values[7])
                     .map_err(|_| GlyphOcrError::InvalidOptions)?,
             },
+            &extra,
             cancelled,
         )
     })();
@@ -156,11 +164,53 @@ pub(crate) fn recognize(
     reply
 }
 
+fn preview_colors(values: &[u32]) -> Result<Vec<GlyphColorRule>, GlyphOcrError> {
+    let extra = values[8..]
+        .chunks_exact(2)
+        .map(|pair| {
+            Ok(GlyphColorRule {
+                rgb: pair[0],
+                tolerance: u8::try_from(pair[1]).map_err(|_| GlyphOcrError::InvalidOptions)?,
+            })
+        })
+        .collect::<Result<Vec<_>, GlyphOcrError>>()?;
+    glyph_ocr::validate_additional_colors(values[5], &extra)
+        .map_err(|_| GlyphOcrError::InvalidOptions)?;
+    Ok(extra)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::template_preview::image;
     use glyph_ocr::{encode_dictionary, GlyphSource};
+
+    #[test]
+    fn multi_color_preview_uses_the_same_palette_and_rejects_invalid_extra_pairs() {
+        let dictionary = encode_dictionary(&[GlyphSource {
+            label: "1".into(),
+            width: 1,
+            height: 3,
+            packed_bits: vec![0xe0],
+        }])
+        .unwrap();
+        let pixels = [255, 0, 0, 255, 0, 247, 0, 255, 255, 0, 0, 255];
+        let args = [0, 0, 1, 3, 1000, 0x00ff_0000, 0, 0, 0x0000_ff00, 8];
+        let result = recognize(20001, image(1, 3, &pixels), &dictionary, &args);
+        assert_eq!(result.status, 0);
+        assert_eq!(result.text, "1");
+        assert_eq!(result.coverage, 1000);
+        let mut duplicate = args;
+        duplicate[8] = 0x00ff_0000;
+        assert_eq!(
+            recognize(20002, image(1, 3, &pixels), &dictionary, &duplicate).status,
+            2
+        );
+        assert_eq!(
+            recognize(20003, image(1, 3, &pixels), &dictionary, &args[..9]).status,
+            2
+        );
+    }
 
     #[test]
     fn actual_dictionary_text_and_cancellation_are_not_simulated() {

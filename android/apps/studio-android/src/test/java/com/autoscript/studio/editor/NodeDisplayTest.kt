@@ -140,10 +140,10 @@ class NodeDisplayTest {
         assertFalse(displayProgramRowText("提示", settings, null, true, true).inheritedDisabled)
     }
 
-    @Test fun runtimePromptShowsLiteralOrVariableAndDisplayMode() {
+    @Test fun runtimePromptShowsLiteralOrVariableWithoutRepeatingDisplayMode() {
         fun label(json: String) = compactProgramLabel(BlockCatalog.find("task.runprompt"), JsonParser.parseString(json).asJsonObject, "task.runprompt")
         val literal = label("{\"message\":\"正在找图\"}")
-        assertTrue(literal.contains("正在找图")); assertTrue(literal.contains("持续显示"))
+        assertTrue(literal.contains("正在找图")); assertFalse(literal.contains("持续显示"))
         val variable = label("{\"message\":\"unused\",\"valueVariable\":\"status\"}")
         assertTrue(variable.contains("status")); assertFalse(variable.contains("unused"))
         assertEquals("提示步骤", applyProgramDisplayLabel(variable, NodeDisplaySettings("提示步骤", false)))

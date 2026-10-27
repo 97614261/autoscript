@@ -28,6 +28,12 @@ pub struct RawCapture {
     pub timings: CaptureTimings,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawRegionCapture {
+    pub capture: RawCapture,
+    pub geometry: root_protocol::capture_region::CaptureRegionMetadata,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureTimings {
     /// 0: legacy peer; 1: bounded screencap; 2: persistent `SurfaceControl` bridge.
@@ -35,6 +41,7 @@ pub struct CaptureTimings {
     pub acquisition_us: u64,
     pub transfer_us: u64,
     pub streamed: bool,
+    pub pipelined: bool,
     /// Optional system capture, software readback, pixel read, encode, bridge write and receive.
     /// Receive overlaps bridge processing; do not add these to the total or each other.
     pub stages_us: Option<[u64; 6]>,
@@ -52,6 +59,9 @@ pub struct CaptureTransferTimings {
 }
 
 struct CaptureStreamMetadata {
+    region: Option<root_protocol::capture_region::CaptureRegionMetadata>,
+    capture_id: u64,
+    pipelined: bool,
     width: u32,
     height: u32,
     row_stride: u32,
@@ -63,13 +73,60 @@ struct CaptureStreamMetadata {
 }
 
 impl CaptureStreamMetadata {
+    fn commit(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<root_protocol::CaptureTransferSummary, ClientError> {
+        if self.pipelined {
+            let completion = root_protocol::CapturePipelineCompletion::decode(bytes)
+                .filter(|c| c.capture_id == self.capture_id && c.pixel_bytes == self.length as u64)
+                .ok_or(ClientError::InvalidCapture)?;
+            self.acquisition_us = completion.acquisition_us;
+            self.stages_us = Some(completion.stages_us);
+            Ok(completion.transfer)
+        } else {
+            root_protocol::CaptureTransferSummary::decode(bytes).ok_or(ClientError::InvalidCapture)
+        }
+    }
     fn decode(metadata: &[u8], capabilities: Capabilities) -> Result<Self, ClientError> {
-        if !matches!(metadata.len(), 49 | 97) || metadata[0] != 0 {
+        let region = if metadata.first() == Some(&5) {
+            if !capabilities.supports(Capabilities::CAPTURE_REGION_REQUIREMENTS)
+                || !matches!(metadata.len(), 81 | 129)
+            {
+                return Err(ClientError::InvalidCapture);
+            }
+            Some(
+                root_protocol::capture_region::CaptureRegionMetadata::decode(
+                    &metadata[metadata.len() - 32..],
+                )
+                .ok_or(ClientError::InvalidCapture)?,
+            )
+        } else {
+            None
+        };
+        let metadata = if region.is_some() {
+            &metadata[..metadata.len() - 32]
+        } else {
+            metadata
+        };
+        let pipelined = metadata.first() == Some(&3);
+        if pipelined
+            && (!capabilities.supports(Capabilities::CAPTURE_PIPELINE_REQUIREMENTS)
+                || metadata.len() != 49)
+        {
+            return Err(ClientError::InvalidCapture);
+        }
+        if !matches!(metadata.len(), 49 | 97)
+            || (!pipelined && metadata[0] != if region.is_some() { 5 } else { 0 })
+        {
             return Err(ClientError::InvalidCapture);
         }
         let acquisition_us = read_u64(metadata, 33)?;
         let backend = read_u32(metadata, 41)?;
-        if acquisition_us > 10_000_000 || !(1..=2).contains(&backend) || metadata[45..49] != [0; 4]
+        if acquisition_us > 10_000_000
+            || !(1..=2).contains(&backend)
+            || metadata[45..49] != [0; 4]
+            || pipelined && (acquisition_us != 0 || backend != 2)
         {
             return Err(ClientError::InvalidCapture);
         }
@@ -110,7 +167,15 @@ impl CaptureStreamMetadata {
             2 => RawCaptureFormat::Bgra8888,
             _ => return Err(ClientError::InvalidCapture),
         };
+        if region.is_some_and(|r| {
+            !r.matches_dimensions(width, height) || r.regional_readback != (backend == 2)
+        }) {
+            return Err(ClientError::InvalidCapture);
+        }
         Ok(Self {
+            region,
+            capture_id: read_u64(base, 0)?,
+            pipelined,
             width,
             height,
             row_stride,
@@ -172,6 +237,7 @@ pub enum ClientError {
     RequestIdExhausted,
     Remote(StatusCode),
     CaptureFailed(root_protocol::CaptureFailure),
+    InputFailed(root_protocol::InputFailure),
     InvalidDuration,
     InvalidPointerId,
     UnsupportedCapability,
@@ -183,6 +249,20 @@ pub enum ClientError {
 }
 
 impl ClientError {
+    /// Content-free input reason; never expose raw transport/process diagnostics.
+    #[must_use]
+    pub const fn input_failure_code(&self) -> &'static str {
+        match self {
+            Self::InputFailed(reason) => reason.code(),
+            Self::Transport(_) => "ROOT_INPUT_TRANSPORT",
+            Self::Protocol(_) => "ROOT_INPUT_PROTOCOL",
+            Self::UnexpectedResponse => "ROOT_INPUT_CORRELATION",
+            Self::Remote(StatusCode::Cancelled) => "ROOT_INPUT_CANCELLED",
+            Self::Remote(StatusCode::BackendUnavailable) => "ROOT_INPUT_BACKEND_UNAVAILABLE",
+            Self::Closed => "ROOT_INPUT_CONNECTION_CLOSED",
+            _ => "ROOT_INPUT_FAILED",
+        }
+    }
     /// Stable, non-sensitive capture diagnostics; never format arbitrary transport text.
     #[must_use]
     pub fn capture_failure_code(&self) -> &'static str {
@@ -214,6 +294,7 @@ impl ClientError {
                 | Self::Closed
                 | Self::IncompleteCapture(_)
                 | Self::CaptureFailed(root_protocol::CaptureFailure::ControlUnavailable)
+                | Self::InputFailed(root_protocol::InputFailure::ControlUnavailable)
         )
     }
 }
@@ -326,6 +407,10 @@ impl<T: PacketTransport> RootClient<T> {
                     .supports(Capabilities::INPUT_RECORDING)
                     && self.priority.is_some(),
             ) << 2)
+            | (u32::from(
+                self.negotiated_capabilities
+                    .supports(Capabilities::INPUT_MULTI_TOUCH),
+            ) << 3)
     }
 
     /// Starts a bounded real evdev capture. No file paths or command strings cross this boundary.
@@ -469,8 +554,15 @@ impl<T: PacketTransport> RootClient<T> {
     ///
     /// Returns an error for a non-zero pointer ID or a rejected daemon command.
     pub fn pointer_up(&mut self, pointer_id: u8) -> Result<(), ClientError> {
-        if pointer_id != 0 {
+        if pointer_id > 4 {
             return Err(ClientError::InvalidPointerId);
+        }
+        if pointer_id != 0
+            && !self
+                .negotiated_capabilities
+                .supports(Capabilities::INPUT_MULTI_TOUCH)
+        {
+            return Err(ClientError::UnsupportedCapability);
         }
         if !self
             .negotiated_capabilities
@@ -555,22 +647,29 @@ impl<T: PacketTransport> RootClient<T> {
         if byte_length > MAX_CAPTURE_BYTES {
             return Err(ClientError::CaptureTooLarge);
         }
-        let mut pixels = Vec::with_capacity(byte_length);
-        while pixels.len() < byte_length {
-            let remaining = byte_length - pixels.len();
+        // Keep one packet buffer in the client and write each chunk into the final
+        // allocation directly.  The old path allocated a temporary Vec for every
+        // CaptureChunk response, which was particularly visible on large screens.
+        let mut pixels = vec![0; byte_length];
+        let mut request = Vec::with_capacity(16);
+        let mut offset_usize = 0usize;
+        while offset_usize < byte_length {
+            let remaining = byte_length - offset_usize;
             let requested_length = remaining.min(CAPTURE_CHUNK_BYTES);
-            let offset = u32::try_from(pixels.len()).map_err(|_| ClientError::CaptureTooLarge)?;
+            let offset = u32::try_from(offset_usize).map_err(|_| ClientError::CaptureTooLarge)?;
             let requested =
                 u32::try_from(requested_length).map_err(|_| ClientError::CaptureTooLarge)?;
-            let mut request = Vec::with_capacity(16);
+            request.clear();
             request.extend_from_slice(&capture_id.to_le_bytes());
             request.extend_from_slice(&offset.to_le_bytes());
             request.extend_from_slice(&requested.to_le_bytes());
-            let chunk = self.transact(Command::CaptureChunk, &request)?;
-            if chunk.len() != requested_length {
-                return Err(ClientError::InvalidCapture);
-            }
-            pixels.extend_from_slice(&chunk);
+            let request_id = self.send_request(Command::CaptureChunk, &request)?;
+            self.receive_capture_chunk(
+                request_id,
+                requested_length,
+                &mut pixels[offset_usize..offset_usize + requested_length],
+            )?;
+            offset_usize += requested_length;
         }
         self.transact_empty(Command::ReleaseCapture, &capture_id.to_le_bytes())?;
         Ok(RawCapture {
@@ -590,8 +689,46 @@ impl<T: PacketTransport> RootClient<T> {
         let started = std::time::Instant::now();
         let request_id = self.send_request(Command::CaptureStream, &[])?;
         let metadata = self.receive_response(Command::CaptureStream, request_id)?;
-        self.capture_stream_data(started, request_id, &metadata)
+        self.capture_stream_data(started, request_id, &metadata, None)
             .map_err(incomplete_capture)
+    }
+
+    /// Fresh region pixels; unsupported peers are rejected without changing capture semantics.
+    /// # Errors
+    /// Rejects unsupported capability, invalid geometry, correlation or incomplete transfer.
+    pub fn capture_region(
+        &mut self,
+        region: root_protocol::capture_region::CaptureRegionRequest,
+    ) -> Result<RawRegionCapture, ClientError> {
+        if !region.valid() {
+            return Err(ClientError::InvalidCapture);
+        }
+        if !self
+            .negotiated_capabilities
+            .supports(Capabilities::CAPTURE_REGION_REQUIREMENTS)
+        {
+            return Err(ClientError::Remote(StatusCode::BackendUnavailable));
+        }
+        let result = (|| {
+            let started = std::time::Instant::now();
+            let request_id = self.send_request(Command::CaptureStream, &region.encode())?;
+            let metadata = self.receive_response(Command::CaptureStream, request_id)?;
+            let geometry = CaptureStreamMetadata::decode(&metadata, self.negotiated_capabilities)?
+                .region
+                .filter(|g| g.request == region)
+                .ok_or(ClientError::InvalidCapture)?;
+            let capture = self
+                .capture_stream_data(started, request_id, &metadata, Some(region))
+                .map_err(incomplete_capture)?;
+            Ok(RawRegionCapture { capture, geometry })
+        })();
+        if matches!(result, Err(ClientError::Remote(StatusCode::Cancelled))) {
+            return result;
+        }
+        if result.is_err() {
+            self.closed = true;
+        }
+        result.map_err(incomplete_capture)
     }
 
     fn capture_stream_data(
@@ -599,24 +736,31 @@ impl<T: PacketTransport> RootClient<T> {
         started: std::time::Instant,
         request_id: u64,
         metadata: &[u8],
+        region: Option<root_protocol::capture_region::CaptureRegionRequest>,
     ) -> Result<RawCapture, ClientError> {
+        let mut metadata = CaptureStreamMetadata::decode(metadata, self.negotiated_capabilities)?;
+        if metadata.region.map(|r| r.request) != region {
+            return Err(ClientError::InvalidCapture);
+        }
         let CaptureStreamMetadata {
+            pipelined,
             width,
             height,
             row_stride,
             length,
             format,
             backend,
-            acquisition_us,
-            stages_us,
-        } = CaptureStreamMetadata::decode(metadata, self.negotiated_capabilities)?;
+            ..
+        } = metadata;
         let transfer_started = std::time::Instant::now();
         let observe_transfer = self
             .negotiated_capabilities
             .supports(Capabilities::CAPTURE_TRANSFER_TIMINGS);
         let mut details = CaptureTransferTimings::default();
+        // Append only authenticated, contiguous chunks; do not zero the whole frame first.
         let mut pixels = Vec::with_capacity(length);
-        while pixels.len() < length {
+        let mut received = 0usize;
+        while received < length {
             if started.elapsed() >= std::time::Duration::from_secs(10) {
                 return Err(ClientError::InvalidCapture);
             }
@@ -642,10 +786,11 @@ impl<T: PacketTransport> RootClient<T> {
                 ));
             }
             let payload = frame.payload;
+            let chunk_length = (length - received).min(CAPTURE_CHUNK_BYTES);
             if payload.len() <= 5
                 || payload[0] != 1
-                || usize::try_from(read_u32(payload, 1)?).ok() != Some(pixels.len())
-                || payload.len() - 5 != (length - pixels.len()).min(CAPTURE_CHUNK_BYTES)
+                || usize::try_from(read_u32(payload, 1)?).ok() != Some(received)
+                || payload.len() - 5 != chunk_length
             {
                 return Err(ClientError::InvalidCapture);
             }
@@ -654,6 +799,7 @@ impl<T: PacketTransport> RootClient<T> {
             }
             let stage_started = observe_transfer.then(std::time::Instant::now);
             pixels.extend_from_slice(&payload[5..]);
+            received += chunk_length;
             if let Some(started) = stage_started {
                 details.append_us = details.append_us.saturating_add(elapsed_us(started));
                 details.packets += 1;
@@ -667,8 +813,7 @@ impl<T: PacketTransport> RootClient<T> {
             if started.elapsed() >= std::time::Duration::from_secs(10) {
                 return Err(ClientError::InvalidCapture);
             }
-            let summary = root_protocol::CaptureTransferSummary::decode(&summary)
-                .ok_or(ClientError::InvalidCapture)?;
+            let summary = metadata.commit(&summary)?;
             if summary.packets != u64::from(details.packets) {
                 return Err(ClientError::InvalidCapture);
             }
@@ -683,13 +828,47 @@ impl<T: PacketTransport> RootClient<T> {
             pixels,
             timings: CaptureTimings {
                 backend,
-                acquisition_us,
+                acquisition_us: metadata.acquisition_us,
                 transfer_us: elapsed_us(transfer_started),
                 streamed: true,
-                stages_us,
+                pipelined,
+                stages_us: metadata.stages_us,
                 transfer_details: observe_transfer.then_some(details),
             },
         })
+    }
+
+    /// Receives one capture chunk without allocating a temporary response Vec.
+    fn receive_capture_chunk(
+        &mut self,
+        request_id: u64,
+        expected_length: usize,
+        destination: &mut [u8],
+    ) -> Result<(), ClientError> {
+        if destination.len() != expected_length {
+            return Err(ClientError::InvalidCapture);
+        }
+        self.transport
+            .receive_packet_into(&mut self.receive_buffer)?;
+        let frame = self.channel.decode_view(&self.receive_buffer)?;
+        if frame.kind != FrameKind::Response
+            || frame.command != Command::CaptureChunk
+            || frame.request_id != request_id
+        {
+            return Err(ClientError::UnexpectedResponse);
+        }
+        if frame.status != StatusCode::Ok {
+            return Err(capture_error(
+                self.negotiated_capabilities,
+                frame.status,
+                frame.payload,
+            ));
+        }
+        if frame.payload.len() != expected_length {
+            return Err(ClientError::InvalidCapture);
+        }
+        destination.copy_from_slice(frame.payload);
+        Ok(())
     }
 
     /// Requests a clean daemon shutdown and permanently closes this client.
@@ -719,8 +898,15 @@ impl<T: PacketTransport> RootClient<T> {
         x: i32,
         y: i32,
     ) -> Result<(), ClientError> {
-        if pointer_id != 0 {
+        if pointer_id > 4 {
             return Err(ClientError::InvalidPointerId);
+        }
+        if pointer_id != 0
+            && !self
+                .negotiated_capabilities
+                .supports(Capabilities::INPUT_MULTI_TOUCH)
+        {
+            return Err(ClientError::UnsupportedCapability);
         }
         if !self
             .negotiated_capabilities
@@ -834,6 +1020,25 @@ impl<T: PacketTransport> RootClient<T> {
             return Err(ClientError::UnexpectedResponse);
         }
         if frame.status != StatusCode::Ok {
+            if matches!(
+                command,
+                Command::Tap
+                    | Command::Swipe
+                    | Command::KeyEvent
+                    | Command::PointerDown
+                    | Command::PointerMove
+                    | Command::PointerUp
+            ) && !frame.payload.is_empty()
+            {
+                if !self
+                    .negotiated_capabilities
+                    .supports(Capabilities::INPUT_FAILURE_DETAILS)
+                {
+                    return Err(ClientError::UnexpectedResponse);
+                }
+                return Err(root_protocol::InputFailure::decode(frame.payload)
+                    .map_or(ClientError::UnexpectedResponse, ClientError::InputFailed));
+            }
             if matches!(command, Command::Capture | Command::CaptureStream)
                 && !frame.payload.is_empty()
             {
@@ -897,6 +1102,27 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, ClientError> {
 #[cfg(target_os = "android")]
 pub type AndroidRootClient = RootClient<std::os::unix::net::UnixStream>;
 
+#[cfg(any(target_os = "android", test))]
+fn default_android_capabilities() -> Capabilities {
+    // Pipeline negotiation stays opt-in until complete-workflow tail gains are stable.
+    Capabilities::from_bits(
+        Capabilities::INPUT_BASIC
+            | Capabilities::INPUT_POINTER_SINGLE
+            | Capabilities::INPUT_MULTI_TOUCH
+            | Capabilities::INPUT_PRIORITY_STOP
+            | Capabilities::CAPTURE_RAW
+            | Capabilities::CAPTURE_STREAM
+            | Capabilities::CAPTURE_STAGE_TIMINGS
+            | Capabilities::CAPTURE_FAILURE_DETAILS
+            | Capabilities::CAPTURE_TRANSFER_TIMINGS
+            | Capabilities::CAPTURE_CONTROL_DETAILS
+            | Capabilities::CAPTURE_REGION
+            | Capabilities::INPUT_RECORDING_TIMED
+            | Capabilities::INPUT_FAILURE_DETAILS
+            | Capabilities::INPUT_RECORDING,
+    )
+}
+
 #[cfg(target_os = "android")]
 pub fn connect_android(
     socket_path: &std::path::Path,
@@ -914,19 +1140,7 @@ pub fn connect_android(
     let mut client = RootClient::connect_with_required(
         stream,
         key,
-        Capabilities::from_bits(
-            Capabilities::INPUT_BASIC
-                | Capabilities::INPUT_POINTER_SINGLE
-                | Capabilities::INPUT_PRIORITY_STOP
-                | Capabilities::CAPTURE_RAW
-                | Capabilities::CAPTURE_STREAM
-                | Capabilities::CAPTURE_STAGE_TIMINGS
-                | Capabilities::CAPTURE_FAILURE_DETAILS
-                | Capabilities::CAPTURE_TRANSFER_TIMINGS
-                | Capabilities::CAPTURE_CONTROL_DETAILS
-                | Capabilities::INPUT_RECORDING_TIMED
-                | Capabilities::INPUT_RECORDING,
-        ),
+        default_android_capabilities(),
         Capabilities::INPUT_BASIC | Capabilities::CAPTURE_RAW,
     )?;
     if client
@@ -958,6 +1172,82 @@ pub fn connect_android(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn input_details_require_negotiation_and_are_not_retried() {
+        use root_protocol::SecureChannel;
+        struct FailureTransport {
+            peer: SecureChannel,
+            response: Vec<u8>,
+            details: bool,
+            taps: usize,
+        }
+        impl PacketTransport for FailureTransport {
+            fn send_packet(&mut self, packet: &[u8]) -> Result<(), TransportError> {
+                let frame = self.peer.decode(packet).unwrap();
+                let (status, payload) = if frame.command == Command::Hello {
+                    (
+                        StatusCode::Ok,
+                        (Capabilities::INPUT_BASIC
+                            | if self.details {
+                                Capabilities::INPUT_FAILURE_DETAILS
+                            } else {
+                                0
+                            })
+                        .to_le_bytes()
+                        .to_vec(),
+                    )
+                } else {
+                    self.taps += 1;
+                    (
+                        StatusCode::BackendUnavailable,
+                        (root_protocol::InputFailure::Deadline as u32)
+                            .to_le_bytes()
+                            .to_vec(),
+                    )
+                };
+                self.response = self
+                    .peer
+                    .encode_response(frame.command, frame.request_id, status, &payload)
+                    .unwrap();
+                Ok(())
+            }
+            fn receive_packet(&mut self) -> Result<Vec<u8>, TransportError> {
+                Ok(std::mem::take(&mut self.response))
+            }
+        }
+        for details in [false, true] {
+            let key = [142; 32];
+            let mut client = RootClient::connect_with_required(
+                FailureTransport {
+                    peer: SecureChannel::new(key).unwrap(),
+                    response: Vec::new(),
+                    details,
+                    taps: 0,
+                },
+                key,
+                Capabilities::from_bits(
+                    Capabilities::INPUT_BASIC | Capabilities::INPUT_FAILURE_DETAILS,
+                ),
+                Capabilities::INPUT_BASIC,
+            )
+            .unwrap();
+            let error = client.tap(1, 1).unwrap_err();
+            assert_eq!(
+                error.input_failure_code(),
+                if details {
+                    "ROOT_INPUT_DEADLINE"
+                } else {
+                    "ROOT_INPUT_CORRELATION"
+                }
+            );
+            assert_eq!(client.transport.taps, 1);
+            assert_eq!(error.is_connection_lost(), !details);
+        }
+        assert!(
+            ClientError::InputFailed(root_protocol::InputFailure::ControlUnavailable)
+                .is_connection_lost()
+        );
+    }
     #[test]
     fn capture_failure_details_are_typed_negotiated_and_close_partial_streams() {
         struct FailureTransport {

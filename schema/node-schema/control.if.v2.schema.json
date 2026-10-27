@@ -59,7 +59,7 @@
       "properties": {
         "variable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "operator": {
           "enum": [
@@ -81,7 +81,7 @@
         },
         "valueVariable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "elseIf": {
           "type": "array",
@@ -97,7 +97,7 @@
             "properties": {
               "variable": {
                 "type": "string",
-                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
               },
               "operator": {
                 "enum": [
@@ -119,7 +119,7 @@
               },
               "valueVariable": {
                 "type": "string",
-                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
               },
               "condition": {
                 "$ref": "#/$defs/condition"
@@ -149,7 +149,7 @@
             },
             "variable": {
               "type": "string",
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+              "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
             },
             "operator": {
               "enum": [
@@ -171,7 +171,7 @@
             },
             "valueVariable": {
               "type": "string",
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+              "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
             }
           }
         },

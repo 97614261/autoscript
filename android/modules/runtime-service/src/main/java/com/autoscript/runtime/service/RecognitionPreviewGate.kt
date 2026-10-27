@@ -27,6 +27,15 @@ internal class RecognitionPreviewGate(private val busy: AtomicBoolean, private v
         }
         return active.get()?.takeIf { it.id == id && it.generation == generation }?.also { it.cancelled.set(true) }
     }
+    fun cancelActive(): Work? {
+        val work = active.get() ?: return null
+        synchronized(cancelled) {
+            cancelled.add(work.id to work.generation)
+            while (cancelled.size > 64) cancelled.remove(cancelled.first())
+        }
+        work.cancelled.set(true)
+        return work
+    }
     fun status(work: Work, generation: Long): Int? = when {
         generation != work.generation -> RecognitionPreviewReply.SESSION_MISMATCH
         now() >= work.deadline -> RecognitionPreviewReply.TIMEOUT

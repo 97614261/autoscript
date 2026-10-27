@@ -396,6 +396,22 @@ fn validate_pointer_sequence(
         .filter_map(|(pointer, lease)| (lease.expires_at > now).then_some((*pointer, lease.task)))
         .collect::<BTreeMap<_, _>>();
     for command in commands {
+        if matches!(
+            command,
+            InputCommand::PointerDown { .. }
+                | InputCommand::PointerMove { .. }
+                | InputCommand::PointerUp { .. }
+        ) && down.values().any(|owner| *owner != task)
+        {
+            return Err(InputError::PointerOwnedByAnotherTask);
+        }
+        if matches!(
+            command,
+            InputCommand::Tap { .. } | InputCommand::Swipe { .. }
+        ) && !down.is_empty()
+        {
+            return Err(InputError::InvalidPointerSequence);
+        }
         match command {
             InputCommand::Delay { milliseconds } if *milliseconds > 60_000 => {
                 return Err(InputError::DelayTooLong);

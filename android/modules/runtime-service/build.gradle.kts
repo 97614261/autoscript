@@ -15,6 +15,15 @@ val acceptanceOcrCandidate = providers.gradleProperty("autoscript.acceptanceOcrC
 }.getOrElse(false)
 require(!acceptanceOcrCandidate || withOnnx) { "OCR candidate evaluation requires the ONNX SDK" }
 val candidateAssets = rootProject.file("../build/ocr-evaluation/assets")
+val validateBundledEnglishOcr by tasks.registering {
+    val model=layout.projectDirectory.file("src/onnxCandidate/assets/vision/en_PP-OCRv5_rec_mobile.onnx")
+    inputs.file(model)
+    doLast {
+        require(model.asFile.length()==7_872_351L) {"Fixed optional English OCR size differs"}
+        val digest=MessageDigest.getInstance("SHA-256").digest(model.asFile.readBytes()).joinToString("") {"%02x".format(it.toInt() and 255)}
+        require(digest=="c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8") {"Fixed optional English OCR hash differs"}
+    }
+}
 val validateOcrCandidate by tasks.registering {
     val candidate = candidateAssets.resolve("candidate/en_PP-OCRv5_rec_mobile.onnx")
     inputs.file(candidate)
@@ -67,6 +76,8 @@ val ndkDirectory = sdkDirectory.resolve("ndk/30.0.14904198")
 val llvmBin = ndkDirectory.resolve("toolchains/llvm/prebuilt/windows-x86_64/bin")
 val rootDaemonLibraries = layout.buildDirectory.dir("generated/rootDaemon/jniLibs")
 val daemonUnstripped = layout.buildDirectory.dir("generated/rootDaemon/unstripped")
+val nativeProfile = rootProject.extra["autoscript.nativeProfile"] as String
+val nativeOutputProfile = rootProject.extra["autoscript.nativeOutputProfile"] as String
 
 data class RootDaemonTarget(
     val rustTarget: String,
@@ -100,7 +111,7 @@ val selectedDaemonTargets = rootDaemonTargets.filter { it.abi in (rootProject.ex
 val syncRootDaemons = selectedDaemonTargets.mapIndexed { index, target ->
     val taskSuffix = target.abi.replace("-", "_").replaceFirstChar(Char::uppercase)
     val cargoOutput = rootProject.layout.projectDirectory.file(
-        "../rust/target/${target.rustTarget}/debug/root-daemon",
+        "../rust/target/${target.rustTarget}/$nativeOutputProfile/root-daemon",
     )
     val buildTask = tasks.register<Exec>("buildRootDaemon$taskSuffix") {
         if (index > 0) {
@@ -111,13 +122,14 @@ val syncRootDaemons = selectedDaemonTargets.mapIndexed { index, target ->
         }
         workingDir(rootProject.file("../rust"))
         commandLine(
-            "cargo", "build", "--offline", "-p", "root-daemon", "--target", target.rustTarget,
+            "cargo", "build", "--offline", "--profile", nativeProfile, "-p", "root-daemon", "--target", target.rustTarget,
         )
         environment(target.ccEnvironment, llvmBin.resolve(target.clang).absolutePath)
         environment(target.arEnvironment, llvmBin.resolve("llvm-ar.exe").absolutePath)
         environment(target.linkerEnvironment, llvmBin.resolve(target.clang).absolutePath)
         inputs.files(rootProject.fileTree("../rust/crates") { include("**/*.rs", "**/Cargo.toml") })
         inputs.files(rootProject.file("../rust/Cargo.toml"), rootProject.file("../rust/Cargo.lock"))
+        inputs.property("nativeProfile", nativeProfile)
         outputs.file(cargoOutput)
     }
     val copyTask = tasks.register<Copy>("syncRootDaemon$taskSuffix") {
@@ -163,6 +175,7 @@ android {
     if (withOnnx) {
         sourceSets.getByName("main").java.srcDir("src/onnx/java")
         sourceSets.getByName("main").assets.srcDir("src/onnx/assets")
+        sourceSets.getByName("main").assets.srcDir("src/onnxCandidate/assets")
         sourceSets.getByName("androidTest").java.srcDir("src/onnxAndroidTest/java")
     }
     if (acceptanceOcrCandidate) sourceSets.getByName("androidTest").assets.srcDir(candidateAssets)
@@ -170,6 +183,7 @@ android {
 }
 
 tasks.named("preBuild").configure { dependsOn(syncRootDaemons, generateVisionBackends) }
+if(withOnnx) tasks.named("preBuild").configure {dependsOn(validateBundledEnglishOcr)}
 if (acceptanceOcrCandidate) tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach { dependsOn(validateOcrCandidate) }
 if (acceptanceProviders) tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach { dependsOn(prepareAcceptanceProviders) }
 

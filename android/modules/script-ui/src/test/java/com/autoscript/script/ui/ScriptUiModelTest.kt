@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScriptUiModelTest {
+    @Test fun chineseBindingsKeepExactKeysWhileControlIdentitiesStayAscii() {
+        for(binding in listOf("global:剩余次数","param:输入值","flow:child:目标文字")) {
+            val model=ScriptUiDefinition(version=2,fields=listOf(UiField("count","次数","integer",false,"3",ui=UiPresentation(control="NUMBER",binding=binding))))
+            assertEquals(model,ScriptUiDefinition.parse(model.toJson().toString()))
+            assertTrue(model.luaConfiguration(model.initialValues()).contains(binding.substringAfterLast(':')))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ScriptUiDefinition(version=2,fields=listOf(UiField("中文ID","次数","integer",false,"3"))).validate()
+        }
+    }
     @Test fun decimalIsFiniteTypedAndNeverTruncated() {
         val ui = ScriptUiDefinition(version = 2, fields = listOf(UiField("decimal", "小数", "number", true, "1.25", -2, 2, ui = UiPresentation(control = "DECIMAL", binding = "global:decimal"))))
         assertEquals(ui, ScriptUiDefinition.parse(ui.toJson().toString()))

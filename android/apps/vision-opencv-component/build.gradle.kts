@@ -13,7 +13,7 @@ android {
     defaultConfig {
         applicationId = "com.zhigou.component.opencv"
         minSdk = 24; targetSdk = 36
-        versionCode = 1; versionName = "4.10.0"
+        versionCode = 3; versionName = "4.10.0"
         ndk { abiFilters += (rootProject.extra["autoscript.abis"] as List<*>).map { it.toString() } }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

@@ -21,10 +21,10 @@ pub(crate) fn collect(
                 continue;
             }
             match node.envelope.kind.as_str() {
-                "vision.findgray" => {
+                "vision.findgray" | "vision.findfeatures" => {
                     components.insert(VisionComponent::Opencv);
                 }
-                "ocr.alphanumeric" => {
+                "ocr.alphanumeric" | "ocr.alphanumericv5" => {
                     components.insert(VisionComponent::Onnx);
                 }
                 _ => {}

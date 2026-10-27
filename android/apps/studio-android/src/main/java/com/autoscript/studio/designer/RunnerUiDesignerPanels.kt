@@ -75,7 +75,8 @@ private fun DesignerMenuChevron(color: Color) {
 
 @Composable
 private fun DesignerTabs(names: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(24.dp).background(DesignerColors.Workspace, RoundedCornerShape(4.dp)).padding(2.dp)) {
+    val height = studioCompactControlHeight(24, LocalDensity.current.fontScale).dp
+    Row(Modifier.fillMaxWidth().height(height).background(DesignerColors.Workspace, RoundedCornerShape(4.dp)).padding(2.dp)) {
         names.forEach { name ->
             Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(3.dp))
                 .background(if (name == selected) Color.White else Color.Transparent)
@@ -142,7 +143,7 @@ internal fun DesignerToolbox(draft: RunnerUiDesignerDraft, page: UiPage, selecti
         Spacer(Modifier.height(4.dp))
         if (tab == "添加") Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             RunnerUiControlKind.entries.chunked(2).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                row.forEach { kind -> Box(Modifier.weight(1f).height(24.dp).clip(RoundedCornerShape(4.dp)).background(DesignerColors.Workspace)
+                row.forEach { kind -> Box(Modifier.weight(1f).heightIn(min = 24.dp).clip(RoundedCornerShape(4.dp)).background(DesignerColors.Workspace)
                     .clickable(!busy) { onAdd(kind) }.padding(2.dp), contentAlignment = Alignment.Center) {
                     Text(designerControlName(kind), fontSize = 10.sp, color = DesignerColors.Ink, maxLines = 1,
                         style = TextStyle(lineHeight = 12.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)))
@@ -150,11 +151,11 @@ internal fun DesignerToolbox(draft: RunnerUiDesignerDraft, page: UiPage, selecti
             } }
         } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             items(draft.fields.filter { it.ui.pageId == page.id }.asReversed(), key = { it.id }) { field ->
-                Row(Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(4.dp)).background(if (field.id in selection) DesignerColors.Selected else Color.Transparent)
+                Row(Modifier.fillMaxWidth().heightIn(min = 24.dp).clip(RoundedCornerShape(4.dp)).background(if (field.id in selection) DesignerColors.Selected else Color.Transparent)
                     .clickable(!busy) { onSelect(field.id) }.padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (field.ui.parentId != null) "↳ " else "▤ ", color = DesignerColors.Accent, fontSize = 10.sp)
-                    Text(field.label, Modifier.weight(1f), fontSize = 10.sp, color = DesignerColors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!field.ui.visible) Text("隐", color = DesignerColors.Muted, fontSize = 9.sp)
+                    Text(if (field.ui.parentId != null) "↳ " else "▤ ", color = DesignerColors.Accent, fontSize = 10.sp, lineHeight = 12.sp)
+                    Text(field.label, Modifier.weight(1f), fontSize = 10.sp, lineHeight = 12.sp, color = DesignerColors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!field.ui.visible) Text("隐", color = DesignerColors.Muted, fontSize = 9.sp, lineHeight = 12.sp)
                 }
             }
         }
@@ -170,9 +171,11 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
     sizePreset: DesignerSizePreset?, onSizePreset: (DesignerSizePreset) -> Unit,
 ) {
     Column(modifier.clip(RoundedCornerShape(6.dp)).background(DesignerColors.Panel).border(1.dp, DesignerColors.Line, RoundedCornerShape(6.dp)).padding(4.dp)) {
-        Row(Modifier.height(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (field == null) "页面属性" else if (count > 1) "已选 $count 个控件" else field.kind.label, Modifier.weight(1f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = DesignerColors.Ink)
-            Text("px", fontSize = 9.sp, color = DesignerColors.Muted)
+        Row(Modifier.heightIn(min = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (field == null) "页面属性" else if (count > 1) "已选 $count 个控件" else field.kind.label, Modifier.weight(1f), fontSize = 10.sp,
+                lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = DesignerColors.Ink,
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
+            Text("px", fontSize = 9.sp, lineHeight = 12.sp, color = DesignerColors.Muted)
         }
         if (field != null) Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
             DesignerTabs(listOf("布局", "样式", "交互"), tab, onTab)
@@ -324,14 +327,16 @@ internal fun DesignerInput(label: String, value: String, enabled: Boolean, modif
     val shown = if (bounded) inputs!!.text(owner!!, label, value) else buffer
     val invalid = integerRange != null && shown.toIntOrNull() !in integerRange
     LaunchedEffect(value, focused) { if (!focused) buffer = value }
-    Row(modifier.height(24.dp).clip(RoundedCornerShape(4.dp)).background(DesignerColors.Workspace).border(1.dp, if (invalid) Color(0xFFD14949) else if (focused) DesignerColors.Accent else DesignerColors.Line, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = DesignerColors.Muted, fontSize = 10.sp, modifier = Modifier.padding(end = 4.dp))
+    Row(modifier.heightIn(min = 24.dp).clip(RoundedCornerShape(4.dp)).background(DesignerColors.Workspace).border(1.dp, if (invalid) Color(0xFFD14949) else if (focused) DesignerColors.Accent else DesignerColors.Line, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = DesignerColors.Muted, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1,
+            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)), modifier = Modifier.padding(end = 4.dp))
         BasicTextField(shown, { text ->
             buffer = text
             if (bounded) inputs!!.edit(owner!!, label, text, integerRange!!)?.let { onChange(it.toString()) }
             else if (integerRange == null || text.toIntOrNull() in integerRange) onChange(text)
         }, enabled = enabled, singleLine = true, modifier = Modifier.weight(1f).onFocusChanged { focused = it.isFocused },
-            textStyle = TextStyle(color = DesignerColors.Ink, fontSize = 10.sp), cursorBrush = SolidColor(DesignerColors.Accent),
+            textStyle = TextStyle(color = DesignerColors.Ink, fontSize = 10.sp, lineHeight = 12.sp,
+                platformStyle = PlatformTextStyle(includeFontPadding = false)), cursorBrush = SolidColor(DesignerColors.Accent),
             keyboardOptions = KeyboardOptions(keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text, imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }))
     }
 }
@@ -345,13 +350,15 @@ internal fun DesignerToggle(label: String, checked: Boolean, enabled: Boolean, m
 internal fun DesignerChoice(label: String, value: String, options: List<Pair<String, String>>, enabled: Boolean, onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        Row(Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(4.dp)).border(1.dp, DesignerColors.Line, RoundedCornerShape(4.dp)).clickable(enabled) { expanded = true }.padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = DesignerColors.Muted, fontSize = 10.sp, modifier = Modifier.padding(end = 4.dp))
-            Text(value, Modifier.weight(1f), color = DesignerColors.Ink, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth().heightIn(min = 24.dp).clip(RoundedCornerShape(4.dp)).border(1.dp, DesignerColors.Line, RoundedCornerShape(4.dp)).clickable(enabled) { expanded = true }.padding(horizontal = 5.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = DesignerColors.Muted, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1, modifier = Modifier.padding(end = 4.dp),
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
+            Text(value, Modifier.weight(1f), color = DesignerColors.Ink, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
             DesignerMenuChevron(if (enabled) DesignerColors.Accent else DesignerColors.Muted)
         }
         DropdownMenu(expanded, onDismissRequest = { expanded = false }, modifier = Modifier.heightIn(max = 224.dp)) {
-            options.forEach { (key, text) -> DropdownMenuItem(text = { Text(text, fontSize = 10.sp) }, onClick = { expanded = false; onChange(key) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(28.dp)) }
+            options.forEach { (key, text) -> DropdownMenuItem(text = { Text(text, fontSize = 10.sp, lineHeight = 12.sp) }, onClick = { expanded = false; onChange(key) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.heightIn(min = 28.dp)) }
             if (options.isEmpty()) Text("没有可选内容", fontSize = 10.sp, modifier = Modifier.padding(12.dp))
         }
     }

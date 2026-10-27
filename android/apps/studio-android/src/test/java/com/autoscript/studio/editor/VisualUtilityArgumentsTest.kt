@@ -6,6 +6,34 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualUtilityArgumentsTest {
+    @Test fun numberReaderUsesDeclaredTextAndIntegerIndexAndReturnsText() {
+        val contract = requireNotNull(BlockCatalog.find("text.numberat"))
+        val inputs = blockPropertyTexts(contract,JsonObject()) + mapOf("textVariable" to "s", "resultVariable" to "s", "index" to "2")
+        assertNull(utilityArgumentError(contract,inputs,variables))
+        assertEquals(ProjectVariableType.STRING,utilityResultType(contract.kind))
+        assertNotNull(utilityArgumentError(contract,inputs + ("index" to "65"),variables))
+        assertNotNull(utilityArgumentError(contract,inputs + ("textVariable" to "i"),variables))
+        assertNotNull(utilityArgumentError(contract,inputs + ("resultVariable" to "i"),variables))
+    }
+    @Test fun pureUtilitiesUseFixedChoicesTypedOutputsAndByteBudgets() {
+        val variables=listOf(CalculationVariable("i",ProjectVariableType.INTEGER,"global"),CalculationVariable("n",ProjectVariableType.NUMBER,"global"),CalculationVariable("s",ProjectVariableType.STRING,"global"))
+        pureUtilityChoices.forEach { (key, choices) ->
+            val kind=key.substringBefore(':'); val path=key.substringAfter(':')
+            val contract=requireNotNull(BlockCatalog.find(kind))
+            val output=if(utilityResultType(kind)==ProjectVariableType.STRING) "s" else "n"
+            val inputs=blockPropertyTexts(contract,JsonObject())+mapOf("resultVariable" to output)
+            choices.forEach { (value,_) -> assertNull("$kind:$value",utilityArgumentError(contract,inputs+(path to value),variables)) }
+            assertNotNull(utilityArgumentError(contract,inputs+(path to "unknown"),variables))
+        }
+        val number=requireNotNull(BlockCatalog.find("text.formatnumber"))
+        val inputs=blockPropertyTexts(number,JsonObject())+mapOf("resultVariable" to "s")
+        assertNull(utilityArgumentError(number,inputs+mapOf("valueVariable" to "n","digitsVariable" to "i"),variables))
+        for((key,value) in listOf("digits" to "10","minIntegerDigits" to "33","value" to "Infinity"))
+            assertNotNull(utilityArgumentError(number,inputs+(key to value),variables))
+        assertNotNull(utilityArgumentError(number,inputs+mapOf("digitsVariable" to "n"),variables))
+        val regex=requireNotNull(BlockCatalog.find("text.regexreplace"))
+        assertNotNull(utilityArgumentError(regex,blockPropertyTexts(regex,JsonObject())+mapOf("resultVariable" to "s","replacement" to "甲".repeat(1366)),variables))
+    }
     private val variables=listOf(CalculationVariable("i",ProjectVariableType.INTEGER,"global"),CalculationVariable("n",ProjectVariableType.NUMBER,"global"),CalculationVariable("s",ProjectVariableType.STRING,"global"),CalculationVariable("w",ProjectVariableType.INTEGER,"global"),CalculationVariable("h",ProjectVariableType.INTEGER,"global"))
     @Test fun allUtilityBlocksHaveTypedConfigurationAndSearchableRealFunctions() {
         utilityApiKinds.forEach { (api,kind) ->

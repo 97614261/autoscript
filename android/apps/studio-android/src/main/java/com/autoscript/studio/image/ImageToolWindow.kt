@@ -94,14 +94,19 @@ internal fun ImageToolWindow(
         var swipeDuration by rememberSaveable { mutableFloatStateOf(300f) }
         var gestureDuration by rememberSaveable { mutableFloatStateOf(800f) }
         var tolerance by rememberSaveable { mutableFloatStateOf(8f) }
-        var ocrRegion by remember(bitmap) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
-        var workbenchOpen by remember(bitmap) { mutableStateOf(false) }
+        var ocrRegion by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
+        var workbenchOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
+        var workbenchFilterOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
+        var workbenchPolygonOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
+        var glyphMakerOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
+        var glyphUse by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf<Triple<ProjectSnapshot, ImageToolOcrConfig, ImageToolCodeGen.Roi?>?>(null) }
 
         var toolbarX by rememberSaveable { mutableFloatStateOf(Float.NaN) }
         var toolbarY by rememberSaveable { mutableFloatStateOf(Float.NaN) }
         // 工具条会因模式增加“缩放 / 容差 / 时长”等按钮，不能假定恒定宽度。
         // 首帧先用最大的保守值，完成测量后再按真实宽度计算可拖动边界。
         var toolbarMeasuredWidthPx by remember { mutableFloatStateOf(0f) }
+        var toolbarMeasuredHeightPx by remember { mutableFloatStateOf(0f) }
         var viewport by remember(bitmap) {
             mutableStateOf(
                 bitmap?.let { ImageToolViewport.fit(it.width, it.height, viewWidth, viewHeight) },
@@ -128,7 +133,7 @@ internal fun ImageToolWindow(
 
         val toolbarWidthPx = toolbarMeasuredWidthPx.takeIf { it > 0f }
             ?: with(density) { TOOLBAR_FALLBACK_WIDTH.toPx() }
-        val toolbarHeightPx = with(density) { TOOLBAR_HEIGHT.toPx() }
+        val toolbarHeightPx = toolbarMeasuredHeightPx.takeIf {it>0f} ?: with(density) { TOOLBAR_HEIGHT.toPx() }
         // 参考初始化把工具条放在水平居中、高度 1/3 处。
         val resolvedToolbar = clampToolbar(
             x = if (toolbarX.isNaN()) (viewWidth - toolbarWidthPx) / 2f else toolbarX,
@@ -265,7 +270,7 @@ internal fun ImageToolWindow(
                     blocked = "请先截图"
                 } else if (mode == ImageToolMode.OCR) {
                     if (snapshot == null || runtimeClient == null) blocked = "取字需要已打开的项目与运行服务会话"
-                    else ocrRegion = selection.box
+                    else { glyphUse = null; ocrRegion = selection.box }
                 } else {
                     val snippet = buildSnippet(
                         mode = mode,
@@ -300,20 +305,37 @@ internal fun ImageToolWindow(
             onCropToTemplate = { selection.box?.let(onCropToTemplate) },
             onClose = onClose,
             onProcessing = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
-                ({ menuOpen = false; workbenchOpen = true }) else null,
+                ({ menuOpen = false; workbenchFilterOpen=false;workbenchPolygonOpen=false; workbenchOpen = true }) else null,
+            onFilter = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
+                ({ menuOpen=false;workbenchFilterOpen=true;workbenchPolygonOpen=false;workbenchOpen=true }) else null,
+            onPolygon = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
+                ({menuOpen=false;workbenchFilterOpen=false;workbenchPolygonOpen=true;workbenchOpen=true}) else null,
+            onMakeGlyph = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
+                ({ menuOpen = false; glyphMakerOpen = true }) else null,
             modifier = Modifier.widthIn(max = maxWidth).onSizeChanged { measured ->
                 toolbarMeasuredWidthPx = measured.width.toFloat()
+                toolbarMeasuredHeightPx = measured.height.toFloat()
             },
         )
 
         val ocrSource = bitmap
+        if (glyphMakerOpen && bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null) {
+            GlyphMakerDialog(snapshot, projectStore, runtimeClient, onWorkbenchSnapshotChanged,
+                onDismiss = { glyphMakerOpen = false }, initialBitmap = bitmap, initialRoi = selection.box,
+                initialForeground = selection.points.lastOrNull()?.rgb ?: 0xFFFFFF, initialTolerance = tolerance.roundToInt(),
+                onUseSaved = { updated, config, roi ->
+                    glyphUse = Triple(updated, config, roi); glyphMakerOpen = false
+                    ocrRegion = roi ?: selection.box ?: ImageToolCodeGen.Roi(0, 0, bitmap.width, bitmap.height)
+                })
+        }
         if (workbenchOpen && bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null) {
             ImageProcessingWorkbench(bitmap, snapshot, projectStore, runtimeClient,
-                onWorkbenchSnapshotChanged, onDismiss = { workbenchOpen = false }, insertionTarget = insertionTarget)
+                onWorkbenchSnapshotChanged, onDismiss = { workbenchOpen = false }, insertionTarget = insertionTarget,initialFilterOpen=workbenchFilterOpen,capturedScreen=true,initialPolygonOpen=workbenchPolygonOpen)
         }
         ocrRegion?.let { roi ->
             if (ocrSource != null && snapshot != null && runtimeClient != null) ImageToolOcrDialog(
-                bitmap = ocrSource, initialRoi = roi, snapshot = snapshot, runtimeClient = runtimeClient,
+                bitmap = ocrSource, initialRoi = roi, snapshot = glyphUse?.first ?: snapshot, runtimeClient = runtimeClient,
+                initialConfig = glyphUse?.second,
                 resultReadTarget = insertionTarget,
                 onDismiss = { ocrRegion = null }, onConfirm = { config, region ->
                     val snippet = config.snippet(region, ocrSource.width, ocrSource.height)
@@ -454,7 +476,6 @@ private val TOOLBAR_HEIGHT = 44.dp
 private val MENU_WIDTH = 124.dp
 // Follow the actual two-column menu instead of hiding the last tools on short displays.
 private val MENU_HEIGHT = (((ImageToolMode.menuOrder.size + 1) / 2) * 60 + 8).dp
-private val MENU_ITEM = 56.dp
 
 internal val ToolChrome = Color(0xE61E2531)
 internal val BoxStroke = Color(0xFFFF4D4F)

@@ -5,6 +5,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ImagePixelProcessingTest {
+    @Test fun filterPreviewMatchesRustAndInvalidOrCancelledWorkDoesNotPublish() {
+        val filter=com.autoscript.project.store.ProjectImageFilter(output="keep",rules=listOf(com.autoscript.project.store.ProjectColorRule(0xff0000,0,0,0)))
+        val original=intArrayOf(0x80ff0000.toInt(),0xff000000.toInt(),0x00ff0000)
+        val op=ImagePixelOperation("filter",filter=filter)
+        assertArrayEquals(intArrayOf(0x80ff0000.toInt(),0,0),processImagePixels(original,3,1,op) {}.argb)
+        assertArrayEquals(intArrayOf(0x80ff0000.toInt(),0xff000000.toInt(),0x00ff0000),original)
+        assertThrows(IllegalArgumentException::class.java) { ImagePixelOperation("filter").dimensions(1,1) }
+        assertThrows(IllegalArgumentException::class.java) { ImagePixelOperation("gray",filter=filter).dimensions(1,1) }
+        assertThrows(CancellationException::class.java) { processImagePixels(original,3,1,op) { throw CancellationException() } }
+        var checks=0
+        assertThrows(CancellationException::class.java) {
+            processImagePixels(IntArray(1024) { -1 },1024,1,op) { if(++checks>=4) throw CancellationException() }
+        }
+        assertEquals(4,checks)
+    }
+
     private fun process(mode: String, width: Int = 0, height: Int = 0, roi: ImageToolCodeGen.Roi? = null) =
         processImagePixels(intArrayOf(1, 2, 3, 4, 5, 6), 2, 3, ImagePixelOperation(mode, width, height, roi)) {}
 

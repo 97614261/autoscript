@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5109,
+  "name": "Screen.findFeatures",
+  "since": "1.8",
+  "capability": "vision.opencv",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "显式ORB+Hamming比值筛选+RANSAC单应性匹配，不是像素多尺度。来源ROI≤1048576像素、模板≤262144像素，均须不透明，最多512特征、256次RANSAC、至少8个几何内点；缩放0.25–4，拒绝越界/退化几何。返回0或1项JSON数组，含原帧x/y/width/height及内点比例scorePermille；分数不与像素相似度等同，不自动点击。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "frame"
+    },
+    {
+      "name": "template",
+      "type": "integer",
+      "required": true,
+      "summary": "template"
+    },
+    {
+      "name": "minimumScorePermille",
+      "type": "integer",
+      "required": true,
+      "summary": "minimumScorePermille"
+    },
+    {
+      "name": "left",
+      "type": "integer",
+      "required": true,
+      "summary": "left"
+    },
+    {
+      "name": "top",
+      "type": "integer",
+      "required": true,
+      "summary": "top"
+    },
+    {
+      "name": "right",
+      "type": "integer",
+      "required": true,
+      "summary": "right"
+    },
+    {
+      "name": "bottom",
+      "type": "integer",
+      "required": true,
+      "summary": "bottom"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "显式ORB+Hamming比值筛选+RANSAC单应性匹配，不是像素多尺度。来源ROI≤1048576像素、模板≤262144像素，均须不透明，最多512特征、256次RANSAC、至少8个几何内点；缩放0.25–4，拒绝越界/退化几何。返回0或1项JSON数组，含原帧x/y/width/height及内点比例scorePermille；分数不与像素相似度等同，不自动点击。"
+  },
+  "legacyAliases": []
+}

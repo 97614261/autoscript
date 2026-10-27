@@ -458,7 +458,7 @@ class VisualProjectStateTest {
         editor.selectedNodeId = owner
         assertTrue(editor.addElseIfBranch())
         assertEquals(listOf("then", "else", "elseIf0"), editor.childBlockNames(owner))
-        assertEquals(1, editor.elseIfBranchCount(owner))
+        assertEquals(1, editor.nodeArguments(owner)!!.getAsJsonArray("elseIf").size())
 
         val noop = requireNotNull(BlockCatalog.find("task.noop"))
         val child = requireNotNull(editor.insertBlock(noop, JsonObject(), owner, "elseIf0"))
@@ -467,7 +467,7 @@ class VisualProjectStateTest {
         editor.selectedNodeId = owner
         assertTrue(editor.removeLastElseIfBranch())
         assertEquals(listOf("then", "else"), editor.childBlockNames(owner))
-        assertEquals(0, editor.elseIfBranchCount(owner))
+        assertFalse(editor.nodeArguments(owner)!!.has("elseIf"))
         assertFalse(editor.rows.any { it.nodeId == child })
     }
 
@@ -635,7 +635,7 @@ class VisualProjectStateTest {
         assertTrue(editor.isNodeDisabled("child"))
         assertFalse(editor.isNodeDisabled("child", inherited = false))
         assertEquals(2, editor.rows.size)
-        assertEquals(2, editor.selectionSubtreeSize())
+        assertEquals(2, editor.copySelection().sumOf { it.nodes.size })
         assertTrue(editor.undo())
         assertEquals(source, editor.currentSource)
         assertFalse(editor.isNodeDisabled("owner"))

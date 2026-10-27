@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14237,
+  "name": "Text.numberAt",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "从左到右读取第index个带紧邻正负号的十进制数字原文，序号从1起；保留前导零和小数位，无该项为空文本。100(+100) 180依次为100、+100、180。不计算表达式，不解析千分位/科学计数或百分比；输入最多4096 UTF-8字节，最多64项，超限整次拒绝。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "待提取的文本，最多4096 UTF-8字节。"
+    },
+    {
+      "name": "index",
+      "type": "integer",
+      "required": true,
+      "summary": "第几个数字，1–64。"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "数字原文（含紧邻正负号）；无该项返回空文本，不返回0。"
+  },
+  "legacyAliases": []
+}

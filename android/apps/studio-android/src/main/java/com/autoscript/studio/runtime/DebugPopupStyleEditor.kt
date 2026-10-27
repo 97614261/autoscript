@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -29,14 +31,16 @@ import com.autoscript.project.store.PopupStyle
 internal fun DebugPopupStyleEditor(draft: PopupStyleDraft, initialStyle: PopupStyle, onChange: (PopupStyleDraft) -> Unit) {
     var helpVisible by remember { mutableStateOf(false) }
     val preview = draft.preview(initialStyle)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val previewHeight = studioPopupPreviewHeight(maxHeight.value).dp
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("样式预览 · px", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.weight(1f))
             Text(if (helpVisible) "收起说明" else "说明", fontSize = 10.sp, color = AutoScriptPalette.Accent,
-                modifier = Modifier.fillMaxHeight().clickable { helpVisible = !helpVisible }
-                    .padding(horizontal = 8.dp).wrapContentSize(Alignment.Center))
+                modifier = Modifier.heightIn(min = 24.dp).clickable { helpVisible = !helpVisible }
+                    .padding(horizontal = 8.dp, vertical = 4.dp).wrapContentSize(Alignment.Center))
         }
-        PopupStylePreview(preview)
+        PopupStylePreview(preview, previewHeight)
         Spacer(Modifier.height(4.dp))
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -52,6 +56,7 @@ internal fun DebugPopupStyleEditor(draft: PopupStyleDraft, initialStyle: PopupSt
                 PopupStyleNumberInput("X px", "x", draft, Modifier.weight(1f), center = true, onChange = onChange)
                 PopupStyleNumberInput("Y px", "y", draft, Modifier.weight(1f), center = true, onChange = onChange)
             }
+            PopupPositionShortcuts(draft, onChange = onChange)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PopupStyleNumberInput("字号 px", "font", draft, Modifier.weight(1f), onChange = onChange)
                 PopupStyleNumberInput("圆角 px", "corner", draft, Modifier.weight(1f), onChange = onChange)
@@ -76,12 +81,55 @@ internal fun DebugPopupStyleEditor(draft: PopupStyleDraft, initialStyle: PopupSt
                     .wrapContentSize(Alignment.Center), textAlign = TextAlign.Center)
         }
     }
+    }
 }
 
 @Composable
-private fun PopupStylePreview(style: PopupStyle) {
+internal fun PopupPositionShortcuts(draft: PopupStyleDraft, enabled: Boolean = true,
+    onChange: (PopupStyleDraft) -> Unit) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val screenSize = remember(context, configuration.orientation, configuration.screenWidthDp,
+        configuration.screenHeightDp, configuration.densityDpi) {
+        android.graphics.Point().also {
+            @Suppress("DEPRECATION")
+            (context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager)
+                ?.defaultDisplay?.getRealSize(it)
+        }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("快捷位置", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
+            modifier = Modifier.width(40.dp).padding(top = 5.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            PopupPositionPreset.entries.chunked(3).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    row.forEach { preset ->
+                        val positioned = draft.withPosition(preset, screenSize.x, screenSize.y)
+                        val selected = positioned != null && positioned.inputs["x"] == draft.inputs["x"] &&
+                            positioned.inputs["y"] == draft.inputs["y"]
+                        Box(Modifier.weight(1f).heightIn(min = 24.dp)
+                            .background(if (selected) AutoScriptPalette.AccentSoft else AutoScriptPalette.PageBackground,
+                                RoundedCornerShape(3.dp))
+                            .clickable(enabled = enabled && positioned != null, onClickLabel = "设置提示位置：${preset.title}") {
+                                positioned?.let(onChange)
+                            }.padding(horizontal = 2.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                            Text(preset.title, fontSize = 10.sp, textAlign = TextAlign.Center,
+                                color = if (!enabled || positioned == null) AutoScriptPalette.TextSecondary
+                                    else if (selected) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary,
+                                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
+                        }
+                    }
+                }
+            }
+            Text("按当前屏幕定位，修改尺寸后可重新点选", fontSize = 9.sp, color = AutoScriptPalette.TextSecondary)
+        }
+    }
+}
+
+@Composable
+private fun PopupStylePreview(style: PopupStyle, previewHeight: androidx.compose.ui.unit.Dp) {
     val density = LocalDensity.current
-    BoxWithConstraints(Modifier.fillMaxWidth().height(72.dp)
+    BoxWithConstraints(Modifier.fillMaxWidth().height(previewHeight)
         .background(AutoScriptPalette.PageBackground, RoundedCornerShape(5.dp)).clip(RoundedCornerShape(5.dp)),
         contentAlignment = Alignment.Center) {
         val scale = popupPreviewScale(style.widthPx, style.heightPx,

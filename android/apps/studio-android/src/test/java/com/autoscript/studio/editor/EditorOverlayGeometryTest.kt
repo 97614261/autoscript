@@ -11,8 +11,8 @@ class EditorOverlayGeometryTest {
     @Test fun firstOverlayLayoutIsVisibleBeforeComposeReportsBounds() {
         val bounds = defaultEditorDockBounds(720, 1280, 1f)
         assertEquals(4f, bounds.left, 0.01f)
-        assertEquals(292f, bounds.width, 0.01f)
-        assertEquals(378f, bounds.height, 0.01f)
+        assertEquals(284f, bounds.width, 0.01f)
+        assertEquals(366f, bounds.height, 0.01f)
         assertTrue(bounds.top >= 0f)
         assertTrue(bounds.bottom <= 1280f)
     }
@@ -25,6 +25,100 @@ class EditorOverlayGeometryTest {
         assertTrue(bounds.bottom <= 240f)
         assertTrue(bounds.width > 1f)
         assertTrue(bounds.height > 1f)
+    }
+
+    @Test fun initialOverlayOriginMatchesAnExplicitWorkArea() {
+        val area = androidx.compose.ui.geometry.Rect(0f, 48f, 720f, 1184f)
+        val bounds = defaultEditorDockBounds(720, 1280, 2f, area)
+        assertEquals(8f, bounds.left, 0f)
+        assertEquals(300f, bounds.top, 0f)
+        assertEquals(568f, bounds.width, 0f)
+        assertEquals(732f, bounds.height, 0f)
+    }
+
+    @Test fun initialOverlayRetainsSpaceAroundNarrowLandscapeWindow() {
+        val area = androidx.compose.ui.geometry.Rect(24f, 48f, 296f, 216f)
+        val bounds = defaultEditorDockBounds(320, 240, 3f, area)
+        assertEquals(24f, bounds.left, .01f)
+        assertEquals(48f, bounds.top, .01f)
+        assertEquals(244.8f, bounds.width, .01f)
+        assertEquals(131.04f, bounds.height, .01f)
+        assertTrue(bounds.right < area.right)
+        assertTrue(bounds.bottom < area.bottom)
+    }
+
+    @Test fun denseLandscapeDefaultDoesNotExpandToTheNewFullScreenDragArea() {
+        val bounds = defaultEditorDockBounds(1280, 720, 2f)
+        assertEquals(568f, bounds.width, .01f)
+        assertEquals(561.6f, bounds.height, .01f)
+        assertTrue(bounds.height < 720f)
+        assertEquals(bounds.size, editorPanelSize(editorWorkArea(1280, 720), 2f))
+    }
+
+    @Test fun unresizedDefaultAdaptsToRotationInsteadOfReusingTallPortraitHeight() {
+        val portrait = editorPanelSize(editorWorkArea(720, 1280), 2f)
+        val landscape = editorPanelSize(editorWorkArea(1280, 720), 2f)
+        assertEquals(732f, portrait.height, .01f)
+        assertEquals(561.6f, landscape.height, .01f)
+        assertEquals(portrait, editorPanelSize(editorWorkArea(720, 1280), 2f))
+    }
+
+    @Test fun minimumResizeHeightDoesNotOverrideTheShortScreenDefault() {
+        val area = editorWorkArea(1280, 480)
+        val initial = editorPanelSize(area, 2f)
+        val small = editorPanelSize(area, 2f, androidx.compose.ui.geometry.Size(1f, 1f))
+        assertEquals(374.4f, initial.height, .01f)
+        assertEquals(initial.height, small.height, .01f)
+        assertTrue(small.height < area.height)
+    }
+
+    @Test fun manualResizeCanExceedDefaultButNeverThePhysicalScreen() {
+        val area = editorWorkArea(1280, 720)
+        val requested = androidx.compose.ui.geometry.Size(850f, 640f)
+        assertEquals(requested, editorPanelSize(area, 2f, requested))
+        assertEquals(area.size, editorPanelSize(area, 2f, androidx.compose.ui.geometry.Size(5000f, 5000f)))
+        val range = editorPanelDragArea(area, requested.width, requested.height)
+        assertEquals(430f, range.right, .01f)
+        assertEquals(80f, range.bottom, .01f)
+    }
+
+    @Test fun invalidResizeAndDensityFallBackToTheSameBoundedInitialSize() {
+        val area = editorWorkArea(720, 1280)
+        val initial = editorPanelSize(area, 1f)
+        assertEquals(initial, editorPanelSize(area, Float.NaN))
+        assertEquals(initial, editorPanelSize(area, 1f, androidx.compose.ui.geometry.Size(Float.NaN, 900f)))
+    }
+
+    @Test fun visibleStatusBarDoesNotApplyTheDefaultHeightRatioASecondTime() {
+        val viewport = androidx.compose.ui.geometry.Size(1280f, 720f)
+        val full = editorWorkArea(1280, 720)
+        val belowBar = editorWorkArea(1280, 720, 48)
+        val initial = editorPanelSize(full, 2f, initialViewport = viewport)
+        assertEquals(561.6f, initial.height, .01f)
+        assertEquals(initial, editorPanelSize(belowBar, 2f, initialViewport = viewport))
+        val native = defaultEditorDockBounds(1280, 720, 2f, belowBar, viewport)
+        assertEquals(initial, native.size)
+        assertTrue(native.top >= 48f)
+        assertTrue(native.bottom <= 720f)
+    }
+
+    @Test fun shortScreensOnlyShrinkTheInitialWindowWhenItCannotFitBelowTheBar() {
+        val viewport = androidx.compose.ui.geometry.Size(1280f, 480f)
+        val belowBar = editorWorkArea(1280, 480, 120)
+        val initial = editorPanelSize(belowBar, 2f, initialViewport = viewport)
+        assertEquals(360f, initial.height, .01f)
+        val minimum = editorPanelSize(belowBar, 2f, androidx.compose.ui.geometry.Size(1f, 1f), viewport)
+        assertEquals(420f, minimum.width, .01f)
+        assertEquals(initial.height, minimum.height, .01f)
+    }
+
+    @Test fun showingAndHidingTheStatusBarDoesNotReplaceManualSizeRequests() {
+        val viewport = androidx.compose.ui.geometry.Size(1280f, 720f)
+        val manual = androidx.compose.ui.geometry.Size(850f, 640f)
+        assertEquals(manual, editorPanelSize(editorWorkArea(1280, 720, 48), 2f, manual, viewport))
+        val tall = androidx.compose.ui.geometry.Size(850f, 710f)
+        assertEquals(672f, editorPanelSize(editorWorkArea(1280, 720, 48), 2f, tall, viewport).height, .01f)
+        assertEquals(tall, editorPanelSize(editorWorkArea(1280, 720), 2f, tall, viewport))
     }
 
     @Test fun `same project edit stays enabled while an editor exists`() {

@@ -16,6 +16,9 @@ class RuntimeLogFilteringTest {
         assertEquals(RuntimeConsoleChannel.SCRIPT, runtimeConsoleChannel("1ms · 脚本/INFO: Runner状态 · idle"))
         assertEquals(RuntimeConsoleChannel.DIAGNOSTIC, runtimeConsoleChannel(diagnostic))
         assertEquals(RuntimeConsoleChannel.DIAGNOSTIC, runtimeConsoleChannel(local))
+        assertEquals(RuntimeConsoleChannel.DIAGNOSTIC, runtimeConsoleChannel("1792542000000 · App诊断 · CAPTURE_PIPE_READ"))
+        assertEquals(RuntimeConsoleChannel.DIAGNOSTIC, runtimeConsoleChannel("1792542000000ms · App诊断 · ROOT_START"))
+        assertEquals(RuntimeConsoleChannel.OTHER, runtimeConsoleChannel("user text · App诊断 · ROOT_START"))
         assertEquals(RuntimeConsoleChannel.OTHER, runtimeConsoleChannel(unknown))
         assertEquals(RuntimeConsoleChannel.OTHER, runtimeConsoleChannel("text · Runner状态 · unknown"))
         assertTrue(editorConsoleLineIsFailure(script))
@@ -43,8 +46,23 @@ class RuntimeLogFilteringTest {
         assertEquals(listOf(script), previous)
         assertEquals(listOf(script, diagnostic), filterRuntimeConsole(next, "", false))
         val ui = File("src/main/java/com/autoscript/studio/runtime/RuntimeLogDialog.kt").readText()
-        assertTrue(ui.contains("val snapshot = lines.toList()"))
+        assertTrue(ui.contains("val snapshot = if (history) lines else lines.toList()"))
         assertTrue(ui.contains("remember(snapshot, query, failuresOnly, channel, history)"))
         assertTrue(ui.contains("LogLineDetailDialog(selectedLine"))
+    }
+
+    @Test fun backgroundHistoryFilteringHonorsCancellationDuringAndAfterScanning() {
+        val lines = List(1024) { "line $it" }
+        var checks = 0
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            filterRuntimeConsole(lines, "line", false) {
+                if (++checks == 3) throw kotlinx.coroutines.CancellationException("new query")
+            }
+        }
+        assertEquals(3, checks)
+        var completed = 0
+        assertEquals(lines, filterRuntimeConsole(lines, "line", false) { completed++ })
+        assertEquals(9, completed)
+        assertEquals(1024, lines.size)
     }
 }

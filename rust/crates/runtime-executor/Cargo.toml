@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+pixel-vision = { path = "../pixel-vision" }
 regex = { workspace = true }
 automation-core = { path = "../automation-core" }
 glyph-ocr = { path = "../glyph-ocr" }

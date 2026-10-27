@@ -4,7 +4,7 @@ use runtime_scheduler::{Clock, TaskToken};
 use serde::Deserialize;
 
 pub(crate) fn handles(opcode: u32) -> bool {
-    matches!(opcode, 2200..=2202 | 15000..=15003 | 16000..=16003 | 17000..=17003)
+    matches!(opcode, 2200..=2202 | 15000..=15003 | 16000..=16003 | 17000..=17003 | 18000..=18008)
 }
 
 impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
@@ -52,6 +52,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
 }
 
 pub(crate) fn validate(opcode: u32, args: &[LuaScalar]) -> Result<(), &'static str> {
+    if (18000..=18008).contains(&opcode) {
+        return crate::host_utility_runtime::validate(opcode, args);
+    }
     if (17000..=17003).contains(&opcode) {
         return crate::floating_runtime::validate(opcode, args);
     }
@@ -163,6 +166,9 @@ pub(crate) fn recording(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 }
 
 pub(crate) fn response(opcode: u32, bytes: Vec<u8>) -> Result<LuaInput, &'static str> {
+    if (18000..=18008).contains(&opcode) {
+        return crate::host_utility_runtime::response(opcode, bytes);
+    }
     let value = match opcode {
         17000..=17002 if bytes.is_empty() => return Ok(LuaInput::Boolean(true)),
         17003 if bytes.len() <= 256 => {

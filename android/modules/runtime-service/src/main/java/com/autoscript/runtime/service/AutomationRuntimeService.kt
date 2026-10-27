@@ -55,6 +55,16 @@ class AutomationRuntimeService : Service() {
     private val nativeHandleRef = AtomicLong(0L)
     private val coordinateSnapshotRef = AtomicLong(1L)
     private val rootStateRef = AtomicReference(RootDaemonController.State.STOPPED)
+    private val rootFailureCode = AtomicReference<AppDiagnosticCode?>(null)
+    private val appDiagnostics by lazy {
+        RuntimeAppDiagnostics(File(filesDir, "app-diagnostics")) { line ->
+            android.util.Log.i("ZhigouDiagnostics", line)
+            synchronized(runtimeLogLock) {
+                while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
+                runtimeLogs.addLast(line)
+            }
+        }
+    }
     private val stateListeners = RemoteCallbackList<IRuntimeStateListener>()
     private val lastNotifiedStateRef = AtomicInteger(UNPUBLISHED_STATE)
     private val lastNotifiedRootStateRef = AtomicInteger(UNPUBLISHED_STATE)
@@ -140,8 +150,7 @@ class AutomationRuntimeService : Service() {
         override fun run() {
             val handle = nativeHandleRef.get()
             if (handle == 0L) return
-            notifyRuntimeStateIfChanged()
-            if (NativeEngineBridge.nativeState(handle) == RuntimeProtocol.STATE_STOPPING) {
+            observeRuntimeStop(::notifyRuntimeStateIfChanged) {
                 engineHandler.postDelayed(this, STOP_STATE_OBSERVER_DELAY_MILLIS)
             }
         }
@@ -192,7 +201,7 @@ class AutomationRuntimeService : Service() {
         }
         override fun testRecognitionPreview(requestId: Long, expectedGeneration: Long, operation: Int,
             frameFile: ParcelFileDescriptor, assetFile: ParcelFileDescriptor?, options: IntArray): RecognitionPreviewReply {
-            if (Binder.getCallingUid() != Process.myUid() || options.size != RecognitionPreviewReply.OPTIONS_SIZE) {
+            if (Binder.getCallingUid() != Process.myUid() || !RecognitionPreviewReply.validOptions(operation,options)) {
                 frameFile.close(); assetFile?.close()
                 return RecognitionPreviewReply(requestId, expectedGeneration, RecognitionPreviewReply.INVALID_INPUT, operation)
             }
@@ -767,14 +776,15 @@ class AutomationRuntimeService : Service() {
             }
             if (enabled && !overlayController.canShow()) {
                 floatingControlEnabled.set(false)
-                overlayController.hide()
+                overlayController.hideControl()
                 return RuntimeProtocol.SURFACE_PERMISSION_DENIED
             }
             floatingControlEnabled.set(enabled)
+            if (enabled) overlayController.enableControl()
             if (enabled && foregroundActive.get()) {
                 overlayController.show(currentRuntimeState())
             } else if (!enabled) {
-                overlayController.hide()
+                overlayController.hideControl()
             }
             return RuntimeProtocol.SURFACE_ACCEPTED
         }
@@ -815,31 +825,39 @@ class AutomationRuntimeService : Service() {
             requestId: Long,
             expectedGeneration: Long,
         ): ParcelFileDescriptor? {
+            appDiagnostics.record(AppDiagnosticCode.CAPTURE_REQUESTED)
             if (expectedGeneration != sessionGenerationRef.get()) {
+                appDiagnostics.record(AppDiagnosticCode.CAPTURE_SESSION_CHANGED)
                 appendPreviewRuntimeLog("截图预览失败：Runner会话已重建")
                 return null
             }
             if (rootStateRef.get() != RootDaemonController.State.READY) {
+                appDiagnostics.record(AppDiagnosticCode.CAPTURE_ROOT_NOT_READY)
                 appendPreviewRuntimeLog("截图预览失败：Root后端尚未就绪")
                 return null
             }
             if (currentRuntimeState() !in setOf(RuntimeProtocol.STATE_IDLE, RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED)) {
+                appDiagnostics.record(AppDiagnosticCode.CAPTURE_RUNTIME_BUSY)
                 appendPreviewRuntimeLog("截图预览失败：脚本运行时不能占用截图通道")
                 return null
             }
             val handle = nativeHandleRef.get()
             if (handle == 0L) {
+                appDiagnostics.record(AppDiagnosticCode.CAPTURE_NATIVE_UNAVAILABLE)
                 appendPreviewRuntimeLog("截图预览失败：Native会话不可用")
                 return null
             }
-            val raw = NativeEngineBridge.nativeCapturePreview(handle)
+            val capture = runCatching { NativeEngineBridge.nativeCapturePreview(handle) }
+            val raw = capture.getOrNull()
             if (raw == null) {
-                appendPreviewRuntimeLog("截图预览失败：Root后端拒绝截图或连接已断开")
+                val code=capturePreviewFailureCode(capture.exceptionOrNull())
+                appDiagnostics.record(code)
+                appendPreviewRuntimeLog("截图预览失败：[${code.name}]；我的 → 运行环境 → Root / 截图诊断")
                 return null
             }
             return runCatching { writePreviewCapture(raw) }
-                .onSuccess { appendPreviewRuntimeLog("截图预览已生成") }
-                .onFailure { appendPreviewRuntimeLog("截图预览失败：画面格式无效或超出预览预算") }
+                .onSuccess { appDiagnostics.record(AppDiagnosticCode.CAPTURE_READY); appendPreviewRuntimeLog("截图预览已生成") }
+                .onFailure { appDiagnostics.record(AppDiagnosticCode.CAPTURE_INVALID_FRAME); appendPreviewRuntimeLog("截图预览失败：画面格式无效或超出预览预算") }
                 .getOrNull()
         }
 
@@ -852,7 +870,9 @@ class AutomationRuntimeService : Service() {
             }
             return synchronized(runtimeLogLock) {
                 val entries = runtimeLogs.toList() + if (runLogWriter.failure) listOf("Runner诊断 · 文件日志保存不完整，请检查存储空间；实时日志仍可查看") else emptyList()
-                entries.takeLast(maximumEntries).toTypedArray()
+                (appDiagnostics.recent().filterNot { it in entries } + entries +
+                    if (appDiagnostics.incomplete) listOf("App诊断 · 部分文件记录丢弃或写盘失败，实时诊断仍可查看") else emptyList())
+                    .takeLast(maximumEntries).toTypedArray()
             }
         }
 
@@ -940,13 +960,20 @@ class AutomationRuntimeService : Service() {
                 @Suppress("DEPRECATION")
                 val display = getSystemService(WindowManager::class.java).defaultDisplay
                 Point().also(display::getRealSize) to display.rotation
-            }, openAudio = { if (it.startsWith("assets/audio/")) audioResources.open(it) else nativeDataFileAdapter.openAudio(it) }, floatingImages=floatingImages)
+            }, openAudio = { if (it.startsWith("assets/audio/")) audioResources.open(it) else nativeDataFileAdapter.openAudio(it) }, floatingImages=floatingImages,
+            inputFeatures={if(rootStateRef.get()==RootDaemonController.State.READY) NativeEngineBridge.nativeInputFeatures(nativeHandleRef.get()) else 0})
         val displaySize = currentDisplaySize()
         nativeHandleRef.set(NativeEngineBridge.nativeCreate(displaySize.x, displaySize.y))
         sessionGenerationRef.set(newSessionGeneration())
         lastNotifiedStateRef.set(currentRuntimeState())
         lastNotifiedRootStateRef.set(currentRootStateCode())
-        rootDaemonController = RootDaemonController(this, engineHandler, ::updateRootState)
+        appDiagnostics.loadPrevious()
+        rootDaemonController = RootDaemonController(this, engineHandler, ::updateRootState) { code, detail ->
+            appDiagnostics.record(code, detail)
+            if (code == AppDiagnosticCode.ROOT_START || code == AppDiagnosticCode.ROOT_READY) rootFailureCode.set(null)
+            else if (code !in setOf(AppDiagnosticCode.ROOT_INSTALLED_DAEMON, AppDiagnosticCode.ROOT_EXTRACTED_DAEMON,
+                    AppDiagnosticCode.ROOT_RETRIES_EXHAUSTED)) rootFailureCode.set(code)
+        }
         val handle = nativeHandleRef.get()
         if (handle != 0L) {
             nativeDataFileAdapter = NativeDataFileAdapter(filesDir)
@@ -1029,6 +1056,7 @@ class AutomationRuntimeService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onDestroy() {
+        appDiagnostics.close()
         if (::runtimeTools.isInitialized) runtimeTools.close()
         restartRequested.set(false)
         frozenRun.set(null)
@@ -1152,17 +1180,17 @@ class AutomationRuntimeService : Service() {
     }
 
     @Synchronized
-    private fun notifyRuntimeStateIfChanged() {
+    private fun notifyRuntimeStateIfChanged(): Int {
         val state = currentRuntimeState()
         val rootState = currentRootStateCode()
-        if (state == RuntimeProtocol.STATE_STOPPED && restartRequested.getAndSet(false) && restartFrozenRun()) return
+        if (state == RuntimeProtocol.STATE_STOPPED && restartRequested.getAndSet(false) && restartFrozenRun()) return currentRuntimeState()
         if (inputPickActive.get() && (rootState != RuntimeProtocol.ROOT_READY ||
             state in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING))) {
             inputPickHandler.post { inputPickSession?.let { cancelInputPick(it.requestId, "运行状态变化，选点已取消") } }
         }
         val stepPause = state == RuntimeProtocol.STATE_PAUSED && stepControlPending.getAndSet(false)
         if (state in setOf(RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED, RuntimeProtocol.STATE_STOPPING)) stepControlPending.set(false)
-        if (!shouldPublishRuntimeState(state, rootState, lastNotifiedStateRef.get(), lastNotifiedRootStateRef.get(), stepPause)) return
+        if (!shouldPublishRuntimeState(state, rootState, lastNotifiedStateRef.get(), lastNotifiedRootStateRef.get(), stepPause)) return state
         if (state != RuntimeProtocol.STATE_RUNNING) {
             pendingExecutionPosition = null
             publishedExecutionPosition = null
@@ -1173,35 +1201,39 @@ class AutomationRuntimeService : Service() {
         lastNotifiedRootStateRef.set(rootState)
         appendRuntimeLog(state, rootState)
         val generation = sessionGenerationRef.get()
-        val count = stateListeners.beginBroadcast()
-        try {
-            for (index in 0 until count) {
-                runCatching {
-                    stateListeners.getBroadcastItem(index)
-                        .onRuntimeStateChanged(generation, state, rootState, currentRuntimeDiagnostic())
+        publishFinalizedRuntimeState(finalizeState = {
+            when (state) {
+                RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED -> {
+                    if (terminalClearsAllRuntimePrompts(state, runStopRequested.get())) overlayController.clearRunPrompts()
+                    frozenRun.set(null)
+                    restartRequested.set(false)
+                    val handle = nativeHandleRef.get()
+                    if (handle != 0L) { drainNativeScriptLogs(handle); drainNativeRunEvents(handle) }
+                    runLogWriter.end(if (state == RuntimeProtocol.STATE_FAILED) "failed" else if (runStopRequested.get()) "stopped" else "ended")
+                    finishForegroundRun()
+                }
+                RuntimeProtocol.STATE_RUNNING,
+                RuntimeProtocol.STATE_PAUSED,
+                RuntimeProtocol.STATE_STOPPING,
+                -> {
+                    updateForegroundNotification()
+                    if (floatingControlEnabled.get()) overlayController.show(state)
                 }
             }
-        } finally {
-            stateListeners.finishBroadcast()
-        }
-        when (state) {
-            RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED -> {
-                if (terminalClearsAllRuntimePrompts(state, runStopRequested.get())) overlayController.clearRunPrompts()
-                frozenRun.set(null)
-                restartRequested.set(false)
-                val handle = nativeHandleRef.get()
-                if (handle != 0L) { drainNativeScriptLogs(handle); drainNativeRunEvents(handle) }
-                runLogWriter.end(if (state == RuntimeProtocol.STATE_FAILED) "failed" else if (runStopRequested.get()) "stopped" else "ended")
-                finishForegroundRun()
-            }
-            RuntimeProtocol.STATE_RUNNING,
-            RuntimeProtocol.STATE_PAUSED,
-            RuntimeProtocol.STATE_STOPPING,
-            -> {
-                updateForegroundNotification()
-                if (floatingControlEnabled.get()) overlayController.show(state)
+        }) {
+            val count = stateListeners.beginBroadcast()
+            try {
+                for (index in 0 until count) {
+                    runCatching {
+                        stateListeners.getBroadcastItem(index)
+                            .onRuntimeStateChanged(generation, state, rootState, currentRuntimeDiagnostic())
+                    }
+                }
+            } finally {
+                stateListeners.finishBroadcast()
             }
         }
+        return state
     }
 
     private fun restartFrozenRun(): Boolean = synchronized(projectStartLock) {
@@ -1280,6 +1312,7 @@ class AutomationRuntimeService : Service() {
         val generation = sessionGenerationRef.get()
         val handle = nativeHandleRef.get()
         overlayController.clearRunPrompts()
+        if (previewRecognitionBusy.get()) recognitionPreview.cancelActive()
         scriptUiController.clear()
         if (handle != 0L) NativeEngineBridge.nativeStop(handle, SystemClock.elapsedRealtimeNanos())
         engineHandler.postAtFrontOfQueue {
@@ -1294,6 +1327,7 @@ class AutomationRuntimeService : Service() {
         frozenRun.set(null)
         runLogWriter.append("diagnostic.log", "${SystemClock.elapsedRealtime()}ms · stop_requested")
         overlayController.clearRunPrompts()
+        if (previewRecognitionBusy.get()) recognitionPreview.cancelActive()
         if (::inputRecording.isInitialized) inputRecording.abort(RecordingReply.CANCELLED)
         if (::nativeDataFileAdapter.isInitialized) nativeDataFileAdapter.clear()
         scriptUiController.clear()
@@ -1592,6 +1626,9 @@ class AutomationRuntimeService : Service() {
     }
 
     private fun currentRuntimeDiagnostic(): String? {
+        if (rootStateRef.get() == RootDaemonController.State.FAILED) {
+            return "Root 后端启动失败 [${rootFailureCode.get()?.name ?: "ROOT_START_FAILED"}]；请查看运行环境的调试详情"
+        }
         val handle = nativeHandleRef.get()
         if (handle == 0L || currentRuntimeState() != RuntimeProtocol.STATE_FAILED) return null
         return NativeEngineBridge.nativeLastDiagnostic(handle)
@@ -1707,6 +1744,7 @@ class AutomationRuntimeService : Service() {
      * This runs on the engine thread, the same serialization point used for Root operations.
      */
     private fun captureOverlayForStudio() {
+        appDiagnostics.record(AppDiagnosticCode.CAPTURE_REQUESTED)
         overlayController.showCaptureMessage("正在截图…")
         val projectId = lastProjectIdRef.get()
         if (projectId == null) {
@@ -1715,6 +1753,7 @@ class AutomationRuntimeService : Service() {
         }
         if (rootStateRef.get() != RootDaemonController.State.READY) {
             reportOverlayCaptureFailure("Root 后端尚未就绪")
+            appDiagnostics.record(AppDiagnosticCode.CAPTURE_ROOT_NOT_READY)
             return
         }
         if (currentRuntimeState() !in setOf(
@@ -1724,12 +1763,16 @@ class AutomationRuntimeService : Service() {
             )
         ) {
             reportOverlayCaptureFailure("请先停止脚本再截图")
+            appDiagnostics.record(AppDiagnosticCode.CAPTURE_RUNTIME_BUSY)
             return
         }
         val handle = nativeHandleRef.get()
-        val raw = handle.takeIf { it != 0L }?.let(NativeEngineBridge::nativeCapturePreview)
+        val capture=runCatching { handle.takeIf { it != 0L }?.let(NativeEngineBridge::nativeCapturePreview) }
+        val raw = capture.getOrNull()
         if (raw == null) {
-            reportOverlayCaptureFailure("Root 后端拒绝截图或连接已断开")
+            val code=capturePreviewFailureCode(capture.exceptionOrNull())
+            reportOverlayCaptureFailure("[${code.name}]；请到运行环境查看 Root / 截图诊断")
+            appDiagnostics.record(code)
             return
         }
         val width = readLittleEndianInt(raw, 0)
@@ -1752,15 +1795,14 @@ class AutomationRuntimeService : Service() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             )
             appendPreviewRuntimeLog("截图已交给 Studio 图像工具")
+            appDiagnostics.record(AppDiagnosticCode.CAPTURE_READY)
             // This is a one-shot capture session. Studio owns the decoded bitmap from here on.
             captureOverlayEnabled.set(false)
             finishForegroundRun()
-        } catch (failure: Exception) {
+        } catch (_: Exception) {
             output.delete()
-            val detail = failure.message?.replace(Regex("\\s+"), " ")?.take(120)
-            reportOverlayCaptureFailure(
-                "${failure.javaClass.simpleName}${detail?.let { "：$it" }.orEmpty()}",
-            )
+            appDiagnostics.record(AppDiagnosticCode.CAPTURE_INVALID_FRAME)
+            reportOverlayCaptureFailure("截图无法保存或返回编辑器 [CAPTURE_HANDOFF_FAILED]")
         }
     }
 

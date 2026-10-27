@@ -2,9 +2,6 @@ package com.autoscript.studio
 
 import com.autoscript.core.model.RuntimeEngineState
 
-internal fun editorEditWindowShouldClose(editingEnabled: Boolean, running: Boolean, externallyManaged: Boolean): Boolean =
-    running || (!editingEnabled && !externallyManaged)
-
 internal const val EDITOR_TREE_LEADING_DP = 2
 internal const val EDITOR_TREE_INDENT_STEP_DP = 8
 internal const val EDITOR_TREE_EXPAND_WIDTH_DP = 16

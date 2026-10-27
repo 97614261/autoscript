@@ -70,6 +70,10 @@
       "type": "integer",
       "required": true,
       "summary": "插空格列数"
+    },
+    {
+      "name": "additionalColors", "type": "string", "required": false,
+      "summary": "可选附加前景色，默认空。最多15项RRGGBB:容差，以分号分隔；与主色取并集，不允许重复RGB，总颜色比较最多6400万次。"
     }
   ],
   "returns": {

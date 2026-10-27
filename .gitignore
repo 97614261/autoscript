@@ -45,3 +45,15 @@ Thumbs.db
 __pycache__/
 /tools/legacy-converter/output/
 /tools/legacy-converter/dist/
+
+# Standalone documentation site; API pages and branding are built from repository sources.
+**/node_modules/
+/docs-site/.vitepress/cache/
+/docs-site/.vitepress/dist/
+/docs-site/.vitepress/data/
+/docs-site/.sites-runtime/
+/docs-site/src/api/generated/
+/docs-site/src/public/zhigou-logo.png
+/docs-site/src/public/downloads/
+/publish-apk.local.json
+/zhigou-publish-token.txt

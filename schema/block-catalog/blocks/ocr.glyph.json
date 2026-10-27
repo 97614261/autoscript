@@ -9,6 +9,7 @@
     { "path": "dictionaryPath", "label": "字库", "editor": "resource", "resourceKind": "glyph_dictionary", "required": true },
     { "path": "foregroundRgb", "label": "文字颜色", "editor": "color", "required": true, "defaultValue": "#FFFFFF" },
     { "path": "tolerance", "label": "颜色容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "additionalColors", "label": "附加前景色", "editor": "string", "required": false, "defaultValue": "" },
     { "path": "similarityPermille", "label": "最低相似度(‰)", "editor": "integer", "required": true, "defaultValue": "900" },
     { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
     { "path": "spaceGapColumns", "label": "空格列数", "editor": "integer", "required": true, "defaultValue": "0" },

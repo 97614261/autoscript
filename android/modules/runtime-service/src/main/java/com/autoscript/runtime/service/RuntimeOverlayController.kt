@@ -37,6 +37,13 @@ internal data class RuntimePopupStyle(
     val durationMs: Int = 3_000,
     val textAlign: String = "center",
 ) {
+    fun hasSameGeometry(other: RuntimePopupStyle?): Boolean = other != null &&
+        widthPx == other.widthPx && heightPx == other.heightPx && xPx == other.xPx && yPx == other.yPx
+
+    fun hasSameAppearance(other: RuntimePopupStyle?): Boolean = other != null &&
+        backgroundColor == other.backgroundColor && textColor == other.textColor &&
+        fontPx == other.fontPx && cornerPx == other.cornerPx && textAlign == other.textAlign
+
     companion object {
         fun parse(value: JSONObject): RuntimePopupStyle? = runCatching {
             val style = RuntimePopupStyle(
@@ -95,6 +102,7 @@ internal class RuntimeOverlayController(
     private var captureOnly = false
     @Volatile private var runtimeState = RuntimeProtocol.STATE_IDLE
     @Volatile private var normalCompletion = false
+    @Volatile private var controlEnabled = true
 
     fun canShow(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
         Settings.canDrawOverlays(appContext)
@@ -116,7 +124,7 @@ internal class RuntimeOverlayController(
         if (captureOnly) expanded = false
         if (!canShow()) return
         mainHandler.post {
-            if (!canShow()) return@post
+            if (!canShow() || !captureOnly && !controlEnabled) return@post
             // ensureForegroundForRun() may have already created the full runner controls.
             // A capture-only session has a different shape, icon and touch target, so merely
             // hiding sibling views leaves the old camera TextView alive and visually misleading.
@@ -147,6 +155,18 @@ internal class RuntimeOverlayController(
         }
     }
 
+    /** Changing the control-ball owner must not end or clear the script tips. */
+    fun hideControl() {
+        controlEnabled = false
+        mainHandler.post {
+            removeControlView()
+            expanded = false
+            captureOnly = false
+        }
+    }
+
+    fun enableControl() { controlEnabled = true }
+
     private fun removeOverlayView() {
         removePromptView()
         removeToastView(notify = false)
@@ -163,20 +183,26 @@ internal class RuntimeOverlayController(
         val ticket = promptSession.beginToast(session) ?: return
         mainHandler.post {
             if (!promptSession.acceptsToast(session, ticket)) return@post
-            removeToastView(notify = false)
+            toastExpiry?.let(mainHandler::removeCallbacks)
+            toastExpiry = null
             if (!canShow()) {
+                removeToastView(notify = false)
                 showFallbackToast(text)
-                promptSession.endToast(session, ticket)
-                onToastExpired()
+                if (promptSession.endToast(session, ticket)) onToastExpired()
                 return@post
             }
-            val params = promptParams(style)
-            val view = TextView(appContext).apply {
-                applyPromptStyle(this, text, style, params.width, params.height)
-                contentDescription = "弹出提示：$text（点击关闭）"
-                setOnClickListener { expireToast(ticket, session) }
+            val existing = toastView
+            val geometryChanged = !style.hasSameGeometry(latestToastStyle)
+            val params = toastLayoutParams ?: promptParams(style)
+            if (existing != null && geometryChanged) updatePromptGeometry(params, style)
+            val view = existing ?: TextView(appContext)
+            updatePromptContent(view, text, style, latestToastStyle, params, "弹出提示：$text（点击关闭）")
+            // A reused view must dismiss the newest message, not its original ticket.
+            view.setOnClickListener { expireToast(ticket, session) }
+            runCatching {
+                if (existing == null) windowManager.addView(view, params)
+                else if (geometryChanged) windowManager.updateViewLayout(view, params)
             }
-            runCatching { windowManager.addView(view, params) }
                 .onSuccess {
                     toastView = view
                     toastLayoutParams = params
@@ -187,9 +213,9 @@ internal class RuntimeOverlayController(
                     }
                 }
                 .onFailure {
+                    removeToastView(notify = false)
                     showFallbackToast(text)
-                    promptSession.endToast(session, ticket)
-                    onToastExpired()
+                    if (promptSession.endToast(session, ticket)) onToastExpired()
                 }
         }
     }
@@ -238,23 +264,23 @@ internal class RuntimeOverlayController(
         val session = promptSession.ticket()
         mainHandler.post {
             if (!promptSession.acceptsWindow(session)) return@post
-            val styleChanged = latestPromptStyle != style
+            val previousStyle = latestPromptStyle
             latestPrompt = text
-            latestPromptStyle = style
             if (!canShow()) {
                 showFallbackToast(text)
                 return@post
             }
+            latestPromptStyle = style
             val existing = promptView
+            val geometryChanged = !style.hasSameGeometry(previousStyle)
             val params = promptLayoutParams ?: promptParams(style)
-            if (styleChanged) updatePromptGeometry(params, style)
+            if (existing != null && geometryChanged) updatePromptGeometry(params, style)
             val view = existing ?: TextView(appContext)
-            applyPromptStyle(view, text, style, params.width, params.height)
-            view.contentDescription = "运行提示：$text（点击设置，拖动移动）"
+            updatePromptContent(view, text, style, if (existing == null) null else previousStyle,
+                params, "运行提示：$text（点击设置，拖动移动）")
             if (existing != null) {
-                if (!promptHidden) runCatching { windowManager.updateViewLayout(view, params) }
+                if (!promptHidden && geometryChanged) runCatching { windowManager.updateViewLayout(view, params) }
                 updatePromptVisibility()
-                render()
                 return@post
             }
             view.setOnTouchListener(PromptDragTouchListener(view, params))
@@ -278,8 +304,15 @@ internal class RuntimeOverlayController(
         fallbackToast = Toast.makeText(appContext, text, Toast.LENGTH_LONG).also { it.show() }
     }
 
-    private fun applyPromptStyle(view: TextView, text: String, style: RuntimePopupStyle, width: Int, height: Int) {
-        view.text = text
+    private fun updatePromptContent(view: TextView, text: String, style: RuntimePopupStyle,
+        previousStyle: RuntimePopupStyle?, params: WindowManager.LayoutParams, description: String) {
+        if (!view.text.contentEquals(text)) view.text = text
+        if (!view.contentDescription.contentEquals(description)) view.contentDescription = description
+        if (!style.hasSameAppearance(previousStyle)) applyPromptStyle(view, style)
+        updatePromptPadding(view, params.width, params.height)
+    }
+
+    private fun applyPromptStyle(view: TextView, style: RuntimePopupStyle) {
         view.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.fontPx.toFloat())
         view.setTextColor(style.textColor)
         view.includeFontPadding = false
@@ -289,12 +322,18 @@ internal class RuntimeOverlayController(
             else -> Gravity.CENTER_HORIZONTAL
         }
         view.maxLines = 10
-        val horizontal = (width / 12).coerceIn(0, dp(12))
-        val vertical = (height / 12).coerceIn(0, dp(6))
-        view.setPadding(horizontal, vertical, horizontal, vertical)
         view.background = GradientDrawable().apply {
             cornerRadius = style.cornerPx.toFloat()
             setColor(style.backgroundColor)
+        }
+    }
+
+    private fun updatePromptPadding(view: TextView, width: Int, height: Int) {
+        val horizontal = (width / 12).coerceIn(0, dp(12))
+        val vertical = (height / 12).coerceIn(0, dp(6))
+        if (view.paddingLeft != horizontal || view.paddingRight != horizontal ||
+            view.paddingTop != vertical || view.paddingBottom != vertical) {
+            view.setPadding(horizontal, vertical, horizontal, vertical)
         }
     }
 
@@ -333,12 +372,16 @@ internal class RuntimeOverlayController(
         mainHandler.post {
             latestToastStyle?.let { style -> toastLayoutParams?.let { params ->
                 updatePromptGeometry(params, style)
-                toastView?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+                toastView?.let {
+                    updatePromptPadding(it, params.width, params.height)
+                    runCatching { windowManager.updateViewLayout(it, params) }
+                }
             } }
             val style = latestPromptStyle ?: return@post
             val view = promptView ?: return@post
             val params = promptLayoutParams ?: return@post
             updatePromptGeometry(params, style)
+            updatePromptPadding(view, params.width, params.height)
             if (!promptHidden) runCatching { windowManager.updateViewLayout(view, params) }
             updatePromptVisibility()
         }
@@ -350,7 +393,8 @@ internal class RuntimeOverlayController(
         val overlaps = transient != null && runtimePromptsOverlap(
             RuntimePromptGeometry(persistent.width, persistent.height, persistent.x, persistent.y),
             RuntimePromptGeometry(transient.width, transient.height, transient.x, transient.y))
-        promptView?.visibility = if (overlaps) View.INVISIBLE else View.VISIBLE
+        val visibility = if (overlaps) View.INVISIBLE else View.VISIBLE
+        promptView?.let { if (it.visibility != visibility) it.visibility = visibility }
     }
 
     private fun removePromptView() {

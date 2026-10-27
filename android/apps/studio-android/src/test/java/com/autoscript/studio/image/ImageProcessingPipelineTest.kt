@@ -6,6 +6,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ImageProcessingPipelineTest {
+    @Test fun filterPipelineCarriesExactRulesAndReleasesScratchWithoutChangingCoordinates() {
+        val filter=com.autoscript.project.store.ProjectImageFilter(output="keep")
+        val pipeline=ImageProcessingPipeline(2,3).append(ImagePixelOperation("filter",filter=filter))
+        val blocks=imageProcessingBlocks(pipeline,null,"scratch","result",variables,emptyList())
+        assertEquals(listOf("screen.capture","screen.transform","screen.release"),blocks.map { it.first.kind })
+        assertEquals(filter.encode(),blocks[1].second["filter"].asString)
+        assertEquals("filter",blocks[1].second["mode"].asString)
+        assertEquals(2 to 3,pipeline.dimensions)
+    }
+
     private val variables = listOf(CalculationVariable("scratch", ProjectVariableType.IMAGE, "局部"),
         CalculationVariable("result", ProjectVariableType.IMAGE, "局部"), CalculationVariable("text", ProjectVariableType.STRING, "全局"))
     private val image = JsonObject().apply { addProperty("kind", "image"); addProperty("path", "assets/images/source.png") }

@@ -1123,6 +1123,9 @@ pub(crate) fn spec(kind: &str) -> Option<Spec> {
     SPECS
         .iter()
         .chain(crate::file_utility_specs::SPECS.iter())
+        .chain(crate::pure_utility_specs::SPECS.iter())
+        .chain(crate::codec_utility_specs::SPECS.iter())
+        .chain(crate::host_utility_specs::SPECS.iter())
         .find(|(name, _)| *name == kind)
         .map(|(_, spec)| *spec)
 }
@@ -1166,6 +1169,11 @@ pub(crate) fn parse(kind: &str, args: &Value) -> Result<UtilityOperation, &'stat
         .map(|field| {
             let literal = map.get(field.name).ok_or("utility literal is required")?;
             validate_literal(field, literal)?;
+            if crate::pure_utility_specs::choices(kind, field.name)
+                .is_some_and(|choices| !choices.contains(&literal.as_str().unwrap_or_default()))
+            {
+                return Err("unknown utility operation choice");
+            }
             let variable = map
                 .get(&format!("{}Variable", field.name))
                 .map(|v| {

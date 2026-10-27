@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14228,
+  "name": "Text.reverse",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按 Unicode 标量值反转，不按 UTF-8 字节截断；不把组合字符或复合表情当作单个字素，输入输出最多 64KiB。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "按 Unicode 标量值反转，不按 UTF-8 字节截断；不把组合字符或复合表情当作单个字素，输入输出最多 64KiB。"
+  },
+  "legacyAliases": []
+}

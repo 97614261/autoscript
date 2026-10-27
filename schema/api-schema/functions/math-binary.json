@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1023,
+  "name": "Math.binary",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "min/max/pow/atan2/log；atan2 为 atan2(左值 y,右值 x)，返回弧度，原点无方向；log 的左值为真数、右值为底数。输入及结果绝对值不超过 10^12，非法定义域报错。",
+  "params": [
+    {
+      "name": "operation",
+      "type": "string",
+      "required": true,
+      "summary": "运算：min=较小值、max=较大值、pow=乘方、atan2=双参数反正切、log=指定底数对数"
+    },
+    {
+      "name": "left",
+      "type": "number",
+      "required": true,
+      "summary": "左值"
+    },
+    {
+      "name": "right",
+      "type": "number",
+      "required": true,
+      "summary": "右值"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "min/max/pow/atan2/log；atan2 为 atan2(左值 y,右值 x)，返回弧度，原点无方向；log 的左值为真数、右值为底数。输入及结果绝对值不超过 10^12，非法定义域报错。"
+  },
+  "legacyAliases": []
+}

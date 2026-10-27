@@ -15,7 +15,7 @@ import com.autoscript.script.ui.UiControl
 import com.autoscript.studio.generated.BlockContract
 import com.google.gson.JsonObject
 private val uiPositionOperations=setOf("windowPosition","bubblePosition","get:windowPosition","get:bubblePosition")
-private val uiWindowOperations=setOf("show","hide","minimize","page","get:config","restoreConfig")+uiPositionOperations
+private val uiWindowOperations=setOf("show","hide","minimize","page","get:config","get:pages","get:controls","restoreConfig")+uiPositionOperations
 
 internal fun uiCommandTargetError(model: ScriptUiDefinition?, kind: String, id: String, operation: String): String? {
     if (kind == "ui.command" && operation in uiWindowOperations)
@@ -103,7 +103,7 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
         error = uiCommandTargetError(model, contract.kind, id, operation)
         if (error == null && reading && inputs["resultVariable"] !in resultVariables) error = "请选择已声明的字符结果变量"
         if (error == null) {
-            val configured = if ((window && operation !in setOf("page","restoreConfig","windowPosition","bubblePosition")) || operation=="groupReset") inputs - "valueVariable" + ("value" to "") else inputs
+            val configured = if ((window && operation !in setOf("page","restoreConfig","windowPosition","bubblePosition","get:controls")) || operation=="groupReset") inputs - "valueVariable" + ("value" to "") else inputs
             val parsed = parseBlockArguments(contract, configured, null, emptyMap(), project.manifest.resources)
             error = parsed.second
             parsed.first?.let(onConfirm)
@@ -131,6 +131,11 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
                 DesignerChoice("结果变量", inputs["resultVariable"].orEmpty(), resultVariables.map { it to it }, true) { update("resultVariable", it) }
                 Text("返回字符值；数值和布尔可用计算积木转换。")
                 if(operation=="get:config") Text("导出输入参数JSON（最多8192字节），密码不包含；接文件写入可持久保存。")
+                if(operation=="get:pages") Text("只读页面ID、标题及设计尺寸，不保存布局、不读取填写值。")
+                if(operation=="get:controls") {
+                    DesignerChoice("查询页面",inputs["value"].orEmpty().ifEmpty {"当前页"},listOf("" to "当前页")+model?.pages.orEmpty().map {it.id to it.title},true) {update("value",it);update("valueVariable","")}
+                    Text("只读控件ID、类型和是否可输入；不会切页，不包含控件值或密码。")
+                }
             } else if (!window || operation in setOf("page","restoreConfig","windowPosition","bubblePosition")) {
                 if(operation=="restoreConfig") Text("从文件读取到字符变量后恢复；全部校验成功才应用，不恢复密码、不触发事件。")
                 val sourceVariables=if(operation in setOf("range","restoreConfig","windowPosition","bubblePosition","backgroundImage")) resultVariables else variables
@@ -225,7 +230,7 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
 private fun uiOperationLabel(operation: String): String {
     val extensions=mapOf("backgroundImage" to "背景图片","groupVisible" to "整组可见","groupEnabled" to "整组启用","groupReset" to "整组恢复默认值","groupCount" to "组内控件数","windowPosition" to "窗口位置","bubblePosition" to "界面浮球位置")
     extensions[operation.removePrefix("get:")]?.let {return (if(operation.startsWith("get:")) "读取 · " else "设置 · ")+it}
-    val inputLabels=mapOf("hint" to "占位提示","minimum" to "数值下限","maximum" to "数值上限","step" to "滑块步长","range" to "一次设置范围","config" to "导出页面参数","restoreConfig" to "恢复页面参数")
+    val inputLabels=mapOf("hint" to "占位提示","minimum" to "数值下限","maximum" to "数值上限","step" to "滑块步长","range" to "一次设置范围","config" to "导出页面参数","pages" to "列出设计页面","controls" to "列出页面控件","restoreConfig" to "恢复页面参数")
     inputLabels[operation.removePrefix("get:")]?.let {return (if(operation.startsWith("get:")) "读取 · " else "")+it}
     val listLabels=mapOf("itemAdd" to "追加选项","itemInsert" to "插入选项","itemSet" to "修改选项","itemRemove" to "删除选项","itemsClear" to "清空选项","itemCount" to "选项数量","selectedIndex" to "单选索引","selectedIndices" to "多选索引")
     listLabels[operation.removePrefix("get:")]?.let {return (if(operation.startsWith("get:")) "读取 · " else "")+it}

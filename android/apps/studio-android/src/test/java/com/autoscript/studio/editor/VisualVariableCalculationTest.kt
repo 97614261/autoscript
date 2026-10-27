@@ -13,7 +13,7 @@ import org.junit.Test
 class VisualVariableCalculationTest {
     @Test fun calculationHintRoundTripsWithoutLosingQuotesOrNewlines() {
         val args = JsonObject().apply { addProperty("name", "text"); addProperty("expression", "\"引号\\\"\\n\" .. text(count)") }
-        val hint = variableCalculationHint(args)
+        val hint = "$VARIABLE_CALCULATION_HINT$args\n"
         assertEquals("variable.calculate", FunctionCatalog.blockKindOf(hint))
         assertEquals(args, variableCalculationArguments(hint))
         val contract = requireNotNull(BlockCatalog.find("variable.calculate"))
@@ -75,7 +75,7 @@ class VisualVariableCalculationTest {
             val wrapped = wrapCalculationFunction(TextFieldValue(source), function, "0")
             assertEquals(expression, wrapped.text)
             val args = JsonObject().apply { addProperty("name", "result"); addProperty("expression", wrapped.text) }
-            val hint = variableCalculationHint(args)
+            val hint = "$VARIABLE_CALCULATION_HINT$args\n"
             assertEquals(args, variableCalculationArguments(hint))
             assertEquals(args, legacyDockBlockArguments(requireNotNull(BlockCatalog.find("variable.calculate")), hint, JsonObject()))
             val entries = FunctionCatalog.search(FunctionCatalog.visualGroups(), function)

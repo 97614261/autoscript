@@ -85,7 +85,7 @@ internal fun legacyDockBlockArguments(
     snippet: String,
     defaults: JsonObject,
 ): JsonObject = defaults.deepCopy().apply {
-    if (contract.kind in setOf("task.runprompt", "task.prompt", "task.log", "task.message", "task.comment",
+    if (contract.kind in setOf("task.runprompt", "task.prompt", "task.log", "task.message", "task.comment", "task.sleep",
             "flow.call", "flow.call.branch", "flow.status.return", "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
         snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + contract.kind + "\n")) {
         val encoded = snippet.lineSequence().drop(1).firstOrNull().orEmpty()
@@ -154,15 +154,15 @@ internal fun legacyDockBlockArguments(
             }
         }
         "control.label" -> snippet.trim().removeSurrounding("::")
-            .takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
+            .takeIf { it.matches(com.autoscript.project.store.ProjectNames.pattern) }
             ?.let { addProperty("name", it) }
         "control.goto" -> snippet.trim().removePrefix("goto ")
-            .takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
+            .takeIf { it.matches(com.autoscript.project.store.ProjectNames.pattern) }
             ?.let { addProperty("name", it) }
         "task.log" -> {
             Regex("Log\\.(info|warn|error)", RegexOption.IGNORE_CASE)
                 .find(snippet)?.groupValues?.getOrNull(1)?.lowercase()?.let { addProperty("level", it) }
-            val variable = Regex("__vars\\s*\\[\\s*[\\\"']([A-Za-z_][A-Za-z0-9_]*)[\\\"']\\s*]")
+            val variable = Regex("__vars\\s*\\[\\s*[\\\"']([${com.autoscript.project.store.ProjectNames.START}][${com.autoscript.project.store.ProjectNames.PART}]{0,63})[\\\"']\\s*]")
                 .find(snippet)?.groupValues?.getOrNull(1)
             if (variable != null) {
                 addProperty("valueVariable", variable)
@@ -172,7 +172,7 @@ internal fun legacyDockBlockArguments(
             }
         }
         "task.prompt", "task.runprompt" -> {
-            val variable = Regex("__vars\\s*\\[\\s*[\\\"']([A-Za-z_][A-Za-z0-9_]*)[\\\"']\\s*]")
+            val variable = Regex("__vars\\s*\\[\\s*[\\\"']([${com.autoscript.project.store.ProjectNames.START}][${com.autoscript.project.store.ProjectNames.PART}]{0,63})[\\\"']\\s*]")
                 .find(snippet)?.groupValues?.getOrNull(1)
             if (variable != null) {
                 addProperty("valueVariable", variable)
@@ -190,7 +190,7 @@ internal fun legacyDockBlockArguments(
                     value.startsWith("fixed:") -> value.removePrefix("fixed:").toLongOrNull()
                         ?.takeIf { it in 0..1_000_000 }?.let { addProperty("times", it) }
                     value.startsWith("variable:") -> value.removePrefix("variable:")
-                        .takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
+                        .takeIf { it.matches(com.autoscript.project.store.ProjectNames.pattern) }
                         ?.let { addProperty("times", 0); addProperty("timesVariable", it) }
                 }
                 return@apply
@@ -213,7 +213,7 @@ internal fun legacyDockBlockArguments(
                         .substringAfterLast(':').toLongOrNull()?.takeIf { it in 1..86_400_000 }
                         ?.let { addProperty("durationMs", it) }
                     marker.startsWith(FunctionCatalog.LOOP_HINT_PREFIX + "timed:variable:") -> marker
-                        .substringAfterLast(':').takeIf { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) }
+                        .substringAfterLast(':').takeIf { it.matches(com.autoscript.project.store.ProjectNames.pattern) }
                         ?.let { addProperty("durationVariable", it) }
                 }
                 return@apply

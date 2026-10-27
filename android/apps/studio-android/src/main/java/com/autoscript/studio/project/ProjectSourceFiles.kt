@@ -5,9 +5,9 @@ import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectSourceMode
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.project.store.SourceGroup
+import com.autoscript.script.ui.CompactId
 import com.google.gson.JsonParser
 import java.io.File
-import java.util.UUID
 
 /** 源文件管理里的一行：一个 Flow 及其显示名、磁盘信息和所属虚拟分组。 */
 internal data class SourceFileEntry(
@@ -48,7 +48,7 @@ internal fun ProjectFlow.displayName(): String = path.substringAfterLast('/').re
  */
 internal class ProjectSourceFiles(
     private val store: ProjectStore,
-    private val idFactory: () -> String = { "flow-${UUID.randomUUID().toString().take(8)}" },
+    private val idFactory: () -> String = { "" },
 ) {
     fun load(snapshot: ProjectSnapshot): SourceFileTree {
         if (snapshot.manifest.sourceMode != ProjectSourceMode.VISUAL) return SourceFileTree()
@@ -162,6 +162,9 @@ internal class ProjectSourceFiles(
     }
 
     private fun freshFlowId(taken: Set<String>): String {
+        val first = idFactory()
+        if (first.isBlank()) return CompactId.nextNumeric("flow", taken)
+        if (first !in taken) return first
         repeat(32) {
             val candidate = idFactory()
             if (candidate !in taken) return candidate

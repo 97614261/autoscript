@@ -19,7 +19,7 @@ Kotlin 根目录为 android/apps/studio-android/src/main/java/com/autoscript/stu
 
 | 职责目录 | 主要入口 |
 |---|---|
-| navigation | MainActivity.kt / StudioEntryModel.kt / ProfileScreens.kt |
+| navigation | MainActivity.kt / StudioEntryModel.kt / StudioAboutScreen.kt |
 | project | ProjectPage.kt / ProjectSettingsDialog.kt / PluginFileManagerDialog.kt |
 | editor | EditorDock.kt / VisualProjectScreen.kt / FunctionLibraryDialog.kt |
 | image | VisualImageRecognitionDialog.kt / ImageToolWindow.kt / ImageTemplateSaveDialog.kt |

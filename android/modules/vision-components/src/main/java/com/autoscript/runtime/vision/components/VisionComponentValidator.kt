@@ -49,7 +49,7 @@ object VisionComponentValidator {
             val expectedNative = descriptor.abis.flatMap { abi -> descriptor.kind.nativeLibraries.map { "lib/$abi/$it" } }.toSet()
             require(names.filter { it.startsWith("lib/") }.toSet() == expectedNative)
             val expectedAssets = descriptor.kind.licenses + VisionComponentDescriptor.PATH +
-                if (descriptor.kind == VisionComponentKind.ONNX) setOf(VisionComponentDescriptor.MODEL_PATH) else emptySet()
+                descriptor.models.map { it.path }.toSet()
             require(names.filter { it.startsWith("assets/") }.toSet() == expectedAssets)
             require("classes.dex" in names && "AndroidManifest.xml" in names)
             require(requireNotNull(zip.getEntry("AndroidManifest.xml")).size in 1..MAX_MANIFEST_BYTES) { "VISION_COMPONENT_MANIFEST_BUDGET" }
@@ -73,11 +73,11 @@ object VisionComponentValidator {
                 require(entry.size in 1..1_048_576L)
                 require(zip.getInputStream(entry).use { hash(it, 1_048_576L, checkpoint) }.first == entry.size)
             }
-            if (descriptor.kind == VisionComponentKind.ONNX) {
-                val model = requireNotNull(zip.getEntry(VisionComponentDescriptor.MODEL_PATH))
-                require(model.size == NativeVisionSpi.MODEL_BYTES.toLong())
-                val checked = zip.getInputStream(model).use { hash(it, NativeVisionSpi.MODEL_BYTES.toLong(), checkpoint) }
-                require(checked.first == model.size && checked.second == NativeVisionSpi.MODEL_SHA256)
+            for (fixed in descriptor.models) {
+                val model = requireNotNull(zip.getEntry(fixed.path))
+                require(model.size == fixed.bytes.toLong())
+                val checked = zip.getInputStream(model).use { hash(it, fixed.bytes.toLong(), checkpoint) }
+                require(checked.first == model.size && checked.second == fixed.sha256)
             }
             descriptor
         }

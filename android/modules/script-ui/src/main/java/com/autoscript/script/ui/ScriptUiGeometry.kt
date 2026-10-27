@@ -17,6 +17,16 @@ data class UiScreenBounds(val left: Int, val top: Int, val width: Int, val heigh
 
 /** Units are consistent within one calculation: physical pixels for Views, dp for designer thumbnails. */
 object ScriptUiGeometry {
+    fun withVisibleDisplayFrame(bounds: UiScreenBounds, visible: UiScreenBounds, margin: Int): UiScreenBounds {
+        require(margin >= 0)
+        // Accept a display-wide frame, never the small overlay's own measured rectangle.
+        if (visible.width <= 0 || visible.height <= 0 || visible.left > bounds.left || visible.top > bounds.top ||
+            visible.left.toLong() + visible.width < bounds.left.toLong() + bounds.width) return bounds
+        val bottom = minOf(bounds.top.toLong() + bounds.height, visible.top.toLong() + visible.height - margin)
+        if (bottom <= bounds.top) return bounds
+        return bounds.copy(height = (bottom - bounds.top).toInt())
+    }
+
     /** Compact radio groups stay usable as one row instead of clipping vertically stacked options. */
     fun radioHorizontal(height: Int, fontPx: Int, optionCount: Int) = optionCount > 1 && height < maxOf(20f, fontPx * 1.8f) * optionCount
 

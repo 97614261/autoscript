@@ -38,7 +38,7 @@ internal fun CompactInputArgumentsDialog(contract: BlockContract, arguments: Jso
                 color = Color.White, shape = RoundedCornerShape(4.dp), shadowElevation = 9.dp) {
                 Column {
                     Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("按键 · ${contract.title}", color = AutoScriptPalette.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("输入 · ${contract.title}", color = AutoScriptPalette.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Text("×", modifier = Modifier.size(32.dp).clickable(onClick = onDismiss).wrapContentSize(Alignment.Center), fontSize = 22.sp)
                     }
                     HorizontalDivider(color = AutoScriptPalette.Divider)

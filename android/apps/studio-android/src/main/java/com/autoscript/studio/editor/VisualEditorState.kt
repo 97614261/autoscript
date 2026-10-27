@@ -1,12 +1,12 @@
 package com.autoscript.studio
 
 import com.autoscript.studio.generated.BlockContract
+import com.autoscript.script.ui.CompactId
 import com.google.gson.JsonNull
 import com.google.gson.JsonElement
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import java.util.UUID
 
 internal class VisualEditorState private constructor(
     initialSource: String,
@@ -15,6 +15,7 @@ internal class VisualEditorState private constructor(
     private val idFactory: () -> String,
     forceReadOnly: Boolean,
 ) {
+    private var projectIds: VisualProjectIds? = null
     var savedSource: String = initialSource
         private set
     var currentSource: String = migratedSource
@@ -101,7 +102,7 @@ internal class VisualEditorState private constructor(
             selectedNodeIds = selection
             return false
         }
-        undoStack += source
+        undoStack += EditorHistoryEntry(source)
         if (undoStack.size > MAX_HISTORY) undoStack.removeAt(0)
         redoStack.clear()
         pruneSelection()
@@ -149,6 +150,9 @@ internal class VisualEditorState private constructor(
         return false
     }
 
+    /** Capture strings/flags only on the owner thread; the worker never touches editor state. */
+    fun variableCheckInput(): VisualVariableCheckInput = VisualVariableCheckInput(currentSource, rootBlockId, isReadOnly)
+
     fun toggleDisabledSelection(): Boolean {
         val roots = selectedRoots()
         if (roots.isEmpty()) return false
@@ -160,31 +164,48 @@ internal class VisualEditorState private constructor(
         return commit(document)
     }
 
-    fun selectionSubtreeSize(): Int = copySelection().sumOf { it.nodes.size }
-
     fun nodeDisplay(nodeId: String): com.autoscript.studio.compiler.NodeDisplaySettings =
         com.autoscript.studio.compiler.NodeDisplaySettings.parse(editableDocument()?.nodes
             ?.firstOrNull { it.nodeId == nodeId }?.json?.get("display"))
 
     /** One document parse per list projection, not several full parses for every row. */
-    fun programDisplayNodes(): List<EditorProgramNode> {
+    fun programDisplayNodes(flowNames: Map<String, String>? = null): List<EditorProgramNode> {
+        if (displayCacheSource == currentSource && displayCacheNames == flowNames) return displayCache
         val parsed = if (isReadOnly) null else parseDocument(currentSource, rootBlockId)
         val byId = parsed?.editable?.nodes.orEmpty().associateBy { it.nodeId }
         val disabledById = mutableMapOf<String, Boolean>()
-        return (parsed?.rows ?: rows).map { row ->
+        val projection = (parsed?.rows ?: rows).map { row ->
             val node = byId[row.nodeId]
             val ownDisabled = node?.json?.get("disabled")?.asBoolean == true
             // Projection is parent-before-child and validated acyclic.
             val inheritedDisabled = node?.parentId?.let { disabledById[it] } == true
             disabledById[row.nodeId] = ownDisabled || inheritedDisabled
             val settings = com.autoscript.studio.compiler.NodeDisplaySettings.parse(node?.json?.get("display"))
-            val defaultLabel = legacyDockProgramLabel(BlockCatalog.find(row.kind), node?.json?.getAsJsonObject("args"), row.kind) + randomizationRowSuffix(node?.json?.getAsJsonObject("randomization"),row.kind)
+            val contract = BlockCatalog.find(row.kind)
+            val args = node?.json?.getAsJsonObject("args")
+            val randomization = randomizationRowSuffix(node?.json?.getAsJsonObject("randomization"), row.kind)
+            val defaultLabel = compactProgramLabel(contract, args, row.kind, flowNames) + randomization
+            val rowLabel = compactProgramLabel(contract, args, row.kind, flowNames, rowSummary = true) + randomization
             val branch = row.childSlot?.let(::childBlockLabel)
+            val parent = node?.parentId?.let(byId::get)
+            val branchHasHeading = row.childSlot in editorBranchSlots(parent?.json?.get("kind")?.asString.orEmpty(),
+                parent?.childBlocks?.keys?.toList().orEmpty())
             EditorProgramNode(row.nodeId, (branch?.let { "[$it] " } ?: "") + applyProgramDisplayLabel(defaultLabel, settings),
                 row.kind, row.depth, node?.childBlocks?.keys?.toList().orEmpty(), ownDisabled,
                 !ownDisabled && inheritedDisabled,
-                displayProgramRowText(defaultLabel, settings, branch, ownDisabled, inheritedDisabled))
+                displayProgramRowText(rowLabel, settings, branch, ownDisabled, inheritedDisabled,
+                    branchHasHeading = branchHasHeading),
+                childSlot = row.childSlot,
+                fullDisplayRow = displayProgramRowText(defaultLabel, settings, branch, ownDisabled, inheritedDisabled, branchHasHeading))
         }
+        if (parsed != null && rowCacheSource != currentSource) {
+            rowCache = java.util.Collections.unmodifiableList(parsed.rows)
+            rowCacheSource = currentSource
+        }
+        displayCache = java.util.Collections.unmodifiableList(projection)
+        displayCacheNames = flowNames?.toMap()
+        displayCacheSource = currentSource
+        return displayCache
     }
 
     fun updateNodeDisplay(nodeId: String, settings: com.autoscript.studio.compiler.NodeDisplaySettings): Boolean {
@@ -296,15 +317,46 @@ internal class VisualEditorState private constructor(
         }
     }
     val isReadOnly: Boolean = forceReadOnly || parseDocument(migratedSource, rootBlockId) == null
-    private val undoStack = mutableListOf<String>()
-    private val redoStack = mutableListOf<String>()
+    private val undoStack = mutableListOf<EditorHistoryEntry>()
+    private val redoStack = mutableListOf<EditorHistoryEntry>()
+    internal val undoGroup: Long? get() = undoStack.lastOrNull()?.group
+    internal val redoGroup: Long? get() = redoStack.lastOrNull()?.group
+
+    internal fun historyGroups(): Set<Long> = (undoStack + redoStack).mapNotNull { it.group }.toSet()
+    internal fun checkpoint() = EditorStateCheckpoint(currentSource, selectedNodeId, selectedNodeIds.toSet(), undoStack.toList(), redoStack.toList())
+    internal fun restoreCheckpoint(state: EditorStateCheckpoint) {
+        currentSource = state.source
+        selectionMutationDepth++
+        try { selectedNodeId = state.primary; selectedNodeIds = state.selection }
+        finally { selectionMutationDepth-- }
+        undoStack.clear(); undoStack.addAll(state.undo)
+        redoStack.clear(); redoStack.addAll(state.redo)
+    }
+    internal fun tagLastUndo(group: Long) {
+        check(undoStack.isNotEmpty())
+        undoStack[undoStack.lastIndex] = undoStack.last().copy(group = group)
+    }
+    internal fun canReplaceSource(expected: String, candidate: String): Boolean = !isReadOnly && currentSource == expected &&
+        candidate.toByteArray(Charsets.UTF_8).size <= 1_048_576 && parseDocument(candidate, rootBlockId) != null
+    // Cache immutable view data only; mutations always obtain their own editable document.
+    private var rowCacheSource: String? = null
+    private var rowCache: List<VisualNodeRow> = emptyList()
+    private var displayCacheSource: String? = null
+    private var displayCacheNames: Map<String, String>? = null
+    private var displayCache: List<EditorProgramNode> = emptyList()
 
     val isDirty: Boolean get() = currentSource != savedSource
     val canUndo: Boolean get() = undoStack.isNotEmpty()
     val canRedo: Boolean get() = redoStack.isNotEmpty()
     val rows: List<VisualNodeRow>
-        get() = parseDocument(currentSource, rootBlockId)?.rows
-            ?: parseVisualNodes(currentSource, rootBlockId)
+        get() {
+            if (rowCacheSource != currentSource) {
+                rowCache = java.util.Collections.unmodifiableList(parseDocument(currentSource, rootBlockId)?.rows
+                    ?: parseVisualNodes(currentSource, rootBlockId))
+                rowCacheSource = currentSource
+            }
+            return rowCache
+        }
 
     fun insertNoop(afterNodeId: String? = selectedNodeId): String? = insertNode(
         kind = "task.noop",
@@ -332,8 +384,13 @@ internal class VisualEditorState private constructor(
     fun stageBlockInsertion(blocks: List<Pair<BlockContract, JsonObject>>, position: EditorInsertPosition,
         anchorNodeId: String?, childSlot: String?): String? {
         if (isReadOnly) return null
-        val candidate = create(currentSource, rootBlockId, idFactory)
+        val candidate = insertionCandidate()
         return if (candidate.insertBlocks(blocks, position, anchorNodeId, childSlot)) candidate.currentSource else null
+    }
+
+    private fun insertionCandidate(): VisualEditorState = create(currentSource, rootBlockId, idFactory).also {
+        // Staging is isolated, but even discarded candidates must reserve IDs across all plugins.
+        it.projectIds = projectIds
     }
 
     /** Stage a bounded ordinary block forest; only the caller's validated final source is committed. */
@@ -346,7 +403,7 @@ internal class VisualEditorState private constructor(
             return tree.children.values.flatten().all { valid(it, depth + 1) }
         }
         if (!trees.all { valid(it, 0) }) return null
-        val candidate = create(currentSource, rootBlockId, idFactory)
+        val candidate = insertionCandidate()
         fun add(tree: VisualBlockTree, after: String?, slot: String?): String? {
             val id = candidate.insertBlock(tree.contract, tree.arguments, after, slot) ?: return null
             for ((name, children) in tree.children) {
@@ -413,7 +470,7 @@ internal class VisualEditorState private constructor(
         // one Undo removes the entire gesture instead of leaving an orphaned pointer-down.
         undoStack.clear()
         undoStack.addAll(undoBefore)
-        undoStack += sourceBefore
+        undoStack += EditorHistoryEntry(sourceBefore)
         if (undoStack.size > MAX_HISTORY) undoStack.removeAt(0)
         redoStack.clear()
         return true
@@ -630,6 +687,17 @@ internal class VisualEditorState private constructor(
         val document = editableDocument() ?: return false
         val node = document.nodes.firstOrNull { it.nodeId == nodeId } ?: return false
         node.json.add("args", arguments.deepCopy())
+        // Legacy recognition leaves gain empty branches only on an explicit parameter save.
+        if (node.kind in setOf("vision.findimage", "vision.findgray") && node.childBlocks.isEmpty()) {
+            val usedIds = document.nodes.flatMapTo(mutableSetOf()) { listOf(it.nodeId, it.blockId) + it.childBlocks.values }
+                .apply { add(rootBlockId) }
+            val branches = JsonObject()
+            listOf("success", "failure").forEach { slot ->
+                val id = uniqueId("block", usedIds).also(usedIds::add)
+                branches.addProperty(slot, id)
+            }
+            node.json.add("childBlocks", branches)
+        }
         return commit(document)
     }
 
@@ -711,39 +779,22 @@ internal class VisualEditorState private constructor(
         ?.firstOrNull { it.nodeId == nodeId }
         ?.childBlocks?.keys?.toList().orEmpty()
 
-    fun elseIfBranchCount(nodeId: String): Int = nodeArguments(nodeId)
-        ?.getAsJsonArray("elseIf")?.size() ?: 0
-
-    fun flowCallTarget(nodeId: String): String? = editableDocument()?.nodes
-        ?.firstOrNull { it.nodeId == nodeId && it.kind in setOf("flow.call", "flow.call.branch") }
-        ?.json?.getAsJsonObject("args")?.get("targetFlowId")
-        ?.takeIf { it.isJsonPrimitive }?.asString
-
-    fun flowCallArguments(nodeId: String): JsonObject? = editableDocument()?.nodes
-        ?.firstOrNull { it.nodeId == nodeId && it.kind in setOf("flow.call", "flow.call.branch") }
-        ?.json?.getAsJsonObject("args")?.getAsJsonObject("arguments")?.deepCopy()
-
-    fun updateFlowCall(nodeId: String, targetFlowId: String, arguments: JsonObject): Boolean =
-        updateArguments(
-            nodeId,
-            JsonObject().apply {
-                addProperty("targetFlowId", targetFlowId)
-                add("arguments", arguments.deepCopy())
-            },
-        )
-
-    fun undo(): Boolean {
+    fun undo(group: Long? = null): Boolean {
         if (undoStack.isEmpty()) return false
-        redoStack += currentSource
-        currentSource = undoStack.removeAt(undoStack.lastIndex)
+        if (undoGroup != null && undoGroup != group) return false
+        val entry = undoStack.removeAt(undoStack.lastIndex)
+        redoStack += EditorHistoryEntry(currentSource, entry.group)
+        currentSource = entry.source
         pruneSelection()
         return true
     }
 
-    fun redo(): Boolean {
+    fun redo(group: Long? = null): Boolean {
         if (redoStack.isEmpty()) return false
-        undoStack += currentSource
-        currentSource = redoStack.removeAt(redoStack.lastIndex)
+        if (redoGroup != null && redoGroup != group) return false
+        val entry = redoStack.removeAt(redoStack.lastIndex)
+        undoStack += EditorHistoryEntry(currentSource, entry.group)
+        currentSource = entry.source
         pruneSelection()
         return true
     }
@@ -766,6 +817,7 @@ internal class VisualEditorState private constructor(
 
     /** A project-wide rename is a committed transaction, not an undoable single-node mutation. */
     fun reloadCommittedSource(source: String) {
+        projectIds?.reserveSource(source)
         currentSource = source
         savedSource = source
         undoStack.clear()
@@ -832,12 +884,18 @@ internal class VisualEditorState private constructor(
     }
 
     private fun uniqueId(prefix: String, existing: Set<String>): String {
+        val first = idFactory()
+        if (first.isBlank()) return allocateProjectIdentity(prefix, existing)
+        if ("$prefix-$first" !in existing) return "$prefix-$first"
         repeat(32) {
             val candidate = "$prefix-${idFactory()}"
             if (candidate !in existing) return candidate
         }
         error("无法生成唯一节点 ID")
     }
+
+    fun allocateProjectIdentity(prefix: String, existing: Set<String>): String =
+        projectIds?.allocate(prefix, existing) ?: CompactId.nextNumeric(prefix, existing)
 
     private fun appendOrderKey(siblings: List<EditableNode>): String? {
         var key = between(siblings.lastOrNull()?.orderKey, null)
@@ -854,7 +912,8 @@ internal class VisualEditorState private constructor(
     private fun commit(document: EditableDocument): Boolean {
         val next = document.serialize(rootBlockId) ?: return false
         if (next == currentSource) return false
-        undoStack += currentSource
+        projectIds?.reserveIds(document.nodes.flatMap { listOf(it.nodeId, it.blockId) + it.childBlocks.values } + rootBlockId)
+        undoStack += EditorHistoryEntry(currentSource)
         if (undoStack.size > MAX_HISTORY) undoStack.removeAt(0)
         redoStack.clear()
         currentSource = next
@@ -862,10 +921,17 @@ internal class VisualEditorState private constructor(
     }
 
     companion object {
+        fun createProjectScoped(source: String, rootBlockId: String, identities: VisualProjectIds): VisualEditorState =
+            create(source, rootBlockId).also {
+                identities.reserveSource(it.currentSource)
+                identities.reserveIds(listOf(rootBlockId))
+                it.projectIds = identities
+            }
+
         fun create(
             source: String,
             rootBlockId: String,
-            idFactory: () -> String = { UUID.randomUUID().toString() },
+            idFactory: () -> String = { "" },
         ): VisualEditorState = when (val migration = BlockMigrationEngine.migrateFlowSource(source)) {
             is FlowMigrationResult.Success -> VisualEditorState(
                 source,
@@ -952,6 +1018,25 @@ private data class ParsedDocument(
     val editable: EditableDocument,
     val rows: List<VisualNodeRow>,
 )
+
+internal data class VisualVariableCheckInput(val source: String, val rootBlockId: String, val readOnly: Boolean)
+internal data class VisualVariableCheckNode(val row: VisualNodeRow, val parentId: String?, val args: JsonObject?, val disabled: Boolean,
+    val display: com.autoscript.studio.compiler.NodeDisplaySettings = com.autoscript.studio.compiler.NodeDisplaySettings())
+
+/** Exactly one validated parse; detached JSON belongs exclusively to this analysis. */
+internal fun variableCheckNodes(input: VisualVariableCheckInput): List<VisualVariableCheckNode> {
+    if (input.readOnly) return emptyList()
+    val parsed = parseDocument(input.source, input.rootBlockId) ?: return emptyList()
+    val byId = parsed.editable.nodes.associateBy { it.nodeId }
+    val disabled = mutableSetOf<String>()
+    return parsed.rows.map { row ->
+        val node = byId.getValue(row.nodeId)
+        val skipped = node.json.get("disabled")?.asBoolean == true || node.parentId in disabled
+        if (skipped) disabled += row.nodeId
+        VisualVariableCheckNode(row, node.parentId, node.json.get("args")?.takeIf { it.isJsonObject }?.asJsonObject, skipped,
+            com.autoscript.studio.compiler.NodeDisplaySettings.parse(node.json.get("display")))
+    }
+}
 
 private fun parseDocument(source: String, rootBlockId: String): ParsedDocument? {
     val nodes = mutableListOf<EditableNode>()

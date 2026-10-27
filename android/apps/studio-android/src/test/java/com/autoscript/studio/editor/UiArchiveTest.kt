@@ -16,6 +16,30 @@ class UiArchiveTest {
             .joinToString("\n") { it.readText() }
         val retiredFunctions = listOf(
             "ProjectSettingsButton",
+            "ImageToolsScreen",
+            "FileManagerPage",
+            "ToolSettingsPage",
+            "ImageRecognitionPage",
+            "insertLegacyTreeNode",
+            "removeLegacyTreeSubtree",
+            "encodeLegacyTreeNodes",
+            "decodeLegacyTreeNodes",
+            "legacyTreeNode",
+            "legacyDockProgramCommand",
+            "editorEditingEntries",
+            "projectFileCatalog",
+            "importRuntimeAudio",
+            "forSingleStep",
+            "selectionSubtreeSize",
+            "elseIfBranchCount",
+            "flowCallTarget",
+            "flowCallArguments",
+            "updateFlowCall",
+            "opensInterface",
+            "displayAlgorithm",
+            "VisualDebugInspector",
+            "backfillFields",
+            "backfillArguments",
             "RecognitionPreviewDialog",
             "LegacyDialogTitle",
             "LegacyDialogRows",
@@ -48,7 +72,7 @@ class UiArchiveTest {
     }
 
     @Test fun retiredLuaPagesAndUnusedResourcesStayOutOfProduction() {
-        for (name in listOf("LuaEditorScreen.kt", "LuaEditorState.kt")) {
+        for (name in listOf("LuaEditorScreen.kt", "LuaEditorState.kt", "RuntimeAudioImporter.kt", "ProjectFileCatalog.kt", "VisualDebugInspector.kt")) {
             assertFalse(name, source.walkTopDown().any { it.isFile && it.name == name })
         }
         for (path in listOf(
@@ -84,10 +108,39 @@ class UiArchiveTest {
             "drawable/editor_swap_24.xml",
             "drawable/ic_description_24.xml",
             "drawable/ic_group_24.xml",
-            "drawable/ic_person_48.xml"
+            "drawable/ic_person_48.xml",
+            "drawable/editor_annotation_24.xml",
+            "drawable/editor_capture_camera_24.xml",
+            "drawable/editor_file_move_24.xml",
+            "drawable/editor_file_paste_24.xml",
+            "drawable/editor_image_processing_24.xml",
+            "drawable/editor_menu_24.xml",
+            "drawable/editor_recognition_preview_24.xml",
+            "drawable/ic_arrow_right_24.xml",
+            "drawable/ic_content_cut_24.xml",
+            "drawable/package_folder_open_20.xml",
+            "drawable/package_java_plugin_24.xml",
+            "drawable/visual_redo_24.xml",
+            "drawable/visual_save_24.xml",
+            "drawable/visual_undo_24.xml"
         )) {
             assertFalse(path, File(resources, path).exists())
         }
+    }
+
+    @Test fun editorHasOnlyTheAuthoritativeVisualTreeAndNoFileCatalogPlumbing() {
+        val dock = File(source, "editor/EditorDock.kt").readText()
+        assertTrue(dock.contains("programNodes: List<EditorProgramNode>,"))
+        for (retired in listOf("EditorTreeNodesStateSaver", "externallyManaged", "treeNodes", "editingNodeId", "nextNodeId")) {
+            assertFalse(retired, Regex("\\b${Regex.escape(retired)}\\b").containsMatchIn(dock))
+        }
+        val screen = File(source, "editor/VisualProjectScreen.kt").readText()
+        assertFalse(screen.contains("projectFileCatalog("))
+        assertFalse(screen.contains("onDeleteProjectFiles"))
+        assertFalse(screen.contains("onOpenProjectFile"))
+        assertFalse(screen.contains("onBackfill"))
+        assertFalse(screen.contains("EditorToolPanel.DATA_BACKFILL"))
+        assertTrue(screen.contains("VariableCheckDialog(snapshot, selectedFlowId, editor, runtimeClient,"))
     }
 
     @Test fun activeUiFilesKeepTheirCurrentNames() {

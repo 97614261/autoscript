@@ -12,7 +12,11 @@ internal enum class RecognitionResultShape(val label: String, val fields: List<S
     TEXT_ITEM("文字查找结果", listOf("count", "text", "left", "top", "right", "bottom", "centerX", "centerY")),
     COLORS("颜色位置结果", listOf("count", "x", "y")),
     COMPONENTS("颜色连通块", listOf("count", "area", "left", "top", "right", "bottom", "centerX", "centerY")),
+    FRAME_DIFF("两帧变化总览",listOf("ratioPermille","changedPixels","totalPixels","fresh","elapsedUs")),
+    SCREEN_POINT("处理图还原原屏坐标",listOf("x","y","screenWidth","screenHeight")),
+    SCALED_IMAGE("多尺度像素找图",listOf("count","x","y","width","height","scorePermille","scalePermille","centerX","centerY")),
 }
+internal fun RecognitionResultShape.isSummary()=this in setOf(RecognitionResultShape.GLYPH_SUMMARY,RecognitionResultShape.FRAME_DIFF,RecognitionResultShape.SCREEN_POINT)
 
 internal fun recognitionResultProducerHint(shape: RecognitionResultShape): String = when(shape) {
     RecognitionResultShape.IMAGES -> "先执行多结果找图，选择其集合输出；单点找到/X/Y不是集合。"
@@ -20,6 +24,9 @@ internal fun recognitionResultProducerHint(shape: RecognitionResultShape): Strin
     RecognitionResultShape.TEXT_ITEM -> "先执行从字库结果找文字，选择匹配集合；不是目标文字或普通OCR文本。"
     RecognitionResultShape.COLORS -> "先执行查找全部颜色或批量多点找色，选择坐标集合；单点找到1/0不是集合。"
     RecognitionResultShape.COMPONENTS -> "先执行颜色连通块，选择连通块集合，不是颜色坐标集合。"
+    RecognitionResultShape.FRAME_DIFF -> "先比较两帧；fresh=0不能作为稳定证据。"
+    RecognitionResultShape.SCREEN_POINT -> "先从有真实截图来源的处理帧还原；仅代表该截图原屏坐标，不保证画面仍未变化。"
+    RecognitionResultShape.SCALED_IMAGE -> "先执行多尺度找图；数组最多1项，坐标属于来源帧，比例为实际命中档位。"
 }
 
 internal fun recognitionActionClearsConfirmation(key: String) = key in setOf(
@@ -40,8 +47,8 @@ internal fun recognitionResultBlocks(shape: RecognitionResultShape, field: Strin
     fun args(vararg values: Pair<String, Any>) = JsonObject().apply { values.forEach { (key, value) ->
         if (value is Number) addProperty(key, value) else addProperty(key, value.toString())
     } }
-    val aggregate = field in setOf("count", "truncated") || shape == RecognitionResultShape.GLYPH_SUMMARY
-    val limit = when (shape) { RecognitionResultShape.IMAGES -> 64; RecognitionResultShape.COLORS, RecognitionResultShape.COMPONENTS -> 256; else -> 2048 }
+    val aggregate = field in setOf("count", "truncated") || shape.isSummary()
+    val limit = when (shape) { RecognitionResultShape.SCALED_IMAGE -> 1;RecognitionResultShape.IMAGES -> 64; RecognitionResultShape.COLORS, RecognitionResultShape.COMPONENTS -> 256; else -> 2048 }
     require(if (aggregate) index == 0 else index in 1..limit) { "总览序号0，逐项序号1–$limit" }
     return listOf(requireNotNull(BlockCatalog.find("vision.readresult")) to args("sourceVariable" to source, "shape" to shape.name,
         "index" to index, "field" to field, "resultVariable" to target))

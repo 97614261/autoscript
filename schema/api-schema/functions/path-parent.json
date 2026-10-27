@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14401,
+  "name": "Path.parent",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "纯路径处理，不读磁盘；返回项目内相对父目录，根或单段返回空文本，不允许向项目外跳转。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "相对路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "纯路径处理，不读磁盘；返回项目内相对父目录，根或单段返回空文本，不允许向项目外跳转。"
+  },
+  "legacyAliases": []
+}

@@ -12,7 +12,8 @@ internal data class VisualBlockTree(val contract: BlockContract, val arguments: 
 }
 
 internal enum class RecognitionWaitMode(val label: String) {
-    APPEAR("等待出现"), DISAPPEAR("等待消失"), RETRY("限次重试"), ABSENT("连续未命中计时")
+    APPEAR("等待出现"), DISAPPEAR("等待消失"), RETRY("限次重试"), ABSENT("连续未命中计时"),
+    STABLE("连续命中 · 位置/文字稳定"), REGION_CHANGED("等待区域变化"), REGION_STABLE("等待区域稳定")
 }
 internal val recognitionWaitKinds = setOf("vision.findimage","vision.findgray","vision.findcolor","vision.findmulticolor","ocr.glyph","ocr.alphanumeric")
 
@@ -21,7 +22,10 @@ internal data class RecognitionWaitDraft(val mode: RecognitionWaitMode = Recogni
     val start: String = "", val clock: String = "", val elapsed: String = "", val attempt: String = "", val outcome: String = "",
     val absentStart: String = "", val absentElapsed: String = "", val match: String = "", val sampleResult: String = "",
     val targetText: String = "", val exactText: Boolean = false,
-    val glyphDetails: String = "", val glyphMatches: String = "")
+    val glyphDetails: String = "", val glyphMatches: String = "",
+    val consecutive:String="3",val driftPx:String="3",val changePermille:String="5",val changeTolerance:String="8",
+    val streak:String="",val fresh:String="",val difference:String="",val previousFrame:String="",
+    val previousX:String="",val previousY:String="",val distance:String="",val previousText:String="",val confirmFrames:Boolean=false)
 
 internal fun recognitionWaitUsesGlyphDetails(kind: String, draft: RecognitionWaitDraft) =
     kind == "ocr.glyph" && draft.targetText.isNotEmpty() && !draft.exactText
@@ -29,7 +33,9 @@ internal fun recognitionWaitUsesGlyphDetails(kind: String, draft: RecognitionWai
 /** Clock values and all work/output variables are explicit declarations; no hidden variable is created. */
 internal fun recognitionWaitBlocks(contract: BlockContract, arguments: JsonObject, draft: RecognitionWaitDraft,
     variables: List<CalculationVariable>): List<VisualBlockTree> {
-    require(contract.kind in recognitionWaitKinds) { "当前识别不支持等待组合" }
+    require(contract.kind in recognitionWaitKinds || (contract.kind=="screen.compareframes" &&
+        draft.mode in setOf(RecognitionWaitMode.REGION_CHANGED,RecognitionWaitMode.REGION_STABLE))) { "当前识别不支持等待组合" }
+    if(draft.mode.usesFreshFrames()) return stableRecognitionBlocks(contract,arguments,draft,variables)
     val color = contract.kind in setOf("vision.findcolor","vision.findmulticolor")
     val ocr = contract.kind.startsWith("ocr.")
     val glyphContains = recognitionWaitUsesGlyphDetails(contract.kind, draft)
@@ -106,6 +112,7 @@ internal fun recognitionWaitBlocks(contract: BlockContract, arguments: JsonObjec
         listOf("dictionaryPath", "foregroundRgb", "tolerance", "similarityPermille", "spaceGapColumns").forEach { key ->
             details.add(key, requireNotNull(arguments[key]) { "字库参数缺少$key" }.deepCopy())
         }
+        arguments["additionalColors"]?.let { details.add("additionalColors",it.deepCopy()) }
         val region = arguments["region"].asJsonObject
         listOf("left", "top", "right", "bottom").forEach { details.add(it, region[it].deepCopy()) }
         // One captured frame produces both the ordinary outputs and the safe target predicate.
@@ -156,14 +163,6 @@ internal fun recognitionWaitReferences(arguments: JsonObject): Set<String> = arg
     .filter { it.key.endsWith("Variable") && it.value.isJsonPrimitive && it.value.asJsonPrimitive.isString }
     .map { it.value.asString }.filter(String::isNotBlank).toSet()
 
-internal fun recognitionWaitWorkNames(draft: RecognitionWaitDraft): List<String> =
-    listOf(draft.start,draft.clock,draft.elapsed,draft.attempt,draft.outcome) +
-        if(draft.mode==RecognitionWaitMode.ABSENT) listOf(draft.absentStart,draft.absentElapsed) else emptyList()
-
-internal fun recognitionWorkVariableSuggestion(draft: RecognitionWaitDraft, variables: List<CalculationVariable>, references: Set<String>): RecognitionWaitDraft? {
-    return recognitionVariableSuggestion("vision.findimage", draft, variables, references + draft.match)
-}
-
 internal data class RecognitionVariableSlot(val key: String, val label: String, val value: String,
     val type: ProjectVariableType = ProjectVariableType.INTEGER)
 
@@ -173,6 +172,22 @@ internal fun recognitionWaitSlots(kind: String, draft: RecognitionWaitDraft): Li
     add(RecognitionVariableSlot("elapsed", "总耗时 ms", draft.elapsed))
     add(RecognitionVariableSlot("attempt", "尝试次数", draft.attempt))
     add(RecognitionVariableSlot("outcome", "完成状态 1/0", draft.outcome))
+    if(draft.mode.usesFreshFrames()) {
+        add(RecognitionVariableSlot("previousFrame","前一帧 · 专用暂存",draft.previousFrame,ProjectVariableType.IMAGE))
+        add(RecognitionVariableSlot("difference","变化详情",draft.difference,ProjectVariableType.STRING))
+        add(RecognitionVariableSlot("fresh","新鲜帧 1/0",draft.fresh))
+        add(RecognitionVariableSlot("streak","连续通过次数",draft.streak))
+        add(RecognitionVariableSlot("distance","位移平方 / 变化率",draft.distance))
+        if(draft.mode==RecognitionWaitMode.STABLE) {
+            add(RecognitionVariableSlot("previousX","前次X",draft.previousX))
+            add(RecognitionVariableSlot("previousY","前次Y",draft.previousY))
+        }
+        if(draft.mode==RecognitionWaitMode.STABLE && kind.startsWith("ocr.")) {
+            add(RecognitionVariableSlot("previousText","前次完整文字",draft.previousText,ProjectVariableType.STRING))
+            add(RecognitionVariableSlot("match","条件状态 1/0",draft.match))
+        }
+        return@buildList
+    }
     if (draft.mode == RecognitionWaitMode.ABSENT) {
         add(RecognitionVariableSlot("absentStart", "未命中起点", draft.absentStart))
         add(RecognitionVariableSlot("absentElapsed", "连续未命中 ms", draft.absentElapsed))
@@ -191,6 +206,9 @@ internal fun recognitionWaitAssign(draft: RecognitionWaitDraft, key: String, val
     "absentStart" -> draft.copy(absentStart=value); "absentElapsed" -> draft.copy(absentElapsed=value)
     "match" -> draft.copy(match=value); "sampleResult" -> draft.copy(sampleResult=value)
     "glyphDetails" -> draft.copy(glyphDetails=value); "glyphMatches" -> draft.copy(glyphMatches=value)
+    "previousFrame" -> draft.copy(previousFrame=value);"difference" -> draft.copy(difference=value)
+    "fresh" -> draft.copy(fresh=value);"streak" -> draft.copy(streak=value);"distance" -> draft.copy(distance=value)
+    "previousX" -> draft.copy(previousX=value);"previousY" -> draft.copy(previousY=value);"previousText" -> draft.copy(previousText=value)
     else -> error("未知工作变量")
 }
 

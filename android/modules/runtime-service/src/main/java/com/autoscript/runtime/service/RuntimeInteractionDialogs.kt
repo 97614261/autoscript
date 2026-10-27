@@ -42,6 +42,10 @@ internal class RuntimeInteractionDialogs(private val context: Context, private v
         window.setBackgroundDrawableResource(android.R.color.transparent)
         window.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE)
         window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN)
+        if (Build.VERSION.SDK_INT < 30) {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR)
+        }
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         if (Build.VERSION.SDK_INT >= 30) {
             window.setDecorFitsSystemWindows(false)
@@ -112,10 +116,10 @@ internal class RuntimeInteractionDialogs(private val context: Context, private v
     }
     fun resize() {
         val session = current ?: return
-        // Layout dialogs may contain EditText controls. Use the dialog's attached
-        // view when measuring the available area so ScriptUiDisplay subtracts the
-        // visible IME inset instead of letting the keyboard cover the action bar.
-        val bounds = ScriptUiDisplay.bounds(context, session.view ?: session.dialog.window?.decorView)
+        // Legacy decorated dialogs let ADJUST_RESIZE fit their content; subtracting
+        // their window-relative IME inset again makes the outer size oscillate.
+        val bounds = ScriptUiDisplay.bounds(context, session.view ?: session.dialog.window?.decorView,
+            includeKeyboard = Build.VERSION.SDK_INT >= 30)
         val size = session.view?.desiredSize(bounds)
         val width = size?.width ?: minOf(dp(340), bounds.width - dp(16)).coerceAtLeast(1)
         val height = size?.height ?: ViewGroup.LayoutParams.WRAP_CONTENT

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "kind": "vision.findfeatures",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/vision.findfeatures/1/vision.findfeatures.schema.json",
+  "title": "特征找图（ORB）",
+  "category": "vision",
+  "summary": "显式ORB+Hamming比值筛选+RANSAC单应性匹配，不是像素多尺度。来源ROI≤1048576像素、模板≤262144像素，均须不透明，最多512特征、256次RANSAC、至少8个几何内点；缩放0.25–4，拒绝越界/退化几何。返回0或1项JSON数组，含原帧x/y/width/height及内点比例scorePermille；分数不与像素相似度等同，不自动点击。",
+  "searchTerms": [
+    "Screen.findFeatures",
+    "ORB",
+    "特征",
+    "英文",
+    "数字",
+    "识图",
+    "新模型"
+  ],
+  "requiredCapabilities": [
+    "vision.opencv", "vision.template"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "来源图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "imagePath",
+      "label": "模板图片资源",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "left",
+      "label": "左",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "top",
+      "label": "上",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "right",
+      "label": "右（不含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "720"
+    },
+    {
+      "path": "bottom",
+      "label": "下（不含）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1280"
+    },
+    {
+      "path": "minimumScorePermille",
+      "label": "最低内点比例‰",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "700"
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果JSON字符变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

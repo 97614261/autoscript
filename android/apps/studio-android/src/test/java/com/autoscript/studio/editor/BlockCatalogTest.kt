@@ -13,8 +13,17 @@ import org.junit.Test
 
 class BlockCatalogTest {
     @Test
+    fun frameReleaseAcceptsTaskCapabilityAndLegacyCaptureWithoutGrantingCapture() {
+        for (capabilities in listOf(setOf("core.task"), setOf("screen.capture"))) {
+            assertTrue(BlockCatalog.search("screen.release", capabilities).single().isAvailable)
+        }
+        assertFalse(BlockCatalog.search("screen.release", emptySet()).single().isAvailable)
+        assertFalse(BlockCatalog.search("screen.capture", setOf("core.task")).single { it.contract.kind=="screen.capture" }.isAvailable)
+    }
+
+    @Test
     fun generatedCatalogIsUniqueSearchableAndBoundToNodeSchemas() {
-        assertEquals(177, BlockCatalog.all.size)
+        assertEquals(218, BlockCatalog.all.size)
         assertEquals(BlockCatalog.all.size, BlockCatalog.all.map { it.kind }.distinct().size)
         assertTrue(BlockCatalog.all.all { it.nodeSchemaId.startsWith("https://autoscript.local/schema/node/") })
         assertTrue(BlockCatalog.search("调用 flow", emptySet()).any { it.contract.kind == "flow.call" })
@@ -52,7 +61,7 @@ class BlockCatalogTest {
                 .toSet(),
         )
         assertEquals(
-            setOf("screen.capture", "screen.release", "screen.loadimage", "screen.crop", "screen.series", "screen.seriesframe", "screen.seriesrelease", "screen.transform", "screen.savepng"),
+            setOf("screen.capture", "screen.captureregion", "screen.release", "screen.loadimage", "screen.crop", "screen.series", "screen.seriesframe", "screen.seriesrelease", "screen.transform", "screen.savepng", "screen.mappoint", "screen.frameinfo"),
             BlockCatalog.search("", emptySet(), BlockCategory.SCREEN)
                 .map { it.contract.kind }
                 .toSet(),
@@ -73,6 +82,9 @@ class BlockCatalogTest {
                 "vision.readresult",
                 "vision.resultaction",
                 "vision.findgray",
+                "vision.findfeatures",
+                "vision.findscaled",
+                "screen.compareframes",
                 "legacy.duodianzhaose",
                 "legacy.duodianbise",
                 "legacy.getrectcolornum",
@@ -83,7 +95,7 @@ class BlockCatalogTest {
                 .toSet(),
         )
         assertEquals(
-            setOf("ocr.glyph", "ocr.alphanumeric", "ocr.glyphdetails", "ocr.findtext"),
+            setOf("ocr.glyph", "ocr.alphanumeric", "ocr.alphanumericv5", "ocr.glyphdetails", "ocr.findtext"),
             BlockCatalog.search("", emptySet(), BlockCategory.OCR)
                 .map { it.contract.kind }
                 .toSet(),

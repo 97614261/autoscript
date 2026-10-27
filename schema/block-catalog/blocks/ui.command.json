@@ -42,6 +42,8 @@
         "get:maximum",
         "get:step",
         "get:config",
+        "get:pages",
+        "get:controls",
         "restoreConfig",
         "itemAdd",
         "itemInsert",

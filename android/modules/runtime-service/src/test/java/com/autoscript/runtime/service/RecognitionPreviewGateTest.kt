@@ -37,6 +37,15 @@ class RecognitionPreviewGateTest {
         assertNull(gate.begin(5, 2))
     }
 
+    @Test fun stopCancelsTheCurrentRequestAndLeavesNoLateSuccessWindow() {
+        val gate = RecognitionPreviewGate(AtomicBoolean()) { 1L }
+        val active = requireNotNull(gate.begin(12, 20))
+        assertEquals(active, gate.cancelActive())
+        assertEquals(Reply.CANCELLED, gate.status(active, 20))
+        gate.finish(active)
+        assertNotNull(gate.begin(13, 20))
+    }
+
     @Test fun optionsRejectUnknownOperationWrongShapeAndOverflowedArea() {
         val valid = intArrayOf(0, 0, 320, 48, 500, 0xFFFFFF, 16, 2)
         assertTrue(Reply.validOptions(Reply.ALPHANUMERIC, valid))

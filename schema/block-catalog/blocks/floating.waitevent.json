@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.waitevent",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.waitevent/1/floating.waitevent.schema.json",
+  "title": "等待图片浮窗事件",
+  "category": "variable",
+  "summary": "事件驱动等待图片浮窗点击/拖动，返回JSON kind=click/drag/timeout/closed及真实屏幕像素位置、localX/Y、sequence、dropped。64个事件有界队列，等待不占Root或普通浮窗控制线程；显式判断kind后调用插件，无任意代码回调。",
+  "searchTerms": [
+    "浮窗",
+    "图片",
+    "点击",
+    "拖动",
+    "Floating.waitImageEvent"
+  ],
+  "requiredCapabilities": [
+    "ui.floating.interactive"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "image_button"
+    },
+    {
+      "path": "nameVariable",
+      "label": "浮窗名称来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "timeoutMs",
+      "label": "等待毫秒（0立即读取，最多60000）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "10000"
+    },
+    {
+      "path": "timeoutMsVariable",
+      "label": "等待毫秒（0立即读取，最多60000）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

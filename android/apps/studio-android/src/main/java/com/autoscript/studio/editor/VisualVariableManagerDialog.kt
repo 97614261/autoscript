@@ -62,8 +62,8 @@ internal fun variableDeclarationError(
     original: ProjectVariable?,
 ): String? = when {
     original == null && variables.size >= 512 -> "项目变量最多512个，请先删除不需要的声明"
-    !replacement.name.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) ->
-        "以字母或下划线开头，仅支持字母、数字和下划线，最长64字符"
+    !replacement.name.matches(com.autoscript.project.store.ProjectNames.pattern) ->
+        "支持中文、英文字母、数字和下划线，不能以数字开头，最长64字符"
     replacement.scope == ProjectVariableScope.FLOW && replacement.flowId.isNullOrBlank() -> "请先选择当前插件"
     variables.any { it != original && it.scope == replacement.scope && it.flowId == replacement.flowId && it.name == replacement.name } ->
         "同一作用域已存在变量：${replacement.name}"
@@ -145,6 +145,8 @@ internal fun VisualVariableManagerDialog(
                         VariableAction("×", ::dismiss, Modifier.width(36.dp).fillMaxHeight(), color = VariableMuted)
                     }
                     HorizontalDivider(color = AutoScriptPalette.Divider)
+                    LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    item(key = "scope") {
                     Row(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 8.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         val scopes = if (allowFlowScope) listOf(ProjectVariableScope.FLOW, ProjectVariableScope.GLOBAL) else listOf(ProjectVariableScope.GLOBAL)
@@ -156,11 +158,15 @@ internal fun VisualVariableManagerDialog(
                         Text(if (scope == ProjectVariableScope.FLOW) flowName else "项目共享", color = VariableMuted, fontSize = 10.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 4.dp))
                     }
+                    }
+                    item(key = "search") {
                     Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 8.dp, vertical = 3.dp)) {
                         VariableInput(query, { query = it.take(64) }, "搜索变量名", Modifier.fillMaxWidth(), height = 34.dp, trailing = {
                             if (query.isNotEmpty()) VariableAction("×", { query = "" }, Modifier.size(30.dp), color = VariableMuted)
                         })
                     }
+                    }
+                    item(key = "columns") {
                     Row(Modifier.fillMaxWidth().height(24.dp).background(VariablePanel).padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("类型", color = VariableMuted, fontSize = 10.sp, modifier = Modifier.width(32.dp))
@@ -170,12 +176,16 @@ internal fun VisualVariableManagerDialog(
                         Text("编辑 / 计算 / 删除", color = VariableMuted, fontSize = 10.sp,
                             modifier = Modifier.width(100.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
+                    }
                     notice?.let {
+                        item(key = "notice") {
                         Text(it, color = VariableDanger, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
+                        }
                     }
                     if (entries.isEmpty()) {
-                        Column(Modifier.weight(1f).fillMaxWidth().padding(16.dp),
+                        item(key = "empty") {
+                        Column(Modifier.fillMaxWidth().padding(16.dp),
                             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(if (scoped.isEmpty()) "还没有" + variableScopeLabel(scope) else "没有匹配的变量",
                                 color = VariableMuted, fontSize = 13.sp)
@@ -183,11 +193,8 @@ internal fun VisualVariableManagerDialog(
                                 if (scoped.isEmpty()) editRequest = VariableEditRequest(scope) else query = ""
                             }, Modifier.height(36.dp).padding(top = 4.dp), enabled = !busy && (!scoped.isEmpty() || draft.size < 512))
                         }
+                        }
                     } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                        ) {
                             items(entries, key = { it.scope.toString() + ":" + it.flowId + ":" + it.name }) { variable ->
                                 VariableDeclarationRow(variable,
                                     enabled = !busy,
@@ -209,7 +216,7 @@ internal fun VisualVariableManagerDialog(
                                 )
                                 HorizontalDivider(color = AutoScriptPalette.Divider.copy(alpha = .6f))
                             }
-                        }
+                    }
                     }
                     HorizontalDivider(color = AutoScriptPalette.Divider)
                     Row(Modifier.fillMaxWidth().height(40.dp)) {
@@ -236,10 +243,12 @@ internal fun VisualVariableManagerDialog(
     }
     calculationArguments?.let { arguments ->
         VisualVariableCalculationDialog(arguments, draft, currentFlowId, flows,
-            onDismiss = { calculationArguments = null },
+            onDismiss = { if (!busy) calculationArguments = null else notice = "正在处理变量，请稍后关闭" },
             onConfirm = { configured ->
                 if (busy) "正在处理变量，请稍后再加入计算"
-                else { calculationArguments = null; onSaveAndInsert?.invoke(draft, configured, renames()); null }
+                // The owning save is asynchronous. Keep the formula on failure; successful
+                // insertion closes the manager through its actual completion path.
+                else { onSaveAndInsert?.invoke(draft, configured, renames()); null }
             })
     }
     deleteVariable?.let { variable ->

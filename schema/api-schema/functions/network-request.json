@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18003,
+  "name": "Network.request",
+  "since": "1.8",
+  "capability": "network.http",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "network_io",
+  "timeoutMs": 35000,
+  "resourceOwnership": "none",
+  "summary": "有界异步HTTP/HTTPS，系统TLS校验不可关闭，不自动重定向/重试/下载。请求正文UTF-8最多8KiB、头4KiB/32项；GET/HEAD不得带正文。响应JSON含status、headers、bodyBase64、elapsedMs；正文最多16KiB（超限报错），用Text.fromBase64读取UTF-8响应。响应头最多1KiB，整体32KiB；停止取消连接，不记录网址/头/正文。",
+  "params": [
+    {
+      "name": "method",
+      "type": "string",
+      "required": true,
+"summary": "请求方式：GET=GET、POST=POST、PUT=PUT、OPTIONS=OPTIONS、DELETE=DELETE、HEAD=HEAD"
+    },
+    {
+      "name": "url",
+      "type": "string",
+      "required": true,
+      "summary": "http/https网址"
+    },
+    {
+      "name": "headersJson",
+      "type": "string",
+      "required": true,
+      "summary": "请求头JSON对象"
+    },
+    {
+      "name": "body",
+      "type": "string",
+      "required": true,
+      "summary": "请求正文（UTF-8）"
+    },
+    {
+      "name": "timeoutMs",
+      "type": "integer",
+      "required": true,
+      "summary": "总超时毫秒"
+    },
+    {
+      "name": "maxResponseBytes",
+      "type": "integer",
+      "required": true,
+      "summary": "响应正文上限字节"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "有界异步HTTP/HTTPS，系统TLS校验不可关闭，不自动重定向/重试/下载。请求正文UTF-8最多8KiB、头4KiB/32项；GET/HEAD不得带正文。响应JSON含status、headers、bodyBase64、elapsedMs；正文最多16KiB（超限报错），用Text.fromBase64读取UTF-8响应。响应头最多1KiB，整体32KiB；停止取消连接，不记录网址/头/正文。"
+  },
+  "legacyAliases": []
+}

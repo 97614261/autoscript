@@ -25,6 +25,13 @@ class RuntimeLogHealthTest {
         assertTrue(old.contains("运行 未知")); assertTrue(old.contains("Root 未知"))
     }
 
+    @Test fun regionalCaptureCountsOnceAndKeepsFailuresVisible() {
+        val report = VisionRunStatistics.parse(listOf(event("capture-region-host-roundtrip", "completed"),
+            event("capture-region-host-roundtrip", "error"), event("capture-region-host-roundtrip", "cancelled"),
+            event("capture-acquisition", "completed"), event("capture-transferVerified", "completed")).joinToString("\n"))
+        assertEquals(RuntimeLogHealth.Counts(1, 0, 0, 1, 1), RuntimeLogHealth.counts(report))
+    }
+
     @Test fun runningDurationIsAnObservedSnapshotAndRootReplacementIsExplicit() {
         val text = RuntimeLogHealth.runSummary(mapOf("status" to "running", "durationMs" to "425000", "rootSessionAgeMs" to "540000", "rootSessionChanged" to "true"))
         assertTrue(text.contains("已记录 7:05")); assertTrue(text.contains("Root 9:00（已断开）"))

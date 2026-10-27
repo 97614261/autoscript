@@ -28,11 +28,11 @@
       "properties": {
         "sourceVariable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "resultVariable": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "shape": {
           "enum": [
@@ -41,7 +41,10 @@
             "GLYPH_ITEM",
             "TEXT_ITEM",
             "COLORS",
-            "COMPONENTS"
+            "COMPONENTS",
+            "FRAME_DIFF",
+            "SCREEN_POINT",
+            "SCALED_IMAGE"
           ]
         },
         "index": {
@@ -70,7 +73,8 @@
             "right",
             "bottom",
             "centerX",
-            "centerY"
+            "centerY",
+            "changedPixels","totalPixels","ratioPermille","fresh","elapsedUs","screenWidth","screenHeight","scalePermille"
           ]
         }
       }

@@ -17,6 +17,7 @@ internal class RootDaemonController(
     private val context: Context,
     private val handler: Handler,
     private val onStateChanged: (State) -> Unit,
+    private val diagnostic: (AppDiagnosticCode, Int?) -> Unit = { _, _ -> },
 ) {
     enum class State {
         STOPPED,
@@ -41,6 +42,7 @@ internal class RootDaemonController(
 
     private val startupTimeout = Runnable {
         if (!stopping.get() && nativeHandle != 0L && observer != null) {
+            diagnostic(AppDiagnosticCode.ROOT_START_TIMEOUT, null)
             recoverFromFailure()
         }
     }
@@ -60,7 +62,10 @@ internal class RootDaemonController(
 
     /** Called on the engine Handler after native I/O detects a broken authenticated channel. */
     fun onNativeDisconnected() {
-        if (!stopping.get() && nativeHandle != 0L) recoverFromFailure()
+        if (!stopping.get() && nativeHandle != 0L) {
+            diagnostic(AppDiagnosticCode.ROOT_DISCONNECTED, null)
+            recoverFromFailure()
+        }
     }
 
     fun stop() {
@@ -86,14 +91,17 @@ internal class RootDaemonController(
     private fun startAttempt() {
         if (stopping.get() || nativeHandle == 0L) return
         onStateChanged(State.STARTING)
+        diagnostic(AppDiagnosticCode.ROOT_START, restartAttempts)
 
         val runtimeDirectory = File(context.noBackupFilesDir, RUNTIME_DIRECTORY)
         if ((!runtimeDirectory.exists() && !runtimeDirectory.mkdirs()) || !runtimeDirectory.isDirectory) {
+            diagnostic(AppDiagnosticCode.ROOT_DIRECTORY_FAILED, null)
             recoverFromFailure()
             return
         }
         runCatching { Os.chmod(runtimeDirectory.absolutePath, DIRECTORY_MODE) }
             .getOrElse {
+                diagnostic(AppDiagnosticCode.ROOT_DIRECTORY_FAILED, null)
                 recoverFromFailure()
                 return
             }
@@ -105,6 +113,7 @@ internal class RootDaemonController(
         val secret = newSessionKey()
         val daemon = resolveDaemon(runtimeDirectory, token)
         if (daemon == null) {
+            diagnostic(AppDiagnosticCode.ROOT_DAEMON_MISSING, null)
             secret.fill(0)
             recoverFromFailure()
             return
@@ -117,6 +126,7 @@ internal class RootDaemonController(
             }
             Os.chmod(key.absolutePath, KEY_MODE)
         }.getOrElse {
+            diagnostic(AppDiagnosticCode.ROOT_KEY_FAILED, null)
             secret.fill(0)
             key.delete()
             recoverFromFailure()
@@ -142,6 +152,7 @@ internal class RootDaemonController(
             ).joinToString(separator = " ", transform = ::shellQuote)
             ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
         }.getOrElse {
+            diagnostic(AppDiagnosticCode.ROOT_SU_START_FAILED, null)
             recoverFromFailure()
             return
         }
@@ -182,10 +193,12 @@ internal class RootDaemonController(
         readyFile?.delete()
         readyFile = null
         if (result == 0) {
+            diagnostic(AppDiagnosticCode.ROOT_READY, null)
             nativeAttached = true
             restartAttempts = 0
             onStateChanged(State.READY)
         } else {
+            diagnostic(AppDiagnosticCode.ROOT_ATTACH_FAILED, result)
             recoverFromFailure()
         }
     }
@@ -204,6 +217,7 @@ internal class RootDaemonController(
         process?.destroy()
 
         if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+            diagnostic(AppDiagnosticCode.ROOT_RETRIES_EXHAUSTED, null)
             onStateChanged(State.FAILED)
             return
         }
@@ -234,7 +248,10 @@ internal class RootDaemonController(
 
     private fun resolveDaemon(runtimeDirectory: File, token: String): File? {
         val installed = File(context.applicationInfo.nativeLibraryDir, DAEMON_LIBRARY)
-        if (installed.isFile && installed.canExecute()) return installed
+        if (installed.isFile && installed.canExecute()) {
+            diagnostic(AppDiagnosticCode.ROOT_INSTALLED_DAEMON, null)
+            return installed
+        }
 
         val target = File(runtimeDirectory, "daemon-$token")
         val temporary = File(runtimeDirectory, "daemon-$token.tmp")
@@ -280,6 +297,7 @@ internal class RootDaemonController(
             require(temporary.renameTo(target)) { "Unable to commit the Root daemon" }
             require(target.isFile && target.canExecute()) { "Root daemon is not executable" }
             extractedDaemonFile = target
+            diagnostic(AppDiagnosticCode.ROOT_EXTRACTED_DAEMON, null)
             target
         }.getOrElse {
             temporary.delete()
@@ -290,17 +308,25 @@ internal class RootDaemonController(
 
     private fun consumeProcessOutput(process: Process) {
         Thread({
+            var category: AppDiagnosticCode? = null
             runCatching {
                 process.inputStream.use { input ->
                     val buffer = ByteArray(PROCESS_OUTPUT_BUFFER_BYTES)
-                    while (input.read(buffer) >= 0) {
-                        // Private paths and runtime details must not enter ordinary logs.
+                    var tail = ""
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        tail = (tail + String(buffer, 0, count, Charsets.UTF_8)).takeLast(2048)
+                        category = category ?: rootProcessFailureCode(tail)
                     }
                 }
             }
-            runCatching { process.waitFor() }
+            val exit = runCatching { process.waitFor() }.getOrNull()
             handler.post {
-                if (!stopping.get() && daemonProcess === process) recoverFromFailure()
+                if (!stopping.get() && daemonProcess === process) {
+                    diagnostic(category ?: AppDiagnosticCode.ROOT_PROCESS_EXITED, exit)
+                    recoverFromFailure()
+                }
             }
         }, "autoscript-root-daemon-watch").apply {
             isDaemon = true

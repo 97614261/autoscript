@@ -1,0 +1,10 @@
+{
+  "schemaVersion":1,"opcode":5012,"name":"Screen.mapPoint","since":"1.7",
+  "capability":"screen.capture","execution":"async_task","cancelMode":"cooperative",
+  "sideEffect":"none","timeoutMs":5000,"resourceOwnership":"none",
+  "summary":"按可信截图来源和最多64步裁剪/正交旋转/镜像/最近邻缩放链，把处理图像素还原为原屏采样像素。文件图片没有原屏来源，明确拒绝；不点击、不保证原屏仍未变化。",
+  "params":[{"name":"frame","type":"integer","required":true,"summary":"处理帧，必须来自真实截图。"},
+    {"name":"x","type":"integer","required":true,"summary":"处理图内X原像素。"},
+    {"name":"y","type":"integer","required":true,"summary":"处理图内Y原像素。"}],
+  "returns":{"type":"string","nullable":false,"summary":"严格JSON：x、y、screenWidth、screenHeight。保留来源截图坐标，不附带点击。"},"legacyAliases":[]
+}

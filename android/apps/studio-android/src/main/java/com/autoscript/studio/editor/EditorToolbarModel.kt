@@ -8,15 +8,7 @@ internal enum class EditorToolbarAction(val label: String) {
     STEP("单步"),
     EDIT("编辑"),
     LOG("日志"),
-    UNDO("撤销"),
-    REDO("重做"),
     MORE("更多"),
-    COPY("复制"),
-    PASTE("粘贴"),
-    DELETE("删除"),
-    MOVE_UP("上移"),
-    MOVE_DOWN("下移"),
-    ORGANIZE("多选"),
 }
 
 internal data class EditorToolbarEntry(val action: EditorToolbarAction, val enabled: Boolean)
@@ -53,23 +45,6 @@ internal fun editorToolbarEntries(
 
 internal fun editorToolbarColumns(widthDp: Float): Int =
     if (widthDp.isFinite()) ((widthDp - 24f) / 40f).toInt().coerceIn(3, 5) else 3
-
-internal fun editorEditingEntries(
-    selectionCount: Int,
-    canUndo: Boolean,
-    canRedo: Boolean,
-    canPaste: Boolean,
-    commandsAvailable: Boolean,
-): List<EditorToolbarEntry> = listOf(
-    EditorToolbarEntry(EditorToolbarAction.UNDO, commandsAvailable && canUndo),
-    EditorToolbarEntry(EditorToolbarAction.REDO, commandsAvailable && canRedo),
-    EditorToolbarEntry(EditorToolbarAction.COPY, commandsAvailable && selectionCount > 0),
-    EditorToolbarEntry(EditorToolbarAction.PASTE, commandsAvailable && canPaste),
-    EditorToolbarEntry(EditorToolbarAction.DELETE, selectionCount > 0),
-    EditorToolbarEntry(EditorToolbarAction.MOVE_UP, commandsAvailable && selectionCount > 0),
-    EditorToolbarEntry(EditorToolbarAction.MOVE_DOWN, commandsAvailable && selectionCount > 0),
-    EditorToolbarEntry(EditorToolbarAction.ORGANIZE, commandsAvailable),
-)
 
 private val failureStatusPattern = Regex("\\\"status\\\"\\s*:\\s*\\\"(failed|error|timeout|budget_exceeded)\\\"")
 private val failureMetricPattern = Regex(" · (截图|找图|单图|多图|灰度找图|文字识别) (失败|超时|预算超限) · ")

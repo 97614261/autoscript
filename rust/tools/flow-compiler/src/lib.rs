@@ -7,17 +7,24 @@ mod digest;
 #[cfg(test)]
 mod execution_tests;
 
+mod codec_utility_specs;
 #[cfg(test)]
 mod cycle_contract_tests;
 mod file_utility_specs;
 mod floating_tools;
 mod frozen_lua;
+mod host_utility_specs;
 mod model;
 #[cfg(test)]
 mod native_vision_tests;
 #[cfg(test)]
 mod native_workflow_tests;
+mod pure_utility_specs;
 mod randomization;
+#[cfg(test)]
+mod recognition_branch_tests;
+#[cfg(test)]
+mod region_capture_tests;
 mod render;
 mod runtime_tools;
 mod screen_resources;
@@ -49,6 +56,158 @@ pub use store::{commit_generation, mark_generation_stale};
 
 pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v14");
 pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
+    SupportedNodeVersion {
+        kind: "text.numberat",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "vision.findfeatures",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "ocr.alphanumericv5",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.imestatus",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.touchdown",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.touchmove",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.touchup",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "floating.image",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "floating.waitevent",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "floating.closeimage",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "input.imetext",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "screen.frameinfo",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "files.modifiedtime",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "system.info",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "system.keepawake",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "app.openurl",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "network.request",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.urlencode",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.urldecode",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.tohex",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.fromhex",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.tobase64",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.frombase64",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.findnth",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.betweennth",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "path.name",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "path.parent",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "path.normalize",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "path.join",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "math.unary",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "math.binary",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "math.roundto",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.formatnumber",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.regexreplace",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.filter",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "text.reverse",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.encode",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "data.sort",
+        version: 1,
+    },
     SupportedNodeVersion {
         kind: "input.pastetext",
         version: 1,
@@ -610,6 +769,10 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         version: 1,
     },
     SupportedNodeVersion {
+        kind: "screen.captureregion",
+        version: 1,
+    },
+    SupportedNodeVersion {
         kind: "screen.crop",
         version: 1,
     },
@@ -619,6 +782,18 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
     },
     SupportedNodeVersion {
         kind: "screen.transform",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "screen.compareframes",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "vision.findscaled",
+        version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "screen.mappoint",
         version: 1,
     },
     SupportedNodeVersion {
@@ -738,12 +913,20 @@ pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
         version: 2,
     },
     SupportedNodeVersion {
+        kind: "vision.findimage",
+        version: 3,
+    },
+    SupportedNodeVersion {
         kind: "ocr.glyph",
         version: 1,
     },
     SupportedNodeVersion {
         kind: "vision.findgray",
         version: 1,
+    },
+    SupportedNodeVersion {
+        kind: "vision.findgray",
+        version: 2,
     },
     SupportedNodeVersion {
         kind: "ocr.alphanumeric",
@@ -1006,8 +1189,8 @@ mod tests {
         ];
         let output = compile_project(&manifest, &sources).expect("valid root-level jump");
         let lua = String::from_utf8(output.main_lua).expect("Lua text");
-        assert!(lua.contains("goto __jump_done"));
-        assert!(lua.contains("::__jump_done::"));
+        assert!(lua.contains("goto __jump_646f6e65"));
+        assert!(lua.contains("::__jump_646f6e65::"));
         assert!(lua.contains("do return __checked_return() end"));
         let missing = main.replacen("\"name\":\"done\"", "\"name\":\"missing\"", 1);
         let missing_report = load_jsonl(

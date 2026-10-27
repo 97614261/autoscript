@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14403,
+  "name": "Path.join",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "规范化并拼接两段项目内相对路径，空段可作为根；输出最多16段/256字节。不接受绝对路径或..，不触碰文件。",
+  "params": [
+    {
+      "name": "left",
+      "type": "string",
+      "required": true,
+      "summary": "父目录"
+    },
+    {
+      "name": "right",
+      "type": "string",
+      "required": true,
+      "summary": "子路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "规范化并拼接两段项目内相对路径，空段可作为根；输出最多16段/256字节。不接受绝对路径或..，不触碰文件。"
+  },
+  "legacyAliases": []
+}

@@ -20,7 +20,7 @@ internal fun DesignerCanvasActions(
     onPosition: (String) -> Unit, onAlign: (String) -> Unit, onDistribute: (Boolean) -> Unit,
     organize: List<DesignerMenuAction>,
 ) {
-    Row(Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(4.dp))
+    Row(Modifier.fillMaxWidth().heightIn(min = 28.dp).clip(RoundedCornerShape(4.dp))
         .background(DesignerColors.Panel).border(1.dp, DesignerColors.Line, RoundedCornerShape(4.dp))
         .horizontalScroll(rememberScrollState()).padding(horizontal = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {

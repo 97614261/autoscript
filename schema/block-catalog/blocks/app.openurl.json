@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "app.openurl",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/app.openurl/1/app.openurl.schema.json",
+  "title": "打开网址",
+  "category": "variable",
+  "summary": "显式请求系统浏览器打开http/https网址；拒绝内嵌账号密码、控制字符和其他scheme。不保证已前台或页面加载成功，不自动下载、提交或注入网页；请求受理返回1。",
+  "searchTerms": [
+    "系统",
+    "网络",
+    "文件",
+    "Apps.openUrl",
+    "打开网址"
+  ],
+  "requiredCapabilities": [
+    "device.apps"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "url",
+      "label": "http/https网址",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "https://example.com"
+    },
+    {
+      "path": "urlVariable",
+      "label": "http/https网址来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

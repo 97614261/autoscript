@@ -13,7 +13,7 @@
       "required": ["milliseconds"],
       "properties": {
         "milliseconds": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
-        "millisecondsVariable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+        "millisecondsVariable": { "type": "string", "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$" },
         "exactTiming": { "type": "boolean", "default": false }
       }
     }

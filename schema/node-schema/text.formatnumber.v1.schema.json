@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/text.formatnumber/1/text.formatnumber.schema.json",
+  "title": "text.formatnumber node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "text.formatnumber"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "digits",
+        "minIntegerDigits",
+        "resultVariable"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": -1000000000000,
+          "maximum": 1000000000000
+        },
+        "valueVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "digits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "digitsVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "minIntegerDigits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "minIntegerDigitsVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

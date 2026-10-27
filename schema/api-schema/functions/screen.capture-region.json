@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1, "opcode": 5014, "name": "Screen.captureRegion", "since": "1.8",
+  "capability": "screen.capture", "execution": "async_task", "cancelMode": "discard_result",
+  "sideEffect": "screen_read", "timeoutMs": 10000, "resourceOwnership": "capture_slot",
+  "summary": "获取原屏半开矩形的新图像采集编号。区域读回与传输保留原像素；不复用短缓存。旧Root服务明确拒绝，screencap降级会标记为全屏读回后裁剪。",
+  "params": [
+    {"name":"left","type":"integer","required":true,"summary":"原屏左边界，像素。"},
+    {"name":"top","type":"integer","required":true,"summary":"原屏上边界，像素。"},
+    {"name":"right","type":"integer","required":true,"summary":"原屏右边界，不包含。"},
+    {"name":"bottom","type":"integer","required":true,"summary":"原屏下边界，不包含。"}
+  ],
+  "returns": {"type":"integer","nullable":false,"summary":"传给Screen.cache获得任务图像；识别坐标是区域局部坐标，Screen.mapPoint显式映射回原屏。"},
+  "legacyAliases": []
+}

@@ -82,10 +82,8 @@ class ProjectSourceFilesTest {
         var snapshot = store.createProject("删除", ProjectSourceMode.VISUAL)
         snapshot = files.createFlow(snapshot, "被调用")
         snapshot = files.createFlow(snapshot, "闲置")
-        val main = snapshot.flowSources.getValue("main").replace(
-            "\"kind\":\"task.noop\",\"nodeVersion\":1,\"depth\":0,\"args\":{}",
-            "\"kind\":\"flow.call\",\"nodeVersion\":1,\"depth\":0,\"args\":{\"targetFlowId\":\"flow-1\",\"arguments\":{}}",
-        )
+        val block = snapshot.manifest.flows.first { it.flowId == "main" }.rootBlockId
+        val main = """{"flowSchemaVersion":1,"nodeId":"node-1","blockId":"$block","parentId":null,"orderKey":"a0","kind":"flow.call","nodeVersion":1,"depth":0,"args":{"targetFlowId":"flow-1","arguments":{}}}""" + "\n"
         snapshot = store.saveFlow(snapshot.manifest.projectId, "main", main, snapshot.flowSources.getValue("main"))
 
         assertEquals(listOf("flow-2"), files.unreferencedFlows(snapshot).map { it.flowId })

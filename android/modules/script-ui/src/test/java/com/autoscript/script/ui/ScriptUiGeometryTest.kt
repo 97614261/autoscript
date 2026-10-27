@@ -4,6 +4,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScriptUiGeometryTest {
+    @Test fun legacyVisibleDisplayFrameKeepsKeyboardAndDismissalInScreenCoordinates() {
+        val screen = UiScreenBounds(16, 64, 688, 1104)
+        assertEquals(screen, ScriptUiGeometry.withVisibleDisplayFrame(screen, UiScreenBounds(0, 48, 720, 1136), 16))
+        val aboveKeyboard = ScriptUiGeometry.withVisibleDisplayFrame(screen, UiScreenBounds(0, 48, 720, 550), 16)
+        assertEquals(UiScreenBounds(16, 64, 688, 518), aboveKeyboard)
+        val size = ScriptUiGeometry.window(UiPage(width = 720, height = 960), aboveKeyboard, 2f, 192)
+        assertTrue(aboveKeyboard.centered(size).second + size.height < 598)
+        assertEquals(aboveKeyboard, ScriptUiGeometry.withVisibleDisplayFrame(screen, UiScreenBounds(0, 48, 720, 550), 16))
+        assertEquals(screen, ScriptUiGeometry.withVisibleDisplayFrame(screen, UiScreenBounds(0, 48, 720, 1136), 16))
+    }
+
+    @Test fun legacyVisibleDisplayFrameRejectsOverlaySizedEmptyAndInvalidFrames() {
+        val screen = UiScreenBounds(16, 64, 688, 1104)
+        for (frame in listOf(UiScreenBounds(36, 119, 647, 994), UiScreenBounds(0, 0, 0, 0),
+            UiScreenBounds(0, 0, 720, 48), UiScreenBounds(0, 0, -1, 1000))) {
+            assertEquals(screen, ScriptUiGeometry.withVisibleDisplayFrame(screen, frame, 16))
+        }
+        val landscape = UiScreenBounds(16, 64, 1152, 640)
+        assertEquals(landscape.copy(height = 320), ScriptUiGeometry.withVisibleDisplayFrame(landscape, UiScreenBounds(0, 48, 1184, 352), 16))
+    }
+
     @Test fun radioWidthAndTextWrappingAreBounded() {
         assertTrue(ScriptUiGeometry.radioHorizontal(208, 40, 20, listOf(60f, 60f)))
         assertFalse(ScriptUiGeometry.radioHorizontal(208, 40, 20, listOf(170f, 60f)))

@@ -78,8 +78,10 @@ impl std::fmt::Debug for Callback {
 pub(super) struct ScriptUiHub {
     callback: Mutex<Option<Arc<Callback>>>,
     active: Mutex<Option<(RequestId, TaskToken, u64)>>,
+    event_active: Mutex<Option<(RequestId, TaskToken, u64)>>,
     sequence: AtomicU64,
     worker: Mutex<Option<DialogWorker<DialogJob>>>,
+    event_worker: Mutex<Option<DialogWorker<DialogJob>>>,
 }
 
 impl HostCancelListener for ScriptUiHub {
@@ -89,7 +91,14 @@ impl HostCancelListener for ScriptUiHub {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .filter(|(id, owner, _)| *id == request && *owner == task)
-            .map(|(_, _, work)| work);
+            .map(|(_, _, work)| work)
+            .or_else(|| {
+                self.event_active
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .filter(|(id, owner, _)| *id == request && *owner == task)
+                    .map(|(_, _, work)| work)
+            });
         if let Some(work) = work {
             self.cancel_work(work);
         }
@@ -103,8 +112,12 @@ impl ScriptUiHub {
         context: &super::RootWorkerContext,
         completion: &SchedulerHandle,
     ) -> Result<(), String> {
-        let mut worker = self
-            .worker
+        let lane = if request.opcode == 18007 {
+            &self.event_worker
+        } else {
+            &self.worker
+        };
+        let mut worker = lane
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if worker
@@ -145,6 +158,14 @@ impl ScriptUiHub {
     }
 
     pub fn join(&self) {
+        let event = self
+            .event_worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(event) = event {
+            event.join();
+        }
         let worker = self
             .worker
             .lock()
@@ -170,6 +191,14 @@ impl ScriptUiHub {
     }
 
     pub fn stop(&self) {
+        let event = self
+            .event_active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map(|(_, _, work)| work);
+        if let Some(work) = event {
+            self.cancel_work(work);
+        }
         let work = self
             .active
             .lock()
@@ -193,7 +222,16 @@ impl ScriptUiHub {
             if let Ok(mut env) = callback.vm.attach_current_thread_as_daemon() {
                 let _ = env.call_method(
                     callback.listener.as_obj(),
-                    "cancel",
+                    if self
+                        .event_active
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .is_some_and(|(_, _, id)| i64::try_from(id) == Ok(work))
+                    {
+                        "cancelEvent"
+                    } else {
+                        "cancel"
+                    },
                     "(J)V",
                     &[JValue::Long(work)],
                 );
@@ -231,9 +269,13 @@ impl ScriptUiHub {
                 .checked_add(1)
                 .filter(|work| i64::try_from(*work).is_ok())
                 .ok_or("UI_ID_EXHAUSTED")?;
+            let lane = if request.opcode == 18007 {
+                &self.event_active
+            } else {
+                &self.active
+            };
             {
-                let mut active = self
-                    .active
+                let mut active = lane
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if active.is_some() {
@@ -289,8 +331,7 @@ impl ScriptUiHub {
                 let _ = unsafe { env.pop_local_frame(&JObject::null()) };
                 result
             })();
-            *self
-                .active
+            *lane
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             result
@@ -318,6 +359,32 @@ fn normalized_request(request: &HostRequest) -> Result<(String, String, String),
         _ => Err("UI_REQUEST_INVALID".to_owned()),
     };
     match request.opcode {
+        18006 if request.args.len()==7 => {
+            let fields=["name","imagePath","x","y","width","height","draggable"];
+            let mut object=serde_json::Map::new();
+            for (field,arg) in fields.iter().zip(&request.args) {
+                let value=match arg {LuaScalar::Bytes(v)=>serde_json::Value::String(std::str::from_utf8(v).map_err(|_|"UI_REQUEST_INVALID")?.to_owned()),LuaScalar::Integer(v)=>serde_json::Value::from(*v),_=>return Err("UI_REQUEST_INVALID".into())};
+                object.insert((*field).into(),value);
+            }
+            Ok(("runtime-tools".into(),"imageShow".into(),serde_json::Value::Object(object).to_string()))
+        }
+        18007 if request.args.len()==2=>{
+            let [_,LuaScalar::Integer(timeout)]=request.args.as_slice() else {return Err("UI_REQUEST_INVALID".into());};
+            Ok(("runtime-tools".into(),"imageEvent".into(),serde_json::json!({"name":text(0)?,"timeoutMs":timeout}).to_string()))
+        }
+        18008 if request.args.len()==1=>Ok(("runtime-tools".into(),"imageClose".into(),text(0)?)),
+        18004 if request.args.is_empty()=>Ok(("runtime-tools".into(),"imeStatus".into(),String::new())),
+        18005 if request.args.len()==1=>Ok(("runtime-tools".into(),"imeText".into(),text(0)?)),
+        18000 if request.args.len()==1 => Ok(("runtime-tools".into(),"deviceInfo".into(),text(0)?)),
+        18001 if request.args.len()==1 => {
+            let [LuaScalar::Integer(enabled)] = request.args.as_slice() else { return Err("UI_REQUEST_INVALID".into()); };
+            Ok(("runtime-tools".into(),"keepScreenAwake".into(),enabled.to_string()))
+        }
+        18002 if request.args.len()==1 => Ok(("runtime-tools".into(),"openUrl".into(),text(0)?)),
+        18003 if request.args.len()==6 => {
+            let [_,_,_,_,LuaScalar::Integer(timeout),LuaScalar::Integer(limit)]=request.args.as_slice() else {return Err("UI_REQUEST_INVALID".into());};
+            Ok(("runtime-tools".into(),"httpRequest".into(),serde_json::json!({"method":text(0)?,"url":text(1)?,"headersJson":text(2)?,"body":text(3)?,"timeoutMs":timeout,"maxResponseBytes":limit}).to_string()))
+        }
         17000 if request.args.len()==11 => {
             let fields=["name","x","y","width","height","text","fontPx","textColor","background","imagePath","shapesJson"];
             let mut object=serde_json::Map::new();

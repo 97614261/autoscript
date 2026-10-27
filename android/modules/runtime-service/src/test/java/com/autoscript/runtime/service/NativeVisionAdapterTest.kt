@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeVisionAdapterTest {
+    @org.junit.Test fun deadlinePreviewRetainsTheFixedJniDispatchDescriptor() {
+        val method=NativeVisionAdapter::class.java.getDeclaredMethod("dispatch", java.lang.Long.TYPE,java.lang.Integer.TYPE,
+            java.nio.ByteBuffer::class.java,IntArray::class.java,java.nio.ByteBuffer::class.java,IntArray::class.java,IntArray::class.java)
+        org.junit.Assert.assertEquals(ByteArray::class.java,method.returnType)
+        org.junit.Assert.assertNotNull(NativeScriptUiAdapter::class.java.getDeclaredMethod("cancelEvent",java.lang.Long.TYPE))
+    }
+    @Test fun candidateHasAnExactSeparateClassBudgetWithoutRelaxingDefault() {
+        val dictionary=listOf("")+('A'..'Z').map(Char::toString)+('a'..'z').map(Char::toString)+('0'..'9').map(Char::toString)+List(375) {"!"}
+        assertEquals(438,dictionary.size)
+        val step=FloatArray(438).apply {this[1]=1f}
+        assertEquals("A" to 1000,decodeEnglishV5(arrayOf(step),dictionary,500))
+        assertThrows(IllegalArgumentException::class.java) {decodeAlphanumeric(arrayOf(step),dictionary,500)}
+        assertThrows(IllegalArgumentException::class.java) {decodeEnglishV5(arrayOf(step),dictionary.dropLast(1),500)}
+    }
     private val dictionary=listOf("") + ('A'..'Z').map(Char::toString) + ('a'..'z').map(Char::toString) + ('0'..'9').map(Char::toString) + listOf(".", " ")
     private fun step(symbol:String, confidence:Float=.9f)=FloatArray(dictionary.size).apply { this[dictionary.indexOf(symbol)]=confidence }
     @Test fun all62SymbolsAndThresholdEndpointsHaveExplicitSemantics() {

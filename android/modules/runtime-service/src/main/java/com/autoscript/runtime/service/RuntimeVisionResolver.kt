@@ -12,7 +12,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-internal data class VisionResolvedBackend(val identity: String, val backend: NativeVisionBackend)
+internal data class VisionResolvedBackend(val identity: String, val backend: NativeVisionBackend, val spiVersion: Int = 1)
 internal data class VisionRuntimeInspection(val identity: String?, val state: NativeVisionAvailabilityState, val bundled: Boolean = false)
 internal class VisionResolutionFailure(val state: NativeVisionAvailabilityState) : IllegalStateException("VISION_COMPONENT_${state.name}")
 
@@ -42,13 +42,20 @@ internal class RuntimeVisionResolver(
 
     private fun resolve(operation: Int, work: NativeVisionWork, loadNanos: Long): NativeVisionBackend {
         work.checkActive()
-        val kind = when (operation) { 5108 -> "opencv"; 6101 -> "onnx"; else -> throw IllegalArgumentException("VISION_OPERATION_INVALID") }
+        val kind = when (operation) { 5108,5109 -> "opencv"; 6101,6104,6105 -> "onnx"; else -> throw IllegalArgumentException("VISION_OPERATION_INVALID") }
+        fun compatible(loaded: VisionResolvedBackend): NativeVisionBackend {
+            if (operation == 6105 && kind !in bundled && loaded.spiVersion < 3)
+                throw VisionResolutionFailure(NativeVisionAvailabilityState.INCOMPATIBLE)
+            if (operation in setOf(5109, 6104) && kind !in bundled && loaded.spiVersion < 2)
+                throw VisionResolutionFailure(NativeVisionAvailabilityState.INCOMPATIBLE)
+            return loaded.backend
+        }
         synchronized(lock) {
             check(!closed) { "VISION_CLOSED" }
             val state = cache.get().getValue(kind).state
             if (backends.containsKey(kind) && state != NativeVisionAvailabilityState.AVAILABLE)
                 throw VisionResolutionFailure(state)
-            backends[kind]?.let { return it.backend }
+            backends[kind]?.let { return compatible(it) }
         }
         val start = nanoTime()
         val checkpoint = {
@@ -97,9 +104,9 @@ internal class RuntimeVisionResolver(
         try {
             work.checkActive()
             try { io.execute(task) } catch (_: RejectedExecutionException) { throw VisionResolutionFailure(NativeVisionAvailabilityState.BUSY) }
-            val backend = task.get(loadNanos, TimeUnit.NANOSECONDS)
+            task.get(loadNanos, TimeUnit.NANOSECONDS)
             work.checkActive()
-            return backend
+            return synchronized(lock) { compatible(requireNotNull(backends[kind])) }
         } catch (error: ExecutionException) { throw requireNotNull(error.cause) }
         catch (_: TimeoutException) { work.cancel(); throw VisionResolutionFailure(NativeVisionAvailabilityState.BUSY) }
         catch (error: InterruptedException) { work.cancel(); Thread.currentThread().interrupt(); throw error }

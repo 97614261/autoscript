@@ -317,12 +317,14 @@ pub fn validate_layout(ui: &RunnerUi) -> Result<(), String> {
                 .ok_or("binding must be text")?
                 .split(':')
                 .collect::<Vec<_>>();
-            if !(parts.len() == 2 && matches!(parts[0], "global" | "param") && id(parts[1])
+            if !(parts.len() == 2
+                && matches!(parts[0], "global" | "param")
+                && crate::valid_user_name(parts[1])
                 || parts.len() == 3
                     && parts[0] == "flow"
                     && !parts[1].is_empty()
                     && parts[1].len() <= 128
-                    && id(parts[2]))
+                    && crate::valid_user_name(parts[2]))
             {
                 return Err("invalid binding".into());
             }

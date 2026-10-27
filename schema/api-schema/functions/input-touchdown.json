@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 4013,
+  "name": "Input.touchDown",
+  "since": "1.8",
+  "capability": "input.multi",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "task_pointer_lease",
+  "summary": "最多5个真实并发触点，由同一任务独占整组手势；设计坐标映射后注入，Root须明确协商多指支持。不支持时拒绝，不降级为单指。暂停/取消/结束/租约超时释放；用等待和逐触点移动组合捏合、旋转、双指拖动。确认返回1，不代表目标App已处理。",
+  "params": [
+    {
+      "name": "pointerId",
+      "type": "integer",
+      "required": true,
+      "summary": "触点编号0–4"
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "required": true,
+      "summary": "设计坐标X"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "required": true,
+      "summary": "设计坐标Y"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "最多5个真实并发触点，由同一任务独占整组手势；设计坐标映射后注入，Root须明确协商多指支持。不支持时拒绝，不降级为单指。暂停/取消/结束/租约超时释放；用等待和逐触点移动组合捏合、旋转、双指拖动。确认返回1，不代表目标App已处理。"
+  },
+  "legacyAliases": []
+}

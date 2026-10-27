@@ -109,7 +109,7 @@ fn probe_bytes_with_policy(
     bytes: &[u8],
     require_embedded_release: bool,
 ) -> Result<PackageReport, ProbeError> {
-    probe_bytes_with_abi_policy(bytes, require_embedded_release, false)
+    probe_bytes_with_abi_policy(bytes, require_embedded_release, None)
 }
 
 /// Explicit phone profile. Default probe functions continue requiring both development ABIs.
@@ -120,13 +120,24 @@ pub fn probe_path_arm64(
     require_embedded_release: bool,
 ) -> Result<PackageReport, ProbeError> {
     let bytes = std::fs::read(path).map_err(|error| ProbeError::Io(error.to_string()))?;
-    probe_bytes_with_abi_policy(&bytes, require_embedded_release, true)
+    probe_bytes_with_abi_policy(&bytes, require_embedded_release, Some("arm64-v8a"))
+}
+
+/// Explicit emulator profile. Default probe functions still require both development ABIs.
+/// # Errors
+/// Rejects malformed packages, missing `x86_64`, other ABIs, signing/layout/release failures.
+pub fn probe_path_x86(
+    path: &Path,
+    require_embedded_release: bool,
+) -> Result<PackageReport, ProbeError> {
+    let bytes = std::fs::read(path).map_err(|error| ProbeError::Io(error.to_string()))?;
+    probe_bytes_with_abi_policy(&bytes, require_embedded_release, Some("x86_64"))
 }
 
 fn probe_bytes_with_abi_policy(
     bytes: &[u8],
     require_embedded_release: bool,
-    arm64_only: bool,
+    single_abi: Option<&str>,
 ) -> Result<PackageReport, ProbeError> {
     let eocd = find_eocd(bytes).ok_or(ProbeError::EndOfCentralDirectoryMissing)?;
     if read_u16(bytes, eocd + 4)? != 0
@@ -153,13 +164,7 @@ fn probe_bytes_with_abi_policy(
     }
 
     let central_entries = parse_central_entries(bytes, central_offset, entries, central_end)?;
-    if arm64_only
-        && central_entries.iter().any(|entry| {
-            entry.name.starts_with("lib/") && !entry.name.starts_with("lib/arm64-v8a/")
-        })
-    {
-        return Err(ProbeError::UnsupportedZipLayout);
-    }
+    check_abi_entries(&central_entries, single_abi)?;
     let release_manifests = central_entries
         .iter()
         .filter(|entry| entry.name == RELEASE_MANIFEST)
@@ -183,11 +188,13 @@ fn probe_bytes_with_abi_policy(
         }
     }
     let mut reports = Vec::with_capacity(REQUIRED_LIBRARIES.len());
-    for &(required_name, expected_machine) in if arm64_only {
-        &REQUIRED_LIBRARIES[..1]
-    } else {
-        &REQUIRED_LIBRARIES[..]
-    } {
+    let required_libraries = match single_abi {
+        Some("arm64-v8a") => &REQUIRED_LIBRARIES[..1],
+        Some("x86_64") => &REQUIRED_LIBRARIES[1..],
+        Some(_) => return Err(ProbeError::UnsupportedZipLayout),
+        None => &REQUIRED_LIBRARIES[..],
+    };
+    for &(required_name, expected_machine) in required_libraries {
         let matching: Vec<_> = central_entries
             .iter()
             .filter(|entry| entry.name == required_name)
@@ -228,6 +235,22 @@ fn probe_bytes_with_abi_policy(
         has_apk_signing_block: has_signing_block,
         has_embedded_release: release_manifests == 1 && release_lua == 1,
     })
+}
+
+fn check_abi_entries(
+    entries: &[CentralEntry<'_>],
+    single_abi: Option<&str>,
+) -> Result<(), ProbeError> {
+    if let Some(abi) = single_abi {
+        let prefix = format!("lib/{abi}/");
+        if entries
+            .iter()
+            .any(|entry| entry.name.starts_with("lib/") && !entry.name.starts_with(&prefix))
+        {
+            return Err(ProbeError::UnsupportedZipLayout);
+        }
+    }
+    Ok(())
 }
 
 fn find_eocd(bytes: &[u8]) -> Option<usize> {
@@ -402,20 +425,22 @@ mod tests {
     }
 
     fn fixture() -> Vec<u8> {
-        fixture_with_abis(true)
+        fixture_with_abis(true, true)
     }
 
-    fn fixture_with_abis(include_x64: bool) -> Vec<u8> {
+    fn fixture_with_abis(include_arm64: bool, include_x64: bool) -> Vec<u8> {
         let mut bytes = Vec::new();
         let arm_name = "lib/arm64-v8a/libengine_jni.so";
         let x64_name = "lib/x86_64/libengine_jni.so";
-        let arm = append_entry(&mut bytes, arm_name, 183);
+        let arm = include_arm64.then(|| append_entry(&mut bytes, arm_name, 183));
         let x64 = include_x64.then(|| append_entry(&mut bytes, x64_name, 62));
         bytes.extend_from_slice(&24_u64.to_le_bytes());
         bytes.extend_from_slice(&24_u64.to_le_bytes());
         bytes.extend_from_slice(APK_SIGNING_MAGIC);
         let central_offset = u32::try_from(bytes.len()).expect("central offset");
-        append_central(&mut bytes, arm_name, arm.0, arm.1);
+        if let Some(arm) = arm {
+            append_central(&mut bytes, arm_name, arm.0, arm.1);
+        }
         if let Some(x64) = x64 {
             append_central(&mut bytes, x64_name, x64.0, x64.1);
         }
@@ -423,8 +448,9 @@ mod tests {
         append_u32(&mut bytes, 0x0605_4b50);
         append_u16(&mut bytes, 0);
         append_u16(&mut bytes, 0);
-        append_u16(&mut bytes, if include_x64 { 2 } else { 1 });
-        append_u16(&mut bytes, if include_x64 { 2 } else { 1 });
+        let count = u16::from(include_arm64) + u16::from(include_x64);
+        append_u16(&mut bytes, count);
+        append_u16(&mut bytes, count);
         append_u32(&mut bytes, central_size);
         append_u32(&mut bytes, central_offset);
         append_u16(&mut bytes, 0);
@@ -433,9 +459,9 @@ mod tests {
 
     #[test]
     fn explicit_phone_policy_accepts_arm64_without_weakening_default_gate() {
-        let phone = fixture_with_abis(false);
+        let phone = fixture_with_abis(true, false);
         assert_eq!(
-            probe_bytes_with_abi_policy(&phone, false, true)
+            probe_bytes_with_abi_policy(&phone, false, Some("arm64-v8a"))
                 .unwrap()
                 .libraries
                 .len(),
@@ -446,8 +472,38 @@ mod tests {
             Err(ProbeError::MissingLibrary("lib/x86_64/libengine_jni.so"))
         );
         assert_eq!(
-            probe_bytes_with_abi_policy(&fixture(), false, true),
+            probe_bytes_with_abi_policy(&fixture(), false, Some("arm64-v8a")),
             Err(ProbeError::UnsupportedZipLayout)
+        );
+    }
+
+    #[test]
+    fn explicit_emulator_policy_rejects_wrong_missing_and_extra_abis() {
+        let emulator = fixture_with_abis(false, true);
+        assert_eq!(
+            probe_bytes_with_abi_policy(&emulator, false, Some("x86_64"))
+                .unwrap()
+                .libraries
+                .len(),
+            1
+        );
+        assert_eq!(
+            probe_bytes(&emulator),
+            Err(ProbeError::MissingLibrary("lib/arm64-v8a/libengine_jni.so"))
+        );
+        for invalid in [fixture(), fixture_with_abis(true, false)] {
+            assert_eq!(
+                probe_bytes_with_abi_policy(&invalid, false, Some("x86_64")),
+                Err(ProbeError::UnsupportedZipLayout)
+            );
+        }
+        assert_eq!(
+            probe_bytes_with_abi_policy(&fixture_with_abis(false, false), false, Some("x86_64")),
+            Err(ProbeError::MissingLibrary("lib/x86_64/libengine_jni.so"))
+        );
+        assert_eq!(
+            probe_bytes_with_abi_policy(&emulator, true, Some("x86_64")),
+            Err(ProbeError::MissingEmbeddedReleaseManifest)
         );
     }
 

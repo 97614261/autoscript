@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14011,
+  "name": "Data.encode",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "text 模式把动态文本安全编码为 JSON 字符串（自动转义）；json 模式校验并紧凑序列化已有 JSON 文本，适用于数字/布尔/空值/数组/对象。不解析 Lua 表或执行代码；沿用 64KiB、16 层、1024 项及对象键预算。",
+  "params": [
+    {
+      "name": "value",
+      "type": "string",
+      "required": true,
+      "summary": "待编码内容"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": true,
+      "summary": "编码方式：text=文本→JSON字符串、json=校验并整理JSON"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "text 模式把动态文本安全编码为 JSON 字符串（自动转义）；json 模式校验并紧凑序列化已有 JSON 文本，适用于数字/布尔/空值/数组/对象。不解析 Lua 表或执行代码；沿用 64KiB、16 层、1024 项及对象键预算。"
+  },
+  "legacyAliases": []
+}

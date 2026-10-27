@@ -55,7 +55,16 @@ fn slice(text: &str, offset: usize, length: usize) -> String {
         .map_or(tail.len(), |(i, _)| i);
     tail[..end].to_owned()
 }
+#[cfg(test)]
 pub(crate) fn execute(opcode: u32, args: &[LuaScalar]) -> Result<LuaScalar, &'static str> {
+    execute_with_regex(opcode, args, crate::regex_cache::compile)
+}
+
+pub(crate) fn execute_with_regex(
+    opcode: u32,
+    args: &[LuaScalar],
+    compile: impl FnOnce(&str) -> crate::regex_cache::Compiled,
+) -> Result<LuaScalar, &'static str> {
     let expected = match opcode {
         14200 | 14218 | 14220 | 14221 => 1,
         14209..=14213 | 14215 | 14219 => 3,
@@ -150,7 +159,7 @@ pub(crate) fn execute(opcode: u32, args: &[LuaScalar]) -> Result<LuaScalar, &'st
         }
         14220 => output(source.to_lowercase()),
         14221 => output(source.to_uppercase()),
-        14222..=14224 => regex(opcode, source, text(args, 1)?),
+        14222..=14224 => regex(opcode, source, text(args, 1)?, compile),
         _ => Err("unknown text operation"),
     }
 }
@@ -252,16 +261,16 @@ fn marked(opcode: u32, source: &str, args: &[LuaScalar]) -> Result<LuaScalar, &'
     }
     output(tail.find(right).map_or("", |at| &tail[..at]).into())
 }
-fn regex(opcode: u32, source: &str, pattern: &str) -> Result<LuaScalar, &'static str> {
+fn regex(
+    opcode: u32,
+    source: &str,
+    pattern: &str,
+    compile: impl FnOnce(&str) -> crate::regex_cache::Compiled,
+) -> Result<LuaScalar, &'static str> {
     if source.len() > 4096 || pattern.is_empty() || pattern.len() > 128 {
         return Err("regex text/pattern exceeds budget");
     }
-    let regex = regex::RegexBuilder::new(pattern)
-        .size_limit(1_048_576)
-        .dfa_size_limit(262_144)
-        .nest_limit(32)
-        .build()
-        .map_err(|_| "invalid or oversized regex")?;
+    let regex = compile(pattern)?;
     if opcode == 14222 {
         return number(usize::from(regex.is_match(source)));
     }
@@ -283,6 +292,17 @@ mod tests {
     use super::*;
     fn b(s: &str) -> LuaScalar {
         LuaScalar::Bytes(s.as_bytes().to_vec())
+    }
+    #[test]
+    fn generic_extraction_preserves_signs_and_accepts_non_ocr_text() {
+        let decimals = r"[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)";
+        assert_eq!(execute(14224, &[b("100(+100) 180"), b(decimals)]).unwrap(), b(r#"["100","+100","180"]"#));
+        assert_eq!(execute(14223, &[b("文件内容: -12.50 / +.5"), b(decimals)]).unwrap(), b("-12.50"));
+        assert_eq!(execute(14224, &[b("接口: A12 B34"), b("[A-Za-z0-9]+")]).unwrap(), b(r#"["A12","B34"]"#));
+        assert_eq!(execute(14224, &[b("item: 中文 ABC 图像"), b(r"\p{Han}+")]).unwrap(), b(r#"["中文","图像"]"#));
+        assert_eq!(execute(14224, &[b("no values"), b(decimals)]).unwrap(), b("[]"));
+        assert_eq!(execute(14223, &[b("no values"), b(decimals)]).unwrap(), b(""));
+        assert!(execute(14224, &[b(&"1 ".repeat(65)), b(decimals)]).is_err());
     }
     #[test]
     fn indexed_text_matches_unicode_reference_at_every_boundary() {

@@ -46,7 +46,7 @@ internal class NativeDataFileAdapter(
 
     @Suppress("unused") // Exact JNI callback descriptor; no arbitrary path root or member access.
     fun dispatch(work: Long, operation: Int, path: String, content: ByteArray): ByteArray {
-        val extended=operation in 14110..14126 || operation in 14140..14146
+val extended=operation in 14110..14126 || operation in 14140..14147
         val png = operation == 14130
         if (work <= 0 || (!extended && !png && operation !in 14100..14103) || path.toByteArray(Charsets.UTF_8).size > 256 ||
             content.size > (if (png) ProjectDataStore.MAX_PNG_BYTES else if(extended) ProjectDataCommands.MAX_WIRE_BYTES else ProjectDataStore.MAX_FILE_BYTES) ||

@@ -1,0 +1,14 @@
+{
+ "schemaVersion":1,"kind":"screen.compareframes","nodeVersion":1,"nodeSchemaId":"https://autoscript.local/schema/node/screen.compareframes/1/screen.compareframes.schema.json",
+ "title":"比较两帧变化","category":"vision","summary":"同尺寸/方向帧的区域变化及新鲜度；不截图、不释放，旧缓存不算稳定证据。",
+ "searchTerms":["区域变化","稳定","差异","新鲜度"],"requiredCapabilities":["vision.pixel"],"childBlocks":[],"migrations":[],
+ "properties":[
+   {"path":"frameVariable","label":"当前帧 · 图像变量","editor":"string","required":true,"defaultValue":""},
+   {"path":"previousFrameVariable","label":"前一帧 · 图像变量","editor":"string","required":true,"defaultValue":""},
+   {"path":"left","label":"左","editor":"integer","required":true,"defaultValue":"0"},
+   {"path":"top","label":"上","editor":"integer","required":true,"defaultValue":"0"},
+   {"path":"right","label":"右不含","editor":"integer","required":true,"defaultValue":"100"},
+   {"path":"bottom","label":"下不含","editor":"integer","required":true,"defaultValue":"100"},
+   {"path":"tolerance","label":"RGB容差0–255","editor":"integer","required":true,"defaultValue":"0"},
+   {"path":"resultVariable","label":"变化详情 · 字符变量","editor":"string","required":true,"defaultValue":""}]
+}

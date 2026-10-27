@@ -47,7 +47,9 @@ class VisionComponentDescriptorTest {
 
     @Test fun wrongNumericTypesAndSpiAreRejected() {
         rejected("spiVersion", "1")
-        val source = descriptor("opencv").toString(Charsets.UTF_8).replace("\"spiVersion\":1", "\"spiVersion\":2")
+        val root = JsonParser.parseString(descriptor("opencv").toString(Charsets.UTF_8)).asJsonObject
+        root.addProperty("spiVersion", 99)
+        val source = root.toString()
         assertThrows(VisionComponentCompatibilityException::class.java) { VisionComponentDescriptor.parse(source.toByteArray()) }
     }
 
@@ -61,11 +63,24 @@ class VisionComponentDescriptorTest {
 
     @Test fun duplicateAbisAndWrongLicensesAreRejected() {
         val root = JsonParser.parseString(descriptor("opencv").toString(Charsets.UTF_8)).asJsonObject
-        root.getAsJsonArray("abis").add("arm64-v8a")
+        root.getAsJsonArray("abis").add(root.getAsJsonArray("abis").first().asString)
         assertThrows(IllegalArgumentException::class.java) { VisionComponentDescriptor.parse(root.toString().toByteArray()) }
         root.remove("abis"); root.add("abis", JsonParser.parseString("[\"arm64-v8a\"]"))
         root.add("licenses", JsonParser.parseString("[\"assets/custom/LICENSE.txt\"]"))
         assertThrows(IllegalArgumentException::class.java) { VisionComponentDescriptor.parse(root.toString().toByteArray()) }
+    }
+
+    @Test fun supportedSingleAndDualAbisAreAcceptedButEmptyAndUnknownAreRejected() {
+        val root = JsonParser.parseString(descriptor("opencv").toString(Charsets.UTF_8)).asJsonObject
+        for (abis in listOf("[\"arm64-v8a\"]", "[\"x86_64\"]", "[\"arm64-v8a\",\"x86_64\"]")) {
+            root.add("abis", JsonParser.parseString(abis))
+            assertEquals(JsonParser.parseString(abis).asJsonArray.map { it.asString }.toSet(),
+                VisionComponentDescriptor.parse(root.toString().toByteArray()).abis)
+        }
+        for (abis in listOf("[]", "[\"armeabi-v7a\"]", "[\"x86_64\",\"x86_64\"]")) {
+            root.add("abis", JsonParser.parseString(abis))
+            assertThrows(IllegalArgumentException::class.java) { VisionComponentDescriptor.parse(root.toString().toByteArray()) }
+        }
     }
 
     @Test fun malformedUtf8AndResourceBudgetFailClosed() {
@@ -81,7 +96,7 @@ class VisionComponentDescriptorTest {
 
     @Test fun manifestMustHaveNoExecutableAndroidComponentsOrPermissions() {
         val descriptor = VisionComponentDescriptor.parse(descriptor("opencv"))
-        val manifest = VisionComponentManifest(descriptor.kind.applicationId, 1, descriptor.kind.sdkVersion, 24, true, 0, 0)
+        val manifest = VisionComponentManifest(descriptor.kind.applicationId, descriptor.componentVersion, descriptor.kind.sdkVersion, 24, true, 0, 0)
         manifest.check(descriptor)
         for ((bad, code) in listOf(manifest.copy(componentCount = 1) to "VISION_COMPONENT_UNEXPECTED_ENTRYPOINT",
             manifest.copy(permissionCount = 1) to "VISION_COMPONENT_UNEXPECTED_PERMISSION",
@@ -90,5 +105,32 @@ class VisionComponentDescriptorTest {
             manifest.copy(hasCode = false) to "VISION_COMPONENT_CODE_MISSING")) {
             assertEquals(code, assertThrows(IllegalArgumentException::class.java) { bad.check(descriptor) }.message)
         }
+    }
+
+    @Test fun v1RemainsOriginalOnlyAndV2PinsBothModels() {
+        val root = JsonParser.parseString(descriptor("onnx").toString(Charsets.UTF_8)).asJsonObject
+        root.addProperty("componentVersion", 2); root.addProperty("versionCode", 2); root.addProperty("spiVersion", 2)
+        val v2 = VisionComponentDescriptor.parse(root.toString().toByteArray())
+        assertEquals(2, v2.componentVersion)
+        assertEquals(listOf("model.onnx", "model-v5.onnx"), v2.models.map { it.snapshotName })
+        val candidate = root.getAsJsonObject("candidateModel").deepCopy()
+        for (key in listOf("path", "size", "sha256")) {
+            root.add("candidateModel", candidate.deepCopy().apply { addProperty(key, "invalid") })
+            assertThrows(IllegalArgumentException::class.java) { VisionComponentDescriptor.parse(root.toString().toByteArray()) }
+        }
+        root.remove("candidateModel")
+        root.addProperty("componentVersion", 1); root.addProperty("versionCode", 1); root.addProperty("spiVersion", 1)
+        assertEquals(1, VisionComponentDescriptor.parse(root.toString().toByteArray()).models.size)
+        root.add("candidateModel", candidate)
+        assertThrows(IllegalArgumentException::class.java) { VisionComponentDescriptor.parse(root.toString().toByteArray()) }
+    }
+
+    @Test fun v3UsesTheSameTwoFixedModelsAsV2() {
+        val root = JsonParser.parseString(descriptor("onnx").toString(Charsets.UTF_8)).asJsonObject
+        root.addProperty("componentVersion", 3); root.addProperty("versionCode", 3); root.addProperty("spiVersion", 3)
+        val third = VisionComponentDescriptor.parse(root.toString().toByteArray())
+        root.addProperty("componentVersion", 2); root.addProperty("versionCode", 2); root.addProperty("spiVersion", 2)
+        assertEquals(VisionComponentDescriptor.parse(root.toString().toByteArray()).models, third.models)
+        assertEquals(3, third.spiVersion)
     }
 }

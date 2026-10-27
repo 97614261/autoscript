@@ -6,6 +6,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RuntimePromptGeometryTest {
+    @Test fun durationAndAppearanceChangesDoNotResetDraggedPosition() {
+        val original = RuntimePopupStyle()
+        val changed = original.copy(durationMs = 500, fontPx = 24, textAlign = "left",
+            backgroundColor = 0, textColor = 1, cornerPx = 2)
+        assertTrue(changed.hasSameGeometry(original))
+        assertFalse(changed.hasSameAppearance(original))
+        assertTrue(original.copy(durationMs = 500).hasSameAppearance(original))
+    }
+
+    @Test fun geometryChangesDoNotRequireNewAppearance() {
+        val original = RuntimePopupStyle()
+        listOf(original.copy(xPx = 0), original.copy(yPx = 0),
+            original.copy(widthPx = 300), original.copy(heightPx = 100)).forEach {
+            assertFalse(it.hasSameGeometry(original))
+            assertTrue(it.hasSameAppearance(original))
+        }
+        assertFalse(original.hasSameGeometry(null))
+        assertFalse(original.hasSameAppearance(null))
+    }
+
     @Test fun transientPriorityDoesNotMoveOriginsOrHideNonOverlappingWindows() {
         val window = runtimePromptGeometry(720, 1280, 260, 40, 0, 1000)
         assertTrue(runtimePromptsOverlap(window, window))

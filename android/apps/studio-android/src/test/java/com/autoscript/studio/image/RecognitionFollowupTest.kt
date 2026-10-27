@@ -30,11 +30,11 @@ class RecognitionFollowupTest {
         assertTrue(recognitionWaitBlocks(contract,args,draft.copy(targetText=""),work).flatMap { it.flattened() }.any { it.contract.kind=="text.length" })
     }
     @Test fun automaticWorkSelectionExcludesRecognitionOutputsAndRequiresEnoughDeclarations() {
-        val suggested=requireNotNull(recognitionWorkVariableSuggestion(draft,work,setOf("x","y","score","coverage")))
+        val suggested=requireNotNull(recognitionVariableSuggestion("vision.findimage",draft,work,setOf("x","y","score","coverage",draft.match)))
         val names=listOf(suggested.start,suggested.clock,suggested.elapsed,suggested.attempt,suggested.outcome)
         assertEquals(names.size,names.distinct().size)
         assertFalse(names.any { it in setOf("match","x","y","score","coverage") })
-        assertNull(recognitionWorkVariableSuggestion(draft,listOf(v("one")),emptySet()))
+        assertNull(recognitionVariableSuggestion("vision.findimage",draft,listOf(v("one")),setOf(draft.match)))
     }
     @Test fun pointTablePreservesInvalidNumbersAndSupportsHexColorsWithoutTruncation() {
         val raw="""[{"dx":0,"dy":0,"rgb":0,"tolerance":0}]"""

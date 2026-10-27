@@ -20,9 +20,86 @@ import org.junit.Before
 import org.junit.Test
 
 class ProjectStoreTest {
+    @Test fun imageRecipesConflictBackupAndCorruptionDoNotOverwriteUserData() {
+        val project=store.createFixtureProject("图像方案",ProjectSourceMode.VISUAL);val id=project.manifest.projectId
+        val recipes=listOf(ProjectImageRecipe("清理",8,8,listOf(ProjectImageStep("despeckle",cleanup=ProjectImageCleanup(minArea=1)))))
+        assertTrue(store.readImageRecipes(id).isEmpty())
+        store.updateImageRecipes(id,recipes,emptyList())
+        assertEquals(recipes,store.readImageRecipes(id))
+        assertThrows(ProjectManifestConflictException::class.java) {store.updateImageRecipes(id,emptyList(),emptyList())}
+        val backup=ByteArrayOutputStream();store.exportProjectBackup(id,backup)
+        val restored=store.importProjectBackup(backup.toByteArray().inputStream())
+        assertEquals(recipes,store.readImageRecipes(restored.manifest.projectId))
+        store.updateImageRecipes(id,emptyList(),recipes)
+        assertEquals(recipes,store.readImageRecipes(restored.manifest.projectId))
+        val file=File(project.directory,".studio/image-recipes.json")
+        val bad=byteArrayOf(0xc3.toByte(),0x28);file.writeBytes(bad)
+        assertThrows(Exception::class.java) {store.readImageRecipes(id)}
+        assertThrows(Exception::class.java) {store.updateImageRecipes(id,recipes,emptyList())}
+        org.junit.Assert.assertArrayEquals(bad,file.readBytes())
+        assertThrows(Exception::class.java) {store.exportProjectBackup(id,ByteArrayOutputStream())}
+    }
+    @Test fun imageFilterPresetsBackupRestoreConflictAndInvalidFileAreSafe() {
+        val project=store.createFixtureProject("滤色方案",ProjectSourceMode.VISUAL);val id=project.manifest.projectId
+        val presets=listOf(ProjectImageFilterPreset("白字",ProjectImageFilter()))
+        assertTrue(store.readImageFilterPresets(id).isEmpty())
+        store.updateImageFilterPresets(id,presets,emptyList())
+        assertEquals(presets,store.readImageFilterPresets(id))
+        assertThrows(ProjectManifestConflictException::class.java) { store.updateImageFilterPresets(id,emptyList(),emptyList()) }
+        val buffer=ByteArrayOutputStream();store.exportProjectBackup(id,buffer)
+        val restored=store.importProjectBackup(buffer.toByteArray().inputStream())
+        assertNotEquals(id,restored.manifest.projectId)
+        assertEquals(presets,store.readImageFilterPresets(restored.manifest.projectId))
+        assertEquals(project.flowSources,restored.flowSources)
+        store.updateImageFilterPresets(id,emptyList(),presets)
+        assertTrue(store.readImageFilterPresets(id).isEmpty())
+        assertEquals(presets,store.readImageFilterPresets(restored.manifest.projectId))
+        val file=File(project.directory,".studio/image-filters.json");file.writeText("{broken}")
+        assertThrows(Exception::class.java) { store.readImageFilterPresets(id) }
+        assertThrows(Exception::class.java) { store.updateImageFilterPresets(id,presets,emptyList()) }
+        assertEquals("{broken}",file.readText())
+        assertThrows(Exception::class.java) { store.exportProjectBackup(id,ByteArrayOutputStream()) }
+        val invalidUtf8=byteArrayOf(0xc3.toByte(),0x28)
+        file.writeBytes(invalidUtf8)
+        assertThrows(Exception::class.java) { store.readImageFilterPresets(id) }
+        assertThrows(Exception::class.java) { store.updateImageFilterPresets(id,presets,emptyList()) }
+        org.junit.Assert.assertArrayEquals(invalidUtf8,file.readBytes())
+    }
+
+    @Test fun newPluginsAreEmptyAndHaveUniqueRootsAcrossTheWholeProject() {
+        var current = store.createProject("多插件身份", ProjectSourceMode.VISUAL)
+        repeat(6) { index ->
+            current = store.createFlow(current.manifest.projectId, "worker-$index", current.manifest.flows.map { it.flowId }.toSet())
+        }
+        val ids = current.flowSources.values.flatMap { source -> source.lineSequence().filter(String::isNotBlank)
+            .map { JsonParser.parseString(it).asJsonObject["nodeId"].asString }.toList() }
+        assertEquals(ids.size, ids.toSet().size)
+        assertTrue(ids.isEmpty())
+        val roots = current.manifest.flows.map { it.rootBlockId }
+        assertEquals(roots.size, roots.toSet().size)
+    }
+
+    @Test fun emptyPluginRootsAndWholePluginCopiesKeepProjectGlobalIdentities() {
+        var current = store.createFixtureProject("空插件复制", ProjectSourceMode.VISUAL)
+        val id = current.manifest.projectId
+        current = store.createFlow(id, "worker", setOf("main"))
+        val emptyRoot = current.manifest.flows.single { it.flowId == "worker" }.rootBlockId
+        current = store.saveFlows(current, mapOf("worker" to ""))
+        current = store.createFlow(id, "other", setOf("main", "worker"))
+        assertNotEquals(emptyRoot, current.manifest.flows.single { it.flowId == "other" }.rootBlockId)
+        current = store.copyFlow(id, "main", "copy", "copy", current.flowSources.keys)
+        current = store.copyFlow(id, "worker", "empty-copy", "empty-copy", current.flowSources.keys)
+        assertEquals("", current.flowSources.getValue("empty-copy"))
+        val nodes = current.flowSources.values.flatMap { source -> source.lineSequence().filter(String::isNotBlank)
+            .map { JsonParser.parseString(it).asJsonObject["nodeId"].asString }.toList() }
+        assertEquals(nodes.size, nodes.toSet().size)
+        val roots = current.manifest.flows.map { it.rootBlockId }
+        assertEquals(roots.size, roots.toSet().size)
+    }
+
     @Test fun executionSettingsCommitTogetherAndRejectStaleOrInvalidDrafts() {
         val caps = setOf("core.task", "device.clipboard", "input.basic")
-        val initial = store.createProject("统一设置", ProjectSourceMode.VISUAL, initialCapabilities = caps)
+        val initial = store.createFixtureProject("统一设置", ProjectSourceMode.VISUAL, initialCapabilities = caps)
         assertEquals(caps, initial.manifest.capabilities.toSet())
         val debug = initial.manifest.debugSettings.copy(runDelayMs = 300, showRunPrompts = false)
         val random = ProjectRandomization(touch = PositionRandomization(true, 2, 3))
@@ -45,7 +122,7 @@ class ProjectStoreTest {
     }
 
     @Test fun newToolSourceAndRuntimeApiUpgradeAreCommittedTogether() {
-        val created=store.createProject("新工具",ProjectSourceMode.VISUAL)
+        val created=store.createFixtureProject("新工具",ProjectSourceMode.VISUAL)
         assertEquals("1.7",created.manifest.runtimeApi)
         val original=created.flowSources.getValue("main")
         val node=JsonParser.parseString(original.lineSequence().first(String::isNotBlank)).asJsonObject
@@ -58,7 +135,7 @@ class ProjectStoreTest {
         assertEquals(created.manifest.capabilities,saved.manifest.capabilities)
     }
     @Test fun audioResourcesAreDeclaredBackedUpAndRestoredWithoutChangingRuntimeData() {
-        val created = store.createProject("音频项目", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("音频项目", ProjectSourceMode.VISUAL)
         val wav = "RIFF1234WAVEfmt ".toByteArray()
         val imported = store.importResource(created.manifest.projectId, ProjectResourceKind.AUDIO,
             "提醒.wav", ByteArrayInputStream(wav), emptySet())
@@ -76,7 +153,7 @@ class ProjectStoreTest {
         }
     }
     @Test fun historicalLuaBackupRemainsLosslessAlongsideNewVisualProjects() {
-        val legacy = store.createProject("历史源码", ProjectSourceMode.LUA)
+        val legacy = store.createFixtureProject("历史源码", ProjectSourceMode.LUA)
         val projectId = legacy.manifest.projectId
         val source = "-- arbitrary Lua must be preserved, not converted\nreturn function() local x = 42; return x end\n"
         store.saveLua(projectId, source, legacy.luaSource)
@@ -85,7 +162,7 @@ class ProjectStoreTest {
         store.importResource(projectId, ProjectResourceKind.IMAGE, "original.png", ByteArrayInputStream(PNG_1X1), emptySet())
         val before = store.openProject(projectId)
         val manifestBytes = File(before.directory, "project.json").readBytes()
-        store.createProject("可视化", ProjectSourceMode.VISUAL)
+        store.createFixtureProject("可视化", ProjectSourceMode.VISUAL)
         val archive = ByteArrayOutputStream().also { store.exportProjectBackup(projectId, it) }
         val restored = store.importProjectBackup(ByteArrayInputStream(archive.toByteArray()))
         assertEquals(ProjectSourceMode.LUA, restored.manifest.sourceMode)
@@ -100,7 +177,7 @@ class ProjectStoreTest {
     }
 
     @Test fun optionalSourceAndVariableListsUseSchemaDefaultsWithoutDroppingData() {
-        val created = store.createProject("公开格式默认值", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("公开格式默认值", ProjectSourceMode.VISUAL)
         val file = File(created.directory, "project.json")
         val manifest = JsonParser.parseString(file.readText()).asJsonObject
         listOf("luaFiles", "luaDirectories", "variables").forEach(manifest::remove)
@@ -129,7 +206,7 @@ class ProjectStoreTest {
 
     @Test
     fun designedInterfacePersistsWithCapabilitiesAndRejectsStaleOrMissingBindings() {
-        val created = store.createProject("脚本界面", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("脚本界面", ProjectSourceMode.VISUAL)
         val model = com.autoscript.script.ui.ScriptUiDefinition(version = 2, fields = listOf(
             com.autoscript.script.ui.UiField("input", "输入", "text", false, "", ui = com.autoscript.script.ui.UiPresentation(fontBold = true, textUnderline = true, borderColor = "#80aBcD12", borderWidthPx = 3, cornerPx = 20)),
         ))
@@ -151,7 +228,7 @@ class ProjectStoreTest {
 
     @Test
     fun freezeGuardAcceptsReadOnlyDefaultsWithoutWritingOrRecoveringFiles() {
-        val created = store.createProject("旧配置", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("旧配置", ProjectSourceMode.LUA)
         val manifest = File(created.directory, "project.json")
         val tree = JsonParser.parseString(manifest.readText()).asJsonObject
         tree.remove("debugSettings")
@@ -168,7 +245,7 @@ class ProjectStoreTest {
 
     @Test
     fun freezeGuardAcceptsOmittedOptionalFieldsWithinDebugSettings() {
-        val created = store.createProject("部分旧调试配置", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("部分旧调试配置", ProjectSourceMode.LUA)
         val manifest = File(created.directory, "project.json")
         val tree = JsonParser.parseString(manifest.readText()).asJsonObject
         tree.getAsJsonObject("debugSettings").apply {
@@ -186,7 +263,7 @@ class ProjectStoreTest {
 
     @Test
     fun freezeGuardRejectsActualManifestChangeAndDoesNotRecoverInvalidPrimary() {
-        val created = store.createProject("原项目", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("原项目", ProjectSourceMode.LUA)
         val manifest = File(created.directory, "project.json")
         val bytes = manifest.readBytes()
         val tree = JsonParser.parseString(bytes.toString(Charsets.UTF_8)).asJsonObject
@@ -201,7 +278,7 @@ class ProjectStoreTest {
 
     @Test
     fun createsLuaProjectAndPersistsAcrossStoreInstances() {
-        val created = store.createProject("Lua 示例", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("Lua 示例", ProjectSourceMode.LUA)
 
         assertEquals("main.lua", created.manifest.entryPoint)
         assertTrue(File(created.directory, "main.lua").readText().contains("Task.sleep(1)"))
@@ -219,12 +296,12 @@ class ProjectStoreTest {
         assertEquals("main", created.manifest.entryFlowId)
         val flow = File(created.directory, "visual/flows/main.jsonl")
         assertTrue(flow.isFile)
-        assertTrue(flow.readText().contains("\"kind\":\"task.noop\""))
+        assertEquals("",flow.readText())
     }
 
     @Test
     fun migratesLegacyPopupDpAndPercentSettingsToPixels() {
-        val created = store.createProject("旧弹窗样式", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("旧弹窗样式", ProjectSourceMode.VISUAL)
         val manifestFile = File(created.directory, "project.json")
         val manifest = JsonParser.parseString(manifestFile.readText()).asJsonObject
         manifest.getAsJsonObject("debugSettings").add("popupStyle", JsonParser.parseString(
@@ -243,7 +320,7 @@ class ProjectStoreTest {
 
     @Test
     fun savesSmallPopupDimensionsInPixels() {
-        val created = store.createProject("小弹窗", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("小弹窗", ProjectSourceMode.VISUAL)
         val settings = created.manifest.debugSettings.copy(
             popupStyle = created.manifest.debugSettings.popupStyle.copy(widthPx = 100, heightPx = 30),
         )
@@ -257,7 +334,7 @@ class ProjectStoreTest {
 
     @Test
     fun createsProjectWithSelectedBaselineResolution() {
-        val created = store.createProject("1080 项目", ProjectSourceMode.VISUAL, 1080, 1920)
+        val created = store.createFixtureProject("1080 项目", ProjectSourceMode.VISUAL, 1080, 1920)
 
         assertEquals(1080, created.manifest.design.width)
         assertEquals(1920, created.manifest.design.height)
@@ -268,8 +345,8 @@ class ProjectStoreTest {
 
     @Test
     fun renamesAndDeletesOnlyTheSelectedProject() {
-        val first = store.createProject("第一个", ProjectSourceMode.LUA)
-        val second = store.createProject("第二个", ProjectSourceMode.VISUAL)
+        val first = store.createFixtureProject("第一个", ProjectSourceMode.LUA)
+        val second = store.createFixtureProject("第二个", ProjectSourceMode.VISUAL)
 
         assertEquals("改名后", store.renameProject(first.manifest.projectId, " 改名后 ").manifest.name)
         store.deleteProject(first.manifest.projectId)
@@ -281,7 +358,7 @@ class ProjectStoreTest {
 
     @Test
     fun exportsAuthoritativeFilesAndImportsAnIndependentProjectCopy() {
-        val created = store.createProject("备份示例", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("备份示例", ProjectSourceMode.LUA)
         val saved = store.saveLua(
             created.manifest.projectId,
             "return function()\n  Task.sleep(7)\nend\n",
@@ -320,7 +397,7 @@ class ProjectStoreTest {
 
     @Test
     fun createsLuaFoldersAndModulesThatRoundTripThroughBackup() {
-        val created = store.createProject("Lua 树", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("Lua 树", ProjectSourceMode.LUA)
         val folder = store.createLuaDirectory(created.manifest.projectId, "lua/tools")
         val module = store.createLuaFile(folder.manifest.projectId, "lua/tools/math.lua", "return { answer = 42 }\n")
 
@@ -338,7 +415,7 @@ class ProjectStoreTest {
 
     @Test
     fun rejectsLuaPathsOutsideTheDedicatedModuleDirectory() {
-        val created = store.createProject("Lua 路径", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("Lua 路径", ProjectSourceMode.LUA)
 
         assertThrows(IllegalArgumentException::class.java) {
             store.createLuaFile(created.manifest.projectId, "../escape.lua")
@@ -363,7 +440,7 @@ class ProjectStoreTest {
 
     @Test
     fun backupImportRejectsFilesNotDeclaredByTheManifest() {
-        val created = store.createProject("严格清单", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("严格清单", ProjectSourceMode.LUA)
         val archive = zipOf(
             "project.json" to File(created.directory, "project.json").readBytes(),
             "main.lua" to File(created.directory, "main.lua").readBytes(),
@@ -380,7 +457,7 @@ class ProjectStoreTest {
 
     @Test
     fun recoversCorruptManifestFromBackup() {
-        val created = store.createProject("原名", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("原名", ProjectSourceMode.LUA)
         store.renameProject(created.manifest.projectId, "新名")
         File(created.directory, "project.json").writeText("{broken")
 
@@ -392,7 +469,7 @@ class ProjectStoreTest {
 
     @Test
     fun migratesLegacyVisualManifestAndKeepsOriginal() {
-        val created = store.createProject("旧积木", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("旧积木", ProjectSourceMode.VISUAL)
         val manifestFile = File(created.directory, "project.json")
         val legacy = manifestFile.readText()
             .replace("\"formatVersion\": 2", "\"formatVersion\": 1")
@@ -412,19 +489,19 @@ class ProjectStoreTest {
     @Test
     fun rejectsInvalidNamesAndIds() {
         assertThrows(IllegalArgumentException::class.java) {
-            store.createProject("  ", ProjectSourceMode.LUA)
+            store.createFixtureProject("  ", ProjectSourceMode.LUA)
         }
         val invalidIdStore = ProjectStore(root, idFactory = { "../escape" })
         assertThrows(IllegalArgumentException::class.java) {
-            invalidIdStore.createProject("越界", ProjectSourceMode.LUA)
+            invalidIdStore.createFixtureProject("越界", ProjectSourceMode.LUA)
         }
         assertFalse(File(root.parentFile, "escape").exists())
     }
 
     @Test
     fun opensBothSourceModesWithTheirDeclaredSources() {
-        val lua = store.createProject("Lua", ProjectSourceMode.LUA)
-        val visual = store.createProject("Visual", ProjectSourceMode.VISUAL)
+        val lua = store.createFixtureProject("Lua", ProjectSourceMode.LUA)
+        val visual = store.createFixtureProject("Visual", ProjectSourceMode.VISUAL)
 
         assertNotNull(store.openProject(lua.manifest.projectId).luaSource)
         assertEquals(setOf("main"), store.openProject(visual.manifest.projectId).flowSources.keys)
@@ -432,7 +509,7 @@ class ProjectStoreTest {
 
     @Test
     fun recoversManifestFromCompletedTemporaryWrite() {
-        val created = store.createProject("临时恢复", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("临时恢复", ProjectSourceMode.LUA)
         val manifest = File(created.directory, "project.json")
         manifest.copyTo(File(created.directory, "project.json.tmp"))
         assertTrue(manifest.delete())
@@ -445,7 +522,7 @@ class ProjectStoreTest {
 
     @Test
     fun savesLuaAndRecoversMissingEntryFromBackup() {
-        val created = store.createProject("保存 Lua", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("保存 Lua", ProjectSourceMode.LUA)
         store.saveLua(created.manifest.projectId, "return function()\n  Task.sleep(9)\nend\n")
         val entry = File(created.directory, "main.lua")
         assertTrue(entry.delete())
@@ -458,7 +535,7 @@ class ProjectStoreTest {
 
     @Test
     fun rejectsSavingOverAConcurrentLuaChange() {
-        val created = store.createProject("冲突", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("冲突", ProjectSourceMode.LUA)
         val original = created.luaSource!!
         store.saveLua(created.manifest.projectId, "return function() return 1 end\n", original)
 
@@ -470,7 +547,7 @@ class ProjectStoreTest {
 
     @Test
     fun savesFlowAtomicallyAndInvalidatesGeneration() {
-        val created = store.createProject("保存 Flow", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("保存 Flow", ProjectSourceMode.VISUAL)
         val original = created.flowSources.getValue("main")
         val generated = File(created.directory, "generated").apply { mkdirs() }
         File(generated, "generation.json").writeText("{\"generationId\":\"old\"}\n")
@@ -485,7 +562,7 @@ class ProjectStoreTest {
 
     @Test
     fun rejectsSavingOverAConcurrentFlowChangeWithoutInvalidatingGeneration() {
-        val created = store.createProject("Flow 冲突", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("Flow 冲突", ProjectSourceMode.VISUAL)
         val original = created.flowSources.getValue("main")
         val first = original.replace("\"orderKey\":\"a0\"", "\"orderKey\":\"b0\"")
         store.saveFlow(created.manifest.projectId, "main", first, original)
@@ -502,7 +579,7 @@ class ProjectStoreTest {
 
     @Test
     fun createsAndSafelyDeletesAdditionalFlow() {
-        val created = store.createProject("多 Flow", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("多 Flow", ProjectSourceMode.VISUAL)
         val withChild = store.createFlow(created.manifest.projectId, "child", setOf("main"))
 
         assertEquals(setOf("main", "child"), withChild.flowSources.keys)
@@ -519,7 +596,7 @@ class ProjectStoreTest {
 
     @Test
     fun refusesDeletingEntryReferencedOrConcurrentlyChangedFlow() {
-        val created = store.createProject("安全删除", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("安全删除", ProjectSourceMode.VISUAL)
         val withChild = store.createFlow(created.manifest.projectId, "child", setOf("main"))
         assertThrows(IllegalArgumentException::class.java) {
             store.deleteFlow(created.manifest.projectId, "main", setOf("main", "child"))
@@ -540,7 +617,7 @@ class ProjectStoreTest {
 
     @Test
     fun importsTypedResourcesWithStableUniqueNamesAndPersistsManifest() {
-        val created = store.createProject("资源", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("资源", ProjectSourceMode.VISUAL)
         File(created.directory, "generated").mkdirs()
         File(created.directory, "generated/generation.json").writeText("old-generation")
         val withImage = store.importResource(
@@ -585,7 +662,7 @@ class ProjectStoreTest {
 
     @Test
     fun importsScreenshotIntoChosenImageFolder() {
-        val created = store.createProject("截图文件夹", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("截图文件夹", ProjectSourceMode.VISUAL)
         val imported = store.importResource(
             created.manifest.projectId, ProjectResourceKind.IMAGE, "按钮.png",
             ByteArrayInputStream(PNG_1X1), emptySet(), imageDirectory = "界面/首页",
@@ -615,7 +692,7 @@ class ProjectStoreTest {
 
     @Test
     fun resourceDeletionIsConflictCheckedAndRefusesReferencedPaths() {
-        val created = store.createProject("资源删除", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("资源删除", ProjectSourceMode.VISUAL)
         val imported = store.importResource(
             created.manifest.projectId,
             ProjectResourceKind.IMAGE,
@@ -641,8 +718,84 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun resourceDeletionProtectsUnsavedDraftsAndTemplateDirectories() {
+        val created = store.createFixtureProject("草稿图片删除", ProjectSourceMode.VISUAL)
+        val imported = store.importResource(created.manifest.projectId, ProjectResourceKind.IMAGE,
+            "target.png", ByteArrayInputStream(PNG_1X1), emptySet(), imageDirectory = "templates")
+        val path = imported.manifest.resources.single().get("path").asString
+        val before = File(imported.directory, "project.json").readBytes()
+        fun draft(field: String, value: String) = com.google.gson.JsonObject().apply {
+            add("args", com.google.gson.JsonObject().apply { addProperty(field, value) })
+        }.toString()
+        for (source in listOf(draft("imagePath", path), draft("imageDirectory", "assets/images/templates/"), "{broken")) {
+            assertThrows(Exception::class.java) {
+                store.deleteResource(created.manifest.projectId, path, setOf(path), mapOf("main" to source))
+            }
+            assertTrue(File(imported.directory, path).isFile)
+            assertTrue(before.contentEquals(File(imported.directory, "project.json").readBytes()))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.deleteResource(created.manifest.projectId, path, setOf(path), mapOf("removed-flow" to ""))
+        }
+        val unrelated = draft("imageDirectory", "assets/images/template/")
+        val deleted = store.deleteResource(created.manifest.projectId, path, setOf(path), mapOf("main" to unrelated))
+        assertTrue(deleted.manifest.resources.isEmpty())
+        assertFalse(File(imported.directory, path).exists())
+    }
+
+    @Test
+    fun resourceDeletionProtectsSavedTemplateDirectoryReferences() {
+        val created = store.createFixtureProject("文件夹找图", ProjectSourceMode.VISUAL)
+        val imported = store.importResource(created.manifest.projectId, ProjectResourceKind.IMAGE,
+            "target.png", ByteArrayInputStream(PNG_1X1), emptySet(), imageDirectory = "templates")
+        val path = imported.manifest.resources.single().get("path").asString
+        val original = imported.flowSources.getValue("main")
+        val referenced = original.lineSequence().filter(String::isNotBlank).joinToString("\n", postfix = "\n") { line ->
+            com.google.gson.JsonParser.parseString(line).asJsonObject.apply {
+                add("args", com.google.gson.JsonObject().apply { addProperty("imageDirectory", "assets/images/templates/") })
+            }.toString()
+        }
+        store.saveFlow(created.manifest.projectId, "main", referenced, original)
+        assertThrows(IllegalArgumentException::class.java) { store.deleteResource(created.manifest.projectId, path, setOf(path)) }
+        assertTrue(File(imported.directory, path).isFile)
+    }
+
+    @Test
+    fun resourceUsageLookupAndDeletionShareSavedAndDraftProtection() {
+        val created = store.createFixtureProject("引用位置", ProjectSourceMode.VISUAL)
+        val imported = store.importResource(created.manifest.projectId, ProjectResourceKind.IMAGE,
+            "target.png", ByteArrayInputStream(PNG_1X1), emptySet())
+        val id = imported.manifest.projectId
+        val path = imported.manifest.resources.single().get("path").asString
+        val original = imported.flowSources.getValue("main")
+        val source = original.lineSequence().filter(String::isNotBlank).joinToString("\n", postfix = "\n") {
+            JsonParser.parseString(it).asJsonObject.apply {
+                add("args", JsonParser.parseString("""{"template":"$path"}"""))
+            }.toString()
+        }
+        store.saveFlow(id, "main", source, original)
+        val drafts = mapOf("main" to original)
+        val report = store.findResourceUsages(id, path, drafts)
+        val failure = assertThrows(ProjectResourceInUseException::class.java) { store.deleteResource(id, path, setOf(path), drafts) }
+        assertEquals(report, failure.report)
+        assertTrue(report.usages.all { it.source == ResourceUsageSource.SAVED_FLOW })
+        assertTrue(report.totalCount > 0)
+        assertTrue(File(imported.directory, path).isFile)
+        store.saveFlow(id, "main", original, source)
+        assertEquals(0, store.findResourceUsages(id, path).totalCount)
+        val recipesFile = File(imported.directory, ".studio/image-recipes.json")
+        recipesFile.parentFile.mkdirs()
+        recipesFile.writeText("{broken")
+        assertThrows(ProjectStoreException::class.java) { store.findResourceUsages(id, path) }
+        assertThrows(ProjectStoreException::class.java) { store.deleteResource(id, path, setOf(path)) }
+        assertTrue(File(imported.directory, path).isFile)
+        recipesFile.writeBytes(encodeImageRecipes(emptyList()))
+        assertTrue(store.deleteResource(id, path, setOf(path)).manifest.resources.isEmpty())
+    }
+
+    @Test
     fun deletesUnreferencedResourceAndUpdatesCapabilitiesWithConflictProtection() {
-        val created = store.createProject("设置", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("设置", ProjectSourceMode.VISUAL)
         val imported = store.importResource(
             created.manifest.projectId,
             ProjectResourceKind.GLYPH_DICTIONARY,
@@ -675,7 +828,7 @@ class ProjectStoreTest {
 
     @Test
     fun refusesDeletingResourceReferencedByLuaSource() {
-        val created = store.createProject("Lua 资源", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("Lua 资源", ProjectSourceMode.LUA)
         val imported = store.importResource(
             created.manifest.projectId,
             ProjectResourceKind.IMAGE,
@@ -697,7 +850,7 @@ class ProjectStoreTest {
 
     @Test
     fun rejectsEmptyUnknownOrMalformedResourceFiles() {
-        val created = store.createProject("坏资源", ProjectSourceMode.LUA)
+        val created = store.createFixtureProject("坏资源", ProjectSourceMode.LUA)
         assertThrows(IllegalArgumentException::class.java) {
             store.importResource(
                 created.manifest.projectId,
@@ -721,7 +874,7 @@ class ProjectStoreTest {
 
     @Test
     fun createsFlowWithChineseDisplayNameAndRenamesWithoutBreakingReferences() {
-        val created = store.createProject("源文件", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("源文件", ProjectSourceMode.VISUAL)
         val projectId = created.manifest.projectId
         val withChild = store.createFlow(projectId, "flow-a", setOf("main"), fileName = "默认名称1")
         val child = withChild.manifest.flows.single { it.flowId == "flow-a" }
@@ -750,7 +903,7 @@ class ProjectStoreTest {
 
     @Test
     fun rejectsIllegalFlowNamesAndConflicts() {
-        val created = store.createProject("非法名", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("非法名", ProjectSourceMode.VISUAL)
         val projectId = created.manifest.projectId
         // "名字 .jsonl" 去掉扩展名后名字真的以空格结尾，trim 拿不掉，必须拒绝；"   " 全空白等价于空名。
         listOf("分组/文件", ".hidden", "尾点.", "名字 .jsonl", "a:b", "", "   ", "カタカナ", "长".repeat(65))
@@ -778,7 +931,7 @@ class ProjectStoreTest {
 
     @Test
     fun copiesFlowWithFreshIdentitiesAndKeepsStructure() {
-        val created = store.createProject("另存为", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("另存为", ProjectSourceMode.VISUAL)
         val projectId = created.manifest.projectId
         File(created.directory, "generated").mkdirs()
         File(created.directory, "generated/generation.json").writeText("old-generation")
@@ -791,6 +944,8 @@ class ProjectStoreTest {
         assertNotEquals(original.rootBlockId, duplicate.rootBlockId)
         val originalSource = copied.flowSources.getValue("main")
         val copySource = copied.flowSources.getValue("flow-copy")
+        assertNotEquals(JsonParser.parseString(originalSource.lineSequence().first(String::isNotBlank)).asJsonObject["nodeId"],
+            JsonParser.parseString(copySource.lineSequence().first(String::isNotBlank)).asJsonObject["nodeId"])
         assertNotEquals(originalSource, copySource)
         assertEquals(originalSource.lines().size, copySource.lines().size)
         assertTrue(copySource.contains("\"blockId\":\"${duplicate.rootBlockId}\""))
@@ -804,7 +959,7 @@ class ProjectStoreTest {
 
     @Test
     fun sourceGroupsAreVirtualValidatedAndPrunedWithFlows() {
-        val created = store.createProject("分组", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("分组", ProjectSourceMode.VISUAL)
         val projectId = created.manifest.projectId
         store.createFlow(projectId, "flow-a", setOf("main"), fileName = "甲")
         store.createFlow(projectId, "flow-b", setOf("main", "flow-a"), fileName = "乙")
@@ -846,7 +1001,7 @@ class ProjectStoreTest {
 
     @Test
     fun backupSlotsPersistRestoreAsNewProjectAndNeverLeakIntoProjectList() {
-        val created = store.createProject("槽位", ProjectSourceMode.VISUAL)
+        val created = store.createFixtureProject("槽位", ProjectSourceMode.VISUAL)
         val projectId = created.manifest.projectId
         assertTrue(store.listBackupSlots(projectId).none(BackupSlot::occupied))
         assertTrue(store.listBackedUpProjects().isEmpty())

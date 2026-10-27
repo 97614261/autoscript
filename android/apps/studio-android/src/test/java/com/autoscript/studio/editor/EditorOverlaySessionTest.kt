@@ -6,6 +6,70 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EditorOverlaySessionTest {
+    @Test fun realtimeLogSamplingStopsWhileHiddenMinimizedOrClosed() {
+        val host = EditorOverlaySession({})
+        assertFalse(host.shouldSampleRealtimeLog)
+        host.realtimeLogRequested = true
+        assertTrue(host.shouldSampleRealtimeLog)
+        host.panel(false)
+        assertFalse(host.shouldSampleRealtimeLog)
+        host.panel(true)
+        assertTrue(host.shouldSampleRealtimeLog)
+        host.systemRequest(true)
+        assertFalse(host.shouldSampleRealtimeLog)
+        host.systemRequest(false)
+        assertTrue(host.shouldSampleRealtimeLog)
+        host.realtimeLogRequested = false
+        assertFalse(host.shouldSampleRealtimeLog)
+        host.realtimeLogRequested = true
+        host.closeDialogs()
+        assertFalse(host.shouldSampleRealtimeLog)
+    }
+
+    @Test fun promptsDeferNewWindowsWithoutClosingOrLosingExistingBackdrop() {
+        val host = EditorOverlaySession({})
+        val backdrop = Observer(); val prompt = Observer(); val late = Observer(); val nested = Observer()
+        assertTrue(host.registerChild(backdrop))
+        assertTrue(host.registerChild(prompt, prompt = true))
+        assertTrue(host.registerChild(late))
+        assertTrue(backdrop.visible)
+        assertTrue(prompt.visible)
+        assertFalse(late.visible)
+        assertEquals(0, late.closes)
+        host.refreshChild(late)
+        assertFalse(late.visible)
+        assertTrue(host.registerChild(nested, prompt = true))
+        host.unregisterChild(prompt)
+        assertFalse(late.visible)
+        host.unregisterChild(nested)
+        assertTrue(late.visible)
+        assertTrue(backdrop.visible)
+        host.closeDialogs()
+        assertEquals(1, backdrop.closes)
+        assertEquals(1, late.closes)
+    }
+    @Test fun promptOrderingSurvivesSystemSelectionAndObserverCannotCoverIt() {
+        val host = EditorOverlaySession({})
+        val observer = Observer(); val prompt = Observer(); val late = Observer()
+        assertTrue(host.registerObserver(observer))
+        assertTrue(host.registerChild(prompt, prompt = true))
+        assertTrue(host.registerChild(late))
+        assertFalse(observer.visible)
+        host.systemRequest(true)
+        assertFalse(prompt.visible)
+        host.restore()
+        assertFalse(prompt.visible)
+        host.systemRequest(false)
+        assertTrue(prompt.visible)
+        assertFalse(late.visible)
+        assertFalse(observer.visible)
+        host.unregisterChild(prompt)
+        assertTrue(observer.visible)
+        assertTrue(late.visible)
+        host.closeDialogs()
+        host.refreshChild(late)
+        assertFalse(late.visible)
+    }
     @Test fun observerRegistrationAndLateUnregistrationAreIdempotent() {
         val host = EditorOverlaySession({})
         val observer = Observer()

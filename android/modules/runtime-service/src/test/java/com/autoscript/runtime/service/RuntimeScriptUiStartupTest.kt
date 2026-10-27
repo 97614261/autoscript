@@ -41,8 +41,10 @@ class RuntimeScriptUiStartupTest {
 
     @Test fun layoutDialogsMeasureAgainstTheAttachedViewForImeInsets() {
         val dialogs = File("src/main/java/com/autoscript/runtime/service/RuntimeInteractionDialogs.kt").readText()
-        assertTrue(dialogs.contains("ScriptUiDisplay.bounds(context, session.view ?: session.dialog.window?.decorView)"))
+        assertTrue(dialogs.contains("ScriptUiDisplay.bounds(context, session.view ?: session.dialog.window?.decorView,"))
+        assertTrue(dialogs.contains("includeKeyboard = Build.VERSION.SDK_INT >= 30"))
         assertTrue(dialogs.contains("window.setDecorFitsSystemWindows(false)"))
+        assertTrue(dialogs.contains("window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR)"))
         assertTrue(dialogs.contains("val target = bounds.centered(size)"))
         assertTrue(dialogs.contains("gravity = Gravity.TOP or Gravity.START"))
     }

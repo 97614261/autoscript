@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -70,6 +69,7 @@ internal fun <T> EditorOptionDialog(
     title: String,
     options: List<Pair<T, String>>,
     onDismiss: () -> Unit,
+    preview: (@Composable (T) -> Unit)? = null,
     onConfirm: (T) -> Unit,
 ) {
     var selectedIndex by remember(options) { mutableStateOf(0) }
@@ -97,6 +97,7 @@ internal fun <T> EditorOptionDialog(
                     }
                     Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
                     Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                        options.getOrNull(selectedIndex)?.let { preview?.invoke(it.first) }
                         if (options.isEmpty()) {
                             Text(
                                 "没有可选项",

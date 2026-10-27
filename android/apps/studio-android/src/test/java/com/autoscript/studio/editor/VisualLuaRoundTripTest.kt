@@ -49,6 +49,16 @@ class VisualLuaRoundTripTest {
         }
     }
 
+    @Test fun multiColorGlyphSettingsSurviveReversibleSourceWithoutBecomingExecutableLua() {
+        for(kind in listOf("ocr.glyph","ocr.glyphdetails")) {
+            val args=JsonParser.parseString("""{"frameVariable":"frame","dictionaryPath":"dictionaries/main.asglyph","foregroundRgb":16711680,"tolerance":4,"additionalColors":"00FF00:8;0000FF:16"}""").asJsonObject
+            val baseline=jsonl(node(kind,args))
+            val exported=tool.export(baseline,"root")
+            assertTrue(exported.text.contains("00FF00:8;0000FF:16"))
+            assertEquals(objects(baseline),objects(tool.parse(exported.text,baseline,"root",emptySet()).text))
+        }
+    }
+
     @Test fun nestedBranchesLoopParametersAndIdentitySurviveRoundTrip() {
         val conditional = node("control.if", JsonParser.parseString("""{"variable":"x","operator":"equals","value":1,"condition":{"type":"not","condition":{"type":"compare","variable":"x","operator":"equals","value":0}},"elseIf":[{"variable":"y","operator":"equals","value":2}]}""").asJsonObject,
             id = "if", children = mapOf("then" to "yes", "elseIf0" to "alternate", "else" to "no"))

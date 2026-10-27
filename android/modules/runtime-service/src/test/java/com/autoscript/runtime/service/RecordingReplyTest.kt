@@ -7,6 +7,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RecordingReplyTest {
+    @Test fun compactFilteringMatchesReferenceForEveryBoundAndRetainsUnchangedBytes() {
+        val random = java.util.Random(149)
+        for (count in listOf(0, 1, 2, 64, 512)) {
+            val source = ByteBuffer.allocate(count * 32).order(ByteOrder.LITTLE_ENDIAN).apply {
+                repeat(count) {
+                    putInt(1 + random.nextInt(4)); putInt(it); putInt(20)
+                    repeat(4) { putInt(random.nextInt(300) - 50) }
+                    putInt(random.nextInt())
+                }
+            }.array()
+            for ((left, top, right, bottom) in listOf(listOf(10, 10, 100, 100), listOf(0, 0, 0, 0),
+                listOf(-100, -100, 300, 300), listOf(100, 100, 10, 10))) {
+                val original = source.copyOf()
+                val expected = source.asList().chunked(32).filter { chunk ->
+                    val data = ByteBuffer.wrap(chunk.toByteArray()).order(ByteOrder.LITTLE_ENDIAN)
+                    val kind = data.int; data.int; data.int
+                    val x1 = data.int; val y1 = data.int; val x2 = data.int; val y2 = data.int
+                    fun inside(x: Int, y: Int) = x >= left && x < right && y >= top && y < bottom
+                    kind == 4 || (!inside(x1, y1) && !inside(x2, y2))
+                }.flatten().toByteArray()
+                val actual = RuntimeInputRecordingController.excludeControls(source, left, top, right, bottom)
+                assertArrayEquals(expected, actual)
+                assertArrayEquals(original, source)
+                assertNotSame(source, actual)
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) { RuntimeInputRecordingController.excludeControls(ByteArray(1), 0, 0, 1, 1) }
+        assertThrows(IllegalArgumentException::class.java) { RuntimeInputRecordingController.excludeControls(ByteArray(16_416), 0, 0, 1, 1) }
+    }
+
     @Test fun generationIsOpaqueSignedAndMustBeNonzero() {
         assertTrue(RecordingReply(17, -99, RecordingReply.CANCELLED).valid())
         assertFalse(RecordingReply(17, 0, RecordingReply.CANCELLED).valid())

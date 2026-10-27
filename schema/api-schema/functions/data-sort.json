@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14012,
+  "name": "Data.sort",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "返回排序后的新 JSON 数组：numberAsc/numberDesc 仅有限数值且绝对值≤10^12；textAsc/textDesc 仅字符串，按 Unicode 字典顺序（非拼音/自然数序）。拒绝混合类型/空值/嵌套项；沿用 64KiB、16 层、1024 项预算，原文不变。",
+  "params": [
+    {
+      "name": "json",
+      "type": "string",
+      "required": true,
+      "summary": "JSON数组"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": true,
+      "summary": "排序方式：numberAsc=数字升序、numberDesc=数字降序、textAsc=文本升序、textDesc=文本降序"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "返回排序后的新 JSON 数组：numberAsc/numberDesc 仅有限数值且绝对值≤10^12；textAsc/textDesc 仅字符串，按 Unicode 字典顺序（非拼音/自然数序）。拒绝混合类型/空值/嵌套项；沿用 64KiB、16 层、1024 项预算，原文不变。"
+  },
+  "legacyAliases": []
+}

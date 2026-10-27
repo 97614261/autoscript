@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 5013,
+  "name": "Screen.frameInfo",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "读取当前任务所属真实帧的width/height/rowStride/rotation/format/hasScreenOrigin JSON；截图、已加载图片和处理帧均可，不截图、不识别、不释放。尺寸为原像素，不是设计画布；有屏幕来源不代表任意处理坐标可直接点击。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "当前任务所属图像句柄"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "读取当前任务所属真实帧的width/height/rowStride/rotation/format/hasScreenOrigin JSON；截图、已加载图片和处理帧均可，不截图、不识别、不释放。尺寸为原像素，不是设计画布；有屏幕来源不代表任意处理坐标可直接点击。"
+  },
+  "legacyAliases": []
+}

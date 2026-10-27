@@ -64,11 +64,13 @@ internal fun StudioPanelDialog(
         BoxWithConstraints((if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).imePadding(), contentAlignment = Alignment.Center) {
             val configuration = LocalConfiguration.current
             val fontScale = LocalDensity.current.fontScale
-            val barHeight = studioCompactControlHeight(40, fontScale).dp
-            val headerHeight = studioCompactControlHeight(if (compactHeader) 32 else 40, fontScale).dp
+            val short = studioShortViewport(maxHeight.value)
+            val denseHeader = compactHeader || short
+            val barHeight = studioCompactControlHeight(if (short) 30 else 40, fontScale).dp
+            val headerHeight = studioCompactControlHeight(if (denseHeader) 32 else 40, fontScale).dp
             Surface(
                 modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 540.dp).fillMaxWidth(.92f)
-                    .heightIn(max = studioPanelMaxHeight(maxHeight.value, configuration.screenHeightDp).dp),
+                    .heightIn(max = studioPanelMaxHeight(maxHeight.value, configuration.screenHeightDp, if (short) 8 else 24).dp),
                 color = Color.White,
                 shape = RoundedCornerShape(if (fullScreen) 0.dp else 3.dp),
                 shadowElevation = 10.dp,
@@ -77,11 +79,11 @@ internal fun StudioPanelDialog(
                     val density = LocalDensity.current
                     var actionWidthPx by remember { mutableIntStateOf(0) }
                     BoxWithConstraints(Modifier.fillMaxWidth().height(headerHeight)) {
-                        val controlSize = if (compactHeader) 28.dp else 36.dp
+                        val controlSize = if (denseHeader) 28.dp else 36.dp
                         val pinnedWidth = 8.dp + controlSize * (if (onToggleFullScreen == null) 1 else 2)
                         val actionsMaxWidth = studioHeaderActionsMaxWidth(maxWidth.value, pinnedWidth.value).dp
-                        Text(title, color = AutoScriptPalette.Accent, fontSize = if (compactHeader) 12.sp else 16.sp,
-                            fontWeight = if (compactHeader) FontWeight.SemiBold else FontWeight.Bold,
+                        Text(title, color = AutoScriptPalette.Accent, fontSize = if (denseHeader) 12.sp else 16.sp,
+                            fontWeight = if (denseHeader) FontWeight.SemiBold else FontWeight.Bold,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
                             modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal =
                                 with(density) { actionWidthPx.toDp() }.coerceAtLeast(44.dp)),
@@ -90,10 +92,10 @@ internal fun StudioPanelDialog(
                             .padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Row(Modifier.widthIn(max = actionsMaxWidth).horizontalScroll(rememberScrollState()),
                                 verticalAlignment = Alignment.CenterVertically) { headerActions() }
-                            if (onToggleFullScreen != null) StudioPanelFullScreenButton(fullScreen, onToggleFullScreen, compactHeader)
+                            if (onToggleFullScreen != null) StudioPanelFullScreenButton(fullScreen, onToggleFullScreen, denseHeader)
                             Box(Modifier.size(controlSize).clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
                                 Icon(Icons.Filled.Close, contentDescription = "关闭", tint = AutoScriptPalette.TextSecondary,
-                                    modifier = Modifier.size(if (compactHeader) 16.dp else 20.dp))
+                                    modifier = Modifier.size(if (denseHeader) 16.dp else 20.dp))
                             }
                         }
                     }

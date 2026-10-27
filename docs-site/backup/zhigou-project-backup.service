@@ -1,0 +1,30 @@
+[Unit]
+Description=Zhigou personal encrypted project backups
+After=network.target
+
+[Service]
+Type=simple
+User=zhigou-backup
+Group=zhigou-backup
+ExecStart=/usr/bin/python3 /opt/zhigou-project-backup/project-backup-server.py --data-dir /var/lib/zhigou-project-backup/snapshots --token-file /etc/zhigou-project-backup/key --port 8766
+WorkingDirectory=/opt/zhigou-project-backup
+Environment=PYTHONDONTWRITEBYTECODE=1
+StateDirectory=zhigou-project-backup
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/zhigou-project-backup
+RestrictAddressFamilies=AF_INET AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=true
+LimitNOFILE=64
+TasksMax=16
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

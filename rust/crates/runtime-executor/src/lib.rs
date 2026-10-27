@@ -33,17 +33,25 @@ pub fn validate_private_data_call(
     opcode: u32,
     args: &[lua_runtime::LuaScalar],
 ) -> Result<(), &'static str> {
-    if !matches!(opcode, 14110..=14126 | 14140..=14146) {
+    if !matches!(opcode, 14110..=14126 | 14140..=14147) {
         return Err("unknown file operation");
     }
     file_extensions::validate(opcode, args)
 }
+mod codec_runtime;
+#[cfg(test)]
+mod codec_tests;
 mod frame_png;
 mod glyph_details;
+mod host_utility_runtime;
 mod json_extensions;
 #[cfg(test)]
 mod performance_tests;
+mod pure_utility_runtime;
+#[cfg(test)]
+mod pure_utility_tests;
 mod recognition_result;
+mod regex_cache;
 mod run_observation;
 mod runtime_tools;
 #[cfg(test)]
@@ -78,6 +86,7 @@ const OP_INPUT_RESOLVE_POINT: u32 = 4_008;
 const OP_INPUT_POINTER_MOVE_SCREEN: u32 = 4_009;
 const OP_INPUT_SWIPE_SCREEN: u32 = 4_010;
 const OP_SCREEN_CAPTURE: u32 = 5_000;
+const OP_SCREEN_CAPTURE_REGION: u32 = 5_014;
 const OP_SCREEN_CACHE: u32 = 5_001;
 const OP_SCREEN_RELEASE: u32 = 5_002;
 const OP_SCREEN_LOAD_IMAGE: u32 = 5_003;
@@ -648,6 +657,7 @@ struct ScriptOutputSwitches {
 #[derive(Debug)]
 pub struct RuntimeExecutor<C, H> {
     utilities: utility_runtime::UtilityState,
+    regexes: regex_cache::RegexCache,
     recognition_results: recognition_result::ResultCache,
     scheduler: Scheduler<C, LuaTaskRegistry>,
     backend: H,
@@ -745,6 +755,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         lua.install_api()?;
         Ok(Self {
             utilities: utility_runtime::UtilityState::default(),
+            regexes: regex_cache::RegexCache::default(),
             recognition_results: recognition_result::ResultCache::default(),
             scheduler: Scheduler::with_finalizer(clock, scheduler_config, lua),
             backend,
@@ -1043,11 +1054,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             code if runtime_tools::handles(code) => {
                 self.apply_runtime_tool(task, opcode, &values[2..])
             }
-            5010 | 5120..=5122 => self.apply_extended_vision(task, opcode, &values[2..]),
+            5010..=5013 | 5120..=5123 => self.apply_extended_vision(task, opcode, &values[2..]),
             14130 => self.save_frame_png(task, &values[2..]),
-            1000 | 1010..=1021 | 2002 | 14007..=14010 | 14200..=14224 | 14300..=14302 => {
-                self.apply_utility(task, opcode, &values[2..])
-            }
+            code if utility_opcode(code) => self.apply_utility(task, opcode, &values[2..]),
             14000..=14006 => {
                 self.resume_inputs.insert(
                     task,
@@ -1056,12 +1065,14 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 self.scheduler.yield_budget(task)?;
                 Ok(())
             }
-            14100..=14103 | 14110..=14126 | 14140..=14146 => {
+            14100..=14103 | 14110..=14126 | 14140..=14147 => {
                 self.apply_file(task, opcode, &values[2..])
             }
             1200..=1203 => self.apply_ui(task, opcode, &values[2..]),
             1204..=1206 => self.apply_dialog(task, opcode, &values[2..]),
-            5108 | 6101 => self.dispatch_host(task, opcode, values[2..].to_vec()),
+            4013..=4015 | 5108 | 5109 | 6101 | 6104 | 6105 => {
+                self.dispatch_host(task, opcode, values[2..].to_vec())
+            }
             OP_LOG_WRITE => self.apply_log(task, &values[2..]),
             OP_PROMPT_SHOW => self.apply_prompt(task, &values[2..]),
             OP_PROMPT_TOAST => self.apply_toast(task, &values[2..]),
@@ -1084,6 +1095,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             | OP_INPUT_POINTER_MOVE_SCREEN
             | OP_INPUT_SWIPE_SCREEN
             | OP_SCREEN_CAPTURE
+            | OP_SCREEN_CAPTURE_REGION
             | OP_SCREEN_CAPTURE_SERIES_FRAME => {
                 self.dispatch_host(task, opcode, values[2..].to_vec())
             }
@@ -1132,11 +1144,10 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let Some(required) = required_capability(opcode) else {
             return Ok(true);
         };
-        if self
-            .allowed_capabilities
-            .as_ref()
-            .is_none_or(|allowed| allowed.contains(required))
-        {
+        if self.allowed_capabilities.as_ref().is_none_or(|allowed| {
+            allowed.contains(required)
+                || (opcode == OP_SCREEN_RELEASE && allowed.contains("screen.capture"))
+        }) {
             return Ok(true);
         }
         let message = format!("project does not declare capability {required}");
@@ -1181,8 +1192,16 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         args: &[LuaScalar],
     ) -> Result<(), ExecutorError> {
         let result = match opcode {
+            14229..=14236 | 14400..=14403 => codec_runtime::execute(opcode, args),
+            1022..=1024 | 14011..=14012 | 14225..=14228 | 14237 => {
+                pure_utility_runtime::execute_with_regex(opcode, args, |pattern| {
+                    self.regexes.get(task, pattern)
+                })
+            }
             14007..=14010 => json_extensions::execute(opcode, args),
-            14200..=14224 => text_runtime::execute(opcode, args),
+            14200..=14224 => text_runtime::execute_with_regex(opcode, args, |pattern| {
+                self.regexes.get(task, pattern)
+            }),
             14300..=14302 => date_runtime::execute(opcode, args),
             _ => self.utilities.execute(opcode, args),
         };
@@ -1284,11 +1303,23 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         task: TaskToken,
         args: &[LuaScalar],
     ) -> Result<glyph_ocr::GlyphOcrResult, String> {
+        let extra = if args.len() == 11 {
+            match &args[10] {
+                LuaScalar::Bytes(value) => glyph_ocr::parse_additional_colors(
+                    std::str::from_utf8(value).map_err(|_| "invalid glyph colors")?,
+                )
+                .map_err(str::to_owned)?,
+                _ => return Err("glyph colors must be text".to_owned()),
+            }
+        } else {
+            Vec::new()
+        };
         let [frame, dictionary, rgb, tolerance, similarity, left, top, right, bottom, space_gap] =
-            integer_args::<10>(args)?;
+            integer_args::<10>(if args.len() == 11 { &args[..10] } else { args })?;
         let frame = decode_frame_handle(frame)?;
         let dictionary = decode_dictionary_handle(dictionary)?;
         let rgb = u32::try_from(rgb).map_err(|_| "RGB is invalid".to_owned())?;
+        glyph_ocr::validate_additional_colors(rgb, &extra).map_err(str::to_owned)?;
         let tolerance = u8::try_from(tolerance).map_err(|_| "tolerance is invalid".to_owned())?;
         let similarity =
             u16::try_from(similarity).map_err(|_| "similarity is invalid".to_owned())?;
@@ -1307,7 +1338,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             .map_err(|error| format!("{error:?}"))?;
         let cancellation = self.scheduler.handle();
         let started = Instant::now();
-        let result = glyph_ocr::recognize_cancellable(
+        let result = glyph_ocr::recognize_palette_cancellable(
             frame.image_view().map_err(|error| format!("{error:?}"))?,
             &dictionary,
             GlyphOcrOptions {
@@ -1327,6 +1358,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 minimum_similarity_permille: similarity,
                 space_gap_columns: space_gap,
             },
+            &extra,
             || {
                 cancellation.cancellation_requested(task)
                     || started.elapsed() >= Duration::from_secs(5)
@@ -2588,7 +2620,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         opcode: u32,
         args: Vec<LuaScalar>,
     ) -> Result<(), ExecutorError> {
-        let native_vision = if matches!(opcode, 5108 | 6101) {
+        let native_vision = if matches!(opcode, 5108 | 5109 | 6101 | 6104 | 6105) {
             Some(
                 self.prepare_native_vision(task, opcode, &args)
                     .map_err(ExecutorError::InvalidYield)?,
@@ -2673,7 +2705,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         opcode: u32,
         args: &[LuaScalar],
     ) -> Result<NativeVisionRequest, String> {
-        let (handle, template, score, left, top, right, bottom) = if opcode == 5108 {
+        let (handle, template, score, left, top, right, bottom) = if matches!(opcode, 5108 | 5109) {
             let [handle, template, score, left, top, right, bottom] = integer_args::<7>(args)?;
             (handle, Some(template), score, left, top, right, bottom)
         } else {
@@ -2714,10 +2746,15 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             return Err("native vision ROI exceeds frame or 4M pixel budget".into());
         }
         if let Some(template) = &template {
-            if template.metadata.width > region.right - region.left
-                || template.metadata.height > region.bottom - region.top
+            if (opcode == 5108
+                && (template.metadata.width > region.right - region.left
+                    || template.metadata.height > region.bottom - region.top))
                 || u64::from(template.metadata.width) * u64::from(template.metadata.height)
                     > 262_144
+                || (opcode == 5109
+                    && u64::from(region.right - region.left)
+                        * u64::from(region.bottom - region.top)
+                        > 1_048_576)
             {
                 return Err("gray template exceeds ROI or 256K pixel budget".into());
             }
@@ -2917,6 +2954,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             }
             SchedulerEvent::HostCancelled { request, task } => {
                 self.recognition_results.clear_task(*task);
+                self.regexes.clear_task(*task);
                 if let Some(pending) = self.pending_host.remove(request) {
                     self.finish_observation(pending.observation, "cancelled");
                     self.backend.cancel(*request, *task, pending.cancel_mode);
@@ -3005,14 +3043,28 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let input = decoded?;
         self.observe_capture_completion(&mut pending, &input);
         let status = match &completion.result {
-            HostResult::Failure { code, .. } if code.contains("TIMEOUT") => "timeout",
-            HostResult::Failure { code, .. } if code.contains("CANCEL") => "cancelled",
-            HostResult::Failure { code, .. } if code.contains("BUDGET") => "budget_exceeded",
-            HostResult::Failure { .. } => "error",
+            HostResult::Failure { code, .. } => {
+                if let Some(observation) = pending.observation.as_mut() {
+                    observation.record_failure_code(code);
+                }
+                if code.contains("TIMEOUT") {
+                    "timeout"
+                } else if code.contains("CANCEL") {
+                    "cancelled"
+                } else if code.contains("BUDGET") {
+                    "budget_exceeded"
+                } else if code.contains("SCREEN_CAPTURE") || code.contains("CAPTURE_BACKEND") {
+                    "capture_failed"
+                } else if code.contains("FRAME_OPERATION") {
+                    "frame_failed"
+                } else {
+                    "error"
+                }
+            }
             HostResult::Success(_)
                 if matches!(
                     pending.opcode,
-                    OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_SERIES_FRAME
+                    OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_REGION | OP_SCREEN_CAPTURE_SERIES_FRAME
                 ) =>
             {
                 "completed"
@@ -3027,12 +3079,12 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     fn observe_capture_completion(&self, pending: &mut PendingHost, input: &LuaInput) {
         if matches!(
             pending.opcode,
-            OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_SERIES_FRAME
+            OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_REGION | OP_SCREEN_CAPTURE_SERIES_FRAME
         ) {
-            let index = if pending.opcode == OP_SCREEN_CAPTURE {
-                1
-            } else {
+            let index = if pending.opcode == OP_SCREEN_CAPTURE_SERIES_FRAME {
                 2
+            } else {
+                1
             };
             if let (Some(observation), LuaInput::Values(values)) = (&mut pending.observation, input)
             {
@@ -3048,23 +3100,47 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                             observation.fields["frame"] = serde_json::json!([width, height]);
                         }
                         if let Some(timings) = pool.capture_timings(CapturedFrameId(capture)) {
+                            if pending.opcode == OP_SCREEN_CAPTURE_REGION {
+                                observation.fields["captureReadback"] =
+                                    serde_json::json!(region_readback_label(timings.backend));
+                            }
                             observation.fields["captureBackend"] =
-                                serde_json::json!(if timings.backend == 2 {
+                                serde_json::json!(if timings.cache_hit {
+                                    "continuous-frame-cache"
+                                } else if timings.backend == 2 {
                                     "root-surfacecontrol"
                                 } else {
                                     "root-screencap-fallback"
                                 });
                             observation.fields["captureTransport"] =
-                                serde_json::json!(if timings.streamed {
+                                serde_json::json!(if timings.cache_hit {
+                                    "cached"
+                                } else if timings.pipelined {
+                                    "authenticated-pipeline"
+                                } else if timings.streamed {
                                     "authenticated-stream"
                                 } else {
                                     "legacy-chunks"
                                 });
-                            observation.fields["captureStagesUs"] = serde_json::json!({
-                                "acquisition": timings.acquisition_us,
-                                "transferVerified": timings.transfer_us,
-                                "framePublish": timings.publish_us,
-                            });
+                            observation.fields["captureCacheHit"] =
+                                serde_json::json!(timings.cache_hit);
+                            if timings.cache_hit {
+                                let mut stages = serde_json::json!({
+                                    "framePublish": timings.publish_us,
+                                });
+                                if let Some(age_us) = timings.cache_age_us {
+                                    stages["cacheAge"] = serde_json::json!(age_us);
+                                    observation.fields["captureCacheAgeUs"] =
+                                        serde_json::json!(age_us);
+                                }
+                                observation.fields["captureStagesUs"] = stages;
+                            } else {
+                                observation.fields["captureStagesUs"] = serde_json::json!({
+                                    "acquisition": timings.acquisition_us,
+                                    "transferVerified": timings.transfer_us,
+                                    "framePublish": timings.publish_us,
+                                });
+                            }
                             if let Some(stages) = timings.stages_us {
                                 for (name, duration) in [
                                     "systemCapture",
@@ -3110,6 +3186,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     ) -> Result<(), ExecutorError> {
         self.record_task_terminal(*task, state);
         self.recognition_results.clear_task(*task);
+        self.regexes.clear_task(*task);
         self.run_contexts.remove(task);
         self.resume_inputs.remove(task);
         if let Some((owner, timer)) = self.callback_tasks.remove(task) {
@@ -3209,6 +3286,10 @@ fn integer_args<const N: usize>(args: &[LuaScalar]) -> Result<[i64; N], String> 
         values[index] = *value;
     }
     Ok(values)
+}
+
+fn utility_opcode(opcode: u32) -> bool {
+    matches!(opcode,1000 | 1010..=1024 | 2002 | 14007..=14012 | 14200..=14237 | 14300..=14302 | 14400..=14403)
 }
 
 fn decode_rgb(value: i64) -> Result<Color, String> {
@@ -3401,7 +3482,7 @@ fn points_input(points: &[PixelPoint]) -> Result<LuaInput, String> {
 
 fn host_data_ui_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, ExecutorError> {
     if let HostResult::Success(payload) = result {
-        if matches!(opcode, 14110..=14126 | 14140..=14146) {
+        if matches!(opcode, 14110..=14126 | 14140..=14147) {
             return file_extensions::resume(opcode, payload)
                 .map_err(|message| ExecutorError::InvalidYield(message.into()));
         }
@@ -3471,12 +3552,20 @@ fn specialized_host_result(
             return Some(resolved_point_resume_input(payload));
         }
     }
-    if matches!(opcode, 1200 | 1203..=1205 | 14100..=14103 | 14110..=14126 | 14140..=14146)
+    if matches!(opcode, 1200 | 1203..=1205 | 14100..=14103 | 14110..=14126 | 14140..=14147)
         && matches!(result, HostResult::Success(_))
     {
         return Some(host_data_ui_resume_input(opcode, result));
     }
     None
+}
+
+fn region_readback_label(backend: u32) -> &'static str {
+    if backend == 2 {
+        "region-readback-full-system-capture"
+    } else {
+        "full-readback-region-transfer-fallback"
+    }
 }
 
 fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, ExecutorError> {
@@ -3531,12 +3620,14 @@ fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, Execu
                     | OP_INPUT_POINTER_DOWN
                     | OP_INPUT_POINTER_MOVE
                     | OP_INPUT_POINTER_UP
-                    | OP_INPUT_TAP_SCREEN
-                    | OP_INPUT_POINTER_DOWN_SCREEN
-                    | OP_INPUT_POINTER_MOVE_SCREEN
-                    | OP_INPUT_SWIPE_SCREEN
-                    | OP_SCREEN_RELEASE
-                    | 14130
+                    | 4013
+                    ..=4015
+                        | OP_INPUT_TAP_SCREEN
+                        | OP_INPUT_POINTER_DOWN_SCREEN
+                        | OP_INPUT_POINTER_MOVE_SCREEN
+                        | OP_INPUT_SWIPE_SCREEN
+                        | OP_SCREEN_RELEASE
+                        | 14130
             ) =>
         {
             if !payload.is_empty() {
@@ -3546,22 +3637,13 @@ fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, Execu
             }
             Ok(LuaInput::Boolean(true))
         }
-        HostResult::Success(payload) if matches!(opcode, OP_SCREEN_CAPTURE | OP_SCREEN_CACHE) => {
-            if payload.len() != 8 {
-                return Err(ExecutorError::InvalidYield(
-                    "resource handle payload must be 8 bytes".to_owned(),
-                ));
-            }
-            let handle = i64::from_le_bytes(payload.as_slice().try_into().expect("length checked"));
-            if handle <= 0 {
-                return Err(ExecutorError::InvalidYield(
-                    "resource handle must be positive".to_owned(),
-                ));
-            }
-            Ok(LuaInput::Values(vec![
-                LuaScalar::Boolean(true),
-                LuaScalar::Integer(handle),
-            ]))
+        HostResult::Success(payload)
+            if matches!(
+                opcode,
+                OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_REGION | OP_SCREEN_CACHE
+            ) =>
+        {
+            resource_handle_resume_input(payload)
         }
         HostResult::Success(payload) if opcode == OP_SCREEN_CAPTURE_SERIES_FRAME => {
             series_capture_resume_input(payload)
@@ -3571,11 +3653,27 @@ fn host_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, Execu
         {
             vision_point_resume_input(payload)
         }
-        HostResult::Success(_) if matches!(opcode, 5108 | 6101) => {
+        HostResult::Success(_) if matches!(opcode, 5108 | 5109 | 6101 | 6104 | 6105) => {
             native_vision_resume_input(opcode, result)
         }
         HostResult::Success(_) => Err(ExecutorError::UnknownOpcode(opcode)),
     }
+}
+
+fn resource_handle_resume_input(payload: &[u8]) -> Result<LuaInput, ExecutorError> {
+    let bytes = payload.try_into().map_err(|_| {
+        ExecutorError::InvalidYield("resource handle payload must be 8 bytes".to_owned())
+    })?;
+    let handle = i64::from_le_bytes(bytes);
+    if handle <= 0 {
+        return Err(ExecutorError::InvalidYield(
+            "resource handle must be positive".to_owned(),
+        ));
+    }
+    Ok(LuaInput::Values(vec![
+        LuaScalar::Boolean(true),
+        LuaScalar::Integer(handle),
+    ]))
 }
 
 fn resolved_point_resume_input(payload: &[u8]) -> Result<LuaInput, ExecutorError> {
@@ -3642,6 +3740,38 @@ fn vision_point_resume_input(payload: &[u8]) -> Result<LuaInput, ExecutorError> 
 
 fn native_vision_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInput, ExecutorError> {
     match result {
+        HostResult::Success(payload) if opcode == 5109 => {
+            if payload.is_empty() {
+                return Ok(LuaInput::Values(vec![
+                    LuaScalar::Boolean(true),
+                    LuaScalar::Nil,
+                ]));
+            }
+            if payload.len() != 18 {
+                return Err(ExecutorError::InvalidYield(
+                    "feature result length invalid".into(),
+                ));
+            }
+            let fields = payload[..16]
+                .chunks_exact(4)
+                .map(|v| u32::from_le_bytes(v.try_into().expect("length")))
+                .collect::<Vec<_>>();
+            let score = u16::from_le_bytes(payload[16..18].try_into().expect("length"));
+            if score > 1000
+                || fields[2] == 0
+                || fields[3] == 0
+                || fields[0].saturating_add(fields[2]) > 32768
+                || fields[1].saturating_add(fields[3]) > 32768
+            {
+                return Err(ExecutorError::InvalidYield(
+                    "feature geometry invalid".into(),
+                ));
+            }
+            let mut result = vec![LuaScalar::Boolean(true)];
+            result.extend(fields.into_iter().map(|v| LuaScalar::Integer(i64::from(v))));
+            result.push(LuaScalar::Integer(i64::from(score)));
+            Ok(LuaInput::Values(result))
+        }
         HostResult::Success(payload) if opcode == 5108 => {
             if payload.is_empty() {
                 return Ok(LuaInput::Values(vec![
@@ -3667,11 +3797,15 @@ fn native_vision_resume_input(opcode: u32, result: &HostResult) -> Result<LuaInp
                 LuaScalar::Integer(i64::from(score)),
             ]))
         }
-        HostResult::Success(payload) if opcode == 6101 => {
+        HostResult::Success(payload) if matches!(opcode, 6101 | 6104 | 6105) => {
             if !(2..=1026).contains(&payload.len())
-                || payload[2..]
-                    .iter()
-                    .any(|byte| !byte.is_ascii_alphanumeric())
+                || payload[2..].iter().any(|byte| {
+                    if opcode == 6105 {
+                        !(b' '..=b'~').contains(byte)
+                    } else {
+                        !byte.is_ascii_alphanumeric()
+                    }
+                })
             {
                 return Err(ExecutorError::InvalidYield("OCR result invalid".into()));
             }
@@ -3952,6 +4086,15 @@ mod tests {
                     assert_eq!(input.frame.pixels.len(), 4);
                     [998u16.to_le_bytes().to_vec(), b"AbZ019".to_vec()].concat()
                 }
+                6105 => {
+                    assert!(request
+                        .native_vision
+                        .as_ref()
+                        .expect("leased input")
+                        .template
+                        .is_none());
+                    [999u16.to_le_bytes().to_vec(), b"100(+100) 180".to_vec()].concat()
+                }
                 _ => panic!("unexpected opcode"),
             };
             completion
@@ -3997,7 +4140,7 @@ mod tests {
             frames,
         )
         .unwrap();
-        let task=executor.start_entry_chunk(b"return function() local f=Screen.cache(Screen.capture()); local r=Screen.findGray(f,f,900,0,0,1,1); gray_score=r.scorePermille; local o=Ocr.alphanumeric(f,0,0,1,1,500); ocr_text=o.text; Screen.release(f) end","native-vision").unwrap();
+        let task=executor.start_entry_chunk(b"return function() local f=Screen.cache(Screen.capture()); local r=Screen.findGray(f,f,900,0,0,1,1); gray_score=r.scorePermille; local o=Ocr.alphanumeric(f,0,0,1,1,500); ocr_text=o.text; local t=Ocr.latinText(f,0,0,1,1,500).text; first=Text.numberAt(t,1); second=Text.numberAt(t,2); third=Text.numberAt(t,3); Screen.release(f) end","native-vision").unwrap();
         executor.drive().unwrap();
         assert_eq!(executor.task_state(task), Some(TaskState::Completed));
         assert_eq!(
@@ -4009,13 +4152,20 @@ mod tests {
             LuaScalar::Bytes(b"AbZ019".to_vec())
         );
         let events = executor.drain_run_events();
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
         let capture: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
         assert_eq!(capture["frame"], serde_json::json!([1, 1]));
         let gray: serde_json::Value = serde_json::from_str(&events[1]).unwrap();
         assert_eq!(gray["templateSizes"], serde_json::json!([[1, 1]]));
         assert_eq!(gray["roi"], serde_json::json!([0, 0, 1, 1]));
         assert!(!events.join("\n").contains("AbZ019"));
+        assert!(!events.join("\n").contains("100(+100) 180"));
+        for (name, value) in [("first", "100"), ("second", "+100"), ("third", "180")] {
+            assert_eq!(
+                executor.lua().global_scalar(name).unwrap(),
+                LuaScalar::Bytes(value.as_bytes().to_vec())
+            );
+        }
         assert_eq!(executor.resources().resource_count(), 0);
     }
     #[test]
@@ -4025,6 +4175,12 @@ mod tests {
         assert!(super::host_resume_input(6101, &HostResult::Success(vec![0, 0, b'$'])).is_err());
         assert!(super::host_resume_input(6101, &HostResult::Success(vec![255, 255])).is_err());
         assert!(super::host_resume_input(6101, &HostResult::Success(vec![0; 1027])).is_err());
+        assert!(super::host_resume_input(6105, &HostResult::Success(vec![0, 0, b'+'])).is_ok());
+        for value in [0, 10, 127, 255] {
+            assert!(
+                super::host_resume_input(6105, &HostResult::Success(vec![0, 0, value])).is_err()
+            );
+        }
     }
 
     impl HostBackend for OneCaptureHost {
@@ -4062,6 +4218,35 @@ mod tests {
             host,
         )
         .expect("executor")
+    }
+
+    #[test]
+    fn cached_regexes_are_released_on_completion_failure_and_stop() {
+        for ending in ["", "error('expected')", "Task.sleep(60000)"] {
+            let clock = ManualClock::new(MonoTime::ZERO);
+            let mut runtime = executor(&clock, VirtualHost::new(720, 1280));
+            let source = format!("return function() local a=Text.regexMatch('A123','[0-9]+'); local b=Text.regexReplace('A123','[0-9]+','#'); assert(a==1 and b=='A#'); {ending} end");
+            let owner = runtime
+                .start_entry_chunk(source.as_bytes(), "regex-lifecycle")
+                .unwrap();
+            runtime.drive().unwrap();
+            if ending.contains("sleep") {
+                assert_eq!(runtime.regexes.len(), 1);
+                runtime.handle().request_stop();
+                runtime.drive().unwrap();
+                assert_eq!(runtime.task_state(owner), Some(TaskState::Cancelled));
+            } else {
+                assert_eq!(
+                    runtime.task_state(owner),
+                    Some(if ending.is_empty() {
+                        TaskState::Completed
+                    } else {
+                        TaskState::Failed
+                    })
+                );
+            }
+            assert_eq!(runtime.regexes.len(), 0);
+        }
     }
 
     #[test]
@@ -5126,6 +5311,190 @@ mod tests {
             LuaScalar::Integer(1)
         );
         assert_eq!(executor.resources().resource_count(), 0);
+    }
+
+    #[test]
+    fn legacy_capture_only_declaration_can_still_release_its_own_frame() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(1, 1));
+        runtime
+            .set_allowed_capabilities(&["screen.capture".into()])
+            .unwrap();
+        let metadata = FrameMetadata {
+            width: 1,
+            height: 1,
+            row_stride: 4,
+            pixel_stride: 4,
+            format: FrameFormat::Rgba8888,
+            rotation: Rotation::Degrees0,
+            timestamp_nanos: 0,
+            snapshot_id: 1,
+        };
+        let id = runtime
+            .frame_pool()
+            .lock()
+            .unwrap()
+            .publish_capture(metadata, &[0, 0, 0, 255])
+            .unwrap()
+            .0;
+        let source = format!("return function() local f=Screen.cache({id});Screen.release(f) end");
+        let task = runtime
+            .start_entry_chunk(source.as_bytes(), "legacy-capture-release")
+            .unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(
+            runtime.task_state(task),
+            Some(TaskState::Completed),
+            "{:?}",
+            runtime.task_failure(task)
+        );
+        assert_eq!(runtime.resources().resource_count(), 0);
+    }
+
+    #[test]
+    fn loaded_frame_info_and_release_run_without_capture_capability() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(16, 12));
+        runtime
+            .set_allowed_capabilities(&["core.task".into(), "vision.template".into()])
+            .unwrap();
+        let metadata = FrameMetadata {
+            width: 16,
+            height: 12,
+            row_stride: 64,
+            pixel_stride: 4,
+            format: FrameFormat::Rgba8888,
+            rotation: Rotation::Degrees0,
+            timestamp_nanos: 0,
+            snapshot_id: 1,
+        };
+        runtime
+            .frame_pool()
+            .lock()
+            .unwrap()
+            .register_template(
+                "assets/images/public.png",
+                metadata,
+                Arc::from([50, 60, 70, 255].repeat(16 * 12)),
+            )
+            .unwrap();
+        let task = runtime
+            .start_entry_chunk(
+                br"return function()
+            local f=Screen.loadImage('assets/images/public.png')
+            public_frame_info=Screen.frameInfo(f)
+            Screen.release(f)
+            public_released_rejected=not pcall(Screen.frameInfo,f)
+            public_capture_rejected=not pcall(Screen.capture)
+        end",
+                "owned-frame-no-capture",
+            )
+            .unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(
+            runtime.task_state(task),
+            Some(TaskState::Completed),
+            "{:?}",
+            runtime.task_failure(task)
+        );
+        let LuaScalar::Bytes(info) = runtime.lua().global_scalar("public_frame_info").unwrap()
+        else {
+            panic!("frame info must be JSON")
+        };
+        let info: serde_json::Value = serde_json::from_slice(&info).unwrap();
+        assert_eq!(info["width"], 16);
+        assert_eq!(info["height"], 12);
+        assert_eq!(info["hasScreenOrigin"], false);
+        assert_eq!(
+            runtime
+                .lua()
+                .global_scalar("public_released_rejected")
+                .unwrap(),
+            LuaScalar::Boolean(true)
+        );
+        assert_eq!(
+            runtime
+                .lua()
+                .global_scalar("public_capture_rejected")
+                .unwrap(),
+            LuaScalar::Boolean(true)
+        );
+        assert_eq!(runtime.resources().resource_count(), 0);
+    }
+
+    #[test]
+    fn frame_tools_execute_through_real_lua_and_never_map_file_images() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = executor(&clock, VirtualHost::new(2, 2));
+        let frames = runtime.frame_pool();
+        let mut pool = frames.lock().unwrap();
+        let metadata = FrameMetadata {
+            width: 2,
+            height: 2,
+            row_stride: 8,
+            pixel_stride: 4,
+            format: FrameFormat::Rgba8888,
+            rotation: Rotation::Degrees0,
+            timestamp_nanos: 10,
+            snapshot_id: 1,
+        };
+        let pixels = [10, 20, 30, 255].repeat(4);
+        let first = pool.publish_capture(metadata, &pixels).unwrap();
+        let second = pool
+            .publish_capture(
+                FrameMetadata {
+                    timestamp_nanos: 20,
+                    ..metadata
+                },
+                &pixels,
+            )
+            .unwrap();
+        pool.register_template("assets/images/public.png", metadata, Arc::from(pixels))
+            .unwrap();
+        drop(pool);
+        let source = format!(
+            r#"return function()
+            local a=Screen.cache({});local b=Screen.cache({});
+            local comparison=Screen.compareFrames(b,a,'{{"region":{{"left":0,"top":0,"right":2,"bottom":2}},"tolerance":0}}')
+            fresh_result=tonumber(Screen.recognitionValue(comparison,'FRAME_DIFF',0,'fresh'))
+            local c=Screen.transform(b,'{{"mode":"flipX","width":0,"height":0}}')
+            local point=Screen.mapPoint(c,0,0);mapped_result=tonumber(Screen.recognitionValue(point,'SCREEN_POINT',0,'x'))
+            Screen.release(a);Screen.release(b);Screen.release(c)
+            local f=Screen.loadImage('assets/images/public.png')
+            local processed=Screen.transform(f,'{{"mode":"gray","width":0,"height":0}}')
+            local ok=pcall(Screen.mapPoint,processed,0,0);file_was_rejected=not ok;Screen.release(processed)
+            local matches=Screen.findScaled(f,f,'{{"region":{{"left":0,"top":0,"right":2,"bottom":2}},"tolerance":0,"similarityPermille":1000,"direction":0,"range":{{"minPermille":1000,"maxPermille":1000,"stepPermille":100}}}}')
+            scale_result=tonumber(Screen.recognitionValue(matches,'SCALED_IMAGE',1,'scalePermille'));Screen.release(f)
+        end"#,
+            first.0, second.0
+        );
+        let task = runtime
+            .start_entry_chunk(source.as_bytes(), "public-frame-tools")
+            .unwrap();
+        runtime.drive().unwrap();
+        assert_eq!(
+            runtime.task_state(task),
+            Some(TaskState::Completed),
+            "{:?}",
+            runtime.task_failure(task)
+        );
+        assert_eq!(
+            runtime.lua().global_scalar("fresh_result").unwrap(),
+            LuaScalar::Integer(1)
+        );
+        assert_eq!(
+            runtime.lua().global_scalar("mapped_result").unwrap(),
+            LuaScalar::Integer(1)
+        );
+        assert_eq!(
+            runtime.lua().global_scalar("file_was_rejected").unwrap(),
+            LuaScalar::Boolean(true)
+        );
+        assert_eq!(
+            runtime.lua().global_scalar("scale_result").unwrap(),
+            LuaScalar::Integer(1000)
+        );
+        assert_eq!(runtime.resources().resource_count(), 0);
     }
 
     #[test]

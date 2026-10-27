@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14400,
+  "name": "Path.name",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "纯路径处理，不读磁盘；仅项目data格式的相对路径，返回末段名称；空路径返回空文本。拒绝绝对路径、上级跳转、隐藏段及非法字符。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "相对路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "纯路径处理，不读磁盘；仅项目data格式的相对路径，返回末段名称；空路径返回空文本。拒绝绝对路径、上级跳转、隐藏段及非法字符。"
+  },
+  "legacyAliases": []
+}

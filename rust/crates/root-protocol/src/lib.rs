@@ -2,7 +2,10 @@
 
 use sha2::{Digest, Sha256};
 
+pub mod capture_pipeline;
+pub mod capture_region;
 pub mod recording;
+pub use capture_pipeline::CapturePipelineCompletion;
 
 #[cfg(test)]
 mod auth_benchmark;
@@ -30,6 +33,19 @@ impl Capabilities {
     pub const CAPTURE_TRANSFER_TIMINGS: u64 = 1 << 10;
     pub const CAPTURE_CONTROL_DETAILS: u64 = 1 << 11;
     pub const INPUT_RECORDING_TIMED: u64 = 1 << 12;
+    pub const INPUT_FAILURE_DETAILS: u64 = 1 << 13;
+    pub const CAPTURE_PIPELINED: u64 = 1 << 14;
+    pub const CAPTURE_REGION: u64 = 1 << 15;
+    pub const CAPTURE_REGION_REQUIREMENTS: u64 = Self::CAPTURE_REGION
+        | Self::CAPTURE_RAW
+        | Self::CAPTURE_STREAM
+        | Self::CAPTURE_STAGE_TIMINGS
+        | Self::CAPTURE_TRANSFER_TIMINGS;
+    pub const CAPTURE_PIPELINE_REQUIREMENTS: u64 = Self::CAPTURE_PIPELINED
+        | Self::CAPTURE_RAW
+        | Self::CAPTURE_STREAM
+        | Self::CAPTURE_STAGE_TIMINGS
+        | Self::CAPTURE_TRANSFER_TIMINGS;
 
     #[must_use]
     pub const fn from_bits(bits: u64) -> Self {
@@ -136,6 +152,44 @@ pub enum CaptureFailure {
     InvalidFrame = 5,
     IdExhausted = 6,
     ControlUnavailable = 7,
+}
+
+/// Fixed input diagnostics, negotiated independently of capture diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum InputFailure {
+    Deadline = 1,
+    ProcessStart = 2,
+    ProcessExit = 3,
+    BridgeTransport = 4,
+    InjectionRejected = 5,
+    ControlUnavailable = 6,
+}
+
+impl InputFailure {
+    #[must_use]
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        match u32::from_le_bytes(bytes.try_into().ok()?) {
+            1 => Some(Self::Deadline),
+            2 => Some(Self::ProcessStart),
+            3 => Some(Self::ProcessExit),
+            4 => Some(Self::BridgeTransport),
+            5 => Some(Self::InjectionRejected),
+            6 => Some(Self::ControlUnavailable),
+            _ => None,
+        }
+    }
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Deadline => "ROOT_INPUT_DEADLINE",
+            Self::ProcessStart => "ROOT_INPUT_PROCESS_START",
+            Self::ProcessExit => "ROOT_INPUT_PROCESS_EXIT",
+            Self::BridgeTransport => "ROOT_INPUT_BRIDGE_TRANSPORT",
+            Self::InjectionRejected => "ROOT_INPUT_INJECTION_REJECTED",
+            Self::ControlUnavailable => "ROOT_INPUT_CONTROL_UNAVAILABLE",
+        }
+    }
 }
 
 impl CaptureFailure {
@@ -324,11 +378,22 @@ pub enum ProtocolError {
     InvalidCommandPayload(Command),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecureChannel {
     key: [u8; 32],
     next_send_sequence: u64,
     next_receive_sequence: u64,
+}
+
+impl std::fmt::Debug for SecureChannel {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SecureChannel")
+            .field("key", &"[REDACTED]")
+            .field("next_send_sequence", &self.next_send_sequence)
+            .field("next_receive_sequence", &self.next_receive_sequence)
+            .finish()
+    }
 }
 
 impl SecureChannel {
@@ -558,16 +623,35 @@ fn validate_command_payload(
             StatusCode::BackendFailure,
             Command::Capture | Command::CaptureStream,
         ) => payload.is_empty() || CaptureFailure::decode(payload).is_some(),
+        (
+            FrameKind::Response,
+            StatusCode::BackendFailure | StatusCode::BackendUnavailable,
+            Command::Tap
+            | Command::Swipe
+            | Command::KeyEvent
+            | Command::PointerDown
+            | Command::PointerMove
+            | Command::PointerUp,
+        ) => payload.is_empty() || InputFailure::decode(payload).is_some(),
         (FrameKind::Response, StatusCode::Ok, Command::CaptureChunk) => !payload.is_empty(),
         (FrameKind::Response, StatusCode::Ok, Command::CaptureStream) => {
             matches!(payload.first(), Some(0)) && matches!(payload.len(), 49 | 97)
+                || matches!(payload.first(), Some(5))
+                    && matches!(payload.len(), 81 | 129)
+                    && capture_region::CaptureRegionMetadata::decode(&payload[payload.len() - 32..])
+                        .is_some()
+                || matches!(payload.first(), Some(3)) && payload.len() == 49
                 || matches!(payload.first(), Some(1))
                     && payload.len() > 5
                     && payload.len() <= 60 * 1024 + 5
                 || CaptureTransferSummary::decode(payload).is_some()
+                || CapturePipelineCompletion::decode(payload).is_some()
         }
         (FrameKind::Request, StatusCode::Ok, Command::RecordingStart) => {
             recording::RecordingConfig::decode(payload).is_ok()
+        }
+        (FrameKind::Request, StatusCode::Ok, Command::CaptureStream) => {
+            payload.is_empty() || capture_region::CaptureRegionRequest::decode(payload).is_some()
         }
         (FrameKind::Request, StatusCode::Ok, Command::RecordingFinish) => {
             recording::RecordingFinish::decode(payload).is_ok()
@@ -578,11 +662,7 @@ fn validate_command_payload(
         (
             FrameKind::Request,
             StatusCode::Ok,
-            Command::GetWindowBounds
-            | Command::Ping
-            | Command::Shutdown
-            | Command::Capture
-            | Command::CaptureStream,
+            Command::GetWindowBounds | Command::Ping | Command::Shutdown | Command::Capture,
         )
         | (FrameKind::Response, _, _) => payload.is_empty(),
         (FrameKind::Request, _, _) => false,
@@ -753,11 +833,31 @@ mod tests {
                 Command::Tap,
                 2,
                 StatusCode::BackendFailure,
-                &1_u32.to_le_bytes()
+                &7_u32.to_le_bytes()
             )
             .is_err());
     }
     use super::StatusCode;
+    #[test]
+    fn input_failure_payloads_are_fixed_and_never_allowed_on_success_or_other_commands() {
+        let mut sender = SecureChannel::new([142; 32]).unwrap();
+        for code in 1_u32..=6 {
+            let bytes = code.to_le_bytes();
+            assert!(super::InputFailure::decode(&bytes).is_some());
+            assert!(sender
+                .encode_response(Command::Tap, 2, StatusCode::BackendUnavailable, &bytes)
+                .is_ok());
+            assert!(sender
+                .encode_response(Command::Tap, 2, StatusCode::Ok, &bytes)
+                .is_err());
+            assert!(sender
+                .encode_response(Command::Ping, 2, StatusCode::BackendFailure, &bytes)
+                .is_err());
+        }
+        for bytes in [&[0, 0, 0, 0][..], &[7, 0, 0, 0], &[1], &[1, 0, 0, 0, 0]] {
+            assert!(super::InputFailure::decode(bytes).is_none());
+        }
+    }
     use super::{
         hmac_sha256, Capabilities, Command, HandshakeError, Hello, PeerIdentity, ProtocolError,
         SecureChannel, PROTOCOL_VERSION,
@@ -977,6 +1077,42 @@ mod tests {
                 0x2e, 0x32, 0xcf, 0xf7,
             ]
         );
+    }
+
+    #[test]
+    fn hmac_matches_rfc_4231_multiblock_and_long_key_vectors() {
+        let cases: &[(&[u8], &[u8], &str)] = &[
+            (
+                b"Jefe",
+                b"what do ya want for nothing?",
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+            ),
+            (
+                &[0xaa; 20],
+                &[0xdd; 50],
+                "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe",
+            ),
+            (
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First",
+                "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+            ),
+        ];
+        for &(key, message, expected) in cases {
+            use std::fmt::Write;
+            let mut actual = String::with_capacity(64);
+            for byte in hmac_sha256(key, message) {
+                write!(actual, "{byte:02x}").unwrap();
+            }
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn channel_debug_never_formats_session_key() {
+        let channel = SecureChannel::new([173; 32]).unwrap();
+        assert_eq!(format!("{channel:?}"),
+            "SecureChannel { key: \"[REDACTED]\", next_send_sequence: 1, next_receive_sequence: 1 }");
     }
 
     #[test]

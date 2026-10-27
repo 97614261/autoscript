@@ -107,6 +107,10 @@ internal object ProviderAcceptanceFixture {
                         store.clearSelection(kind, ::checkpoint)
                         val imported = store.import({ context.assets.open(asset) }, ::checkpoint)
                         check(imported.descriptor.kind == kind && store.selectionId(kind, ::checkpoint) == null)
+                        check(imported.descriptor.componentVersion == NativeVisionSpi.VERSION && imported.descriptor.spiVersion == NativeVisionSpi.VERSION)
+                        report.put("${kind.id}Component", JSONObject().put("sha256", imported.sha256)
+                            .put("componentVersion", imported.descriptor.componentVersion).put("spiVersion", imported.descriptor.spiVersion)
+                            .put("models", JSONArray(imported.descriptor.models.map { it.sha256 })))
                         store.select(kind, imported.sha256, ::checkpoint)
                         check(store.selected(kind, ::checkpoint)?.sha256 == imported.sha256)
                         verified = imported
@@ -145,8 +149,17 @@ internal object ProviderAcceptanceFixture {
                     }
                 }
                 val source = object : NativeVisionBackendSource {
-                    override fun resolve(operation: Int, work: NativeVisionWork): NativeVisionBackend = requireNotNull(loaded[operation])
+                    override fun resolve(operation: Int, work: NativeVisionWork): NativeVisionBackend = requireNotNull(loaded[if(operation in setOf(5108,5109)) 5108 else 6101])
                     override fun close() { loaded.values.forEach { it.close() } }
+                }
+                case("v2-external-orb-and-fixed-v5-with-v4-preserved") {
+                    check(loaded.values.all { it.spiVersion == NativeVisionSpi.VERSION })
+                    val expansion = androidRuntimeVisionResolver(isolated).use { resolver ->
+                        listOf("opencv", "onnx").forEachIndexed { index, kind -> resolver.prepare(kind, NativeVisionWork(950_000L + index)) }
+                        CapabilityVisionAcceptanceFixture.run(context, resolver)
+                    }
+                    report.put("extensionResults", expansion)
+                    check(expansion.optBoolean("pass")) { "PROVIDER_EXTENSIONS_FAILED" }
                 }
                 NativeVisionAdapter(source).use { adapter ->
                     val frame = Bitmap.createBitmap(96, 64, Bitmap.Config.ARGB_8888)

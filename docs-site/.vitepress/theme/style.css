@@ -1,0 +1,69 @@
+:root {
+  --vt-c-brand: #7650cc;
+  --vt-c-brand-light: #9470e3;
+  --vt-c-brand-dark: #6540b6;
+  --vt-c-brand-highlight: #7650cc;
+  --vt-c-green: #7650cc;
+  --vt-c-green-light: #9470e3;
+  --vt-c-green-lighter: #ac8bf1;
+  --vt-c-green-dark: #6540b6;
+  --vt-c-green-darker: #4e2d93;
+  --zg-muted: #777381;
+  --zg-border: #e9e6ee;
+  --zg-tint: #f8f6fc;
+  --zg-gradient: linear-gradient(115deg, #7251d1 12%, #be63cb 65%, #e786ac);
+}
+.dark {
+  --vt-c-brand: #bca1f5;
+  --vt-c-brand-light: #cfb8ff;
+  --vt-c-brand-dark: #a582ed;
+  --vt-c-green: #bca1f5;
+  --vt-c-green-light: #cfb8ff;
+  --vt-c-green-dark: #a582ed;
+  --zg-muted: #a6a0b1;
+  --zg-border: #35313e;
+  --zg-tint: #25222c;
+}
+html body { min-width: 0; overflow-wrap: anywhere; }
+a, button, input { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--vt-c-brand); outline-offset: 4px; }
+.zhigou-nav-logo { object-fit: contain; margin-right: 8px; }
+.zhigou-nav-name { font-size: 19px; font-weight: 700; letter-spacing: 1px; }
+.zhigou-nav-label { font-size: 12px; padding-left: 11px; margin-left: 11px; border-left: 1px solid var(--zg-border); color: var(--zg-muted); }
+.zhigou-sidebar-search { display: block; padding: 9px 12px; margin: 8px 0 22px; border: 1px solid var(--zg-border); border-radius: 7px; color: var(--zg-muted); font-size: 12px; }
+.zhigou-sidebar-search:hover { color: var(--vt-c-brand); border-color: var(--vt-c-brand); }
+.api-eyebrow { color: var(--zg-muted); font-size: 12px; }
+.api-catalog { margin-top: 24px; }
+.catalog-search { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1px solid var(--zg-border); border-radius: 9px; background: var(--vt-c-bg-soft); }
+.catalog-search:focus-within { border-color: var(--vt-c-brand); box-shadow: 0 0 0 3px #9b76db12; }
+.catalog-search > span:first-child { font-size: 22px; line-height: 1; color: var(--zg-muted); }
+.catalog-search input { background: transparent; border: 0; color: inherit; min-width: 0; width: 100%; font: inherit; font-size: 12px; outline: 0; }
+.catalog-search input:focus-visible { outline: 0; }
+.catalog-total { flex: 0 0 auto; font-size: 9px; color: var(--zg-muted); white-space: nowrap; }
+.catalog-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 15px 0 21px; }
+.catalog-filters button { border: 1px solid var(--zg-border); border-radius: 5px; padding: 4px 8px; font-size: 10px; line-height: 1.8; cursor: pointer; }
+.catalog-filters button span { margin-left: 4px; opacity: .55; font-size: 9px; }
+.catalog-filters button[aria-pressed=true] { background: var(--vt-c-brand); border-color: transparent; color: var(--vt-c-bg); }
+.catalog-results-heading { display: flex; justify-content: space-between; gap: 12px; color: var(--zg-muted); font-size: 11px; padding-bottom: 8px; }
+.catalog-results-heading button, .catalog-empty button { color: var(--vt-c-brand); cursor: pointer; }
+.vt-doc .catalog-list { list-style: none; padding: 0; margin: 0; }
+.vt-doc .catalog-list li { margin: 0; border-top: 1px solid var(--zg-border); }
+.vt-doc .catalog-list a { display: block; position: relative; padding: 14px 24px 13px 0; text-decoration: none; color: inherit; font-weight: normal; }
+.catalog-name { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.vt-doc .catalog-name code { background: none; padding: 0; font-size: 12px; color: var(--vt-c-brand); font-weight: 600; }
+.catalog-name > span { color: var(--zg-muted); font-size: 9px; }
+.vt-doc .catalog-list p { font-size: 11px; line-height: 1.75; margin: 5px 0 0; color: var(--zg-muted); }
+.catalog-arrow { position: absolute; right: 0; top: 14px; color: var(--zg-muted); font-size: 12px; }
+.catalog-list a:hover .catalog-arrow { color: var(--vt-c-brand); }
+.catalog-empty { text-align: center; padding: 36px 10px; border: 1px dashed var(--zg-border); border-radius: 8px; font-size: 12px; }
+.vt-doc .catalog-empty h2 { margin: 0 0 12px; padding: 0; border: 0; font-size: 16px; }
+.vt-doc table { font-size: 12px; }
+.vt-doc th, .vt-doc td { padding: 9px 12px; vertical-align: top; }
+.vt-doc details { border: 1px solid var(--zg-border); padding: 12px 16px; border-radius: 7px; margin-top: 22px; font-size: 12px; }
+.vt-doc summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 767px) {
+  .catalog-total { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+}

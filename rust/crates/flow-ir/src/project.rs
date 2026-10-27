@@ -633,8 +633,7 @@ fn validate_debug_settings(settings: &ProjectDebugSettings) -> Result<(), Projec
     if !matches!(
         filters.variable_type.as_str(),
         "all" | "integer" | "number" | "string" | "image"
-    ) || filters.variable_name != "all"
-        && (filters.variable_name.len() > 64 || !valid_identifier(&filters.variable_name))
+    ) || filters.variable_name != "all" && !crate::valid_user_name(&filters.variable_name)
     {
         return Err(ProjectManifestError::InvalidDebugSettings);
     }
@@ -654,7 +653,7 @@ fn validate_variables(manifest: &ProjectManifest) -> Result<(), ProjectManifestE
         .collect::<HashSet<_>>();
     let mut declarations = HashSet::with_capacity(manifest.variables.len());
     for variable in &manifest.variables {
-        if variable.name.len() > 64 || !valid_identifier(&variable.name) {
+        if !crate::valid_user_name(&variable.name) {
             return Err(ProjectManifestError::InvalidVariable(variable.name.clone()));
         }
         let key = match variable.scope {
@@ -957,7 +956,7 @@ fn validate_flows(
         }
         let mut parameters = HashSet::with_capacity(flow.params.len());
         for parameter in &flow.params {
-            if !valid_identifier(&parameter.name) {
+            if !crate::valid_user_name(&parameter.name) {
                 return Err(ProjectManifestError::InvalidParameter(
                     parameter.name.clone(),
                 ));

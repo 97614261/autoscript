@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -27,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -57,37 +63,72 @@ internal fun FunctionLibraryDialog(
     onInsert: (String) -> Unit,
     initialGroup: String? = null,
     documentationOnly: Boolean = false,
+    onInsertWithCompletion: ((String, () -> Unit) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    var usage by remember { mutableStateOf(readFunctionUsage(context)) }
+    var collection by rememberSaveable { mutableStateOf("all") }
+    var usageMessage by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(context) {
+        val prefs = functionUsagePreferences(context)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == FUNCTION_USAGE_KEY) usage = readFunctionUsage(context)
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    fun requestInsert(entry: FunctionLibraryEntry) {
+        if (!entry.canInsert) return
+        val submit = onInsertWithCompletion
+        if (submit == null) onInsert(entry.snippet) else {
+            var recorded = false
+            submit(entry.snippet) {
+                if (!recorded) {
+                    recorded = true
+                    entry.blockKind?.let { kind -> updateFunctionUsage(context) { it.used(kind) } }
+                }
+            }
+        }
+    }
     var apiReference by rememberSaveable { mutableStateOf(false) }
     val visibleGroups = if (documentationOnly && apiReference) FunctionCatalog.apiGroups() else groups
     var category by rememberSaveable(initialGroup) { mutableStateOf(initialGroup) }
     var query by rememberSaveable { mutableStateOf("") }
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val activeCategory = category?.takeIf { label -> visibleGroups.any { it.label == label } }
-    val matched = remember(visibleGroups, query, activeCategory) { FunctionCatalog.search(visibleGroups, query, activeCategory) }
+    val matched = remember(visibleGroups, query, activeCategory, collection, usage) {
+        val matches = FunctionCatalog.search(visibleGroups, query, activeCategory)
+        val keys = when (collection) { "favorites" -> usage.favorites; "recent" -> usage.recent; else -> null }
+        if (keys == null || apiReference) matches else matches.filter { it.second.blockKind in keys }
+            .sortedBy { keys.indexOf(it.second.blockKind) }
+    }
     // Search/category changes start at the first result. Opening/closing details keeps this instance.
-    val resultScroll = remember(apiReference, activeCategory, query) { LazyListState() }
+    val resultScroll = remember(apiReference, activeCategory, query, collection) { LazyListState() }
     val selected = visibleGroups.flatMap { it.entries }.firstOrNull { it.libraryKey() == selectedKey }
     val screenHeight = LocalConfiguration.current.screenHeightDp
     val panelHeight = functionLibraryHeightDp(screenHeight, matched.size).dp
     var fullScreen by rememberSaveable { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
+        val short = studioShortViewport(maxHeight.value)
+        val availableHeight = studioPanelMaxHeight(maxHeight.value, screenHeight, if (short) 8 else 24).dp
         Surface(
-            modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 680.dp).fillMaxWidth(.94f).height(panelHeight),
+            modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 680.dp).fillMaxWidth(.96f)
+                .height(minOf(if (short) availableHeight else panelHeight, availableHeight)),
             color = Color.White,
             shape = RoundedCornerShape(if (fullScreen) 0.dp else 6.dp),
             shadowElevation = 10.dp,
         ) {
             Column {
                 Row(
-                    Modifier.fillMaxWidth().height(44.dp).padding(start = 14.dp),
+                    Modifier.fillMaxWidth().height(if (short) 32.dp else 44.dp).padding(start = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(if (documentationOnly) "函数文档" else "函数库", color = AutoScriptPalette.Accent, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(if (documentationOnly) "函数文档" else "函数库", color = AutoScriptPalette.Accent, fontSize = if (short) 13.sp else 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     Text("${visibleGroups.sumOf { it.entries.size }} 项", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp)
-                    StudioPanelFullScreenButton(fullScreen, { fullScreen = !fullScreen })
-                    LibraryControl("×", "关闭函数库", Modifier.width(44.dp).fillMaxHeight(), onClick = onDismiss)
+                    StudioPanelFullScreenButton(fullScreen, { fullScreen = !fullScreen }, compact = short)
+                    LibraryControl("×", if (documentationOnly) "关闭函数文档" else "关闭函数库", Modifier.width(44.dp).fillMaxHeight(), onClick = onDismiss)
                 }
                 LibraryDivider()
                 if (documentationOnly) Row(Modifier.fillMaxWidth().height(32.dp)) {
@@ -99,8 +140,8 @@ internal fun FunctionLibraryDialog(
                     }
                 }
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)
-                        .heightIn(min = 34.dp).background(Color(0xFFF5F7FB), RoundedCornerShape(4.dp))
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = if (short) 3.dp else 7.dp)
+                        .heightIn(min = if (short) 28.dp else 34.dp).background(Color(0xFFF5F7FB), RoundedCornerShape(4.dp))
                         .border(1.dp, AutoScriptPalette.DividerSoft, RoundedCornerShape(4.dp)),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -120,6 +161,16 @@ internal fun FunctionLibraryDialog(
                     if (query.isNotEmpty()) LibraryControl("×", "清空搜索", Modifier.width(34.dp).height(34.dp)) { query = "" }
                 }
                 LibraryDivider()
+                if (!apiReference) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 28.dp)) {
+                        listOf("all" to "全部", "favorites" to "收藏", "recent" to "最近使用").forEach { (key, label) ->
+                            LibraryControl(label, label, Modifier.weight(1f).heightIn(min = 28.dp), accent = collection == key) {
+                                collection = key; category = null; usageMessage = null
+                            }
+                        }
+                    }
+                    usageMessage?.let { Text(it, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(horizontal = 10.dp)) }
+                }
                 Row(Modifier.weight(1f)) {
                     LazyColumn(Modifier.width(FUNCTION_LIBRARY_CATEGORY_WIDTH_DP.dp).fillMaxHeight().background(Color(0xFFF7F8FA))) {
                         item {
@@ -133,7 +184,12 @@ internal fun FunctionLibraryDialog(
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         if (matched.isEmpty()) {
                             Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) {
-                                Text("没有匹配函数\n试试中文用途或英文 API", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp)
+                                Text(when {
+                                    collection == "favorites" && usage.favorites.isEmpty() -> "暂无收藏\n点函数旁的☆收藏常用项"
+                                    collection == "recent" && usage.recent.isEmpty() -> "还没有加入记录\n实际加入积木后会显示在这里"
+                                    documentationOnly -> "没有匹配条目\n试试中文用途或英文 API"
+                                    else -> "没有匹配积木\n试试中文用途或英文 API"
+                                }, color = AutoScriptPalette.TextSecondary, fontSize = 12.sp)
                             }
                         } else {
                             LazyColumn(
@@ -151,26 +207,34 @@ internal fun FunctionLibraryDialog(
                                         entry = entry,
                                         capabilities = capabilities,
                                         onDetail = { selectedKey = entry.libraryKey() },
-                                        onInsert = { if (entry.canInsert) onInsert(entry.snippet) },
+                                        onInsert = { requestInsert(entry) },
                                         documentationOnly = documentationOnly,
+                                        favorite = entry.blockKind?.let { it in usage.favorites } == true,
+                                        onFavorite = entry.blockKind?.let { kind -> {
+                                            usageMessage = if (kind !in usage.favorites && usage.favorites.size >= 64) "最多收藏64项，请先取消不常用的收藏" else null
+                                            updateFunctionUsage(context) { it.toggle(kind) }
+                                        } },
                                     )
                                 }
                             }
                         }
                     }
                 }
+                if (!short) {
                 LibraryDivider()
                 Box(Modifier.fillMaxWidth().height(30.dp), contentAlignment = Alignment.Center) {
                     Text("${matched.size} 项 · " + if (documentationOnly) "点名称查看说明；不修改项目" else "点名称看详情，点加入添加",
                         color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, style = LibraryCenteredText)
                 }
+                }
             }
+        }
         }
     }
     selected?.let { entry ->
         FunctionLibraryDetailDialog(entry, capabilities, onDismiss = { selectedKey = null }, documentationOnly = documentationOnly) {
             selectedKey = null
-            if (entry.canInsert) onInsert(entry.snippet)
+            requestInsert(entry)
         }
     }
 }
@@ -212,8 +276,10 @@ private fun LibraryFunctionRow(
     onDetail: () -> Unit,
     onInsert: () -> Unit,
     documentationOnly: Boolean,
+    favorite: Boolean = false,
+    onFavorite: (() -> Unit)? = null,
 ) {
-    val missing = entry.requiredCapabilities - capabilities
+    val missing = BlockCatalog.missingCapabilities(entry.blockKind ?: entry.apiName, entry.requiredCapabilities, capabilities)
     Row(
         Modifier.fillMaxWidth().heightIn(min = 32.dp)
             .background(Color(0xFFFAFBFD), RoundedCornerShape(4.dp))
@@ -233,10 +299,9 @@ private fun LibraryFunctionRow(
             overflow = TextOverflow.Ellipsis,
             style = LibraryCenteredText,
         )
-        LibraryControl(
-            "详情", "查看${entry.title}详情", Modifier.width(38.dp).height(28.dp),
-            onClick = onDetail,
-        )
+        if (onFavorite != null) LibraryControl(if (favorite) "★" else "☆",
+            if (favorite) "取消收藏${entry.title}" else "收藏${entry.title}", Modifier.width(28.dp).height(28.dp),
+            accent = favorite, onClick = onFavorite)
         if (!documentationOnly && entry.canInsert) LibraryControl(
             if (missing.isEmpty()) "加入" else "未启用",
             "加入${entry.title}",
@@ -252,7 +317,7 @@ private fun LibraryFunctionRow(
 @Composable
 private fun FunctionLibraryDetailDialog(entry: FunctionLibraryEntry, capabilities: Set<String>, onDismiss: () -> Unit,
     documentationOnly: Boolean, onInsert: () -> Unit) {
-    val missing = entry.requiredCapabilities - capabilities
+    val missing = BlockCatalog.missingCapabilities(entry.blockKind ?: entry.apiName, entry.requiredCapabilities, capabilities)
     val height = (190 + entry.parameterInfo.size * 44 + if (entry.notes.isEmpty()) 40 else 90)
         .coerceIn(330, 540).coerceAtMost((LocalConfiguration.current.screenHeightDp - 48).coerceAtLeast(160)).dp
     var fullScreen by remember { mutableStateOf(false) }
@@ -302,16 +367,16 @@ private fun FunctionLibraryDetailDialog(entry: FunctionLibraryEntry, capabilitie
                                 color = AutoScriptPalette.TextSecondary, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(8.dp)) }
                         }
                         Text(if (documentationOnly) "在编辑器的函数库中配置并加入此积木；这里仅查看说明，不修改项目。"
-                            else "加入使用现有可视化积木配置流程；变量、图像和判断会打开对应参数面板。", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp)
+                            else "加入使用现有可视化积木配置流程；变量、图像和条件会打开对应参数面板。", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp)
                     }
                 }
                 if (!documentationOnly && entry.canInsert && missing.isNotEmpty()) Text("无法加入：项目未声明 ${missing.joinToString("、")}", color = AutoScriptPalette.Danger, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp))
                 LibraryDivider()
                 Row(Modifier.fillMaxWidth().height(42.dp)) {
-                    LibraryControl("返回", "返回函数库", Modifier.weight(1f).fillMaxHeight(), onClick = onDismiss)
+                    LibraryControl("返回", if (documentationOnly) "返回函数文档" else "返回函数库", Modifier.weight(1f).fillMaxHeight(), onClick = onDismiss)
                     if (!documentationOnly && entry.canInsert) {
                         Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))
-                        LibraryControl("配置 / 加入", "加入函数", Modifier.weight(1f).fillMaxHeight(),
+                        LibraryControl("配置 / 加入", "加入积木", Modifier.weight(1f).fillMaxHeight(),
                             enabled = missing.isEmpty(), accent = true, onClick = onInsert)
                     }
                 }
@@ -323,7 +388,8 @@ private fun FunctionLibraryDetailDialog(entry: FunctionLibraryEntry, capabilitie
 @Composable
 private fun LibraryControl(label: String, description: String, modifier: Modifier, enabled: Boolean = true, accent: Boolean = false, onClick: () -> Unit) {
     val fontSize = if (label == "×") 23.sp else 13.sp
-    Box(modifier.clickable(enabled = enabled, onClickLabel = description, onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(modifier.semantics { if (label == "×") contentDescription = description }
+        .clickable(enabled = enabled, onClickLabel = description, onClick = onClick), contentAlignment = Alignment.Center) {
         Text(label, color = if (!enabled) AutoScriptPalette.TextSecondary else if (accent) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary,
             fontSize = fontSize, lineHeight = fontSize, style = LibraryCenteredText)
     }

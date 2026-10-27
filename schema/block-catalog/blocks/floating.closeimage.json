@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.closeimage",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.closeimage/1/floating.closeimage.schema.json",
+  "title": "关闭交互图片浮窗",
+  "category": "variable",
+  "summary": "关闭命名交互图片浮窗，清理其排队事件并唤醒等待者返回closed。与触摸穿透浮窗分开管理，停止自动清理。",
+  "searchTerms": [
+    "浮窗",
+    "图片",
+    "点击",
+    "拖动",
+    "Floating.closeImage"
+  ],
+  "requiredCapabilities": [
+    "ui.floating.interactive"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "image_button"
+    },
+    {
+      "path": "nameVariable",
+      "label": "浮窗名称来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

@@ -8,7 +8,7 @@ class VisualFrameResourceDialogTest {
     @Test fun allResourceBlocksHaveTypedSelectorsAndRealCatalogEntries() {
         frameResourceKinds.forEach {kind ->
             val contract=requireNotNull(BlockCatalog.find(kind))
-            val inputs=blockPropertyTexts(contract,JsonObject())
+            val inputs=blockPropertyTexts(contract,JsonObject()).let {if(kind=="screen.frameinfo") it+mapOf("frameVariable" to "frame","resultVariable" to "series") else it}
             if (kind == "screen.loadimage") return@forEach
             assertNull(kind,frameResourceArgumentError(kind,inputs,variables))
             assertNotNull(parseBlockArguments(contract,inputs,null,emptyMap(),emptyList()).first)
@@ -31,5 +31,22 @@ class VisualFrameResourceDialogTest {
         val series=blockPropertyTexts(requireNotNull(BlockCatalog.find("screen.series")),JsonObject())
         assertNotNull(frameResourceArgumentError("screen.series",series+("maxFrames" to "121"),variables))
         assertNotNull(frameResourceArgumentError("screen.series",series+("allowPartial" to "1"),variables))
+    }
+    @Test fun explicitSharedFrameCaptureAndReleaseRequireDeclaredImageVariables() {
+        for(kind in listOf("screen.capture","screen.release")) {
+            val key=if(kind=="screen.capture") "resultVariable" else "frameVariable"
+            assertNull(frameResourceArgumentError(kind,mapOf(key to "frame"),variables))
+            assertNotNull(frameResourceArgumentError(kind,mapOf(key to "series"),variables))
+            assertNotNull(frameResourceArgumentError(kind,mapOf(key to "missing"),variables))
+        }
+    }
+    @Test fun regionCaptureNeedsOnlyExplicitBoundsAndDeclaredImage() {
+        val contract=requireNotNull(BlockCatalog.find("screen.captureregion"))
+        val inputs=blockPropertyTexts(contract,JsonObject())
+        assertNull(frameResourceArgumentError(contract.kind,inputs,variables))
+        for(change in listOf("resultVariable" to "series","left" to "-1","right" to "0","bottom" to "16385"))
+            assertNotNull(frameResourceArgumentError(contract.kind,inputs+change,variables))
+        assertEquals(setOf("screen.capture"),contract.requiredCapabilities)
+        assertTrue(contract.properties.none {it.path=="frameVariable" || it.path=="sourceVariable"})
     }
 }

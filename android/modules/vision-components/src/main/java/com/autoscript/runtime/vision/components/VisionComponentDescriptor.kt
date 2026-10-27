@@ -31,10 +31,15 @@ enum class VisionComponentKind(val id: String, val sdkVersion: String, val provi
 
 class VisionComponentCompatibilityException : IllegalArgumentException("VISION_COMPONENT_INCOMPATIBLE")
 
-data class VisionComponentDescriptor(val kind: VisionComponentKind, val abis: Set<String>) {
+data class VisionComponentDescriptor(val kind: VisionComponentKind, val abis: Set<String>, val componentVersion: Int = 1) {
+    val spiVersion: Int get() = componentVersion
+    val models: List<VisionComponentModel> get() = if (kind != VisionComponentKind.ONNX) emptyList() else
+        listOf(VisionComponentModel(MODEL_PATH, "model.onnx", NativeVisionSpi.MODEL_BYTES, NativeVisionSpi.MODEL_SHA256)) +
+            if (componentVersion >= 2) listOf(VisionComponentModel(V5_PATH, "model-v5.onnx", NativeVisionSpi.V5_BYTES, NativeVisionSpi.V5_SHA256)) else emptyList()
     companion object {
         const val PATH = "assets/packaging/vision-component.json"
         const val MODEL_PATH = "assets/vision/en_PP-OCRv4_rec_mobile.onnx"
+        const val V5_PATH = "assets/vision/en_PP-OCRv5_rec_mobile.onnx"
         const val MAX_BYTES = 8192
 
         fun parse(bytes: ByteArray): VisionComponentDescriptor {
@@ -56,25 +61,28 @@ data class VisionComponentDescriptor(val kind: VisionComponentKind, val abis: Se
             fun compatible(condition: Boolean) { if (!condition) throw VisionComponentCompatibilityException() }
             val kind = VisionComponentKind.entries.singleOrNull { it.id == text("kind") }
                 ?: throw VisionComponentCompatibilityException()
+            val version = integer("componentVersion")
+            compatible(version in 1..3 && integer("spiVersion") == version)
             val keys = setOf("formatVersion", "kind", "componentVersion", "spiVersion", "sdkVersion", "applicationId",
                 "versionCode", "versionName", "minSdk", "abis", "providerClass", "licenses") +
-                if (kind == VisionComponentKind.ONNX) setOf("model") else emptySet()
+                if (kind == VisionComponentKind.ONNX) setOf("model") + (if (version >= 2) setOf("candidateModel") else emptySet()) else emptySet()
             require(root.keySet() == keys)
-            compatible(integer("formatVersion") == 1 && integer("componentVersion") == 1 && integer("spiVersion") == NativeVisionSpi.VERSION)
-            compatible(integer("versionCode") == 1 && integer("minSdk") == 24 && text("versionName") == kind.sdkVersion)
+            compatible(integer("formatVersion") == 1)
+            compatible(integer("versionCode") == version && integer("minSdk") == 24 && text("versionName") == kind.sdkVersion)
             compatible(text("applicationId") == kind.applicationId && text("sdkVersion") == kind.sdkVersion)
             compatible(text("providerClass") == kind.providerClass)
             val abis = strings(root.get("abis"), 2)
-            compatible("arm64-v8a" in abis && abis.all { it in setOf("arm64-v8a", "x86_64") })
+            compatible(abis.all { it in setOf("arm64-v8a", "x86_64") })
             require(strings(root.get("licenses"), 3) == kind.licenses)
-            if (kind == VisionComponentKind.ONNX) {
-                val model = root.get("model").also { require(it.isJsonObject) }.asJsonObject
+            val descriptor = VisionComponentDescriptor(kind, abis, version)
+            descriptor.models.forEachIndexed { index, fixed ->
+                val model = root.get(if (index == 0) "model" else "candidateModel").also { require(it.isJsonObject) }.asJsonObject
                 require(model.keySet() == setOf("path", "size", "sha256"))
-                require(model.get("path").let { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString == MODEL_PATH })
-                require(model.get("sha256").let { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString == NativeVisionSpi.MODEL_SHA256 })
-                require(model.get("size").let { it.isJsonPrimitive && it.asJsonPrimitive.isNumber && it.asString == NativeVisionSpi.MODEL_BYTES.toString() })
+                require(model.get("path").let { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString == fixed.path })
+                require(model.get("sha256").let { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString == fixed.sha256 })
+                require(model.get("size").let { it.isJsonPrimitive && it.asJsonPrimitive.isNumber && it.asString == fixed.bytes.toString() })
             }
-            return VisionComponentDescriptor(kind, abis)
+            return descriptor
         }
 
         private fun strings(value: JsonElement, max: Int): Set<String> {
@@ -108,3 +116,5 @@ data class VisionComponentDescriptor(val kind: VisionComponentKind, val abis: Se
         }
     }
 }
+
+data class VisionComponentModel(val path: String, val snapshotName: String, val bytes: Int, val sha256: String)

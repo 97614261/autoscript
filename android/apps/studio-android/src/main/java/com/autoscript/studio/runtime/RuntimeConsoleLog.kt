@@ -45,12 +45,29 @@ internal class RuntimeConsoleLog(
     fun recordRemote(snapshot: List<String>) {
         val nextSnapshot = snapshot.asSequence().map(String::trim).filter(String::isNotEmpty)
             .toList().takeLast(MAX_CONSOLE_LINES)
-        val overlap = (minOf(remoteSnapshot.size, nextSnapshot.size) downTo 0)
-            .first { count -> remoteSnapshot.takeLast(count) == nextSnapshot.take(count) }
-        nextSnapshot.drop(overlap).forEach(lines::add)
+        val overlap = runtimeConsoleOverlap(remoteSnapshot, nextSnapshot)
+        lines.addAll(nextSnapshot.subList(overlap, nextSnapshot.size))
         remoteSnapshot = nextSnapshot
         while (lines.size > MAX_CONSOLE_LINES) lines.removeAt(0)
     }
+}
+
+/** Maximal suffix/prefix, including repeated identical lines; bounded linear work. */
+internal fun runtimeConsoleOverlap(previous: List<String>, next: List<String>): Int {
+    if (previous.isEmpty() || next.isEmpty()) return 0
+    val prefix = IntArray(next.size)
+    for (index in 1 until next.size) {
+        var matched = prefix[index - 1]
+        while (matched > 0 && next[index] != next[matched]) matched = prefix[matched - 1]
+        if (next[index] == next[matched]) matched++
+        prefix[index] = matched
+    }
+    var matched = 0
+    for (index in (previous.size - next.size).coerceAtLeast(0) until previous.size) {
+        while (matched > 0 && (matched == next.size || previous[index] != next[matched])) matched = prefix[matched - 1]
+        if (previous[index] == next[matched]) matched++
+    }
+    return matched
 }
 
 /**

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "files.modifiedtime",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/files.modifiedtime/1/files.modifiedtime.schema.json",
+  "title": "读取文件修改时间",
+  "category": "variable",
+  "summary": "读取普通项目私有data文件的修改时间（Unix毫秒）；不跟随链接或读取任意路径，缺失/不可用报错，不用墙钟时间控制超时。",
+  "searchTerms": [
+    "系统",
+    "网络",
+    "文件",
+    "Files.modifiedTime",
+    "读取文件修改时间"
+  ],
+  "requiredCapabilities": [
+    "storage.data"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "私有data相对文件",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "sample.txt"
+    },
+    {
+      "path": "pathVariable",
+      "label": "私有data相对文件来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

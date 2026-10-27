@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$DeviceSerial,
-    [ValidateSet('keyboard', 'full', 'shared-ui')][string]$Suite = 'keyboard',
+    [ValidateSet('keyboard', 'full', 'shared-ui', 'landscape', 'glyph-maker', 'glyph-palette')][string]$Suite = 'keyboard',
     [switch]$ConfirmTemporaryImeSwitch,
     [switch]$ConfirmTargetRestart,
     [string]$AdbPath = 'C:\Work\AndroidSDK\platform-tools\adb.exe'
@@ -34,11 +34,11 @@ try {
     if ($Suite -eq 'shared-ui') {
         $arguments += @('-e', 'scriptUiOnly', 'true', 'com.autoscript.vision.acceptance/com.autoscript.runtime.service.VisionAcceptanceInstrumentation')
     } else {
-        $arguments += @('-e', $(if ($Suite -eq 'full') { 'finalClosure' } else { 'keyboardOnly' }), 'true',
+        $arguments += @('-e', $(if ($Suite -eq 'full') { 'finalClosure' } elseif ($Suite -eq 'landscape') { 'landscapeOnly' } elseif ($Suite -eq 'glyph-maker') { 'glyphMakerOnly' } elseif ($Suite -eq 'glyph-palette') { 'glyphPaletteOnly' } else { 'keyboardOnly' }), 'true',
             'com.zhigou.kaifaban.acceptance/com.autoscript.studio.StudioAcceptanceInstrumentation')
     }
     try {
-        $output = Invoke-BoundedCli $qaKeyboardAdb $arguments $(if ($Suite -eq 'full') { 420 } else { 180 })
+        $output = Invoke-BoundedCli $qaKeyboardAdb $arguments $(if ($Suite -in @('full', 'landscape', 'glyph-maker', 'glyph-palette')) { 420 } else { 180 })
     } catch {
         $qaFailure = $_
         if ($qaFailure.Exception.Message -match 'timed out after' -and ($Suite -eq 'shared-ui' -or $ConfirmTargetRestart)) {

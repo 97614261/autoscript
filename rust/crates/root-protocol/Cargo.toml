@@ -8,5 +8,9 @@ publish = false
 [dependencies]
 sha2 = { workspace = true }
 
+[target.'cfg(all(target_os = "android", any(target_arch = "aarch64", target_arch = "x86_64")))'.dependencies]
+# Upstream keeps runtime hardware detection; x86 also accelerates its scalar fallback.
+sha2 = { workspace = true, features = ["asm"] }
+
 [lints]
 workspace = true

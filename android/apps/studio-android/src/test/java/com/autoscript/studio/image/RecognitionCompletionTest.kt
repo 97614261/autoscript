@@ -17,7 +17,7 @@ class RecognitionCompletionTest {
     private val find = requireNotNull(BlockCatalog.find("vision.findimage"))
 
     @Test fun waitingModesHaveExplicitDeadlineAndOneSampleWithoutImplicitActions() {
-        for (mode in RecognitionWaitMode.entries) {
+        for (mode in RecognitionWaitMode.entries.filterNot {it.usesFreshFrames()}) {
             val forest = recognitionWaitBlocks(find, arguments(), draft.copy(mode = mode), work)
             val all = forest.flatMap { it.flattened() }
             val sample = all.single { it.contract.kind == "vision.findimage" }.arguments

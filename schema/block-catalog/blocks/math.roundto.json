@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.roundto",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.roundto/1/math.roundto.schema.json",
+  "title": "保留小数",
+  "category": "variable",
+  "summary": "按二进制浮点值半值远离零，保留 0–9 位小数并返回浮点数；输入及结果绝对值不超过 10^12。尾随零请使用数字格式化，旧 Math.round 返回整数不变。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "保留小数"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "value",
+      "label": "数值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "3.14159"
+    },
+    {
+      "path": "valueVariable",
+      "label": "数值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "digits",
+      "label": "小数位数",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "2"
+    },
+    {
+      "path": "digitsVariable",
+      "label": "小数位数来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

@@ -3,10 +3,23 @@ package com.autoscript.studio
 import com.autoscript.core.model.RuntimeConnectionPhase
 import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.core.model.RuntimeRootState
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
 class EditorPermissionsImageTest {
+    @Test fun imageLibraryBelongsToTheServiceOverlayInsteadOfAnActivityDialog() {
+        val screen = File("src/main/java/com/autoscript/studio/editor/VisualProjectScreen.kt").readText()
+        assertFalse(screen.lineSequence().any { it.trim() == "import androidx.compose.ui.window.Dialog" })
+        val library = screen.substringAfter("if (showImageLibrary) {").substringBefore("if (showRecognitionReader)")
+        assertTrue(library.contains("ImageLibraryDialog("))
+        assertFalse(screen.contains("ImageToolsScreen("))
+        assertTrue(library.contains("onDismiss = { showImageLibrary = false }"))
+        val host = File("src/main/java/com/autoscript/studio/image/ImageLibraryDialog.kt").readText()
+        assertTrue(host.contains("StudioDialog("))
+        assertFalse(host.lineSequence().any { it.trim() == "import androidx.compose.ui.window.Dialog" })
+    }
+
     @Test fun connectionDoesNotMeanRootOrInputPermission() {
         val rows = automationPermissionStatuses(RuntimeConnectionState(phase = RuntimeConnectionPhase.CONNECTED), 3)
         assertTrue(rows.first().healthy)
@@ -22,7 +35,9 @@ class EditorPermissionsImageTest {
         assertFalse(automationPermissionStatuses(state, 1)[3].healthy)
         assertTrue(automationPermissionStatuses(state, 3)[3].healthy)
         assertFalse(automationPermissionStatuses(state, 2)[3].healthy)
-        assertTrue(automationPermissionStatuses(state, 3).last().status.contains("未执行截图测试"))
+        assertTrue(automationPermissionStatuses(state, 3).single {it.title=="Root 截图"}.status.contains("未执行截图测试"))
+        assertFalse(automationPermissionStatuses(state,3).last().healthy)
+        assertTrue(automationPermissionStatuses(state,11).last().healthy)
     }
 
     @Test fun disconnectedOrFailedRootDoesNotReuseOldFeatures() {
@@ -36,12 +51,17 @@ class EditorPermissionsImageTest {
         val actions = imageEntryGroups.flatMap { it.second }
         assertEquals(actions.size, actions.map { it.kind }.distinct().size)
         actions.forEach { action ->
-            val kind = if (action.kind == RECOGNITION_RESULT_READER) "vision.readresult" else action.kind
+            if (action.kind == GLYPH_MAKER_ENTRY) {
+                assertNull("制字是Studio工具，不是执行积木", BlockCatalog.find(action.kind))
+                return@forEach
+            }
+            val kind = when(action.kind) { RECOGNITION_RESULT_READER -> "vision.readresult"; COLOR_FILTER_ENTRY -> "screen.transform";else -> action.kind }
             assertNotNull(action.title, BlockCatalog.find(kind))
             assertTrue(kind, kind in visualRecognitionKinds || kind in setOf(
                 "vision.result", "vision.readresult", "vision.resultaction", "vision.findallmulticolor", "vision.components",
                 "ocr.glyphdetails", "ocr.findtext", "screen.loadimage", "screen.crop", "screen.transform", "screen.savepng",
-                "screen.series", "screen.seriesframe", "screen.seriesrelease",
+                "screen.series", "screen.seriesframe", "screen.seriesrelease", "screen.compareframes", "screen.mappoint", "vision.findscaled",
+                "screen.frameinfo", "screen.capture", "screen.release", "screen.captureregion", "vision.findfeatures", "ocr.alphanumericv5",
             ))
         }
     }
@@ -55,7 +75,8 @@ class EditorPermissionsImageTest {
         assertEquals(RecognitionSection.ADVANCED, recognitionPropertySection("offsetX"))
         assertEquals(RecognitionSection.ADVANCED, recognitionPropertySection("autoCapture"))
         imageEntryGroups.flatMap { it.second }.forEach { action ->
-            val kind = if (action.kind == RECOGNITION_RESULT_READER) "vision.readresult" else action.kind
+            if (action.kind == GLYPH_MAKER_ENTRY) return@forEach
+            val kind = when(action.kind) { RECOGNITION_RESULT_READER -> "vision.readresult"; COLOR_FILTER_ENTRY -> "screen.transform";else -> action.kind }
             requireNotNull(BlockCatalog.find(kind)).properties.forEach { assertNotNull(recognitionPropertySection(it.path)) }
         }
     }

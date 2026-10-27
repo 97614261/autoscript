@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1024,
+  "name": "Math.roundTo",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "按二进制浮点值半值远离零，保留 0–9 位小数并返回浮点数；输入及结果绝对值不超过 10^12。尾随零请使用数字格式化，旧 Math.round 返回整数不变。",
+  "params": [
+    {
+      "name": "value",
+      "type": "number",
+      "required": true,
+      "summary": "数值"
+    },
+    {
+      "name": "digits",
+      "type": "integer",
+      "required": true,
+      "summary": "小数位数"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "按二进制浮点值半值远离零，保留 0–9 位小数并返回浮点数；输入及结果绝对值不超过 10^12。尾随零请使用数字格式化，旧 Math.round 返回整数不变。"
+  },
+  "legacyAliases": []
+}

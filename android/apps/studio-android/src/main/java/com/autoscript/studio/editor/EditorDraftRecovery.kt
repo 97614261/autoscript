@@ -46,17 +46,24 @@ internal fun EditorDraftRecovery(
     LaunchedEffect(loaded, checkpoint, readFailed, writeTicket) {
         if (!loaded || checkpoint != null || readFailed) return@LaunchedEffect
         try {
-            val captured = journal.capture(snapshot, editors)
             delay(300)
             coroutineContext.ensureActive()
-            withContext(Dispatchers.IO) { journal.writeIfCurrent(projectId, captured, writeTicket) }
+            val frozen = journal.freeze(snapshot, editors)
+            withContext(Dispatchers.IO) {
+                val captured = journal.capture(snapshot, frozen)
+                coroutineContext.ensureActive()
+                journal.writeIfCurrent(projectId, captured, writeTicket)
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { onMessage("恢复草稿写入失败，请主动保存；正式项目未被覆盖") }
     }
     if (promptVisible && (checkpoint != null || readFailed)) {
         val retained = checkpoint
-        val compatible = retained?.let { journal.compatible(it, snapshot) }.orEmpty()
-        val entry = compatible.firstOrNull()
+        val compatible by produceState<List<EditorDraftEntry>?>(null, retained, snapshot) {
+            value = null
+            value = withContext(Dispatchers.Default) { retained?.let { journal.compatible(it, snapshot) }.orEmpty() }
+        }
+        val entry = compatible?.firstOrNull()
         fun defer() {
             if (busy) return
             promptVisible = false
@@ -67,18 +74,19 @@ internal fun EditorDraftRecovery(
             title = { Text("恢复编辑草稿") },
             text = { Text(problem ?: when {
                 readFailed -> "恢复记录无效。可以明确丢弃后继续编辑，正式脚本不受影响。"
+                compatible == null -> "正在核对恢复记录与正式项目…"
                 entry == null -> "项目版本或插件已变化，不能应用这份旧草稿。正式脚本不会被覆盖。"
-                else -> "发现未保存的插件草稿（${compatible.size}个）。逐个校验并恢复到编辑器，可撤销；不会直接保存或运行。"
+                else -> "发现未保存的插件草稿（${compatible.orEmpty().size}个）。逐个校验并恢复到编辑器，可撤销；不会直接保存或运行。"
             }) },
             compact = true,
             actions = listOf(
                 StudioConfirmAction("保留并关闭", enabled = !busy, onClick = ::defer),
                 StudioConfirmAction("丢弃记录", enabled = !busy, destructive = true, onClick = {
                 busy = true
+                val ticket = journal.nextRevision()
                 scope.launch {
                     try {
-                        journal.nextRevision()
-                        withContext(Dispatchers.IO) { journal.discard(projectId) }
+                        check(withContext(Dispatchers.IO) { journal.discardIfCurrent(projectId, ticket) })
                         checkpoint = null; readFailed = false; problem = null
                         checkpointRevision++
                     } catch (cancelled: CancellationException) { throw cancelled }

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.findnth",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.findnth/1/text.findnth.schema.json",
+  "title": "查找第N次",
+  "category": "variable",
+  "summary": "按不重叠匹配查找第1–1024次，返回Unicode字符索引（1起），未找到0；查找串非空，原文64KiB。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Text.findNth",
+    "查找第N次"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "a甲a乙a"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "needle",
+      "label": "查找文字",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "a"
+    },
+    {
+      "path": "needleVariable",
+      "label": "查找文字来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "occurrence",
+      "label": "第几次",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "2"
+    },
+    {
+      "path": "occurrenceVariable",
+      "label": "第几次来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

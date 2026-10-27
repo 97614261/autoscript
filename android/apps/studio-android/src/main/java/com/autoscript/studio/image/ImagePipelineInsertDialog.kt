@@ -16,7 +16,7 @@ import com.autoscript.project.store.ProjectVariableType
 internal fun ImagePipelineInsertDialog(pipeline: ImageProcessingPipeline, originalImagePath: String?,
     snapshot: ProjectSnapshot, target: ImageWorkbenchInsertionTarget, onDismiss: () -> Unit,
     onReady: (ImageBlockInsertionRequest) -> Unit, recognitionTail: ImagePipelineRecognitionTail? = null,
-    recognitionIsCurrent: () -> Boolean = { false }) {
+    recognitionIsCurrent: () -> Boolean = { false }, visible: Boolean = true) {
     val variables = calculationVariables(snapshot.manifest.variables, target.flowId, snapshot.manifest.flows)
     val images = variables.filter { it.type == ProjectVariableType.IMAGE }.map { it.name to it.name }
     var scratch by remember { mutableStateOf(images.firstOrNull()?.first.orEmpty()) }
@@ -32,7 +32,7 @@ internal fun ImagePipelineInsertDialog(pipeline: ImageProcessingPipeline, origin
         if (recognitionTail == null) imageProcessingBlocks(pipeline, source, scratch, output, variables, snapshot.manifest.resources)
         else imageProcessingRecognitionBlocks(pipeline, source, scratch, output, recognitionTail, outputNames, variables, snapshot.manifest.resources, retainFinal)
     }
-    StudioConfirmDialog(onDismissRequest = onDismiss, title = { Text("加入处理流水线") }, text = {
+    if (visible) StudioConfirmDialog(onDismissRequest = onDismiss, prompt = false, title = { Text("加入处理流水线") }, text = {
         Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("${pipeline.operations.size}步处理 · 预览输出${pipeline.dimensions.first}×${pipeline.dimensions.second}px", fontSize = 11.sp)
             Row {
@@ -59,6 +59,7 @@ internal fun ImagePipelineInsertDialog(pipeline: ImageProcessingPipeline, origin
     }, confirmButton = { TextButton(enabled = configured.isSuccess, onClick = {
         ImageBlockInsertionRequest.create(snapshot.manifest.projectId, target.flowId, target.editor,
             configured.getOrThrow(), ImageInsertionOrigin.WORKBENCH,
-            eligibility = if (recognitionTail == null) { { true } } else recognitionIsCurrent)?.let(onReady)
+            eligibility = if (recognitionTail == null) { { true } } else recognitionIsCurrent,
+            preferredChildSlot = target.preferredChildSlot)?.let(onReady)
     }) { Text("选择加入位置") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("返回") } })
 }

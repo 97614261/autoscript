@@ -11,7 +11,7 @@ class RuntimeLogSettingsDraftTest {
     @Test fun asynchronousSaveKeepsDraftAndBusyStateDoesNotRemoveDialog() {
         val log = File("src/main/java/com/autoscript/studio/runtime/RuntimeLogDialog.kt").readText()
         assertFalse(log.contains("onSaveDebugSettings(settings); recordingSettings = false"))
-        val dock = File("src/main/java/com/autoscript/studio/editor/EditorDock.kt").readText()
+        val dock = editorDockTestSources()
         assertTrue(dock.contains("debugSettings = debugSettings, settingsEditable = editingEnabled"))
         val dialog = File("src/main/java/com/autoscript/studio/runtime/RuntimeLogSettingsDialog.kt").readText()
         assertTrue(dialog.contains("submitted == RuntimeLogSettingsDraft.from(settings)"))

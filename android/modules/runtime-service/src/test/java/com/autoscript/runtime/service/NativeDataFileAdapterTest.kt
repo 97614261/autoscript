@@ -22,6 +22,17 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class NativeDataFileAdapterTest {
+    @Test fun modifiedTimeReadsOnlyAnExistingPrivateFile() {
+        val root=File(temporary.root.canonicalFile,"metadata-time")
+        val store=ProjectDataStore(root,TestFileOps())
+        store.write("sample.txt","public".toByteArray(),{}, {it()})
+        val file=File(root,"data/sample.txt")
+        assertTrue(file.setLastModified(1700000000123L))
+        assertEquals(1700000000123L,store.modifiedTime("sample.txt",{}))
+        assertEquals("1700000000123",ProjectDataCommands(store,{}, {it()}).execute(14147,"sample.txt","[]".toByteArray()).toString(Charsets.UTF_8))
+        assertThrowsCode("FILE_PATH_INVALID") {store.modifiedTime("../outside",{})}
+        assertThrowsCode("FILE_NOT_FOUND") {store.modifiedTime("missing",{})}
+    }
     @Test fun metadataAndBase64OperationsPreserveBinaryAndRejectOverwrite() {
         val root = File(temporary.root.canonicalFile, "binary-tools")
         val store = ProjectDataStore(root, TestFileOps())

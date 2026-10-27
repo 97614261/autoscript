@@ -1,0 +1,8 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://autoscript.local/schema/node/screen.compareframes/1/screen.compareframes.schema.json",
+  "title":"比较两帧变化","type":"object","required":["kind","nodeVersion","args"],
+  "properties":{"kind":{"const":"screen.compareframes"},"nodeVersion":{"const":1},"args":{"type":"object","additionalProperties":false,
+    "required":["frameVariable","previousFrameVariable","left","top","right","bottom","tolerance","resultVariable"],
+    "properties":{"frameVariable":{"type":"string","pattern":"^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"},"previousFrameVariable":{"type":"string","pattern":"^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"},"resultVariable":{"type":"string","pattern":"^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"},
+      "left":{"type":"integer","minimum":0,"maximum":32768},"top":{"type":"integer","minimum":0,"maximum":32768},"right":{"type":"integer","minimum":1,"maximum":32768},"bottom":{"type":"integer","minimum":1,"maximum":32768},"tolerance":{"type":"integer","minimum":0,"maximum":255}}}}
+}

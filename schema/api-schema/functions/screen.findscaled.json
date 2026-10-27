@@ -1,0 +1,7 @@
+{
+ "schemaVersion":1,"opcode":5123,"name":"Screen.findScaled","since":"1.7","capability":"vision.template","execution":"async_task","cancelMode":"cooperative","sideEffect":"none","timeoutMs":5000,"resourceOwnership":"none",
+ "summary":"显式枚举缩放模板的像素找图，不换OpenCV、不改原资源。按距1000‰最近优先、同距较小优先，再按指定位置方向返回首个达到阈值的结果，不代表全局最高分。",
+ "params":[{"name":"frame","type":"integer","required":true,"summary":"任务所属来源帧。"},{"name":"template","type":"integer","required":true,"summary":"任务所属模板帧。"},
+ {"name":"options","type":"string","required":true,"summary":"严格JSON最多1024字节：region半开LTRB对象、tolerance0–255、similarityPermille0–1000、direction0–4、range={minPermille,maxPermille,stepPermille}。范围250–4000‰、正步长≤1000、末端须整除、最多16档，最近邻取整。单档模板≤262144像素、累计重采样≤4194304像素、所有档合计1亿像素比较；无效/超预算明确拒绝，透明像素忽略，零有效模板拒绝。"}],
+ "returns":{"type":"string","nullable":false,"summary":"JSON数组0或1项，每项x/y/width/height/scorePermille/scalePermille；位置属于输入帧，不自动截图、点击或释放。"},"legacyAliases":[]
+}

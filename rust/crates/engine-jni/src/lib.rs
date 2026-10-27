@@ -1,9 +1,12 @@
 //! Narrow JNI boundary backed by generation-checked opaque handles.
 
+mod boot_clock;
+mod capture_cache;
 mod debug_snapshot;
 mod input_recording;
 mod input_runtime;
 mod ocr_preview;
+mod scaled_preview;
 mod template_preview;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -51,6 +54,7 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeT
     options: jni::objects::JIntArray<'_>,
 ) -> jstring {
     let result = catch_unwind(AssertUnwindSafe(|| {
+        let options_len = env.get_array_length(&options).map_err(|e| e.to_string())?;
         if request_id <= 0
             || !(1..=4096).contains(&width)
             || !(1..=4096).contains(&height)
@@ -60,7 +64,8 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeT
                 &env.get_array_length(&dictionary)
                     .map_err(|e| e.to_string())?,
             )
-            || env.get_array_length(&options).map_err(|e| e.to_string())? != 8
+            || !(8..=38).contains(&options_len)
+            || options_len % 2 != 0
         {
             return Err("invalid OCR preview".to_owned());
         }
@@ -68,7 +73,7 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeT
         let dictionary = env
             .convert_byte_array(dictionary)
             .map_err(|e| e.to_string())?;
-        let mut args = [0; 8];
+        let mut args = vec![0; usize::try_from(options_len).map_err(|e| e.to_string())?];
         env.get_int_array_region(options, 0, &mut args)
             .map_err(|e| e.to_string())?;
         let reply = ocr_preview::recognize(
@@ -412,6 +417,8 @@ const OP_INPUT_SWIPE_SCREEN: u32 = 4_010;
 #[cfg(target_os = "android")]
 const OP_SCREEN_CAPTURE: u32 = 5_000;
 #[cfg(target_os = "android")]
+const OP_SCREEN_CAPTURE_REGION: u32 = 5_014;
+#[cfg(target_os = "android")]
 const OP_SCREEN_CAPTURE_SERIES_FRAME: u32 = 5_004;
 
 enum SessionCommand {
@@ -519,12 +526,14 @@ mod platform_root {
     use std::path::Path;
     use std::time::Duration;
 
+    use super::capture_cache::CaptureCache;
     use super::{
         AutomationBackend, BackendError, CaptureSeriesHandle, CoordinateSnapshot, FrameFormat,
         FrameMetadata, FramePool, HostRequest, HostResult, InputCommand, LuaScalar, PreviewCapture,
         PreviewCaptureError, RequestId, ResourceId, ResourceKind, RootDispatch, Rotation,
-        SeriesPublish, TaskToken, OP_SCREEN_CAPTURE, OP_SCREEN_CAPTURE_SERIES_FRAME,
-        OP_SYSTEM_ELAPSED_REALTIME_MILLIS, OP_SYSTEM_GET_SCREEN_SIZE,
+        SeriesPublish, TaskToken, OP_SCREEN_CAPTURE, OP_SCREEN_CAPTURE_REGION,
+        OP_SCREEN_CAPTURE_SERIES_FRAME, OP_SYSTEM_ELAPSED_REALTIME_MILLIS,
+        OP_SYSTEM_GET_SCREEN_SIZE,
     };
 
     pub type Client = root_client::AndroidRootClient;
@@ -552,8 +561,8 @@ mod platform_root {
         fn map_client_error(&mut self, error: root_client::ClientError) -> BackendError {
             self.connection_lost |= error.is_connection_lost();
             BackendError {
-                code: "ROOT_INPUT_FAILED",
-                message: format!("Root input backend rejected the request: {error:?}"),
+                code: error.input_failure_code(),
+                message: format!("Root input failed [{}]", error.input_failure_code()),
                 retryable: false,
                 connection_lost: error.is_connection_lost(),
             }
@@ -648,6 +657,11 @@ mod platform_root {
     }
 
     pub fn capture_preview(client: &mut Client) -> Result<PreviewCapture, PreviewCaptureError> {
+        // A fresh idle preview is new work after a stopped script, never a replay of its capture.
+        clean_and_resume(client).map_err(|_| PreviewCaptureError {
+            message: "CAPTURE_CONTROL_UNAVAILABLE".to_owned(),
+            connection_lost: true,
+        })?;
         client
             .capture()
             .map(|capture| PreviewCapture {
@@ -661,7 +675,7 @@ mod platform_root {
                 pixels: capture.pixels,
             })
             .map_err(|error| PreviewCaptureError {
-                message: format!("RootDaemon failed to capture preview: {error:?}"),
+                message: error.capture_failure_code().to_owned(),
                 connection_lost: error.is_connection_lost(),
             })
     }
@@ -676,6 +690,7 @@ mod platform_root {
         display: (u32, u32),
         _coordinates: CoordinateSnapshot,
         frames: &std::sync::Mutex<FramePool>,
+        cache: &std::sync::Mutex<CaptureCache>,
         timestamp_nanos: u64,
         snapshot_id: u64,
     ) -> RootDispatch {
@@ -687,11 +702,26 @@ mod platform_root {
                 success(payload)
             }
             OP_SYSTEM_ELAPSED_REALTIME_MILLIS if request.args.is_empty() => {
-                success((timestamp_nanos / 1_000_000).to_le_bytes().to_vec())
+                match super::boot_clock::elapsed_millis() {
+                    Some(milliseconds) => success(milliseconds.to_le_bytes().to_vec()),
+                    None => failure(
+                        "MONOTONIC_CLOCK_UNAVAILABLE",
+                        "boot clock could not be read",
+                        false,
+                    ),
+                }
             }
             OP_SCREEN_CAPTURE if request.args.is_empty() => {
-                capture(client, frames, timestamp_nanos, snapshot_id)
+                capture(client, frames, cache, display, timestamp_nanos, snapshot_id)
             }
+            OP_SCREEN_CAPTURE_REGION => capture_region(
+                client,
+                frames,
+                &request.args,
+                display,
+                timestamp_nanos,
+                snapshot_id,
+            ),
             OP_SCREEN_CAPTURE_SERIES_FRAME => {
                 capture_series_frame(client, frames, &request.args, timestamp_nanos, snapshot_id)
             }
@@ -706,52 +736,157 @@ mod platform_root {
     fn capture(
         client: &mut Client,
         frames: &std::sync::Mutex<FramePool>,
+        cache: &std::sync::Mutex<CaptureCache>,
+        display: (u32, u32),
         timestamp_nanos: u64,
         snapshot_id: u64,
     ) -> RootDispatch {
-        let capture = match client.capture() {
-            Ok(capture) => capture,
-            Err(error) => {
-                return failure(
-                    "SCREEN_CAPTURE_FAILED",
-                    &format!(
-                        "RootDaemon failed to capture the screen [{}]",
-                        error.capture_failure_code()
-                    ),
-                    error.is_connection_lost(),
-                );
-            }
+        let cached = cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .fresh(timestamp_nanos, display.0, display.1, snapshot_id);
+        let (metadata, pixels, timings, cache_age_nanos) = if let Some(cached) = cached {
+            (cached.metadata, cached.pixels, None, Some(cached.age_nanos))
+        } else {
+            let capture = match client.capture() {
+                Ok(capture) => capture,
+                Err(error) => {
+                    return failure(
+                        "SCREEN_CAPTURE_FAILED",
+                        &format!(
+                            "RootDaemon failed to capture the screen [{}]",
+                            error.capture_failure_code()
+                        ),
+                        error.is_connection_lost(),
+                    );
+                }
+            };
+            let format = match capture.format {
+                root_client::RawCaptureFormat::Rgba8888 => FrameFormat::Rgba8888,
+                root_client::RawCaptureFormat::Bgra8888 => FrameFormat::Bgra8888,
+            };
+            let metadata = FrameMetadata {
+                width: capture.width,
+                height: capture.height,
+                row_stride: capture.row_stride,
+                pixel_stride: 4,
+                format,
+                rotation: Rotation::Degrees0,
+                timestamp_nanos,
+                snapshot_id,
+            };
+            let pixels = automation_core::SharedPixels::from(capture.pixels);
+            cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(metadata, pixels.clone());
+            (metadata, pixels, Some(capture.timings), None)
         };
-        let format = match capture.format {
-            root_client::RawCaptureFormat::Rgba8888 => FrameFormat::Rgba8888,
-            root_client::RawCaptureFormat::Bgra8888 => FrameFormat::Bgra8888,
-        };
-        let timings = capture.timings;
         let publish_started = std::time::Instant::now();
         let captured = frames
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .publish_capture_vec(
-                FrameMetadata {
-                    width: capture.width,
-                    height: capture.height,
-                    row_stride: capture.row_stride,
-                    pixel_stride: 4,
-                    format,
-                    rotation: Rotation::Degrees0,
-                    timestamp_nanos,
-                    snapshot_id,
-                },
-                capture.pixels,
-            );
+            .publish_capture_shared(metadata, pixels);
         match captured {
             Ok(capture) => {
-                record_capture_timings(frames, capture, timings, publish_started);
+                if let Some(timings) = timings {
+                    record_capture_timings(frames, capture, timings, publish_started);
+                } else if let Some(age_nanos) = cache_age_nanos {
+                    record_cache_timings(frames, capture, age_nanos, publish_started);
+                }
                 success(capture.0.to_le_bytes().to_vec())
             }
             Err(_) => failure(
                 "SCREEN_CAPTURE_FAILED",
                 "engine frame budget rejected the capture",
+                false,
+            ),
+        }
+    }
+
+    fn capture_region(
+        client: &mut Client,
+        frames: &std::sync::Mutex<FramePool>,
+        args: &[LuaScalar],
+        display: (u32, u32),
+        timestamp_nanos: u64,
+        snapshot_id: u64,
+    ) -> RootDispatch {
+        let bounds = args
+            .iter()
+            .map(|v| match v {
+                LuaScalar::Integer(value) => u32::try_from(*value).ok(),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(bounds) = bounds.filter(|values| values.len() == 4) else {
+            return failure(
+                "SCREEN_REGION_INVALID",
+                "region requires four pixel boundaries",
+                false,
+            );
+        };
+        let region = root_protocol::capture_region::CaptureRegionRequest {
+            screen_width: display.0,
+            screen_height: display.1,
+            left: bounds[0],
+            top: bounds[1],
+            right: bounds[2],
+            bottom: bounds[3],
+        };
+        if !region.valid() {
+            return failure(
+                "SCREEN_REGION_INVALID",
+                "region is outside the current screen",
+                false,
+            );
+        }
+        let captured = match client.capture_region(region) {
+            Ok(capture) => capture,
+            Err(error) => {
+                return failure(
+                    "SCREEN_CAPTURE_FAILED",
+                    &format!(
+                        "Root region capture failed [{}]",
+                        error.capture_failure_code()
+                    ),
+                    error.is_connection_lost(),
+                )
+            }
+        };
+        let capture = captured.capture;
+        let metadata = FrameMetadata {
+            width: capture.width,
+            height: capture.height,
+            row_stride: capture.row_stride,
+            pixel_stride: 4,
+            format: match capture.format {
+                root_client::RawCaptureFormat::Rgba8888 => FrameFormat::Rgba8888,
+                root_client::RawCaptureFormat::Bgra8888 => FrameFormat::Bgra8888,
+            },
+            rotation: Rotation::Degrees0,
+            timestamp_nanos,
+            snapshot_id,
+        };
+        let publish_started = std::time::Instant::now();
+        let published = frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .publish_region_capture(
+                metadata,
+                capture.pixels,
+                display,
+                (region.left, region.top),
+                captured.geometry.rotation,
+            );
+        match published {
+            Ok(id) => {
+                record_capture_timings(frames, id, capture.timings, publish_started);
+                success(id.0.to_le_bytes().to_vec())
+            }
+            Err(_) => failure(
+                "SCREEN_CAPTURE_FAILED",
+                "frame budget rejected the region",
                 false,
             ),
         }
@@ -884,6 +1019,7 @@ mod platform_root {
                     transfer_us: timings.transfer_us,
                     publish_us,
                     streamed: timings.streamed,
+                    pipelined: timings.pipelined,
                     stages_us: timings.stages_us,
                     transfer_stages_us: timings.transfer_details.map(|details| {
                         [
@@ -895,6 +1031,36 @@ mod platform_root {
                         ]
                     }),
                     transfer_packets: timings.transfer_details.map(|details| details.packets),
+                    cache_hit: false,
+                    cache_age_us: None,
+                },
+            );
+    }
+
+    fn record_cache_timings(
+        frames: &std::sync::Mutex<FramePool>,
+        capture: automation_core::CapturedFrameId,
+        age_nanos: u64,
+        started: std::time::Instant,
+    ) {
+        let publish_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_capture_timings(
+                capture,
+                automation_core::FrameCaptureTimings {
+                    backend: 0,
+                    acquisition_us: 0,
+                    transfer_us: 0,
+                    publish_us,
+                    streamed: false,
+                    pipelined: false,
+                    stages_us: None,
+                    transfer_stages_us: None,
+                    transfer_packets: None,
+                    cache_hit: true,
+                    cache_age_us: Some(age_nanos / 1_000),
                 },
             );
     }
@@ -987,7 +1153,7 @@ mod platform_root {
 
     pub fn capture_preview(_client: &mut Client) -> Result<PreviewCapture, PreviewCaptureError> {
         Err(PreviewCaptureError {
-            message: "RootDaemon is only available on Android".to_owned(),
+            message: "CAPTURE_BACKEND_UNAVAILABLE".to_owned(),
             connection_lost: true,
         })
     }
@@ -997,12 +1163,15 @@ mod platform_root {
         Ok(())
     }
 
+    // Keep the non-Android test stub ABI-shaped like the Android implementation.
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch(
         _client: &mut Client,
         _request: &HostRequest,
         _display: (u32, u32),
         _coordinates: CoordinateSnapshot,
         _frames: &std::sync::Mutex<FramePool>,
+        _cache: &std::sync::Mutex<super::capture_cache::CaptureCache>,
         _timestamp_nanos: u64,
         _snapshot_id: u64,
     ) -> RootDispatch {
@@ -1024,6 +1193,32 @@ fn prepare_input_commands(
         return Some(result);
     }
     let result = match request.opcode {
+        4013 | 4014 => {
+            let [LuaScalar::Integer(id), LuaScalar::Integer(x), LuaScalar::Integer(y)] =
+                request.args.as_slice()
+            else {
+                return Some(Err(input_failure("invalid multi-touch arguments")));
+            };
+            let Some(pointer_id) = u8::try_from(*id).ok().filter(|v| *v <= 4) else {
+                return Some(Err(input_failure("multi-touch ID must be 0..4")));
+            };
+            map_design_point(coordinates, *x, *y).map(|(x, y)| {
+                vec![if request.opcode == 4013 {
+                    InputCommand::PointerDown { pointer_id, x, y }
+                } else {
+                    InputCommand::PointerMove { pointer_id, x, y }
+                }]
+            })
+        }
+        4015 => {
+            let [LuaScalar::Integer(id)] = request.args.as_slice() else {
+                return Some(Err(input_failure("invalid multi-touch release")));
+            };
+            match u8::try_from(*id).ok().filter(|v| *v <= 4) {
+                Some(pointer_id) => Ok(vec![InputCommand::PointerUp { pointer_id }]),
+                None => Err(()),
+            }
+        }
         OP_INPUT_TAP => {
             let [LuaScalar::Integer(x), LuaScalar::Integer(y)] = request.args.as_slice() else {
                 return Some(Err(input_failure("invalid tap arguments")));
@@ -1334,6 +1529,7 @@ struct NativeSession {
     input_stop_requested: Arc<AtomicBool>,
     recording: Arc<input_recording::RecordingControl>,
     wake_callback: Arc<Mutex<Option<WakeCallback>>>,
+    capture_cache: Arc<Mutex<capture_cache::CaptureCache>>,
 }
 
 #[derive(Debug)]
@@ -1409,6 +1605,7 @@ struct RootWorkerContext {
     input_config: InputArbiterConfig,
     input_stop_requested: Arc<AtomicBool>,
     recording: Arc<input_recording::RecordingControl>,
+    capture_cache: Arc<Mutex<capture_cache::CaptureCache>>,
 }
 
 fn spawn_root_worker(
@@ -1452,6 +1649,7 @@ impl NativeSession {
         let root_attached = Arc::new(AtomicBool::new(false));
         let input_stop_requested = Arc::new(AtomicBool::new(false));
         let recording = Arc::new(input_recording::RecordingControl::default());
+        let capture_cache = Arc::new(Mutex::new(capture_cache::CaptureCache::default()));
         let root_worker = spawn_root_worker(
             root_receiver,
             RootWorkerContext {
@@ -1470,6 +1668,7 @@ impl NativeSession {
                 input_config: engine_config.input,
                 input_stop_requested: Arc::clone(&input_stop_requested),
                 recording: recording.clone(),
+                capture_cache: Arc::clone(&capture_cache),
             },
         )?;
         let state = Arc::new(AtomicI32::new(STATE_IDLE));
@@ -1561,6 +1760,7 @@ impl NativeSession {
             input_stop_requested,
             recording,
             wake_callback,
+            capture_cache,
         }))
     }
 
@@ -1570,6 +1770,17 @@ impl NativeSession {
     ) -> Result<(), String> {
         let (response_tx, response_rx) = mpsc::sync_channel(1);
         let command = build(response_tx);
+        if matches!(
+            &command,
+            SessionCommand::Start { .. }
+                | SessionCommand::UpdateDisplay { .. }
+                | SessionCommand::ConfigureProject { .. }
+        ) {
+            self.capture_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
+        }
         let _recording_fence = if matches!(&command, SessionCommand::Start { .. }) {
             Some(self.recording.reserve_run()?)
         } else {
@@ -1589,9 +1800,12 @@ impl NativeSession {
         }
         self.stop_boot_nanos.store(boot_nanos, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
-        self.input_stop_requested.store(true, Ordering::Release);
         self.recording.stop();
-        self.vision.stop();
+        self.capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        publish_root_input_stop(&self.input_stop_requested, || self.vision.stop());
         self.script_ui.stop();
         self.data_files.stop();
         self.stop_handle
@@ -1731,6 +1945,10 @@ impl NativeSession {
         if self.shutdown_requested.load(Ordering::Acquire) {
             return Err("SESSION_CLOSED".to_owned());
         }
+        self.capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         let (response_tx, response_rx) = mpsc::sync_channel(1);
         self.commands
             .try_send(if preserve {
@@ -1791,6 +2009,10 @@ impl NativeSession {
         design_height: u32,
         scale_mode: ScaleMode,
     ) -> Result<(), String> {
+        self.capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         self.request(|response| SessionCommand::ConfigureProject {
             snapshot_id,
             design_width,
@@ -1888,12 +2110,12 @@ impl NativeSession {
             .try_send(RootControl::CapturePreview {
                 response: response_tx,
             })
-            .map_err(|error| format!("Root preview queue rejected request: {error}"))?;
+            .map_err(|_| "CAPTURE_QUEUE_BUSY".to_owned())?;
         // The Root worker may be parked waiting for a script-host event.
         self.host_queue.interrupt();
         let capture = response_rx
             .recv_timeout(COMMAND_TIMEOUT)
-            .map_err(|error| format!("Root preview timed out: {error}"))??;
+            .map_err(|_| "CAPTURE_DEADLINE".to_owned())??;
         if capture.pixels.len() > MAX_PREVIEW_CAPTURE_BYTES {
             return Err("PREVIEW_CAPTURE_TOO_LARGE".to_owned());
         }
@@ -1970,6 +2192,10 @@ impl NativeSession {
 
     fn detach_root(&self) -> Result<(), String> {
         self.root_attached.store(false, Ordering::Release);
+        self.capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         let (response_tx, response_rx) = mpsc::sync_channel(1);
         self.root_control
             .try_send(RootControl::Disconnect {
@@ -1990,13 +2216,16 @@ impl NativeSession {
     }
 
     fn shutdown(&self) {
-        self.recording.stop();
-        self.input_stop_requested.store(true, Ordering::Release);
-        self.vision.stop();
-        self.script_ui.stop();
-        self.data_files.stop();
         self.stop_boot_nanos.store(0, Ordering::Release);
         self.stop_requested.store(true, Ordering::Release);
+        self.recording.stop();
+        self.capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        publish_root_input_stop(&self.input_stop_requested, || self.vision.stop());
+        self.script_ui.stop();
+        self.data_files.stop();
         *self
             .pause_request
             .lock()
@@ -2578,12 +2807,23 @@ fn root_worker_loop(receiver: &Receiver<RootControl>, context: &RootWorkerContex
     }
 }
 
+fn publish_root_input_stop(requested: &AtomicBool, fence: impl FnOnce()) {
+    // An awake worker must not finish cleanup before its pending marker is set.
+    fence();
+    requested.store(true, Ordering::Release);
+}
+
 fn apply_priority_stop(
     context: &RootWorkerContext,
     client: &mut Option<platform_root::Client>,
     input: &mut InputRuntime,
 ) {
     if context.input_stop_requested.swap(false, Ordering::AcqRel) {
+        context
+            .capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         if let Some(connected) = client.as_mut() {
             let priority_clean = platform_root::wait_clean(connected);
             let mut backend = platform_root::InputBackend::new(connected);
@@ -2591,7 +2831,9 @@ fn apply_priority_stop(
             context
                 .vision
                 .cleanup_finished(priority_clean && result.is_ok());
-            if backend.connection_lost()
+            if !priority_clean
+                || result.is_err()
+                || backend.connection_lost()
                 || matches!(
                     result,
                     Err(InputRuntimeError::Backend(BackendError {
@@ -2617,6 +2859,25 @@ enum RootControlAction {
     Wait,
 }
 
+fn clear_root_capture_cache(context: &RootWorkerContext) {
+    context
+        .capture_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+}
+
+fn invalidate_failed_cleanup(
+    context: &RootWorkerContext,
+    client: &mut Option<platform_root::Client>,
+    input: &mut InputRuntime,
+) {
+    context.vision.cleanup_finished(false);
+    *client = None;
+    input.abandon();
+    notify_root_disconnected(context);
+}
+
 fn poll_root_control(
     receiver: &Receiver<RootControl>,
     context: &RootWorkerContext,
@@ -2630,6 +2891,7 @@ fn poll_root_control(
         }
         Ok(RootControl::Disconnect { response }) => {
             context.recording.detach();
+            clear_root_capture_cache(context);
             if let Some(mut connected) = client.take() {
                 let mut backend = platform_root::InputBackend::new(&mut connected);
                 let clean = input.stop(&mut backend).is_ok();
@@ -2643,20 +2905,21 @@ fn poll_root_control(
             return RootControlAction::Continue;
         }
         Ok(RootControl::ResetInput { response }) => {
+            clear_root_capture_cache(context);
             if let Some(connected) = client.as_mut() {
                 if !platform_root::wait_clean(connected) {
-                    context.vision.cleanup_finished(false);
+                    invalidate_failed_cleanup(context, client, input);
                     let _ = response.send(());
                     return RootControlAction::Continue;
                 }
                 let mut backend = platform_root::InputBackend::new(connected);
                 if input.stop(&mut backend).is_err() {
-                    context.vision.cleanup_finished(false);
+                    invalidate_failed_cleanup(context, client, input);
                     let _ = response.send(());
                     return RootControlAction::Continue;
                 }
                 if platform_root::clean_and_resume(connected).is_err() {
-                    context.vision.cleanup_finished(false);
+                    invalidate_failed_cleanup(context, client, input);
                     let _ = response.send(());
                     return RootControlAction::Continue;
                 }
@@ -2705,6 +2968,7 @@ fn poll_root_control(
         }
         Ok(RootControl::Shutdown) => {
             context.recording.detach();
+            clear_root_capture_cache(context);
             if let Some(mut connected) = client.take() {
                 let _ = platform_root::shutdown(&mut connected);
             }
@@ -2756,7 +3020,7 @@ fn apply_root_host_event(
             request,
             completion,
         } => {
-            if matches!(request.opcode, 1204 | 1205 | 2200..=2202 | 15000..=15003 | 16000..=16003 | 17000..=17003)
+            if matches!(request.opcode, 1204 | 1205 | 2200..=2202 | 15000..=15003 | 16000..=16003 | 17000..=17003 | 18000..=18008)
             {
                 dispatch_dialog_event(*request, context, &completion);
                 return true;
@@ -2793,6 +3057,11 @@ fn apply_root_host_event(
             }
         }
         ExternalHostEvent::Cancel { request_id, .. } => {
+            context
+                .capture_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
             let mut backend =
                 platform_root::InputBackend::new(client.as_mut().expect("attached client"));
             let result = input.cancel(request_id, &mut backend);
@@ -2828,6 +3097,11 @@ fn apply_root_host_event(
         }
         ExternalHostEvent::Interrupted => {}
         ExternalHostEvent::Stop => {
+            context
+                .capture_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
             if let Some(mut connected) = client.take() {
                 let mut backend = platform_root::InputBackend::new(&mut connected);
                 let _ = input.stop(&mut backend);
@@ -2881,7 +3155,7 @@ fn dispatch_root_request(
             connection_lost: false,
         }
     } else if (14100..=14103).contains(&request.opcode)
-        || matches!(request.opcode, 14110..=14126 | 14140..=14146)
+        || matches!(request.opcode, 14110..=14126 | 14140..=14147)
         || request.opcode == 14130
     {
         RootDispatch {
@@ -2900,6 +3174,18 @@ fn dispatch_root_request(
         }
     } else {
         match prepare_input_commands(request, coordinates) {
+            Some(_)
+                if (4013..=4015).contains(&request.opcode)
+                    && platform_root::input_features(client) & 8 == 0 =>
+            {
+                RootDispatch {
+                    result: HostResult::Failure {
+                        code: "MULTI_TOUCH_UNAVAILABLE".into(),
+                        message: "Root backend did not negotiate multi-touch".into(),
+                    },
+                    connection_lost: false,
+                }
+            }
             Some(_) if context.recording.active() => RootDispatch {
                 result: HostResult::Failure {
                     code: "RECORDING_BUSY".into(),
@@ -2918,6 +3204,7 @@ fn dispatch_root_request(
                 ),
                 coordinates,
                 &context.frames,
+                &context.capture_cache,
                 context.boot_nanos.load(Ordering::Acquire),
                 context.snapshot_id.load(Ordering::Acquire),
             ),
@@ -2932,6 +3219,12 @@ fn dispatch_input_request(
     client: &mut platform_root::Client,
     input: &mut InputRuntime,
 ) -> RootDispatch {
+    // Input can change the display immediately; never reuse a pre-input frame.
+    context
+        .capture_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
     context.vision.begin_input(request);
     let now = MonoTime::from_nanos(context.boot_nanos.load(Ordering::Acquire));
     if let Some(expires_at) = now.checked_add(request.timeout) {
@@ -2991,6 +3284,11 @@ fn dispatch_input_request(
         }
         let mut dispatch = input_runtime_result(result);
         dispatch.connection_lost |= backend_lost || rearm_failed;
+        context
+            .capture_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         dispatch
     } else {
         input_failure("input timeout overflow")
@@ -3014,6 +3312,11 @@ fn wait_for_root_client(
                 response,
             } => match platform_root::connect(&socket_path, key, timeout) {
                 Ok(client) => {
+                    context
+                        .capture_cache
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clear();
                     #[cfg(target_os = "android")]
                     {
                         context.vision.attach_root(&client);
@@ -3065,6 +3368,11 @@ fn wait_for_root_client(
 
 fn notify_root_disconnected(context: &RootWorkerContext) {
     context.recording.detach();
+    context
+        .capture_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
     context.vision.detach_root(false);
     context.attached.store(false, Ordering::Release);
     let callback = context
@@ -3093,6 +3401,9 @@ fn publish_engine_state(engine: &EngineSession, signals: WorkerSignals<'_>) {
     } else {
         match engine.state() {
             EngineState::Created | EngineState::Starting => STATE_IDLE,
+            // A fresh external VM is internally running before any script is loaded.
+            // Geometry updates must not turn that unloaded session into a public run.
+            EngineState::Running if engine.root_task().is_none() => STATE_IDLE,
             EngineState::Running => STATE_RUNNING,
             EngineState::Paused => STATE_PAUSED,
             EngineState::Stopping => STATE_STOPPING,
@@ -3700,7 +4011,7 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeL
 
 #[no_mangle]
 pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeCapturePreview(
-    env: JNIEnv<'_>,
+    mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
 ) -> jbyteArray {
@@ -3708,11 +4019,70 @@ pub extern "system" fn Java_com_autoscript_engine_jni_NativeEngineBridge_nativeC
         let handle = u64::try_from(handle).map_err(|_| "SESSION_CLOSED".to_owned())?;
         get_session(handle)?.capture_preview()
     }));
-    let Ok(Ok(bytes)) = result else {
-        return std::ptr::null_mut();
+    let bytes = match result {
+        Ok(Ok(bytes)) => bytes,
+        failure => {
+            let error = match &failure {
+                Ok(Err(error)) => error.as_str(),
+                _ => "CAPTURE_REQUEST_FAILED",
+            };
+            let _ = env.throw_new(
+                "java/lang/IllegalStateException",
+                preview_capture_failure_code(error),
+            );
+            return std::ptr::null_mut();
+        }
     };
     env.byte_array_from_slice(&bytes)
         .map_or(std::ptr::null_mut(), JByteArray::into_raw)
+}
+
+fn preview_capture_failure_code(error: &str) -> &'static str {
+    match error {
+        "SESSION_CLOSED" => "CAPTURE_SESSION_CHANGED",
+        "ROOT_BACKEND_NOT_READY" => "CAPTURE_ROOT_NOT_READY",
+        "PREVIEW_CAPTURE_TOO_LARGE" | "CAPTURE_BUDGET" => "CAPTURE_BUDGET",
+        "PREVIEW_CAPTURE_INVALID" | "CAPTURE_INVALID_FRAME" => "CAPTURE_INVALID_FRAME",
+        "CAPTURE_DEADLINE" => "CAPTURE_DEADLINE",
+        "CAPTURE_PROCESS_START" => "CAPTURE_PROCESS_START",
+        "CAPTURE_PIPE_READ" => "CAPTURE_PIPE_READ",
+        "CAPTURE_PROCESS_EXIT" => "CAPTURE_PROCESS_EXIT",
+        "CAPTURE_ID_EXHAUSTED" => "CAPTURE_ID_EXHAUSTED",
+        "CAPTURE_CONTROL_UNAVAILABLE" => "CAPTURE_CONTROL_UNAVAILABLE",
+        "CAPTURE_TRANSPORT" => "CAPTURE_TRANSPORT",
+        "CAPTURE_PROTOCOL" => "CAPTURE_PROTOCOL",
+        "CAPTURE_CORRELATION" => "CAPTURE_CORRELATION",
+        "CAPTURE_CANCELLED" => "CAPTURE_CANCELLED",
+        "CAPTURE_BACKEND_UNAVAILABLE" => "CAPTURE_BACKEND_UNAVAILABLE",
+        "CAPTURE_BACKEND_FAILED" => "CAPTURE_BACKEND_FAILED",
+        "CAPTURE_CONNECTION_CLOSED" => "CAPTURE_CONNECTION_CLOSED",
+        "CAPTURE_QUEUE_BUSY" => "CAPTURE_QUEUE_BUSY",
+        _ => "CAPTURE_REQUEST_FAILED",
+    }
+}
+
+#[test]
+fn capture_preview_failure_codes_never_expose_backend_output() {
+    assert_eq!(
+        preview_capture_failure_code("CAPTURE_PIPE_READ"),
+        "CAPTURE_PIPE_READ"
+    );
+    assert_eq!(
+        preview_capture_failure_code("ROOT_BACKEND_NOT_READY"),
+        "CAPTURE_ROOT_NOT_READY"
+    );
+    assert_eq!(
+        preview_capture_failure_code("SESSION_CLOSED"),
+        "CAPTURE_SESSION_CHANGED"
+    );
+    for raw in [
+        "",
+        "private /data/path token=secret",
+        "CAPTURE_PIPE_READ secret",
+        "CAPTURE_READY",
+    ] {
+        assert_eq!(preview_capture_failure_code(raw), "CAPTURE_REQUEST_FAILED");
+    }
 }
 
 #[no_mangle]
@@ -3859,6 +4229,37 @@ mod tests {
         create_session, destroy_session, get_session, SessionCommand, STATE_FAILED, STATE_IDLE,
         STATE_STOPPED, STATE_STOPPING,
     };
+
+    #[test]
+    fn root_cleanup_work_is_published_after_fence_and_pending_marker() {
+        use std::sync::atomic::AtomicBool;
+        for previous_work in [false, true] {
+            let requested = AtomicBool::new(previous_work);
+            let pending = AtomicBool::new(false);
+            super::publish_root_input_stop(&requested, || {
+                // Simulate the worker consuming any preceding work at the old race point.
+                assert_eq!(requested.swap(false, Ordering::AcqRel), previous_work);
+                pending.store(false, Ordering::Release);
+                // The current request now establishes its real cleanup obligation.
+                pending.store(true, Ordering::Release);
+            });
+            assert!(requested.swap(false, Ordering::AcqRel));
+            assert!(pending.swap(false, Ordering::AcqRel));
+            assert!(!requested.load(Ordering::Acquire));
+            assert!(!pending.load(Ordering::Acquire));
+        }
+    }
+
+    #[test]
+    fn incomplete_root_fence_does_not_publish_cleanup_work() {
+        use std::sync::atomic::AtomicBool;
+        let requested = AtomicBool::new(false);
+        let failed = std::panic::catch_unwind(|| {
+            super::publish_root_input_stop(&requested, || panic!("owned fixture"));
+        });
+        assert!(failed.is_err());
+        assert!(!requested.load(Ordering::Acquire));
+    }
 
     #[test]
     fn screen_input_snapshot_guard_preserves_old_calls_and_rejects_stale_points() {
@@ -4018,6 +4419,52 @@ mod tests {
         session.reset(1080, 1920).expect("reset idle session");
 
         assert_eq!(session.state.load(Ordering::Acquire), STATE_IDLE);
+        destroy_session(handle).expect("destroy");
+    }
+
+    #[test]
+    fn display_updates_preserve_unloaded_idle_and_loaded_execution_states() {
+        let handle = create_session(720, 1280).expect("create");
+        let session = get_session(handle).expect("lookup");
+        let rotate = |snapshot_id, width, height| {
+            session
+                .request(|response| SessionCommand::UpdateDisplay {
+                    snapshot_id,
+                    width,
+                    height,
+                    response,
+                })
+                .expect("update display");
+        };
+        rotate(2, 1280, 720);
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_IDLE);
+        session
+            .configure_project(3, 1280, 720, coordinate::ScaleMode::Letterbox)
+            .expect("configure unloaded project");
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_IDLE);
+        session.reset(720, 1280).expect("reset idle");
+        rotate(4, 720, 1280);
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_IDLE);
+
+        session
+            .request(|response| SessionCommand::Start {
+                source: b"return function() Task.sleep(60000) end".to_vec(),
+                capabilities: vec!["core.task".to_owned()],
+                response,
+            })
+            .expect("start");
+        rotate(5, 1280, 720);
+        assert_eq!(session.state.load(Ordering::Acquire), super::STATE_RUNNING);
+        session.request_stop(1).expect("stop");
+        for _ in 0..100 {
+            if session.state.load(Ordering::Acquire) == STATE_STOPPED {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_STOPPED);
+        rotate(6, 720, 1280);
+        assert_eq!(session.state.load(Ordering::Acquire), STATE_STOPPED);
         destroy_session(handle).expect("destroy");
     }
 

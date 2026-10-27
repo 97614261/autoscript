@@ -108,7 +108,7 @@ fn integer(value: &LuaScalar) -> Result<i64, &'static str> {
         _ => Err("expected exact bounded integer"),
     }
 }
-fn number(value: &LuaScalar) -> Result<f64, &'static str> {
+pub(super) fn number(value: &LuaScalar) -> Result<f64, &'static str> {
     let value = match value {
         LuaScalar::Number(value) => *value,
         // Small integers convert exactly through From<i32>, without allocating

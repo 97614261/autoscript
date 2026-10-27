@@ -5,7 +5,7 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/text.regexmatch/1/text.regexmatch.schema.json",
   "title": "正则匹配判断",
   "category": "variable",
-  "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。",
+  "summary": "文本中任意位置命中返回整数1，未命中返回0；整段匹配请用^和$。不支持反向引用/环视，不返回捕获组。",
   "searchTerms": [
     "工具",
     "正则匹配判断",

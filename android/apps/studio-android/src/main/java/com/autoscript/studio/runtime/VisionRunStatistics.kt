@@ -6,16 +6,6 @@ import kotlin.math.ceil
 
 /** Same algorithm, geometry, threshold and outcome only; nearest-rank, no mixed averages. */
 internal object VisionRunStatistics {
-    fun displayAlgorithm(algorithm: String): String = when (algorithm) {
-        "capture-host-roundtrip" -> "截图总耗时（宿主往返）"
-        "capture-acquisition" -> "截图采集（含桥读取）"
-        "capture-transferVerified" -> "帧传输 / 鉴权"
-        "capture-framePublish" -> "帧入池"
-        "rust-rgba-first" -> "Rust 找图 · 首结果"
-        "rust-rgba-single" -> "Rust 找图 · 单模板"
-        "rust-rgba-all" -> "Rust 找图 · 多结果"
-        else -> algorithm
-    }
     data class Group(val algorithm: String, val configuration: String, val status: String,
         val count: Int, val p50Ms: Double, val p95Ms: Double, val p99Ms: Double,
         val parameters: Map<String, String> = emptyMap(), val unit: String = "ms")
@@ -38,12 +28,13 @@ internal object VisionRunStatistics {
                         require(event.get("version")?.asInt == 1)
                         val elapsed = event.get("elapsedUs").asLong
                         require(elapsed in 0..3_600_000_000L)
-                        val fields = listOf("flowId", "nodeId", "frame", "roi", "templateCount", "templateSizes", "templateFingerprintVersion", "templateFingerprints", "tolerance", "similarity", "direction", "limit", "comparisonBudget", "timeoutMs", "captureBackend", "captureTransport")
+                        val fields = listOf("flowId", "nodeId", "frame", "roi", "captureRegion", "captureReadback", "templateCount", "templateSizes", "templateFingerprintVersion", "templateFingerprints", "tolerance", "similarity", "direction", "limit", "comparisonBudget", "timeoutMs", "captureBackend", "captureTransport")
                         val configuration = fields
                             .joinToString(" · ") { "$it=${event.get(it) ?: "-"}" }
                         val key = Triple(event.get("algorithm").asString, configuration, event.get("status").asString)
                         val stages = event.getAsJsonObject("captureStagesUs")
-                        val values = if (key.first == "capture-host-roundtrip" && key.third == "completed" && stages != null) {
+                        val capture = key.first in setOf("capture-host-roundtrip", "capture-region-host-roundtrip")
+                        val values = if (capture && key.third == "completed" && stages != null) {
                             listOf("acquisition", "transferVerified", "framePublish").map { name ->
                                 val value = requireNotNull(stages.get(name)).asLong
                                 require(value in 0..3_600_000_000L)
@@ -57,7 +48,7 @@ internal object VisionRunStatistics {
                             }
                         } else emptyList()
                         val transfer = event.getAsJsonObject("captureTransferUs")
-                        val transferValues = if (key.first == "capture-host-roundtrip" && key.third == "completed" && transfer != null) {
+                        val transferValues = if (capture && key.third == "completed" && transfer != null) {
                             val packets = requireNotNull(transfer.get("packets")).asLong
                             require(packets in 1..1_093)
                             listOf("sendEncode", "sendWrite", "receiveRead", "verify", "append").map { name ->

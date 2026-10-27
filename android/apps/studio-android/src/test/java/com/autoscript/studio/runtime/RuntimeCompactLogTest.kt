@@ -14,6 +14,25 @@ class RuntimeCompactLogTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun capture(time: Int = 28000) = """{"version":1,"kind":"vision","opcode":5000,"algorithm":"capture-host-roundtrip","flowId":"main","nodeId":"node-12345678-1234-1234-1234-123456789abc","frame":[720,1280],"captureBackend":"root-surfacecontrol","captureTransport":"authenticated-stream","elapsedUs":$time,"status":"completed","receivedAtElapsedMs":1000,"captureStagesUs":{"acquisition":16000,"transferVerified":9500,"framePublish":140,"systemCapture":2900,"softwareReadback":9920,"pixelRead":1230,"pixelEncode":620,"bridgeWrite":1620,"bridgeReceive":3350},"captureTransferUs":{"sendEncode":7710,"sendWrite":1380,"receiveRead":460,"verify":7430,"append":1380,"packets":60}}"""
 
+    @Test fun explicitRegionKeepsSeparateStatisticsAndCumulativeCaptureCount() {
+        val region=JsonParser.parseString(capture()).asJsonObject.apply {
+            addProperty("opcode",5014); addProperty("algorithm","capture-region-host-roundtrip")
+            add("captureRegion",JsonParser.parseString("[149,407,546,879]"))
+            addProperty("captureReadback","region-readback-full-system-capture")
+        }.toString()
+        val packed=RuntimeLogEventCodec.Encoder().encode(region)
+        val report=VisionRunStatistics.parse(packed.condition+"\n"+packed.sample+"\n"+capture())
+        assertEquals(0,report.malformed)
+        val sections=VisionLogPresentation.sections(report)
+        assertEquals(2,sections.size)
+        assertTrue(sections.all(VisionLogPresentation::isCapture))
+        assertTrue(report.groups.any {it.algorithm=="capture-region-host-roundtrip" && it.parameters["captureRegion"]=="[149,407,546,879]"})
+        assertTrue(RuntimeLogEventCodec.preview(packed.condition+"\n"+packed.sample).contains("区域截图 完成"))
+        val root=temporary.newFolder(); val writer=RuntimeLogWriter(root)
+        writer.begin(emptyMap()); writer.append("events.jsonl",region); writer.end("stopped"); writer.close()
+        assertTrue(writer.awaitClosed(5000)); assertEquals("1",RuntimeLogFiles.list(root).single().metadata["visionCaptures"])
+    }
+
     @Test fun compactRoundtripPreservesEveryFieldAndPercentileWithLegacyMix() {
         val encoder = RuntimeLogEventCodec.Encoder()
         val first = encoder.encode(capture())

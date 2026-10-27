@@ -13,7 +13,7 @@ android {
     defaultConfig {
         applicationId = "com.zhigou.component.onnx"
         minSdk = 24; targetSdk = 36
-        versionCode = 1; versionName = "1.19.2"
+        versionCode = 3; versionName = "1.19.2"
         ndk { abiFilters += (rootProject.extra["autoscript.abis"] as List<*>).map { it.toString() } }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -21,6 +21,7 @@ android {
     sourceSets.getByName("main") {
         java.srcDir(rootProject.file("modules/runtime-service/src/onnx/java"))
         assets.srcDir(rootProject.file("modules/runtime-service/src/onnx/assets"))
+        assets.srcDir(rootProject.file("modules/runtime-service/src/onnxCandidate/assets"))
         assets.srcDir(layout.buildDirectory.dir("generated/component-assets"))
     }
 }

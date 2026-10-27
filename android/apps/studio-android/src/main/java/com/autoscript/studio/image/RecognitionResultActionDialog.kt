@@ -46,7 +46,7 @@ internal fun RecognitionResultActionDialog(project: ProjectSnapshot, flowId: Str
         Column(Modifier.fillMaxWidth().heightIn(max=if(fullScreen) 900.dp else 380.dp).verticalScroll(rememberScrollState()).padding(10.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
             DesignerChoice("结果集合",inputs["sourceVariable"].orEmpty(),variables.filter { it.type==ProjectVariableType.STRING }.map { it.name to it.name },true) { update("sourceVariable",it) }
             val shape=RecognitionResultShape.entries.firstOrNull { it.name==inputs["shape"] }
-            DesignerChoice("结果类型",shape?.label ?: "请选择",RecognitionResultShape.entries.filter { it!=RecognitionResultShape.GLYPH_SUMMARY }.map { it.name to it.label },true) { update("shape",it) }
+            DesignerChoice("结果类型",shape?.label ?: "请选择",RecognitionResultShape.entries.filter { !it.isSummary() && it!=RecognitionResultShape.SCALED_IMAGE }.map { it.name to it.label },true) { update("shape",it) }
             shape?.let { Text(recognitionResultProducerHint(it),fontSize=10.sp) }
             DesignerChoice("处理范围",inputs["selection"].orEmpty(),listOf("first" to "首项","all" to "逐项（有界）"),true) { update("selection",it) }
             DesignerChoice("动作位置",inputs["anchor"].orEmpty(),listOf("center" to "矩形中心 / 颜色点","topLeft" to "左上 / 颜色点"),true) { update("anchor",it) }

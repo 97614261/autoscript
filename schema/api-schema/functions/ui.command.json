@@ -9,7 +9,7 @@
   "sideEffect": "ui_prompt",
   "timeoutMs": 3000,
   "resourceOwnership": "none",
-  "summary": "白名单控件属性与列表操作。itemAdd追加文字，itemInsert/itemSet接受index/text对象，itemRemove为1起索引，itemsClear留空；selectedIndex为1起整数（非必选可0），selectedIndices为JSON索引数组。get:itemCount/selectedIndex/selectedIndices读取对应状态。x/y/width/height/fontPx等为设计像素，颜色#AARRGGBB。新属性和列表操作等待宿主确认，旧写操作保持兼容；不写回设计稿。",
+  "summary": "白名单控件属性与列表操作。window/get:pages返回页面元数据JSON；window/get:controls以value指定页面ID（空为当前页）返回控件ID、类型和输入类型，不返回值、密码或事件，也不切页。itemAdd追加文字，itemInsert/itemSet接受index/text对象，itemRemove为1起索引，itemsClear留空；selectedIndex为1起整数（非必选可0），selectedIndices为JSON索引数组。get:itemCount/selectedIndex/selectedIndices读取对应状态。x/y/width/height/fontPx等为设计像素，颜色#AARRGGBB。新属性和列表操作等待宿主确认，旧写操作保持兼容；不写回设计稿。",
   "params": [
     {
       "name": "id",

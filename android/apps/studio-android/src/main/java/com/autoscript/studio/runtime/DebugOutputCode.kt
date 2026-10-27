@@ -2,6 +2,33 @@ package com.autoscript.studio
 
 import com.google.gson.JsonObject
 
+internal data class DebugOutputDraft(
+    val mode: Int = DebugOutputCode.RUN_PROMPT,
+    val text: String = "",
+    val variable: String? = null,
+    val expression: Boolean = false,
+    val logLevel: String = "info",
+) {
+    fun needsDiscard(initial: DebugOutputDraft, editingExisting: Boolean): Boolean =
+        this != initial && (editingExisting || text.isNotEmpty() || variable != null)
+
+    companion object {
+        fun from(kind: String?, arguments: JsonObject?): DebugOutputDraft = DebugOutputDraft(
+            mode = when (kind) {
+                "task.prompt" -> DebugOutputCode.TOAST
+                "task.log" -> DebugOutputCode.LOG
+                "task.comment" -> DebugOutputCode.COMMENT
+                "task.message" -> DebugOutputCode.expressionOutputMode(arguments)
+                else -> DebugOutputCode.RUN_PROMPT
+            },
+            text = arguments?.get(if (kind == "task.message") "expression" else "message")?.asString.orEmpty(),
+            variable = arguments?.get("valueVariable")?.asString,
+            expression = kind == "task.message",
+            logLevel = arguments?.get("level")?.asString ?: "info",
+        )
+    }
+}
+
 /** User-facing progress, transient toast and developer log have different runtime channels. */
 internal object DebugOutputCode {
     const val RUN_PROMPT = 0
@@ -9,7 +36,7 @@ internal object DebugOutputCode {
     const val LOG = 2
     const val COMMENT = 3
 
-    private val variableName = Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")
+    private val variableName = com.autoscript.project.store.ProjectNames.pattern
 
     fun expressionError(mode: Int, text: String, visualMode: Boolean): String? = when {
         !visualMode -> "表达式提示仅用于可视化编辑"
@@ -32,14 +59,6 @@ internal object DebugOutputCode {
         "popup" -> TOAST
         "console" -> LOG
         else -> RUN_PROMPT
-    }
-
-    fun appendExpressionVariable(text: String, variable: String): String? {
-        if (!variableName.matches(variable)) return null
-        val prefix = text.trimEnd()
-        val join = if (prefix.isEmpty() || prefix.endsWith("..") || prefix.last() in "(,+-*/") "" else " .. "
-        val result = prefix + join + "text($variable)"
-        return result.takeIf { it.toByteArray(Charsets.UTF_8).size <= 1024 }
     }
 
     fun error(mode: Int, text: String, variable: String?, logLevel: String = "info"): String? {

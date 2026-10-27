@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -241,13 +241,16 @@ internal fun BoxScope.ImageToolBar(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     onProcessing: (() -> Unit)? = null,
+    onMakeGlyph: (() -> Unit)? = null,
+    onFilter: (() -> Unit)? = null,
+    onPolygon: (() -> Unit)? = null,
 ) {
     val latestOnDrag by rememberUpdatedState(onDrag)
     val latestOnToggleMenu by rememberUpdatedState(onToggleMenu)
     Surface(
         modifier = modifier
             .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-            .height(44.dp),
+            .heightIn(min = 44.dp),
         shape = RoundedCornerShape(8.dp),
         color = ToolChrome,
         shadowElevation = 10.dp,
@@ -296,7 +299,10 @@ internal fun BoxScope.ImageToolBar(
                 if (hasImage && !zoomMode) {
                     ImageToolButton("缩放", ButtonGrey, true, onZoom)
                 }
+                onMakeGlyph?.let { ImageToolButton("制字", ButtonBlue, hasImage && !capturing, it) }
+                onFilter?.let { ImageToolButton("滤色", ButtonBlue, hasImage && !capturing, it) }
                 onProcessing?.let { ImageToolButton("处理", ButtonBlue, hasImage && !capturing, it) }
+                onPolygon?.let { ImageToolButton("多边形", ButtonBlue, hasImage && !capturing, it) }
                 when {
                     // 多点没有「取点」按钮：按住图片拖动、抬手就加一个点（参考 colorpicker 的取法）。
                     mode == ImageToolMode.MULTI_COLOR ->
@@ -319,11 +325,11 @@ internal fun BoxScope.ImageToolBar(
                 if (selection.box != null || selection.points.isNotEmpty()) {
                     ImageToolButton("清除", ButtonGrey, true, onClear)
                 }
-                if (mode == ImageToolMode.CROP) {
-                    ImageToolButton("存模板", ButtonGreen, ready, onCropToTemplate)
-                } else {
-                    ImageToolButton(if (mode == ImageToolMode.OCR) "取字" else "确定", ButtonGreen, ready, onConfirm)
-                }
+            }
+            if (mode == ImageToolMode.CROP) {
+                ImageToolButton("存模板", ButtonGreen, ready, onCropToTemplate)
+            } else {
+                ImageToolButton(if (mode == ImageToolMode.OCR) "取字" else "确定", ButtonGreen, ready, onConfirm)
             }
             Box(Modifier.size(38.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
                 Icon(
@@ -400,7 +406,7 @@ internal fun ImageToolButton(label: String, color: Color, enabled: Boolean, onCl
         fontWeight = FontWeight.Bold,
         textAlign = TextAlign.Center,
         modifier = Modifier
-            .height(28.dp)
+            .heightIn(min = 28.dp)
             .background(if (enabled) color else Color(0xFF262C38), RoundedCornerShape(4.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 9.dp)

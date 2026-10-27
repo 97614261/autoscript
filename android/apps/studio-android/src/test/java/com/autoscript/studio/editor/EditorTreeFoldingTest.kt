@@ -6,16 +6,16 @@ import org.junit.Test
 
 class EditorTreeFoldingTest {
     private fun node(id: String, depth: Int, container: Boolean = false, expanded: Boolean = true) =
-        EditorTreeNode(id, id, "task.noop", EditorToolPanel.COMMON, depth, container, expanded)
+        EditorTreeNode(id, id, "task.noop", depth, container, expanded)
 
     @Test fun nestedCollapseHidesOnlyDescendantsAndKeepsSiblingRows() {
         val nodes = listOf(node("parent", 0, true), node("inner", 1, true, false),
             node("leaf", 2), node("sibling", 1), node("root", 0))
-        assertEquals(listOf("parent", "inner", "sibling", "root"), legacyVisibleTreeNodes(nodes).map { it.id })
+        assertEquals(listOf("parent", "inner", "sibling", "root"), editorVisibleTreeNodes(nodes).map { it.id })
         val collapsed = nodes.map { if (it.id == "parent") it.copy(expanded = false) else it }
-        assertEquals(listOf("parent", "root"), legacyVisibleTreeNodes(collapsed).map { it.id })
+        assertEquals(listOf("parent", "root"), editorVisibleTreeNodes(collapsed).map { it.id })
         val restored = collapsed.map { if (it.id == "parent") it.copy(expanded = true) else it }
-        assertEquals(listOf("parent", "inner", "sibling", "root"), legacyVisibleTreeNodes(restored).map { it.id })
+        assertEquals(listOf("parent", "inner", "sibling", "root"), editorVisibleTreeNodes(restored).map { it.id })
         assertEquals(5, restored.size)
     }
 
@@ -30,12 +30,15 @@ class EditorTreeFoldingTest {
     }
 
     @Test fun editListSharesMainTreeExpansionAndScrollsVisibleIndices() {
-        val source = File("src/main/java/com/autoscript/studio/editor/EditorDock.kt").readText()
+        val source = editorDockTestSources()
         assertTrue(source.contains("onToggleNode = ::toggleNodeExpansion"))
         assertTrue(source.contains("onToggleExpansion = ::toggleNodeExpansion"))
-        val dialog = source.substringAfter("private fun EditorNodeEditDialog(").substringBefore("private fun legacyBreadcrumb(")
-        assertTrue(dialog.contains("itemsIndexed(visibleNodes"))
-        assertTrue(dialog.contains("editListState.scrollToItem(visibleSelectedIndex)"))
+        assertTrue(source.contains("val index = displayedTreeNodes.indexOfFirst { it.id == programSelectedNodeId }"))
+        val dialog = source.substringAfter("fun EditorNodeEditDialog(").substringBefore("fun editorTreeBreadcrumb(")
+        assertTrue(dialog.contains("itemsIndexed(displayRows"))
+        assertTrue(dialog.contains("editorTreeDisplayRows(viewNodes)"))
+        assertTrue(dialog.contains("editorMinimumScrollRequest(visibleSelectedIndex"))
+        assertTrue(dialog.contains("editListState.scrollToItem(request.index, request.offset)"))
         assertTrue(dialog.contains("onToggleExpansion(node.id)"))
         assertTrue(dialog.contains("onToggleNode?.invoke(node.id)"))
     }

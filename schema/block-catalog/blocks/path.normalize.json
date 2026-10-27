@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "path.normalize",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/path.normalize/1/path.normalize.schema.json",
+  "title": "规范相对路径",
+  "category": "variable",
+  "summary": "折叠重复/及独立.段，拒绝..、绝对路径、反斜线、隐藏段及非法字符；最多16段/256字节。结果仍是项目私有data相对路径，不读取或授权文件。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Path.normalize",
+    "规范相对路径"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "相对路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "images/./sample.png"
+    },
+    {
+      "path": "pathVariable",
+      "label": "相对路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

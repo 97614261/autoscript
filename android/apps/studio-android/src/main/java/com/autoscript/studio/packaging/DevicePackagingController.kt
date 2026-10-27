@@ -132,10 +132,13 @@ internal class DevicePackagingController(context: Context) {
                     committed?.delete()
                     throw error
                 } finally {
-                    val root = appContext.cacheDir.canonicalFile
-                    if (staging.canonicalPath.startsWith(root.path + File.separator) && staging.name.startsWith("device-apk-")) staging.deleteRecursively()
-                    active.compareAndSet(work, null)
-                    ownedWork.compareAndSet(work, null)
+                    try {
+                        val root = appContext.cacheDir.canonicalFile
+                        if (staging.canonicalPath.startsWith(root.path + File.separator) && staging.name.startsWith("device-apk-")) staging.deleteRecursively()
+                    } finally {
+                        active.compareAndSet(work, null)
+                        ownedWork.compareAndSet(work, null)
+                    }
                 }
             }
         } catch (error: Throwable) {

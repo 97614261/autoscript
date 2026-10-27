@@ -20,6 +20,11 @@ internal object BlockCatalog {
 
     fun find(kind: String): BlockContract? = byKind[kind]
 
+    fun missingCapabilities(kind: String?, required: Set<String>, capabilities: Set<String>): Set<String> =
+        if ((kind == "screen.release" || kind == "Screen.release") && "screen.capture" in capabilities)
+            required - capabilities - "core.task"
+        else required - capabilities
+
     fun search(
         query: String,
         capabilities: Set<String>,
@@ -39,7 +44,7 @@ internal object BlockCatalog {
                 terms.all(haystack::contains)
             }
             .map { contract ->
-                BlockSearchResult(contract, contract.requiredCapabilities - capabilities)
+                BlockSearchResult(contract, missingCapabilities(contract.kind, contract.requiredCapabilities, capabilities))
             }
             .sortedWith(
                 compareBy<BlockSearchResult> { it.contract.category.ordinal }

@@ -1,6 +1,190 @@
 use super::*;
 
 #[test]
+#[ignore = "alternating tolerant scalar/block CPU benchmark; no device claims"]
+fn benchmark_tolerant_span_batches() {
+    for bgra in [false, true] {
+        let colors: Vec<_> = (0..200 * 122)
+            .map(|n| {
+                [
+                    u8::try_from(n % 251).unwrap(),
+                    u8::try_from(n % 239).unwrap(),
+                    u8::try_from(n % 227).unwrap(),
+                    255,
+                ]
+            })
+            .collect();
+        let bytes: Vec<_> = colors
+            .iter()
+            .enumerate()
+            .flat_map(|(n, c)| {
+                let mut p = *c;
+                p[0] = p[0].wrapping_add(if n % 17 == 0 { 10 } else { 1 });
+                if !bgra {
+                    p.swap(0, 2);
+                }
+                p
+            })
+            .collect();
+        let tolerance = ColorTolerance {
+            red: 3,
+            green: 3,
+            blue: 3,
+            alpha: 0,
+        };
+        let mut times = [Vec::new(), Vec::new()];
+        for iteration in 0..111 {
+            for variant in [iteration % 2, 1 - iteration % 2] {
+                let start = std::time::Instant::now();
+                for _ in 0..100 {
+                    let mut budget = ComparisonBudget::new(1_000_000_000);
+                    let mut mismatch = 0;
+                    let result = match (variant, bgra) {
+                        (0, false) => compare_span_scalar::<false, false, false>(
+                            &colors,
+                            std::hint::black_box(&bytes),
+                            tolerance,
+                            2440,
+                            &mut mismatch,
+                            &mut budget,
+                        ),
+                        (0, true) => compare_span_scalar::<true, false, false>(
+                            &colors,
+                            std::hint::black_box(&bytes),
+                            tolerance,
+                            2440,
+                            &mut mismatch,
+                            &mut budget,
+                        ),
+                        (_, false) => compare_span_mode::<false, false, false, true>(
+                            &colors,
+                            std::hint::black_box(&bytes),
+                            tolerance,
+                            2440,
+                            &mut mismatch,
+                            &mut budget,
+                        ),
+                        (_, true) => compare_span_mode::<true, false, false, true>(
+                            &colors,
+                            std::hint::black_box(&bytes),
+                            tolerance,
+                            2440,
+                            &mut mismatch,
+                            &mut budget,
+                        ),
+                    };
+                    assert_eq!(result, Ok(true));
+                    std::hint::black_box(mismatch);
+                }
+                if iteration >= 11 {
+                    times[variant].push(start.elapsed().as_micros());
+                }
+            }
+        }
+        for (name, mut values) in ["scalar", "blocks"].into_iter().zip(times) {
+            values.sort_unstable();
+            println!(
+                "tolerant-bgra={bgra}-{name}-100: P50={} P95={} P99={}us",
+                values[49], values[94], values[98]
+            );
+        }
+    }
+}
+
+#[test]
+fn tolerant_blocks_preserve_every_budget_and_cancellation_boundary() {
+    for length in [31, 32, 33, 65, 2053] {
+        let colors: Vec<_> = (0..length)
+            .map(|n| {
+                [
+                    u8::try_from(n % 256).unwrap(),
+                    u8::try_from(n * 7 % 256).unwrap(),
+                    u8::try_from(n * 13 % 256).unwrap(),
+                    255,
+                ]
+            })
+            .collect();
+        for bgra in [false, true] {
+            let actual: Vec<_> = colors
+                .iter()
+                .enumerate()
+                .flat_map(|(n, c)| {
+                    let mut p = *c;
+                    p[n % 4] = p[n % 4].wrapping_add(u8::try_from(n % 31).unwrap());
+                    if !bgra {
+                        p.swap(0, 2);
+                    }
+                    p
+                })
+                .collect();
+            for allowed in [0, 31, 32, 33, 4096] {
+                for maximum in [0_u64, 1, 31, 32, 33, 1023, 1024, 2054] {
+                    for gap in [0, 1, 31, 32, 33, 1024] {
+                        let tolerance = ColorTolerance {
+                            red: 3,
+                            green: 12,
+                            blue: 18,
+                            alpha: 2,
+                        };
+                        let mut calls = [0; 2];
+                        let mut results = Vec::new();
+                        for (variant, calls) in calls.iter_mut().enumerate() {
+                            let mut stop = || {
+                                *calls += 1;
+                                *calls == 2
+                            };
+                            let mut budget = ComparisonBudget {
+                                remaining: maximum,
+                                next_check: maximum.saturating_sub(gap),
+                                checkpoint: Some(&mut stop),
+                            };
+                            let mut mismatches = 0;
+                            let result = match (variant, bgra) {
+                                (0, false) => compare_span_scalar::<false, false, false>(
+                                    &colors,
+                                    &actual,
+                                    tolerance,
+                                    allowed,
+                                    &mut mismatches,
+                                    &mut budget,
+                                ),
+                                (0, true) => compare_span_scalar::<true, false, false>(
+                                    &colors,
+                                    &actual,
+                                    tolerance,
+                                    allowed,
+                                    &mut mismatches,
+                                    &mut budget,
+                                ),
+                                (_, false) => compare_span_mode::<false, false, false, true>(
+                                    &colors,
+                                    &actual,
+                                    tolerance,
+                                    allowed,
+                                    &mut mismatches,
+                                    &mut budget,
+                                ),
+                                (_, true) => compare_span_mode::<true, false, false, true>(
+                                    &colors,
+                                    &actual,
+                                    tolerance,
+                                    allowed,
+                                    &mut mismatches,
+                                    &mut budget,
+                                ),
+                            };
+                            results.push((result, budget.remaining, budget.next_check, mismatches));
+                        }
+                        assert_eq!(results[0], results[1]);
+                        assert_eq!(calls[0], calls[1]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn batched_exact_spans_preserve_failure_pixel_budget_and_checkpoint_boundaries() {
     for length in [31, 32, 33, 65, 2053] {
         let colors: Vec<_> = (0..length)

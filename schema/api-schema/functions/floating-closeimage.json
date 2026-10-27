@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18008,
+  "name": "Floating.closeImage",
+  "since": "1.8",
+  "capability": "ui.floating.interactive",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "关闭命名交互图片浮窗，清理其排队事件并唤醒等待者返回closed。与触摸穿透浮窗分开管理，停止自动清理。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "关闭命名交互图片浮窗，清理其排队事件并唤醒等待者返回closed。与触摸穿透浮窗分开管理，停止自动清理。"
+  },
+  "legacyAliases": []
+}

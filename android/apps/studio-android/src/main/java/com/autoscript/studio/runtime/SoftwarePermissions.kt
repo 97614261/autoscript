@@ -78,6 +78,12 @@ internal fun automationPermissionStatuses(state: RuntimeConnectionState, feature
             else -> "不支持持续单指"
         }, pointer),
         SoftwarePermissionStatus("Root 截图", if (root) "后端就绪，未执行截图测试" else "等待 Root 就绪", root),
+        SoftwarePermissionStatus("多指触摸（最多5指）",when {
+            !root->"等待 Root 就绪"
+            features==null->"读取中"
+            features and RuntimeProtocol.INPUT_FEATURE_MULTI_POINTER!=0->"已协商支持，未代表目标App实测"
+            else->"后端不支持，不降级为单指"
+        },root && features!=null && features and RuntimeProtocol.INPUT_FEATURE_MULTI_POINTER!=0),
     )
 }
 
@@ -188,6 +194,8 @@ private fun SoftwarePermissionsDialog(runtimeClient: RuntimeClient, startupPromp
                 },
                 "应用权限" to { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())) },
                 "电池限制" to { open(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
+                "启用输入法" to { open(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) },
+                "选择输入法" to { context.getSystemService(android.view.inputmethod.InputMethodManager::class.java).showInputMethodPicker();revision++ },
                 "重新检查" to { scope.launch { withContext(Dispatchers.IO) { runtimeClient.refresh() }; revision++ } },
                 "声明权限" to { showDeclared = !showDeclared },
             )
@@ -208,6 +216,7 @@ private fun SoftwarePermissionsDialog(runtimeClient: RuntimeClient, startupPromp
                 HorizontalDivider(color = AutoScriptPalette.Divider)
             }
             Text("Root 由设备的 Root 管理器授权给智构，不属于 Android 普通权限；连接成功不等于授权成功。当前不提供无障碍或系统录屏后端。项目能力声明仍在项目设置维护。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+            Text("智构输入法为可选文字提交工具，不读取或保存输入内容；请在系统中主动启用并选择，脚本不会自动切换。",fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
             if (showDeclared) declared.forEach { row ->
                 Text("${row.title} · ${row.status}", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
             }

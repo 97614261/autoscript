@@ -12,7 +12,7 @@ data class RuntimeDebugValue(
     val declaredType: String = "",
 ) {
     init {
-        require(scope in setOf("local", "global") && name.toByteArray(Charsets.UTF_8).size in 1..128 && type in setOf("nil", "boolean", "integer", "number", "string", "unsupported"))
+        require(scope in setOf("local", "global") && name.toByteArray(Charsets.UTF_8).size in 1..192 && type in setOf("nil", "boolean", "integer", "number", "string", "unsupported"))
         require(value.length <= 1024)
         require(declaredType in setOf("", "boolean", "integer", "number", "string", "image"))
         require(when (type) {

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 1022,
+  "name": "Math.unary",
+  "since": "1.7",
+  "capability": "core.math",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "支持 abs/ceil/floor/sqrt/ln/log10/exp/sin/cos/tan/asin/acos/atan/deg/rad。三角函数使用弧度，deg/rad 显式转换；输入及结果绝对值不超过 10^12，定义域或非有限结果报错。",
+  "params": [
+    {
+      "name": "operation",
+      "type": "string",
+      "required": true,
+      "summary": "运算：abs=绝对值、ceil=向上取整、floor=向下取整、sqrt=平方根、ln=自然对数、log10=常用对数、exp=指数、sin=正弦、cos=余弦、tan=正切、asin=反正弦、acos=反余弦、atan=反正切、deg=弧度转角度、rad=角度转弧度"
+    },
+    {
+      "name": "value",
+      "type": "number",
+      "required": true,
+      "summary": "数值"
+    }
+  ],
+  "returns": {
+    "type": "number",
+    "nullable": false,
+    "summary": "支持 abs/ceil/floor/sqrt/ln/log10/exp/sin/cos/tan/asin/acos/atan/deg/rad。三角函数使用弧度，deg/rad 显式转换；输入及结果绝对值不超过 10^12，定义域或非有限结果报错。"
+  },
+  "legacyAliases": []
+}

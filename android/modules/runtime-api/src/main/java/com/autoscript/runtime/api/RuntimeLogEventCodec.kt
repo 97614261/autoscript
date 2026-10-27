@@ -127,10 +127,11 @@ object RuntimeLogEventCodec {
         val elapsed = event.get("elapsedUs").asLong
         require(elapsed in 0..3_600_000_000L)
         val algorithm = event.get("algorithm").asString
-        if ((algorithm.startsWith("capture-") && algorithm != "capture-host-roundtrip") || algorithm.startsWith("match-")) return null
+        val capture = algorithm in setOf("capture-host-roundtrip", "capture-region-host-roundtrip")
+        if ((algorithm.startsWith("capture-") && !capture) || algorithm.startsWith("match-")) return null
         val status = event.get("status").asString
         val key = when {
-            algorithm == "capture-host-roundtrip" && status == "completed" -> "visionCaptures"
+            capture && status == "completed" -> "visionCaptures"
             status == "found" -> "visionFound"
             status == "not_found" -> "visionNotFound"
             status in setOf("error", "failed", "timeout", "budget_exceeded") -> "visionFailed"
@@ -150,6 +151,7 @@ object RuntimeLogEventCodec {
                         val algorithm = event.get("algorithm")?.asString
                         val label = when (algorithm) {
                             "capture-host-roundtrip" -> "截图"
+                            "capture-region-host-roundtrip" -> "区域截图"
                             "rust-rgba-first" -> "找图"
                             "rust-rgba-single" -> "单图"
                             "rust-rgba-all" -> "多图"

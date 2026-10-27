@@ -127,3 +127,43 @@ fn benchmark_common_function_matrix() {
         );
     }
 }
+
+#[test]
+#[ignore = "explicit alternating compiled-pattern CPU comparison"]
+fn benchmark_regex_reference_and_cache() {
+    use runtime_scheduler::{TaskGeneration, TaskId};
+    let task = runtime_scheduler::TaskToken {
+        id: TaskId(1),
+        generation: TaskGeneration(1),
+    };
+    let mut cache = super::regex_cache::RegexCache::default();
+    let mut samples = [Vec::new(), Vec::new()];
+    let args = [bytes(&"智构A123 B456 ".repeat(200)), bytes("[0-9]+")];
+    for round in 0..110 {
+        for mode in [round % 2, (round + 1) % 2] {
+            let began = Instant::now();
+            for _ in 0..100 {
+                let value = if mode == 0 {
+                    super::text_runtime::execute(14222, black_box(&args))
+                } else {
+                    super::text_runtime::execute_with_regex(14222, black_box(&args), |p| {
+                        cache.get(task, p)
+                    })
+                }
+                .unwrap();
+                assert_eq!(black_box(value), LuaScalar::Integer(1));
+            }
+            if round >= 10 {
+                samples[mode].push(began.elapsed().as_secs_f64() * 10_000.0);
+            }
+        }
+    }
+    for (mode, sample) in samples.iter_mut().enumerate() {
+        sample.sort_by(f64::total_cmp);
+        println!(
+            "PERF_REGEX {}",
+            serde_json::json!({"mode":mode,"p50Us":sample[49],"p95Us":sample[94],"p99Us":sample[98],
+            "samples":100,"callsPerBatch":100,"scope":"direct Rust regex operation; not script/Root latency"})
+        );
+    }
+}

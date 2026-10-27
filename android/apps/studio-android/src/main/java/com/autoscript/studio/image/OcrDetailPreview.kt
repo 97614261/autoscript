@@ -5,9 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -21,6 +19,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.JsonParser
@@ -70,29 +71,37 @@ internal fun ocrPreviewReaderArguments(index:Int) = com.google.gson.JsonObject()
 }
 
 @Composable
-internal fun OcrDetailPreview(bitmap:Bitmap,details:OcrPreviewDetails,onReadResult:((Int)->Unit)?=null) {
+internal fun OcrDetailPreview(bitmap:Bitmap,details:OcrPreviewDetails,onReadResult:((Int)->Unit)?=null,compact:Boolean=false,
+    lowScoreBelow:Int = 0, onResample:((OcrPreviewGlyph)->Unit)? = null) {
     var selected by remember(details) { mutableIntStateOf(-1) }
     val listState=rememberLazyListState()
     LaunchedEffect(selected,details) { if(selected in details.glyphs.indices) listState.animateScrollToItem(selected) }
     val ratio=bitmap.width.toFloat()/bitmap.height
-    Box(Modifier.fillMaxWidth().heightIn(max=240.dp).aspectRatio(ratio,matchHeightConstraintsFirst=false)) {
+    Box(Modifier.fillMaxWidth().heightIn(max=if(compact) 112.dp else 240.dp).aspectRatio(ratio,matchHeightConstraintsFirst=false)) {
         Image(bitmap.asImageBitmap(),"真实逐字位置",Modifier.fillMaxSize())
         Canvas(Modifier.fillMaxSize().pointerInput(details,bitmap.width,bitmap.height) {
             detectTapGestures { point -> selected=ocrGlyphAt(details,bitmap.width,bitmap.height,size.width.toFloat(),size.height.toFloat(),point.x,point.y) }
         }) {
             val scale=minOf(size.width/bitmap.width,size.height/bitmap.height)
             val ox=(size.width-bitmap.width*scale)/2;val oy=(size.height-bitmap.height*scale)/2
-            details.glyphs.forEachIndexed { index,g -> drawRect(if(index==selected) Color(0xFF7657E8) else if(g.recognized) Color(0xFF2CA674) else Color(0xFFD45353),
+            details.glyphs.forEachIndexed { index,g -> drawRect(if(index==selected) Color(0xFF7657E8) else if(!g.recognized) Color(0xFFD45353) else if(g.score < lowScoreBelow) Color(0xFFD88A23) else Color(0xFF2CA674),
                 Offset(ox+g.left*scale,oy+g.top*scale),Size((g.right-g.left)*scale,(g.bottom-g.top)*scale),style=Stroke(if(index==selected) 3f else 1f)) }
         }
     }
     SelectionContainer { Text("${details.glyphs.size}项 · 覆盖${details.coverage}‰ · 均分${details.score}‰\n${details.text}",fontSize=11.sp) }
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max=140.dp),state=listState) {
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max=if(compact) 72.dp else 140.dp),state=listState) {
         itemsIndexed(details.glyphs) { index,g ->
-            SelectionContainer { Text("${if(index==selected) "▶" else ""}${index+1} ${g.text} · (${g.left},${g.top})–(${g.right},${g.bottom}) · ${g.score}‰ ${if(g.recognized) "已识别" else "未识别"}",
-                Modifier.fillMaxWidth().clickable { selected=index }.padding(vertical=3.dp),fontSize=11.sp) }
+            val rowText = "${if(index==selected) "▶" else ""}${index+1} ${g.text} · (${g.left},${g.top})–(${g.right},${g.bottom}) · ${g.score}‰ ${if(!g.recognized) "未识别" else if(g.score < lowScoreBelow) "低分" else "已识别"}"
+            Box(Modifier.fillMaxWidth().clickable { selected=index }.semantics {
+                contentDescription = "识别字形${index+1}"
+                stateDescription = rowText
+            }.padding(vertical=3.dp)) {
+                SelectionContainer { Text(rowText, fontSize=11.sp) }
+            }
         }
     }
     if(onReadResult!=null) DesignerAction("配置第${if(selected>=0) selected+1 else "—"}项结果读取",enabled=selected in details.glyphs.indices,onClick={onReadResult(selected+1)})
-    Text("点字框或列表联动选中；坐标可复制。快捷读取仅带入序号，运行时须先生成逐字结果；下一帧同序号不保证仍是同一字符，不会生成点击。",fontSize=10.sp)
+    if(onResample!=null) DesignerAction("回到取样并框选第${if(selected>=0) selected+1 else "—"}项",enabled=selected in details.glyphs.indices,onClick={onResample(details.glyphs[selected])})
+    Text(if(onResample!=null) "红框未识别 · 橙框低分 · 点框或列表后可回到原图补样；不会猜标注。" else if(compact) "点字框或列表选中 · 原图坐标 · 读取序号不代表下一帧身份" else
+        "点字框或列表联动选中；坐标可复制。快捷读取仅带入序号，运行时须先生成逐字结果；下一帧同序号不保证仍是同一字符，不会生成点击。",fontSize=10.sp)
 }

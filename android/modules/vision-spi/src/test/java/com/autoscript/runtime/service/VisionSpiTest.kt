@@ -5,6 +5,24 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class VisionSpiTest {
+    private val latinDictionary = listOf("") + (32..126).map { it.toChar().toString() } + listOf("")
+    private fun latinStep(symbol: String, score: Float = 1f) = FloatArray(97).apply {
+        this[latinDictionary.indexOf(symbol)] = score
+    }
+
+    @Test fun symbolsSpacesAndCtcRepeatsSurviveOnlyInExplicitLatinMode() {
+        val value = "100(+100) 180[-12.50]/25% = A_b:!"
+        val steps = value.flatMap { listOf(latinStep(it.toString()), latinStep(it.toString()), latinStep("")) }.toTypedArray()
+        assertEquals(value to 1000, decodeLatinText(steps, latinDictionary, 500))
+        assertEquals("100100180125025Ab", decodeAlphanumeric(steps, latinDictionary, 500).first)
+    }
+
+    @Test fun latinDecoderKeepsFixedDictionaryThresholdAndOutputBudgets() {
+        assertEquals("" to 0, decodeLatinText(arrayOf(latinStep("+", .4f)), latinDictionary, 500))
+        assertThrows(IllegalArgumentException::class.java) { decodeLatinText(emptyArray(), List(438) { "" }, 500) }
+        assertThrows(IllegalArgumentException::class.java) { decodeLatinText(Array(1025) { latinStep("1") }, latinDictionary, 500) }
+        assertThrows(IllegalArgumentException::class.java) { decodeLatinText(arrayOf(latinStep("1", Float.NaN)), latinDictionary, 500) }
+    }
     @Test fun bufferContractRejectsHeapBuffersAndBadStride() {
         val metadata = intArrayOf(2, 2, 8, 1)
         assertThrows(IllegalArgumentException::class.java) {

@@ -10,6 +10,12 @@ class SourceLayoutTest {
         val repository = File(requireNotNull(System.getProperty("autoscript.projectRoot"))).canonicalFile
         val map = JsonParser.parseString(File(repository, "docs/source-layout-map.json").readText()).asJsonObject
         assertEquals(1, map["version"].asInt)
+        // The initial folder move kept filenames; later responsibility renames are explicit.
+        val renamed = mapOf(
+            "ProjectFileCatalog.kt" to "ProjectFilePaths.kt",
+            "ProjectFileCatalogTest.kt" to "ProjectFilePathsTest.kt",
+            "VisualDebugInspector.kt" to "VisualVariableWarnings.kt",
+        )
         val targets = HashSet<String>()
         for (entry in map.getAsJsonArray("moves")) {
             val move = entry.asJsonObject
@@ -19,7 +25,7 @@ class SourceLayoutTest {
             assertTrue(targets.add(to.path))
             assertFalse(from.exists())
             assertTrue(to.isFile)
-            assertEquals(from.name, to.name)
+            assertEquals(renamed[from.name] ?: from.name, to.name)
             assertTrue(to.readText().startsWith("package com.autoscript.studio"))
         }
         assertEquals(186, targets.size)

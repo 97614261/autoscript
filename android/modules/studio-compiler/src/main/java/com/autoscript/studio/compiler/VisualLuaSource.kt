@@ -6,7 +6,7 @@ import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
-import java.util.UUID
+import com.autoscript.script.ui.CompactId
 
 data class SourceContract(val kind: String, val version: Int, val children: List<String>, val title: String)
 data class SourceLocation(val line: Int, val column: Int, val endLine: Int = line)
@@ -101,25 +101,48 @@ class VisualLuaSource(private val contracts: List<SourceContract>) {
     }
 
     fun parse(lua: String, baseline: String, root: String, variables: Set<String>,
+        allocateIdentity: ((String, Set<String>) -> String)? = null,
         checkCancelled: () -> Unit = {}): VisualSourceDocument {
         if (lua.toByteArray(Charsets.UTF_8).size > MAX_BYTES) fail(1, 1, "源码超过 1 MiB")
         val originals = originals(baseline)
+        // Keep generated identities disjoint from every identity already present in the
+        // baseline, including child block ids that are stored outside the node map.
+        val usedNodeIds = originals.keys.toMutableSet()
+        val usedBlockIds = mutableSetOf<String>().apply {
+            add(root)
+            originals.values.forEach { node ->
+                node["blockId"]?.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
+                node.getAsJsonObject("childBlocks")?.entrySet()?.forEach { entry ->
+                    entry.value.takeIf { it.isJsonPrimitive }?.asString?.let(::add)
+                }
+            }
+        }
+        // Index old membership once; scanning every original node for every child block is
+        // quadratic for large visual plugins.
+        val oldIdsByBlock = originals.values
+            .groupBy { it["blockId"].asString }
+            .mapValues { (_, nodes) -> nodes.sortedBy { it["orderKey"].asString }.map { it["nodeId"].asString } }
         val parsed = Parser(lua, variables, checkCancelled).program()
         val seen = mutableSetOf<String>()
         val output = mutableListOf<JsonObject>()
         val locations = linkedMapOf<String, SourceLocation>()
+        fun allocate(prefix: String, used: MutableSet<String>, location: SourceLocation): String {
+            val id = allocateIdentity?.invoke(prefix, used) ?: CompactId.nextNumeric(prefix, used)
+            if (!Regex("[A-Za-z0-9][A-Za-z0-9_.-]{0,127}").matches(id) || !used.add(id))
+                fail(location, "新积木身份无效或重复")
+            return id
+        }
         fun build(nodes: List<SyntaxNode>, blockId: String, parent: String?, depth: Int) {
             checkCancelled()
             if (depth > 32) fail(1, 1, "积木嵌套超过 32 层")
             // Reuse order keys when membership/order is unchanged; otherwise assign bounded canonical keys.
-            val oldIds = originals.values.filter { it["blockId"].asString == blockId }
-                .sortedBy { it["orderKey"].asString }.map { it["nodeId"].asString }
+            val oldIds = oldIdsByBlock[blockId].orEmpty()
             val unchangedOrder = nodes.map { it.id } == oldIds
             nodes.forEachIndexed { index, syntax ->
                 checkCancelled()
                 val contract = byKind[syntax.kind] ?: fail(syntax.location, "未注册积木类型")
                 val previous = syntax.id?.let { originals[it] ?: fail(syntax.location, "身份不属于当前插件；新积木请删除 @node 行") }
-                val id = syntax.id ?: "node-${UUID.randomUUID()}"
+                val id = syntax.id ?: allocate("node", usedNodeIds, syntax.location)
                 if (!seen.add(id)) fail(syntax.location, "重复节点身份；复制源码时请删除复制段的 @node 行")
                 if (previous != null && previous["kind"].asString != syntax.kind)
                     fail(syntax.location, "更改积木类型时请删除旧 @node 身份")
@@ -146,10 +169,16 @@ class VisualLuaSource(private val contracts: List<SourceContract>) {
                 if (node.has("randomization") && !NodeRandomizationSettings.supports(syntax.kind)) fail(syntax.location, "此积木不支持随机策略")
                 val expected = contract.children.toSet() + if (syntax.kind == "control.if")
                     (0 until (args["elseIf"]?.asJsonArray?.size() ?: 0)).map { "elseIf$it" } else emptyList()
-                if (syntax.children.keys != expected) fail(syntax.location, "${contract.title} 需要子区：${expected.joinToString()}")
+                // Migrated recognition leaves stay reversible until an explicit parameter save adds branches.
+                val legacyRecognitionLeaf = syntax.children.isEmpty() && previous != null &&
+                    (previous.getAsJsonObject("childBlocks")?.size() ?: 0) == 0 &&
+                    (syntax.kind == "vision.findimage" && contract.version == 3 ||
+                        syntax.kind == "vision.findgray" && contract.version == 2)
+                if (syntax.children.keys != expected && !legacyRecognitionLeaf)
+                    fail(syntax.location, "${contract.title} 需要子区：${expected.joinToString()}")
                 val children = JsonObject()
                 syntax.children.keys.forEach { slot ->
-                    children.addProperty(slot, previous?.getAsJsonObject("childBlocks")?.get(slot)?.asString ?: "block-${UUID.randomUUID()}")
+                    children.addProperty(slot, previous?.getAsJsonObject("childBlocks")?.get(slot)?.asString ?: allocate("block", usedBlockIds, syntax.location))
                 }
                 if (children.size() > 0 || previous?.has("childBlocks") == true) node.add("childBlocks", children)
                 else node.remove("childBlocks")

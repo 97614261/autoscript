@@ -16,12 +16,7 @@ pub(crate) struct DataOperation {
 }
 
 fn variable_name(value: &str) -> bool {
-    let mut bytes = value.bytes();
-    value.len() <= 64
-        && bytes
-            .next()
-            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    flow_ir::valid_user_name(value)
 }
 
 pub(crate) fn parse(kind: &str, args: &Value) -> Result<DataOperation, &'static str> {

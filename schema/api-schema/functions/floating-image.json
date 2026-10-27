@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18006,
+  "name": "Floating.image",
+  "since": "1.8",
+  "capability": "ui.floating.interactive",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "可点击、可拖动的声明图片浮窗，最多8个。仅窗口内拦截触摸；拖动结束或点击进入有界事件队列，等待事件后可接判断与调用插件。停止清理，不自动执行脚本回调。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    },
+    {
+      "name": "imagePath",
+      "type": "string",
+      "required": true,
+      "summary": "声明的项目图片"
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "required": true,
+      "summary": "X像素（-1居中）"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "required": true,
+      "summary": "Y像素（-1居中）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "required": true,
+      "summary": "宽度像素"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "required": true,
+      "summary": "高度像素"
+    },
+    {
+      "name": "draggable",
+      "type": "integer",
+      "required": true,
+      "summary": "允许拖动0/1"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "可点击、可拖动的声明图片浮窗，最多8个。仅窗口内拦截触摸；拖动结束或点击进入有界事件队列，等待事件后可接判断与调用插件。停止清理，不自动执行脚本回调。"
+  },
+  "legacyAliases": []
+}

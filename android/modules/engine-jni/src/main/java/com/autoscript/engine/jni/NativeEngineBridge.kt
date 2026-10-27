@@ -99,6 +99,8 @@ class NativeEngineBridge private constructor() {
             frameWidth: Int, frameHeight: Int, frameRgba: ByteArray,
             templateWidth: Int, templateHeight: Int, templateRgba: ByteArray,
             tolerance: Int, similarityPermille: Int, direction: Int): IntArray?
+        @JvmStatic external fun nativeTestScaled(requestId:Long,frameWidth:Int,frameHeight:Int,frameRgba:ByteArray,
+            templateWidth:Int,templateHeight:Int,templateRgba:ByteArray,options:IntArray):String?
         @JvmStatic external fun nativeDrainScriptLogs(handle: Long): Array<String>
         @JvmStatic external fun nativeDrainRunEvents(handle: Long): Array<String>
         @JvmStatic external fun nativeDrainScriptPrompts(handle: Long): Array<String>

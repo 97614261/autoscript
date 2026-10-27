@@ -6,7 +6,7 @@ internal object VisionLogPresentation {
     data class Outcome(val status: String, val rows: List<VisionRunStatistics.Group>)
     data class ScreenshotLine(val heading: String? = null, val group: VisionRunStatistics.Group? = null)
 
-    fun isCapture(section: Section): Boolean = section.rows.any { it.algorithm == "capture-host-roundtrip" }
+    fun isCapture(section: Section): Boolean = section.rows.any { it.algorithm in setOf("capture-host-roundtrip", "capture-region-host-roundtrip") }
 
     /** Display adjacent independent tables, never correlate events or merge input conditions. */
     fun screenshotSections(sections: List<Section>, selected: Section): List<Section> {
@@ -62,7 +62,7 @@ internal object VisionLogPresentation {
         "match-work-templatesPrepared", "match-work-prefiltersBuilt", "match-work-candidatesVisited", "match-work-prefilterRejected", "match-work-prefilterRejectPpm", "match-work-comparisonPixels", "match-work-prefilterWork")
 
     fun sections(report: VisionRunStatistics.Report): List<Section> = report.groups.groupBy { it.configuration }.map { (configuration, rows) ->
-        Section(configuration, rows.first().parameters, rows.sortedBy { captureOrder.indexOf(it.algorithm).takeIf { index -> index >= 0 }
+        Section(configuration, rows.first().parameters, rows.sortedBy { captureOrder.indexOf(if (it.algorithm == "capture-region-host-roundtrip") "capture-host-roundtrip" else it.algorithm).takeIf { index -> index >= 0 }
             ?: matchOrder.indexOf(it.algorithm).takeIf { index -> index >= 0 }?.let { index -> captureOrder.size + 1 + index } ?: captureOrder.size })
     }
 
@@ -89,6 +89,7 @@ internal object VisionLogPresentation {
         "capture-bridgeWrite" -> "桥写出 / 背压"
         "capture-bridgeReceive" -> "桥接收（重叠）"
         "capture-host-roundtrip" -> "截图总耗时"
+        "capture-region-host-roundtrip" -> "区域截图总耗时"
         "capture-acquisition" -> "采集 / 桥读取"
         "capture-transferVerified" -> "传输 / 鉴权"
         "capture-framePublish" -> "帧入池"
@@ -118,13 +119,18 @@ internal object VisionLogPresentation {
     fun summary(parameters: Map<String, String>): String = listOfNotNull(
         parameters["frame"]?.replace("[", "")?.replace("]", "")?.replace(",", "×"),
         parameters["captureBackend"]?.let { when (it) { "root-surfacecontrol" -> "常驻 Root"; "root-screencap-fallback" -> "兼容截图"; else -> it } },
-        parameters["captureTransport"]?.let { if (it == "authenticated-stream") "认证流式" else it },
+        parameters["captureTransport"]?.let { when (it) {
+            "authenticated-stream" -> "认证流式"
+            "authenticated-pipeline" -> "认证流水线"
+            else -> it
+        } },
         parameters["templateCount"]?.let { "模板 $it" },
         parameters["templateCount"]?.toIntOrNull()?.takeIf { it > 0 }?.let {
             if (VisionRunComparison.hasTemplateIdentity(parameters)) "指纹已记录" else "内容未核验"
         },
         parameters["similarity"]?.let { "$it‰" },
         parameters["roi"]?.let { "ROI $it" },
+        parameters["captureRegion"]?.let { "原屏区域 $it" },
     ).joinToString(" · ")
 
     fun details(section: Section): String {

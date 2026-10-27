@@ -34,7 +34,7 @@ class VisionComponentStoreTest {
         val descriptor = ZipFile(file).use { zip ->
             zip.getInputStream(requireNotNull(zip.getEntry(VisionComponentDescriptor.PATH))).use { VisionComponentDescriptor.parse(it.readBytes()) }
         }
-        VisionComponentManifest(descriptor.kind.applicationId, 1, descriptor.kind.sdkVersion, 24, true, 0, 0)
+        VisionComponentManifest(descriptor.kind.applicationId, descriptor.componentVersion, descriptor.kind.sdkVersion, 24, true, 0, 0)
     }
     private fun import(store: VisionComponentStore, kind: String = "opencv") = store.import({ fixture(kind).inputStream() }, {})
 
@@ -115,7 +115,7 @@ class VisionComponentStoreTest {
         val root = temporary.newFolder()
         val store = store(root)
         val imported = import(store)
-        store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {}).use { prepared ->
+        store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {}).use { prepared ->
             prepared.verify {}
             assertEquals(imported, prepared.verified)
             assertFalse(prepared.apk.canWrite())
@@ -138,7 +138,7 @@ class VisionComponentStoreTest {
         }, unseal = { directory -> assertTrue(directory.isDirectory); unsealed += directory })
         val imported = import(store)
         assertThrows(CancellationException::class.java) {
-            store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a") {
+            store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first()) {
                 if (sealed.size == 2) throw CancellationException()
             }
         }
@@ -152,7 +152,7 @@ class VisionComponentStoreTest {
         val root = temporary.newFolder()
         val store = store(root)
         val imported = import(store)
-        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         val lease = prepared.retain()
         prepared.close()
         assertTrue(prepared.apk.exists())
@@ -163,13 +163,15 @@ class VisionComponentStoreTest {
         assertThrows(IllegalStateException::class.java) { prepared.verifyRetained {} }
     }
 
-    @Test fun onnxPreparationHasOnlyPinnedModelAndItsTwoLibraries() {
+    @Test fun onnxPreparationHasOnlyBothPinnedModelsAndItsTwoLibraries() {
         val root = temporary.newFolder()
         val store = store(root)
         val imported = import(store, "onnx")
-        store.prepare(imported.sha256, VisionComponentKind.ONNX, "arm64-v8a", {}).use { prepared ->
+        store.prepare(imported.sha256, VisionComponentKind.ONNX, imported.descriptor.abis.first(), {}).use { prepared ->
             assertEquals(7_653_044L, requireNotNull(prepared.model).length())
             assertFalse(requireNotNull(prepared.model).canWrite())
+            assertEquals(7_872_351L, requireNotNull(prepared.candidateModel).length())
+            assertFalse(requireNotNull(prepared.candidateModel).canWrite())
             assertEquals(VisionComponentKind.ONNX.nativeLibraries, prepared.nativeDirectory.listFiles().orEmpty().map { it.name }.toSet())
             prepared.verify {}
         }
@@ -178,15 +180,15 @@ class VisionComponentStoreTest {
     @Test fun twoPreparedLeasesAreBoundedAndClosingReclaimsTheOwnedSlot() {
         val store = store(temporary.newFolder())
         val imported = import(store)
-        val first = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
-        val second = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val first = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
+        val second = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         try {
             assertTrue(first.apk != second.apk)
-            assertThrows(IllegalArgumentException::class.java) { store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {}) }
+            assertThrows(IllegalArgumentException::class.java) { store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {}) }
             first.close()
             assertFalse(first.apk.exists())
             assertThrows(IllegalStateException::class.java) { first.verify {} }
-            store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {}).use { it.verify {} }
+            store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {}).use { it.verify {} }
             second.verify {}
         } finally { first.close(); second.close() }
     }
@@ -223,7 +225,7 @@ class VisionComponentStoreTest {
         val imported = import(store)
         val original = File(root, "${imported.sha256}.apk")
         assertThrows(CancellationException::class.java) {
-            store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a") {
+            store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first()) {
                 if (File(root, "prepared").listFiles().orEmpty().any { File(it, "native").exists() }) throw CancellationException()
             }
         }
@@ -237,7 +239,7 @@ class VisionComponentStoreTest {
         val marker = File(root, "keep").apply { writeText("preserve") }
         val store = store(root)
         val imported = import(store)
-        assertThrows(IllegalArgumentException::class.java) { store.prepare(imported.sha256, VisionComponentKind.ONNX, "arm64-v8a", {}) }
+        assertThrows(IllegalArgumentException::class.java) { store.prepare(imported.sha256, VisionComponentKind.ONNX, imported.descriptor.abis.first(), {}) }
         assertThrows(IllegalArgumentException::class.java) { store.remove("../keep") {} }
         assertEquals("preserve", marker.readText())
         assertFalse(File(root, "prepared").exists())
@@ -295,7 +297,7 @@ class VisionComponentStoreTest {
     @Test fun preparedTamperingAndLateUseAreRejected() {
         val store = store(temporary.newFolder())
         val imported = import(store)
-        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         try {
             val file = requireNotNull(prepared.nativeDirectory.listFiles()).first()
             assertTrue(file.setWritable(true))
@@ -309,7 +311,7 @@ class VisionComponentStoreTest {
     @Test fun closePreservesUnknownSnapshotFileAndCanRetryAfterItsOwnerRemovesIt() {
         val store = store(temporary.newFolder())
         val imported = import(store)
-        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         val marker = File(prepared.apk.parentFile, "unknown.keep").apply { writeText("preserve") }
         assertThrows(IllegalArgumentException::class.java) { prepared.close() }
         assertEquals("preserve", marker.readText())
@@ -341,7 +343,7 @@ class VisionComponentStoreTest {
         File(snapshot, "component.apk").writeText("partial")
         File(snapshot, "native").also { it.mkdirs() }
             .resolve("libopencv_java4.so").writeText("partial")
-        store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {}).use { it.verify {} }
+        store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {}).use { it.verify {} }
         assertTrue(File(root, "prepared").listFiles().orEmpty().isEmpty())
     }
 
@@ -349,7 +351,7 @@ class VisionComponentStoreTest {
         val root = temporary.newFolder()
         val store = store(root)
         val imported = import(store)
-        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         val native = requireNotNull(prepared.nativeDirectory.listFiles()).first()
         assertTrue(native.setWritable(true))
         native.appendBytes(byteArrayOf(1))
@@ -364,7 +366,7 @@ class VisionComponentStoreTest {
         val root = temporary.newFolder()
         val store = store(root)
         val imported = import(store)
-        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         try {
             val stale = File(root, "prepared/snapshot-123e4567-e89b-12d3-a456-426614174000")
             // An independent copy models files remaining after their process died.
@@ -409,7 +411,7 @@ class VisionComponentStoreTest {
         val root = temporary.newFolder()
         val store = store(root)
         val imported = import(store)
-        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, "arm64-v8a", {})
+        val prepared = store.prepare(imported.sha256, VisionComponentKind.OPENCV, imported.descriptor.abis.first(), {})
         RandomAccessFile(File(root, "registry.lock"), "rw").use { handle ->
             handle.channel.lock().use {
                 assertThrows(IllegalStateException::class.java) { prepared.close() }

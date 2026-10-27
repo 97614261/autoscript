@@ -76,6 +76,7 @@ pub(crate) fn resume(opcode: u32, payload: &[u8]) -> Result<LuaInput, &'static s
                 14120 => (0..=65_536).contains(&value),
                 14126 => true,
                 14140 => (0..=64 * 1024 * 1024).contains(&value),
+                14147 => (0..=253_402_300_799_999).contains(&value),
                 _ => value == 1,
             };
             if !valid {

@@ -18,15 +18,36 @@ const BASE: u64 = Capabilities::CAPTURE_RAW
     | Capabilities::CAPTURE_FAILURE_DETAILS;
 
 #[derive(Default)]
+enum CaptureMode {
+    #[default]
+    Buffered,
+    Pipeline,
+}
+
+#[derive(Default)]
 struct CaptureFixture {
+    mode: CaptureMode,
     chunks: u64,
     fail_initial: bool,
     fail_second_chunk: bool,
     pixel: u8,
+    patterned: bool,
     cancel_at_chunk: Option<u64>,
 }
 
 impl CommandDispatcher for CaptureFixture {
+    fn dispatch_capture_stream(
+        &mut self,
+        frame: &Frame,
+        pipelined: bool,
+    ) -> Result<DispatchResponse, DispatchError> {
+        self.mode = if pipelined {
+            CaptureMode::Pipeline
+        } else {
+            CaptureMode::Buffered
+        };
+        self.dispatch(frame)
+    }
     fn capture_failure_reason(&self) -> Option<CaptureFailure> {
         (self.fail_initial || self.fail_second_chunk).then_some(CaptureFailure::ControlUnavailable)
     }
@@ -54,6 +75,23 @@ impl CommandDispatcher for CaptureFixture {
                 response.payload.extend_from_slice(&30_u64.to_le_bytes());
                 response.payload.extend_from_slice(&2_u32.to_le_bytes());
                 response.payload.extend_from_slice(&0_u32.to_le_bytes());
+                if matches!(self.mode, CaptureMode::Pipeline) {
+                    response.payload[0] = 3;
+                    response.payload[33..41].fill(0);
+                }
+                if let Some(region) =
+                    root_protocol::capture_region::CaptureRegionRequest::decode(&frame.payload)
+                {
+                    response.payload[0] = 5;
+                    response.payload.extend_from_slice(
+                        &root_protocol::capture_region::CaptureRegionMetadata {
+                            request: region,
+                            rotation: Some(0),
+                            regional_readback: true,
+                        }
+                        .encode(),
+                    );
+                }
             }
             Command::CaptureChunk => {
                 self.chunks += 1;
@@ -67,7 +105,29 @@ impl CommandDispatcher for CaptureFixture {
                         if self.pixel == 0 { 37 } else { self.pixel };
                         usize::try_from(count).unwrap()
                     ];
+                    if self.patterned {
+                        let offset = u32::from_le_bytes(frame.payload[8..12].try_into().unwrap());
+                        for (index, pixel) in response.payload.iter_mut().enumerate() {
+                            *pixel =
+                                u8::try_from((u64::from(offset) + index as u64) % 251).unwrap();
+                        }
+                    }
                 }
+            }
+            Command::ReleaseCapture if matches!(self.mode, CaptureMode::Pipeline) => {
+                response.payload = root_protocol::CapturePipelineCompletion {
+                    capture_id: 1,
+                    pixel_bytes: BYTES,
+                    acquisition_us: 77,
+                    stages_us: [2, 3, 4, 5, 6, 7],
+                    transfer: CaptureTransferSummary {
+                        encode_us: 0,
+                        write_us: 0,
+                        packets: 2,
+                    },
+                }
+                .encode()
+                .to_vec();
             }
             _ => {}
         }
@@ -148,7 +208,9 @@ fn failed_partial_capture_never_survives_a_fresh_authenticated_connection() {
 
 #[derive(Clone, Copy)]
 enum Fault {
+    WrongRegion,
     None,
+    TamperedData,
     Missing,
     Tampered,
     WrongRequest,
@@ -156,6 +218,10 @@ enum Fault {
     Replayed,
     Truncated,
     Early,
+    WrongIdentity,
+    WrongLength,
+    DowngradedSummary,
+    WrongOffset,
 }
 
 struct Transport {
@@ -205,6 +271,38 @@ impl Transport {
         let last = self.queue.len() - 1;
         for (index, packet) in self.queue.iter_mut().enumerate() {
             let mut frame = decoder.decode(packet).unwrap();
+            if index == 0
+                && frame.payload.first() == Some(&5)
+                && matches!(self.fault, Fault::WrongRegion)
+            {
+                let offset = frame.payload.len() - 32;
+                let mut region = root_protocol::capture_region::CaptureRegionMetadata::decode(
+                    &frame.payload[offset..],
+                )
+                .unwrap();
+                region.request.left += 1;
+                region.request.right += 1;
+                frame.payload[offset..].copy_from_slice(&region.encode());
+            }
+            if index == last {
+                if let Some(mut completion) =
+                    root_protocol::CapturePipelineCompletion::decode(&frame.payload)
+                {
+                    if matches!(self.fault, Fault::WrongIdentity) {
+                        completion.capture_id += 1;
+                    }
+                    if matches!(self.fault, Fault::WrongLength) {
+                        completion.pixel_bytes -= 1;
+                    }
+                    frame.payload = completion.encode().to_vec();
+                    if matches!(self.fault, Fault::DowngradedSummary) {
+                        frame.payload = completion.transfer.encode().to_vec();
+                    }
+                }
+            }
+            if index == 1 && matches!(self.fault, Fault::WrongOffset) {
+                frame.payload[1..5].copy_from_slice(&1_u32.to_le_bytes());
+            }
             if index == last && matches!(self.fault, Fault::WrongRequest) {
                 frame.request_id += 1;
             }
@@ -238,11 +336,114 @@ impl Transport {
     }
 }
 
+fn region_request() -> root_protocol::capture_region::CaptureRegionRequest {
+    root_protocol::capture_region::CaptureRegionRequest {
+        screen_width: 16_384,
+        screen_height: 1,
+        left: 17,
+        top: 0,
+        right: 16_017,
+        bottom: 1,
+    }
+}
+
+#[test]
+fn region_stream_is_fresh_request_bound_and_leaves_next_full_capture_unchanged() {
+    let mut client = client(
+        BASE | Capabilities::CAPTURE_REGION_REQUIREMENTS,
+        Fault::None,
+        CaptureFixture::default(),
+    );
+    for _ in 0..2 {
+        let capture = client.capture_region(region_request()).unwrap();
+        assert_eq!(capture.geometry.request, region_request());
+        assert!(capture.geometry.regional_readback);
+        assert_eq!(
+            capture.capture.pixels,
+            vec![37; usize::try_from(BYTES).unwrap()]
+        );
+        assert_eq!(capture.capture.timings.transfer_details.unwrap().packets, 2);
+        client.ping().unwrap();
+    }
+    let frame = client.capture().unwrap();
+    assert_eq!(frame.pixels.len(), usize::try_from(BYTES).unwrap());
+    client.ping().unwrap();
+}
+
+#[test]
+fn unsupported_region_is_rejected_without_sending_or_closing_full_capture() {
+    let mut client = client(BASE, Fault::None, CaptureFixture::default());
+    assert!(matches!(
+        client.capture_region(region_request()),
+        Err(ClientError::Remote(StatusCode::BackendUnavailable))
+    ));
+    assert!(!client.closed);
+    client.capture().unwrap();
+    client.ping().unwrap();
+}
+
+#[test]
+fn region_transfer_rejects_wrong_roi_tampering_offsets_missing_summary_and_cancellation() {
+    for fault in [
+        Fault::WrongRegion,
+        Fault::TamperedData,
+        Fault::WrongOffset,
+        Fault::Missing,
+        Fault::WrongCount,
+        Fault::Replayed,
+        Fault::WrongRequest,
+        Fault::Truncated,
+        Fault::Early,
+    ] {
+        let mut client = client(
+            BASE | Capabilities::CAPTURE_REGION_REQUIREMENTS,
+            fault,
+            CaptureFixture::default(),
+        );
+        assert!(client.capture_region(region_request()).is_err());
+        assert!(client.closed);
+    }
+    let mut initial_cancel = client(
+        BASE | Capabilities::CAPTURE_REGION_REQUIREMENTS,
+        Fault::None,
+        CaptureFixture {
+            cancel_at_chunk: Some(0),
+            ..CaptureFixture::default()
+        },
+    );
+    assert!(matches!(
+        initial_cancel.capture_region(region_request()),
+        Err(ClientError::Remote(StatusCode::Cancelled))
+    ));
+    assert!(!initial_cancel.closed);
+    initial_cancel.capture_region(region_request()).unwrap();
+    for chunk in [1, 2] {
+        let mut client = client(
+            BASE | Capabilities::CAPTURE_REGION_REQUIREMENTS,
+            Fault::None,
+            CaptureFixture {
+                cancel_at_chunk: Some(chunk),
+                ..CaptureFixture::default()
+            },
+        );
+        assert!(client
+            .capture_region(region_request())
+            .unwrap_err()
+            .is_connection_lost());
+        assert!(client.closed);
+        assert!(client.ping().is_err());
+    }
+}
+
 impl PacketTransport for Transport {
     fn send_packet(&mut self, packet: &[u8]) -> Result<(), TransportError> {
         self.queue
             .push_back(self.daemon.receive(packet, 1).unwrap());
         while let Some(packet) = self.daemon.next_capture_packet(2).unwrap() {
+            let mut packet = packet;
+            if matches!(self.fault, Fault::TamperedData) && self.queue.len() == 1 {
+                packet[32 + 5] ^= 1;
+            }
             self.queue.push_back(packet);
         }
         let mut summary = Vec::new();
@@ -261,7 +462,7 @@ impl PacketTransport for Transport {
             self.summaries += 1;
             self.queue.push_back(summary);
             match self.fault {
-                Fault::None => {}
+                Fault::None | Fault::TamperedData => {}
                 Fault::Missing => {
                     self.queue.pop_back();
                 }
@@ -275,7 +476,14 @@ impl PacketTransport for Transport {
                     let previous = self.queue[self.queue.len() - 2].clone();
                     *self.queue.back_mut().unwrap() = previous;
                 }
-                Fault::WrongRequest | Fault::WrongCount | Fault::Early => {
+                Fault::WrongRequest
+                | Fault::WrongCount
+                | Fault::Early
+                | Fault::WrongIdentity
+                | Fault::WrongLength
+                | Fault::DowngradedSummary
+                | Fault::WrongRegion
+                | Fault::WrongOffset => {
                     self.mutate_signed_summary();
                 }
             }
@@ -296,11 +504,67 @@ fn client(bits: u64, fault: Fault, fixture: CaptureFixture) -> RootClient<Transp
         Transport::new(bits, fault, fixture),
         KEY,
         Capabilities::from_bits(
-            BASE | Capabilities::CAPTURE_TRANSFER_TIMINGS | Capabilities::CAPTURE_CONTROL_DETAILS,
+            BASE | Capabilities::CAPTURE_TRANSFER_TIMINGS
+                | Capabilities::CAPTURE_REGION
+                | Capabilities::CAPTURE_CONTROL_DETAILS
+                | Capabilities::CAPTURE_PIPELINE_REQUIREMENTS,
         ),
         BASE,
     )
     .unwrap()
+}
+
+#[test]
+fn pipeline_requires_commit_and_final_identity_length_request_sequence_and_offsets() {
+    let bits = BASE | Capabilities::CAPTURE_PIPELINE_REQUIREMENTS;
+    let mut good = client(
+        bits,
+        Fault::None,
+        CaptureFixture {
+            patterned: true,
+            ..CaptureFixture::default()
+        },
+    );
+    let capture = good.capture().unwrap();
+    assert_eq!(capture.timings.acquisition_us, 77);
+    assert_eq!(capture.timings.stages_us, Some([2, 3, 4, 5, 6, 7]));
+    assert_eq!(
+        capture.pixels,
+        (0..BYTES)
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect::<Vec<_>>()
+    );
+    good.ping().unwrap();
+    for fault in [
+        Fault::TamperedData,
+        Fault::Missing,
+        Fault::Tampered,
+        Fault::WrongRequest,
+        Fault::WrongCount,
+        Fault::Replayed,
+        Fault::Truncated,
+        Fault::Early,
+        Fault::WrongIdentity,
+        Fault::WrongLength,
+        Fault::DowngradedSummary,
+        Fault::WrongOffset,
+    ] {
+        let mut broken = client(bits, fault, CaptureFixture::default());
+        assert!(broken.capture().unwrap_err().is_connection_lost());
+        assert!(broken.closed);
+        assert!(broken.ping().is_err());
+    }
+    for chunk in [1, 2] {
+        let mut broken = client(
+            bits,
+            Fault::None,
+            CaptureFixture {
+                cancel_at_chunk: Some(chunk),
+                ..CaptureFixture::default()
+            },
+        );
+        assert!(broken.capture().unwrap_err().is_connection_lost());
+    }
 }
 
 #[test]
@@ -331,6 +595,38 @@ fn older_peer_has_no_summary_reads_or_synthetic_zero_details() {
     assert_eq!(client.transport.summaries, 0);
     assert_eq!(client.transport.receives, 4); // Hello, metadata, two data packets.
     client.ping().unwrap();
+}
+
+#[test]
+fn authenticated_append_preserves_chunk_boundary_and_partial_last_chunk() {
+    for bits in [BASE, BASE | Capabilities::CAPTURE_TRANSFER_TIMINGS] {
+        let mut client = client(
+            bits,
+            Fault::None,
+            CaptureFixture {
+                patterned: true,
+                ..CaptureFixture::default()
+            },
+        );
+        for _ in 0..8 {
+            let capture = client.capture().unwrap();
+            assert_eq!(capture.pixels.len(), usize::try_from(BYTES).unwrap());
+            for (index, pixel) in capture.pixels.iter().enumerate() {
+                assert_eq!(*pixel, u8::try_from(index % 251).unwrap());
+            }
+            client.ping().unwrap();
+        }
+    }
+}
+
+#[test]
+fn unauthenticated_chunk_is_never_returned_as_a_partial_frame() {
+    for bits in [BASE, BASE | Capabilities::CAPTURE_TRANSFER_TIMINGS] {
+        let mut client = client(bits, Fault::TamperedData, CaptureFixture::default());
+        assert!(client.capture().unwrap_err().is_connection_lost());
+        assert!(client.closed);
+        assert!(client.capture().is_err());
+    }
 }
 
 #[test]
@@ -400,4 +696,15 @@ fn unsolicited_control_reason_is_rejected_without_negotiation() {
     assert_eq!(error.capture_failure_code(), "CAPTURE_CORRELATION");
     let error = ClientError::CaptureFailed(CaptureFailure::ControlUnavailable);
     assert!(error.is_connection_lost());
+}
+#[test]
+fn android_default_keeps_the_measured_buffered_capture_path() {
+    let capabilities = super::default_android_capabilities();
+    assert!(capabilities.supports(
+        root_protocol::Capabilities::CAPTURE_RAW
+            | root_protocol::Capabilities::CAPTURE_STREAM
+            | root_protocol::Capabilities::CAPTURE_STAGE_TIMINGS
+            | root_protocol::Capabilities::CAPTURE_TRANSFER_TIMINGS
+    ));
+    assert!(!capabilities.supports(root_protocol::Capabilities::CAPTURE_PIPELINED));
 }

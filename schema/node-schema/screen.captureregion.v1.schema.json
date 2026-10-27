@@ -1,0 +1,16 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://autoscript.local/schema/node/screen.captureregion/1/screen.captureregion.schema.json",
+  "title":"screen.captureregion node semantics","type":"object","required":["kind","nodeVersion","args"],
+  "properties":{
+    "kind":{"const":"screen.captureregion"},"nodeVersion":{"const":1},
+    "args":{"type":"object","additionalProperties":false,"required":["left","top","right","bottom","resultVariable"],
+      "properties":{
+        "left":{"type":"integer","minimum":0,"maximum":16383},
+        "top":{"type":"integer","minimum":0,"maximum":16383},
+        "right":{"type":"integer","minimum":1,"maximum":16384},
+        "bottom":{"type":"integer","minimum":1,"maximum":16384},
+        "resultVariable":{"type":"string","pattern":"^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"}
+      }}
+  }
+}

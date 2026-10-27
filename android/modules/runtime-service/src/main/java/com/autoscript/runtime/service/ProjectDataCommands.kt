@@ -14,11 +14,12 @@ internal class ProjectDataCommands(private val store: ProjectDataStore, private 
     fun execute(op: Int, path: String, payload: ByteArray): ByteArray {
         if (payload.size > MAX_WIRE_BYTES) fail()
         val args = parse(decode(payload), MAX_WIRE_BYTES).let { if (!it.isJsonArray) fail() else it.asJsonArray }
-        val arity = when(op) {14110,14114,14115,14117,14119,14123,14124,14144,14145,14146 -> 1; 14118,14121,14122,14126 -> 2; in 14111..14113,14116,14120,14125,in 14140..14143 -> 0; else -> fail()}
+        val arity = when(op) {14110,14114,14115,14117,14119,14123,14124,14144,14145,14146 -> 1; 14118,14121,14122,14126 -> 2; in 14111..14113,14116,14120,14125,in 14140..14143,14147 -> 0; else -> fail()}
         if(args.size()!=arity) fail()
         check()
         val result: JsonElement = when(op) {
             14140 -> JsonPrimitive(store.fileSize(path,check))
+            14147 -> JsonPrimitive(store.modifiedTime(path,check))
             14141 -> { store.fileSize(path,check); JsonPrimitive(path.substringAfterLast('/').substringAfterLast('.', "")) }
             14142 -> JsonPrimitive(store.directoryStats(path,check))
             14143 -> JsonPrimitive(store.toBase64(path,check))

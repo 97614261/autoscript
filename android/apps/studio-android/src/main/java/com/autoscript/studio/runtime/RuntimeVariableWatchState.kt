@@ -10,6 +10,11 @@ import com.autoscript.runtime.api.RuntimeDebugValue
 internal data class RuntimeVariableKey(val scope: String, val flowId: String, val name: String)
 internal fun RuntimeDebugValue.watchKey(flowId: String) = RuntimeVariableKey(scope, if (scope == "local") flowId else "", name)
 
+// LazyColumn saves item state in an Android Bundle, which cannot hold RuntimeVariableKey.
+internal fun RuntimeDebugValue.watchListKey(flowId: String): String = watchKey(flowId).let { key ->
+    listOf(key.scope, key.flowId, key.name).joinToString("") { "${it.length}:$it" }
+}
+
 /** Only observed, bounded values are retained. A sample is not an assignment trace. */
 internal class RuntimeVariableWatchState {
     var reply by mutableStateOf(RuntimeDebugReply.unavailable())

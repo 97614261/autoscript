@@ -17,7 +17,9 @@ import com.google.gson.JsonObject
 internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonObject, project: ProjectSnapshot,
     flowId: String, onManageVariables: (() -> Unit)?, onDismiss: () -> Unit, onConfirm: (List<VisualBlockTree>) -> Unit,
     visible: Boolean = true) {
-    val initial = remember(contract.kind, arguments) { RecognitionWaitDraft() }
+    val regionOnly=contract.kind=="screen.compareframes"
+    val initial = remember(contract.kind, arguments) { if(regionOnly) RecognitionWaitDraft(mode=RecognitionWaitMode.REGION_STABLE,
+        changeTolerance=arguments["tolerance"]?.asString ?: "8") else RecognitionWaitDraft() }
     var draft by remember(initial) { mutableStateOf(initial) }
     var discard by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -35,14 +37,15 @@ internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonO
     fun choices(slot: RecognitionVariableSlot) = variables.filter { variable -> variable.type==slot.type && variable.name !in reserved &&
         slots.none { it.key!=slot.key && it.value==variable.name } }.map { it.name to "${it.scope} · ${it.name}" }
     fun close() { if (draft != initial) discard = true else onDismiss() }
-    if (visible) StudioPanelDialog("识别 · 等待与重试", ::close, "选择位置并加入", fullScreen = fullScreen,
+    if (visible) StudioPanelDialog(if(regionOnly) "区域变化 / 稳定等待" else "识别 · 等待与重试", ::close, "选择位置并加入", fullScreen = fullScreen,
         onToggleFullScreen = { fullScreen = !fullScreen }, onConfirm = {
             runCatching { recognitionWaitBlocks(contract, arguments, draft, variables) }
                 .onSuccess(onConfirm).onFailure { error = it.message ?: "配置无效，未加入"; showWork=true }
         }) {
         Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 900.dp else 440.dp).verticalScroll(rememberScrollState()).padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            DesignerChoice("方式", draft.mode.label, RecognitionWaitMode.entries.map { it.name to it.label }, true) {
+            DesignerChoice("方式", draft.mode.label, RecognitionWaitMode.entries.filter { !regionOnly || it in
+                setOf(RecognitionWaitMode.REGION_CHANGED,RecognitionWaitMode.REGION_STABLE) }.map { it.name to it.label }, true) {
                 update(draft.copy(mode = RecognitionWaitMode.valueOf(it)))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -51,11 +54,21 @@ internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonO
             }
             if (draft.mode == RecognitionWaitMode.RETRY) DesignerInput("最多尝试次数", draft.attempts, true, Modifier.fillMaxWidth(), numeric = true) { update(draft.copy(attempts = it)) }
             if (draft.mode == RecognitionWaitMode.ABSENT) DesignerInput("连续未命中 ms", draft.absentMs, true, Modifier.fillMaxWidth(), numeric = true) { update(draft.copy(absentMs = it)) }
+            if(draft.mode.usesFreshFrames()) {
+                Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                    DesignerInput("连续通过次数",draft.consecutive,true,Modifier.weight(1f),numeric=true) {update(draft.copy(consecutive=it))}
+                    if(draft.mode==RecognitionWaitMode.STABLE && !ocr) DesignerInput("最大位移 px",draft.driftPx,true,Modifier.weight(1f),numeric=true) {update(draft.copy(driftPx=it))}
+                    if(draft.mode!=RecognitionWaitMode.STABLE) DesignerInput("变化阈值 ‰",draft.changePermille,true,Modifier.weight(1f),numeric=true) {update(draft.copy(changePermille=it))}
+                }
+                if(draft.mode!=RecognitionWaitMode.STABLE) DesignerInput("RGB容差0–255",draft.changeTolerance,true,Modifier.fillMaxWidth(),numeric=true) {update(draft.copy(changeTolerance=it))}
+                Text("每次重新截图；旧缓存不计数。当前截图和前帧均须专用图像变量，允许覆盖并按组合释放。区域等待不执行找图；稳定字库要求完整覆盖且全文相同。",fontSize=10.sp)
+                DesignerToggle("两份图像变量均专用于本组合，允许覆盖和释放",draft.confirmFrames,true) {update(draft.copy(confirmFrames=it))}
+            }
             if (ocr) {
                 DesignerInput("目标文字 · 留空为非空文字",draft.targetText,true,Modifier.fillMaxWidth()) { update(draft.copy(targetText=it)) }
                 DesignerToggle("完全一致（否则包含）",draft.exactText,true) { update(draft.copy(exactText=it)) }
             }
-            if (color || ocr) slots.first { it.key=="match" }.let { slot ->
+            if (color || ocr) slots.firstOrNull { it.key=="match" }?.let { slot ->
                 DesignerChoice("条件状态 · 整数1/0",slot.value.ifEmpty { "请选择" },choices(slot),true) { update(recognitionWaitAssign(draft,slot.key,it)) }
             }
             Text("变量映射 $configured/${slots.size} · 整数${slots.count { it.type==ProjectVariableType.INTEGER }} / 字符${slots.count { it.type==ProjectVariableType.STRING }}",fontSize=11.sp)
@@ -73,6 +86,7 @@ internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonO
                 }
             }
             Text(when {
+                regionOnly || draft.mode in setOf(RecognitionWaitMode.REGION_CHANGED,RecognitionWaitMode.REGION_STABLE) -> "比较连续新截图的指定范围，不需要模板、字库或识别输出；末尾完成/耗尽分支可继续编辑。"
                 color -> "颜色集合独立输出；原单点是否找到/X/Y不写入。"
                 recognitionWaitUsesGlyphDetails(contract.kind,draft) -> "同帧逐字定位目标；目标外可有未知字，目标内未知/跨行/空白不通过。需两个字符工作变量，不覆盖原文字/得分。"
                 contract.kind=="ocr.glyph" && draft.targetText.isNotEmpty() -> "完全一致要求覆盖率1000‰并比较完整文字，未知占位符不算目标。"

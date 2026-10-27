@@ -10,6 +10,7 @@ class RunnerAbiContentTest {
 
     @Test fun completePhoneAndDevelopmentRuntimesAreAccepted() {
         assertTrue(RunnerApkArchive.hasRuntimeContent(base + libraries("arm64-v8a")))
+        assertTrue(RunnerApkArchive.hasRuntimeContent(base + libraries("x86_64")))
         assertTrue(RunnerApkArchive.hasRuntimeContent(base + libraries("arm64-v8a") + libraries("x86_64")))
     }
 
@@ -17,7 +18,8 @@ class RunnerAbiContentTest {
         val phone = base + libraries("arm64-v8a")
         assertFalse(RunnerApkArchive.hasRuntimeContent(phone + "lib/x86_64/libengine_jni.so"))
         for (library in libraries("arm64-v8a")) assertFalse(RunnerApkArchive.hasRuntimeContent(phone - library))
-        assertFalse(RunnerApkArchive.hasRuntimeContent(base + libraries("x86_64")))
+        assertFalse(RunnerApkArchive.hasRuntimeContent(base))
+        for (library in libraries("x86_64")) assertFalse(RunnerApkArchive.hasRuntimeContent(base + libraries("x86_64") - library))
         assertFalse(RunnerApkArchive.hasRuntimeContent(phone + libraries("armeabi-v7a")))
     }
 

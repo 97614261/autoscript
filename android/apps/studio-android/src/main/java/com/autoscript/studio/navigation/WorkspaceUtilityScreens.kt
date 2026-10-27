@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -65,12 +64,16 @@ internal fun BackupManagementScreen(
     onOpen: (BackupProjectSummary) -> Unit,
     onDelete: (BackupProjectSummary) -> Unit,
     modifier: Modifier = Modifier,
+    onServerBackups: (() -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     var deleteTarget by remember { mutableStateOf<BackupProjectSummary?>(null) }
     val timestamp = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     Column(modifier.fillMaxSize().background(AutoScriptPalette.PageBackground)) {
         UtilityLightHeader("备份管理", "可用 3 槽位/项目", onBack) {
+            onServerBackups?.let { open ->
+                TextButton(onClick = open, enabled = !busy) { Text("服务器", fontSize = 11.sp) }
+            }
             Text(
                 "导入",
                 color = AutoScriptPalette.Accent,

@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "kind": "floating.image",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/floating.image/1/floating.image.schema.json",
+  "title": "交互图片浮窗",
+  "category": "variable",
+  "summary": "可点击、可拖动的声明图片浮窗，最多8个。仅窗口内拦截触摸；拖动结束或点击进入有界事件队列，等待事件后可接判断与调用插件。停止清理，不自动执行脚本回调。",
+  "searchTerms": [
+    "浮窗",
+    "图片",
+    "点击",
+    "拖动",
+    "Floating.image"
+  ],
+  "requiredCapabilities": [
+    "ui.floating.interactive"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "name",
+      "label": "浮窗名称",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "image_button"
+    },
+    {
+      "path": "nameVariable",
+      "label": "浮窗名称来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "imagePath",
+      "label": "声明的项目图片",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "assets/images/button.png"
+    },
+    {
+      "path": "imagePathVariable",
+      "label": "声明的项目图片来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "x",
+      "label": "X像素（-1居中）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "-1"
+    },
+    {
+      "path": "xVariable",
+      "label": "X像素（-1居中）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "y",
+      "label": "Y像素（-1居中）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "-1"
+    },
+    {
+      "path": "yVariable",
+      "label": "Y像素（-1居中）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "width",
+      "label": "宽度像素",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "96"
+    },
+    {
+      "path": "widthVariable",
+      "label": "宽度像素来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "height",
+      "label": "高度像素",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "96"
+    },
+    {
+      "path": "heightVariable",
+      "label": "高度像素来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "draggable",
+      "label": "允许拖动0/1",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "draggableVariable",
+      "label": "允许拖动0/1来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（整数）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

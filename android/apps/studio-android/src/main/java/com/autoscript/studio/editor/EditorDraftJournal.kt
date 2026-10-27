@@ -11,6 +11,7 @@ import java.security.MessageDigest
 
 internal data class EditorDraftEntry(val flowId: String, val rootBlockId: String, val baseHash: String, val source: String)
 internal data class EditorDraftCheckpoint(val manifestHash: String, val entries: List<EditorDraftEntry>)
+internal data class EditorDraftSource(val flowId: String, val rootBlockId: String, val saved: String, val current: String)
 
 /** Private recovery data only. Project source files are never opened for writing here. */
 internal class EditorDraftJournal(private val files: File) {
@@ -22,15 +23,27 @@ internal class EditorDraftJournal(private val files: File) {
     fun writeIfCurrent(projectId: String, checkpoint: EditorDraftCheckpoint, ticket: Long) = synchronized(diskLock) {
         if (ownerSequence == owner && ticket >= 0 && revision == ticket) write(projectId, checkpoint)
     }
+    fun discardIfCurrent(projectId: String, ticket: Long): Boolean = synchronized(diskLock) {
+        if (ownerSequence != owner || ticket < 0 || revision != ticket) return@synchronized false
+        discard(projectId)
+        true
+    }
     fun manifestHash(snapshot: ProjectSnapshot) = hash(gson.toJson(snapshot.manifest))
 
     fun capture(snapshot: ProjectSnapshot, editors: Map<String, VisualEditorState>): EditorDraftCheckpoint {
-        val entries = snapshot.manifest.flows.mapNotNull { flow ->
+        return capture(snapshot, freeze(snapshot, editors))
+    }
+
+    fun freeze(snapshot: ProjectSnapshot, editors: Map<String, VisualEditorState>): List<EditorDraftSource> =
+        snapshot.manifest.flows.mapNotNull { flow ->
             editors[flow.flowId]?.takeIf { it.isDirty && !it.isReadOnly }?.let {
-                EditorDraftEntry(flow.flowId, flow.rootBlockId, hash(it.savedSource), it.currentSource)
+                EditorDraftSource(flow.flowId, flow.rootBlockId, it.savedSource, it.currentSource)
             }
         }
-        require(entries.size <= MAX_ENTRIES) { "恢复草稿超过16个插件，请先保存" }
+
+    fun capture(snapshot: ProjectSnapshot, sources: List<EditorDraftSource>): EditorDraftCheckpoint {
+        require(sources.size <= MAX_ENTRIES) { "恢复草稿超过16个插件，请先保存" }
+        val entries = sources.map { EditorDraftEntry(it.flowId, it.rootBlockId, hash(it.saved), it.current) }
         entries.forEach { require(it.source.toByteArray(Charsets.UTF_8).size <= MAX_SOURCE_BYTES) { "插件恢复草稿超过1 MiB，请先保存" } }
         return EditorDraftCheckpoint(manifestHash(snapshot), entries)
     }

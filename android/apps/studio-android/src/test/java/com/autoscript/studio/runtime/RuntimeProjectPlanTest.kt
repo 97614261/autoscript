@@ -29,7 +29,8 @@ class RuntimeProjectPlanTest {
         val root = temporaryFolder.newFolder("node-test")
         val savedSource = """{"flowSchemaVersion":1,"nodeId":"selected","blockId":"root","parentId":null,"orderKey":"a0","kind":"task.noop","nodeVersion":1,"depth":0,"args":{}}""" + "\n"
         val snap = visualSnapshot(root).copy(flowSources = mapOf("main" to savedSource),
-            manifest = visualSnapshot(root).manifest.copy(debugSettings = ProjectDebugSettings(runDelayMs = 5000)))
+            manifest = visualSnapshot(root).manifest.copy(debugSettings = ProjectDebugSettings(runDelayMs = 5000,
+                runPromptFilters = RunPromptFilters(flowStart = true,flowReturn = true,variables = true))))
         File(root, "project.json").writeText("saved-manifest")
         val generated = File(root, "generated-node-test").apply { mkdirs() }
         val generation = "gen-node-test"
@@ -45,7 +46,10 @@ class RuntimeProjectPlanTest {
             plan.luaSource.toString(Charsets.UTF_8).contains("-- @autoscript debug run delay"))
         assertTrue(plan.luaSource.toString(Charsets.UTF_8).startsWith("-- @autoscript selected-node prompt preview\n"))
         assertTrue(plan.luaSource.toString(Charsets.UTF_8).contains("Prompt.toast(message, styleJson or"))
+        assertTrue(plan.luaSource.toString(Charsets.UTF_8).contains("flowStart=false, flowReturn=false"))
+        assertTrue(snap.manifest.debugSettings.runPromptFilters.flowStart)
         assertArrayEquals(lua, File(generated, "main.lua").readBytes())
+        assertFalse(plan.luaSource.toString(Charsets.UTF_8).contains("__autoscript_debug_target_node"))
         val hidden = snap.copy(manifest = snap.manifest.copy(debugSettings = snap.manifest.debugSettings.copy(showRunPrompts = false)))
         val hiddenPlan = RuntimeProjectPlan.fromVisualSnapshot(hidden, generation, "main", "selected")
         assertFalse(hiddenPlan.luaSource.toString(Charsets.UTF_8).contains("selected-node prompt preview"))
@@ -58,7 +62,7 @@ class RuntimeProjectPlanTest {
     }
 
     @Test
-    fun configurationSeedsTypedValuesAndSingleStepSkipsUiEvents() {
+    fun configurationSeedsTypedValuesAndEditorRunSkipsUiEvents() {
         val root = temporaryFolder.newFolder("ui-plan")
         val model = com.autoscript.script.ui.ScriptUiDefinition(version = 2, fields = listOf(
             com.autoscript.script.ui.UiField("count", "次数", "integer", false, "3", ui = com.autoscript.script.ui.UiPresentation(control = "NUMBER")),
@@ -78,25 +82,6 @@ class RuntimeProjectPlanTest {
         assertTrue(plan.withInterface(visual, mapOf("count" to "12")).luaSource.toString(Charsets.UTF_8).contains("__ui_debug_skip_events = false\n"))
         assertArrayEquals(plan.luaSource, plan.forEditorRun(snap).luaSource)
         assertArrayEquals(plan.luaSource, plan.forEditorRun(visual.copy(manifest = visual.manifest.copy(runnerUi = null))).luaSource)
-        val debug = RuntimeProjectPlan("__autoscript_debug_capture = true\n__autoscript_debug_step = false\n".toByteArray(), emptyList(), emptyList(),720,1280,0)
-        assertTrue(debug.forSingleStep().luaSource.toString(Charsets.UTF_8).startsWith("__ui_debug_skip_events = true\n"))
-    }
-
-    @Test
-    fun selectedStepUsesTargetCheckpointWithoutChangingOriginalArtifact() {
-        val original = ("__autoscript_debug_capture = true\n__autoscript_debug_step = false\n" +
-            "local function __checkpoint(flow,node) if __autoscript_debug_execute_target then end end\n" +
-            "__checkpoint(\"main\", \"node-2\", {}, {})\n").toByteArray()
-        val plan = RuntimeProjectPlan(original, emptyList(), emptyList(), 720, 1280, 0)
-        val selected = plan.forSingleStep("main", "node-2").luaSource.toString(Charsets.UTF_8)
-        assertTrue(selected.contains("__autoscript_debug_target_flow = \"main\""))
-        assertTrue(selected.contains("__autoscript_debug_target_node = \"node-2\""))
-        assertTrue(selected.contains("__autoscript_debug_step = false"))
-        assertTrue(selected.contains("__autoscript_debug_execute_target = true"))
-        assertTrue(plan.forSingleStep("main", "node-2", executeTarget = false).luaSource.toString(Charsets.UTF_8)
-            .contains("__autoscript_debug_execute_target = false"))
-        assertArrayEquals(original, plan.luaSource)
-        assertTrue(runCatching { plan.forSingleStep("main", "missing") }.isFailure)
     }
 
     @get:Rule

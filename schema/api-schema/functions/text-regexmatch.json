@@ -9,7 +9,7 @@
   "sideEffect": "none",
   "timeoutMs": null,
   "resourceOwnership": "none",
-  "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。",
+  "summary": "文本中任意位置命中返回整数1，未命中返回0；整段匹配请用^和$。不支持反向引用/环视，不返回捕获组。",
   "params": [
     {
       "name": "text",
@@ -27,7 +27,7 @@
   "returns": {
     "type": "integer",
     "nullable": false,
-    "summary": "有限自动机正则，不支持反向引用/环视；完整匹配，不返回捕获组。"
+    "summary": "文本中任意位置命中返回整数1，未命中返回0；整段匹配请用^和$。不支持反向引用/环视，不返回捕获组。"
   },
   "legacyAliases": []
 }

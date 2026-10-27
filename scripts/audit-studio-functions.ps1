@@ -37,9 +37,9 @@ $lines.Add('Evidence: every row has a matching node schema and exact compiler ki
 $lines.Add('')
 $lines.Add('Shared paths: [catalog](../../android/apps/studio-android/src/main/java/com/autoscript/studio/editor/FunctionCatalog.kt), [configuration](../../android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualBlockArguments.kt), [editor](../../android/apps/studio-android/src/main/java/com/autoscript/studio/editor/VisualEditorState.kt), [compiler](../../rust/tools/flow-compiler/src/lib.rs), [catalog regression](../../android/apps/studio-android/src/test/java/com/autoscript/studio/editor/FunctionLibraryTest.kt), [source roundtrip regression](../../android/apps/studio-android/src/test/java/com/autoscript/studio/editor/VisualLuaRoundTripTest.kt), [audited production routes and retired gaps](studio-first-version-master-plan.md).')
 $lines.Add('')
-$lines.Add('Runtime: variable/control/flow blocks compile to structured Lua; other blocks dispatch through the frozen runtime contract. Host requests are serviced by runtime-service, pure operations by runtime-executor. The table does not infer API equivalence from names. Current regression execution and device acceptance remain PENDING for every row; historical batch evidence stays in its original verification record.')
+$lines.Add('Runtime: variable/control/flow blocks compile to structured Lua; other blocks dispatch through the frozen runtime contract. Host requests are serviced by runtime-service, pure operations by runtime-executor. The table does not infer API equivalence from names. The [current release ledger](../verification/code-optimization-1-7-2026-10-18.md) records actual host-suite results, the exact candidate and device attempts. Suite execution does not certify every parameter of every row; dated device evidence applies only to the tested APK and cases.')
 $lines.Add('')
-$lines.Add('| Kind | Title | Version | Schema / Compiler | Capabilities | Runtime / Device Acceptance |')
+$lines.Add('| Kind | Title | Version | Schema / Compiler | Capabilities | Runtime / Device Evidence |')
 $lines.Add('|---|---|---:|---|---|---|')
 $seen = @{}
 foreach ($block in $blocks) {
@@ -55,7 +55,7 @@ foreach ($block in $blocks) {
     $title = $block.title.Replace('|','/').Replace("`r",' ').Replace("`n",' ')
     $caps = if (@($block.requiredCapabilities).Count) { @($block.requiredCapabilities) -join ', ' } else { '-' }
     $nodeLink = '../../schema/node-schema/' + $schema.Name
-    $lines.Add('| `' + $kind + '` | ' + $title + ' | ' + $block.nodeVersion + ' | [schema](' + $nodeLink + ') / registered | ' + $caps + ' | PENDING / PENDING |')
+    $lines.Add('| `' + $kind + '` | ' + $title + ' | ' + $block.nodeVersion + ' | [schema](' + $nodeLink + ') / registered | ' + $caps + ' | suite ledger / not exhaustive |')
 }
 if ($registered.Count -ne $seen.Count) { throw 'Unpublished compiler registrations require explicit review' }
 $expected = ($lines -join "`n") + "`n"
@@ -66,4 +66,4 @@ if ($Update) {
         throw 'Studio coverage matrix is stale; run scripts/audit-studio-functions.ps1 -Update'
     }
 }
-Write-Output "Studio coverage: $($blocks.Count) published kinds, exact schema/compiler registrations; runtime/device gates remain pending."
+Write-Output "Studio coverage: $($blocks.Count) published kinds, exact schema/compiler registrations; executed suite evidence is separate from per-parameter device acceptance."

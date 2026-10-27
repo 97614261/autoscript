@@ -75,6 +75,8 @@ class ScriptUiView(
         else -> error("无效的界面读取")
     }
     fun exportConfig(): String=commandState.exportConfig()
+    fun describePages():String=ScriptUiIntrospection.pages(definition)
+    fun describeControls(page:String):String=ScriptUiIntrospection.controls(definition,page.ifEmpty {pageId})
     fun restoreConfig(text: String) {commandState.restoreConfig(text); renderPage()}
     fun setRuntime(running: Boolean) { runtime = running; renderActions() }
     fun setDialogMode(value: Boolean) { dialogMode = value; renderActions() }

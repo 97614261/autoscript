@@ -14,8 +14,7 @@ internal enum class StudioEntry(val title: String, val detail: String) {
     PERMISSIONS("软件权限", "悬浮授权与实际能力"),
     ENVIRONMENT("运行环境", "Runner、Root 与诊断"),
     DOCS("函数文档", "本地真实接口与积木"),
-    GUIDE("使用指南", "编写、启动与截图流程"),
-    ABOUT("关于智构", "版本、隐私与运行边界"),
+    ABOUT("关于智构", "版本号与应用更新"),
 }
 
 internal data class StudioProfileSection(val title: String, val entries: List<StudioEntry>)
@@ -23,9 +22,8 @@ internal data class StudioProfileSection(val title: String, val entries: List<St
 internal val studioProfileSections = listOf(
     StudioProfileSection("设备与运行", listOf(StudioEntry.PERMISSIONS, StudioEntry.ENVIRONMENT)),
     StudioProfileSection("项目与数据", listOf(StudioEntry.BACKUPS)),
-    StudioProfileSection("帮助与应用", listOf(StudioEntry.DOCS, StudioEntry.GUIDE, StudioEntry.ABOUT)),
+    StudioProfileSection("帮助与应用", listOf(StudioEntry.DOCS, StudioEntry.ABOUT)),
 )
-internal val profileStudioEntries = studioProfileSections.flatMap { it.entries }
 
 /** Display hint only, never an identity for lookup, copying, persistence or export. */
 internal fun compactProjectId(projectId: String): String {
@@ -46,10 +44,6 @@ internal class WorkspaceEntryGate {
         return true
     }
 }
-
-internal fun recentStudioProjects(projects: List<ProjectSummary>): List<ProjectSummary> =
-    StudioProjectPolicy.active(projects).sortedWith(compareByDescending<ProjectSummary> { it.lastOpenedAt ?: it.updatedAt }
-        .thenByDescending { it.updatedAt }.thenBy { it.projectId }).take(3)
 
 internal fun searchStudioProjects(projects: List<ProjectSummary>, query: String): List<ProjectSummary> =
     StudioProjectPolicy.active(projects).filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }

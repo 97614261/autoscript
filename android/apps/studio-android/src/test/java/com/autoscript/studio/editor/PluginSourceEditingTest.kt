@@ -6,6 +6,18 @@ import org.junit.Test
 class PluginSourceEditingTest {
     private fun editor(): VisualEditorState = VisualEditorState.create("", "block-root").apply { insertNoop() }
 
+    @Test fun emptyPluginAcceptsFirstRealBlockAndUndoReturnsToEmpty() {
+        val state=VisualEditorState.create("","block-root")
+        assertTrue(state.rows.isEmpty())
+        state.insertNoop()
+        val source=state.currentSource
+        assertEquals(1,state.rows.size)
+        assertTrue(state.undo())
+        assertEquals("",state.currentSource)
+        assertTrue(state.redo())
+        assertEquals(source,state.currentSource)
+    }
+
     @Test fun rawSourceAppliesAsOneUndoableDraftWithoutMarkingSaved() {
         val editor = editor()
         val original = editor.currentSource

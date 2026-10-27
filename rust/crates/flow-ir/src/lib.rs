@@ -1,5 +1,7 @@
 mod codec;
 mod model;
+mod names;
+pub use names::{user_name_part, user_name_start, valid_user_name};
 mod order_key;
 mod project;
 mod randomization;

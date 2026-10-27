@@ -45,7 +45,7 @@ class ImagePipelineRecognitionTailTest {
     }
 
     @Test fun glyphAndAlphanumericUseProcessedFrameAndExplicitTypedOutputs() {
-        for (operation in listOf(Reply.GLYPH, Reply.ALPHANUMERIC)) {
+        for (operation in listOf(Reply.GLYPH, Reply.ALPHANUMERIC, Reply.LATIN_TEXT)) {
             val tail = ImagePipelineRecognitionTail.Ocr(ImageToolOcrConfig(operation, "dictionaries/main.asglyph", 0x123456, 12, 900, 3), roi)
             val blocks = imageProcessingRecognitionBlocks(pipeline, null, "scratch", "result", tail, names(tail), variables(tail), resources, retainFinal = true)
             assertEquals("screen.capture", blocks.first().first.kind)
@@ -57,7 +57,10 @@ class ImagePipelineRecognitionTailTest {
                 assertTrue(args["foregroundRgb"].asJsonPrimitive.isNumber)
                 assertEquals(0x123456, args["foregroundRgb"].asInt)
                 assertEquals("ocrCoverage", args["coverageVariable"].asString)
-            } else { assertEquals("ocr.alphanumeric", blocks.last().first.kind); assertFalse(args["autoCapture"].asBoolean) }
+            } else {
+                assertEquals("ocr.alphanumeric", blocks.last().first.kind); assertFalse(args["autoCapture"].asBoolean)
+                assertEquals(operation == Reply.LATIN_TEXT, args["includeSymbols"].asBoolean)
+            }
         }
     }
 

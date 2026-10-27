@@ -45,9 +45,9 @@ internal fun rewriteCalculationNames(source: String, names: Map<String, String>)
             }
             require(closed && i <= source.length) { "计算表达式包含未闭合字符串" }
             result.append(source, start, i)
-        } else if (ch in 'A'..'Z' || ch in 'a'..'z' || ch == '_') {
+        } else if (ProjectNames.isStart(ch)) {
             val start = i++
-            while (i < source.length && (source[i].isLetterOrDigit() || source[i] == '_')) i++
+            while (i < source.length && ProjectNames.isPart(source[i])) i++
             val name = source.substring(start, i)
             var next = i
             while (next < source.length && source[next].isWhitespace()) next++

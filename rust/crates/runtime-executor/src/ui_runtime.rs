@@ -18,7 +18,19 @@ pub(crate) fn host_operation(operation: &str, value: &str) -> Result<bool, &'sta
     if let Some(result) = extension_operation(operation, value) {
         return result;
     }
-    if operation == "get:config" {
+    if operation == "get:controls" {
+        return if value.is_empty()
+            || (value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+        {
+            Ok(true)
+        } else {
+            Err("page id must be bounded identifier")
+        };
+    }
+    if operation == "get:config" || operation == "get:pages" {
         return if value.is_empty() {
             Ok(true)
         } else {

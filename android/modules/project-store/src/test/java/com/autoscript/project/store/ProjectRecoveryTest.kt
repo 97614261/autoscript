@@ -13,7 +13,7 @@ class ProjectRecoveryTest {
     @After fun close() { root.deleteRecursively() }
 
     @Test fun readOnlyListingDoesNotDiscardTransactionFiles() {
-        val project = store.createProject("恢复", ProjectSourceMode.VISUAL)
+        val project = store.createFixtureProject("恢复", ProjectSourceMode.VISUAL)
         val temp = File(project.directory, "project.json.tmp").apply { writeText("draft") }
         val previous = File(project.directory, "project.json.previous").apply { writeText("previous") }
         assertEquals(1, store.listProjects().size)
@@ -22,7 +22,7 @@ class ProjectRecoveryTest {
     }
 
     @Test fun missingFlowRestoresOnlyCommittedPreviousAndInvalidatesGeneration() {
-        val project = store.createProject("恢复", ProjectSourceMode.VISUAL)
+        val project = store.createFixtureProject("恢复", ProjectSourceMode.VISUAL)
         val flow = project.manifest.flows.single()
         val target = File(project.directory, flow.path)
         val previous = File(target.parentFile, "${target.name}.previous")
@@ -34,7 +34,7 @@ class ProjectRecoveryTest {
     }
 
     @Test fun uncommittedTempOrOldBackupIsNotSilentlyPromoted() {
-        val project = store.createProject("恢复", ProjectSourceMode.VISUAL)
+        val project = store.createFixtureProject("恢复", ProjectSourceMode.VISUAL)
         val target = File(project.directory, project.manifest.flows.single().path)
         val temp = File(target.parentFile, "${target.name}.tmp").apply { writeText(target.readText()) }
         assertTrue(target.delete())
@@ -48,7 +48,7 @@ class ProjectRecoveryTest {
     }
 
     @Test fun wrongRootIdentityCannotRecoverIntoAnotherFlow() {
-        val project = store.createProject("恢复", ProjectSourceMode.VISUAL)
+        val project = store.createFixtureProject("恢复", ProjectSourceMode.VISUAL)
         val flow = project.manifest.flows.single()
         val target = File(project.directory, flow.path)
         val previous = File(target.parentFile, "${target.name}.previous")
@@ -60,7 +60,7 @@ class ProjectRecoveryTest {
     }
 
     @Test fun apiPromotionCommitsManifestAndSourceTogether() {
-        val project = store.createProject("恢复", ProjectSourceMode.VISUAL)
+        val project = store.createFixtureProject("恢复", ProjectSourceMode.VISUAL)
         val manifest = File(project.directory, "project.json")
         val json = JsonParser.parseString(manifest.readText()).asJsonObject.apply { addProperty("runtimeApi", "1.6") }
         manifest.writeText(json.toString())

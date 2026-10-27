@@ -9,8 +9,16 @@ plugins {
 }
 
 val abiProfile = providers.gradleProperty("autoscript.abiProfile").getOrElse("development")
-require(abiProfile in setOf("development", "arm64")) { "Unknown autoscript.abiProfile: $abiProfile" }
-extra["autoscript.abis"] = if (abiProfile == "arm64") listOf("arm64-v8a") else listOf("arm64-v8a", "x86_64")
+require(abiProfile in setOf("development", "arm64", "x86_64")) { "Unknown autoscript.abiProfile: $abiProfile" }
+extra["autoscript.abis"] = when (abiProfile) {
+    "arm64" -> listOf("arm64-v8a")
+    "x86_64" -> listOf("x86_64")
+    else -> listOf("arm64-v8a", "x86_64")
+}
+val nativeProfile = providers.gradleProperty("autoscript.nativeProfile").getOrElse("dev")
+require(nativeProfile in setOf("dev", "distribution")) { "Unknown autoscript.nativeProfile: $nativeProfile" }
+extra["autoscript.nativeProfile"] = nativeProfile
+extra["autoscript.nativeOutputProfile"] = if (nativeProfile == "dev") "debug" else nativeProfile
 val visionProfileProperty = providers.gradleProperty("autoscript.visionProfile")
 val visionProfile = visionProfileProperty.getOrElse("full")
 require(visionProfile in setOf("base", "opencv", "onnx", "full")) { "Unknown autoscript.visionProfile: $visionProfile" }
@@ -38,7 +46,14 @@ val buildToolsDirectory = sdkDirectory.resolve("build-tools").listFiles().orEmpt
     .maxWithOrNull(Comparator { left, right -> compareBuildTools(left.name, right.name) })
     ?: error("No complete Android Build Tools installation was found under ${sdkDirectory.resolve("build-tools")}")
 extra["autoscript.buildToolsDirectory"] = buildToolsDirectory
-if (visionProfileProperty.isPresent) {
+if (nativeProfile == "distribution") {
+    require(!visionProfileProperty.isPresent) { "Distribution candidates retain the default full vision profile" }
+    val profileRoot = rootProject.file("../build/profiles/distribution/$abiProfile")
+    require(gradle.startParameter.projectCacheDir?.canonicalFile == profileRoot.resolve(".gradle").canonicalFile) {
+        "Distribution requires --project-cache-dir ${profileRoot.resolve(".gradle").absolutePath}"
+    }
+    subprojects { layout.buildDirectory.set(profileRoot.resolve(path.drop(1).replace(':', '/'))) }
+} else if (visionProfileProperty.isPresent) {
     val profileRoot = rootProject.file("../build/profiles/components/$abiProfile/$visionProfile")
     require(gradle.startParameter.projectCacheDir?.canonicalFile == profileRoot.resolve(".gradle").canonicalFile) {
         "Explicit vision profiles require --project-cache-dir ${profileRoot.resolve(".gradle").absolutePath}"
@@ -46,11 +61,11 @@ if (visionProfileProperty.isPresent) {
     subprojects {
         layout.buildDirectory.set(profileRoot.resolve(path.drop(1).replace(':', '/')))
     }
-} else if (abiProfile == "arm64") {
-    require(gradle.startParameter.projectCacheDir?.canonicalFile == rootProject.file("../build/profiles/arm64/.gradle").canonicalFile) {
-        "arm64 requires --project-cache-dir build/profiles/arm64/.gradle; use build-mobile.cmd"
+} else if (abiProfile != "development") {
+    require(gradle.startParameter.projectCacheDir?.canonicalFile == rootProject.file("../build/profiles/$abiProfile/.gradle").canonicalFile) {
+        "$abiProfile requires its isolated --project-cache-dir under build/profiles/$abiProfile"
     }
     subprojects {
-        layout.buildDirectory.set(rootProject.layout.projectDirectory.dir("../build/profiles/arm64/${path.drop(1).replace(':', '/')}"))
+        layout.buildDirectory.set(rootProject.layout.projectDirectory.dir("../build/profiles/$abiProfile/${path.drop(1).replace(':', '/')}"))
     }
 }

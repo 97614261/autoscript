@@ -84,19 +84,22 @@ import kotlinx.coroutines.withContext
 internal fun ProjectSettingsDialog(
     snapshot: ProjectSnapshot,
     store: ProjectStore,
+    runtimeClient: com.autoscript.runtime.client.RuntimeClient,
     onSnapshotChanged: (ProjectSnapshot) -> Unit,
     onDismiss: () -> Unit,
 ) {
     key(snapshot.manifest.projectId) {
-        ProjectSettingsContent(snapshot, store, onSnapshotChanged, onDismiss)
+        ProjectSettingsContent(snapshot, store, runtimeClient, onSnapshotChanged, onDismiss)
     }
 }
 
 @Composable
 private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStore,
+    runtimeClient: com.autoscript.runtime.client.RuntimeClient,
     onSnapshotChanged: (ProjectSnapshot) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val savePrompt = rememberResourceSavePrompt()
     val latestSnapshot by rememberUpdatedState(snapshot)
     var importKind by remember { mutableStateOf<ProjectResourceKind?>(null) }
     var choosingImportFolder by remember { mutableStateOf(false) }
@@ -105,6 +108,7 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var glyphMakerVisible by remember { mutableStateOf(false) }
     var runnerUiEditorVisible by remember { mutableStateOf(false) }
     var runnerUiDraft by remember { mutableStateOf("") }
     var runnerUiInitial by remember { mutableStateOf("") }
@@ -132,7 +136,7 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
         notice = null
         scope.launch {
             editorOperation({ failure -> error = failure.message ?: "资源导入失败" }, { busy = false }) {
-                val updated = withContext(Dispatchers.IO) {
+                val updated = savePrompt.run { mode -> withContext(Dispatchers.IO) {
                     val sourceName = queryDisplayName(context.contentResolver, uri)
                     if (kind == ProjectResourceKind.IMAGE) {
                         validateImageDocument(context.contentResolver, uri)
@@ -148,21 +152,24 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
                             it,
                             current.resourcePaths(),
                             imageDirectory = if (kind == ProjectResourceKind.IMAGE) folder else "",
+                            mode = mode,
                         )
                     }
-                }
+                } }
                 onSnapshotChanged(updated)
                 notice = when(kind) { ProjectResourceKind.IMAGE -> "图片已导入"; ProjectResourceKind.AUDIO -> "音频已导入"; else -> "字库已导入" }
             }
         }
     }
 
+    if (glyphMakerVisible) GlyphMakerDialog(snapshot, store, runtimeClient, onSnapshotChanged,
+        onDismiss = { glyphMakerVisible = false })
     if (choosingImportFolder) ImageTemplateSaveDialog(
         imagePaths = snapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
         store = store, projectId = snapshot.manifest.projectId, folderOnly = true,
         initialFolder = importImageDirectory,
         onDismiss = { choosingImportFolder = false },
-        onSave = { folder, _ ->
+        onSave = { folder, _, _ ->
             choosingImportFolder = false
             importImageDirectory = folder
             importKind = ProjectResourceKind.IMAGE
@@ -299,13 +306,18 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
                     fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                 val resources = filterSettingsResources(snapshot.manifest.resources, resourceFilter)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("固定数字/字母可直接采样制字", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
+                        modifier = Modifier.weight(1f))
+                    SettingsOutlineAction("制作字库", !busy, Modifier.width(84.dp)) { glyphMakerVisible = true }
+                }
                 key(resourceFilter) {
                     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
                         if (resources.isEmpty()) item {
                             SettingsEmptyState(if (resourceFilter == null) "暂无项目资源" else "此分类暂无资源", "点击上方按钮导入")
                         }
                         items(resources, key = { it.get("path").asString }) { resource ->
-                            ProjectResourceRow(snapshot.directory, resource, !busy,
+                            ProjectResourceRow(snapshot.directory, resource, snapshot.resourceRevision, !busy,
                                 onOpen = { resourceDetailsVisible = resource },
                                 onDelete = { deletePath = resource.get("path").asString })
                             HorizontalDivider(color = AutoScriptPalette.Border)
@@ -586,6 +598,7 @@ private fun SettingsEmptyState(title: String, hint: String) {
 private fun ProjectResourceRow(
     projectDirectory: File,
     resource: JsonObject,
+    resourceRevision: String,
     enabled: Boolean,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
@@ -593,14 +606,14 @@ private fun ProjectResourceRow(
     val path = resource.get("path").asString
     val kind = resource.get("kind").asString
     val file = File(projectDirectory, path)
-    val details by produceState("", file.path, file.lastModified(), kind) {
+    val details by produceState("", file.path, file.lastModified(), kind, resourceRevision) {
         value = withContext(Dispatchers.IO) { resourceDetails(file, kind) }
     }
     Row(
         modifier = Modifier.fillMaxWidth().height(54.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-            ResourcePreview(file, kind)
+            ResourcePreview(file, kind, resourceRevision)
             Column(Modifier.weight(1f).clickable(onClick = onOpen).padding(horizontal = 8.dp)) {
                 Text(file.name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -623,14 +636,14 @@ private fun ProjectResourceRow(
 }
 
 @Composable
-private fun ResourcePreview(file: File, kind: String) {
+private fun ResourcePreview(file: File, kind: String, resourceRevision: String) {
     if (kind != "image") {
         Box(Modifier.size(34.dp).background(AutoScriptPalette.PageBackground, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
             Text(if (kind == "audio") "音频" else "字库", style = MaterialTheme.typography.labelMedium)
         }
         return
     }
-    val preview by produceState<ImageBitmap?>(null, file.path, file.lastModified()) {
+    val preview by produceState<ImageBitmap?>(null, file.path, file.lastModified(), resourceRevision) {
         value = withContext(Dispatchers.IO) { decodeThumbnail(file)?.asImageBitmap() }
     }
     Box(Modifier.size(34.dp).background(AutoScriptPalette.PageBackground, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
@@ -656,7 +669,7 @@ private fun decodeThumbnail(file: File) = BitmapFactory.Options().let { bounds -
     BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
 }
 
-private fun validateImageDocument(resolver: android.content.ContentResolver, uri: Uri) {
+internal fun validateImageDocument(resolver: android.content.ContentResolver, uri: Uri) {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     resolver.openInputStream(uri)?.use { input ->
         BitmapFactory.decodeStream(input, null, bounds)
@@ -703,7 +716,7 @@ private fun readFilePrefix(file: File, maximumBytes: Int): ByteArray = file.inpu
     bytes.copyOf(offset)
 }
 
-private fun queryDisplayName(resolver: android.content.ContentResolver, uri: Uri): String {
+internal fun queryDisplayName(resolver: android.content.ContentResolver, uri: Uri): String {
     val queried = runCatching {
         resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) cursor.getString(0) else null
@@ -712,7 +725,7 @@ private fun queryDisplayName(resolver: android.content.ContentResolver, uri: Uri
     return queried?.takeIf(String::isNotBlank) ?: uri.lastPathSegment ?: "resource"
 }
 
-private fun ProjectSnapshot.resourcePaths(): Set<String> =
+internal fun ProjectSnapshot.resourcePaths(): Set<String> =
     manifest.resources.map { it.get("path").asString }.toSet()
 
 private fun Set<String>.toggle(value: String): Set<String> =

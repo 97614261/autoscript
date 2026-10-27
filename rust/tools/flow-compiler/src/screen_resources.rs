@@ -4,6 +4,8 @@ use flow_ir::{ProjectManifest, ProjectVariableType};
 use serde_json::{Map, Value};
 
 pub(crate) const KINDS: &[&str] = &[
+    "screen.captureregion",
+    "screen.frameinfo",
     "screen.loadimage",
     "screen.crop",
     "screen.series",
@@ -12,6 +14,14 @@ pub(crate) const KINDS: &[&str] = &[
 ];
 #[derive(Debug, Clone)]
 pub(crate) enum Operation {
+    CaptureRegion {
+        output: String,
+        bounds: [i64; 4],
+    },
+    Info {
+        source: String,
+        output: String,
+    },
     LoadImage {
         path: String,
         output: String,
@@ -37,6 +47,7 @@ pub(crate) enum Operation {
         source: String,
     },
 }
+
 fn name(map: &Map<String, Value>, key: &str) -> Result<String, &'static str> {
     map.get(key)
         .and_then(Value::as_str)
@@ -55,6 +66,8 @@ pub(crate) fn parse(kind: &str, args: &Value) -> Result<Operation, &'static str>
         .as_object()
         .ok_or("resource arguments must be object")?;
     let keys: &[&str] = match kind {
+        "screen.captureregion" => &["resultVariable", "left", "top", "right", "bottom"],
+        "screen.frameinfo" => &["frameVariable", "resultVariable"],
         "screen.loadimage" => &["imagePath", "resultVariable"],
         "screen.crop" => &[
             "frameVariable",
@@ -79,6 +92,11 @@ pub(crate) fn parse(kind: &str, args: &Value) -> Result<Operation, &'static str>
         return Err("resource fields are incomplete or unknown");
     }
     match kind {
+        "screen.captureregion" => capture_region(map),
+        "screen.frameinfo" => Ok(Operation::Info {
+            source: name(map, "frameVariable")?,
+            output: name(map, "resultVariable")?,
+        }),
         "screen.loadimage" => {
             let path = map
                 .get("imagePath")
@@ -137,6 +155,21 @@ pub(crate) fn parse(kind: &str, args: &Value) -> Result<Operation, &'static str>
         _ => unreachable!(),
     }
 }
+fn capture_region(map: &Map<String, Value>) -> Result<Operation, &'static str> {
+    let bounds = [
+        integer(map, "left", 0, 16383)?,
+        integer(map, "top", 0, 16383)?,
+        integer(map, "right", 1, 16384)?,
+        integer(map, "bottom", 1, 16384)?,
+    ];
+    if bounds[0] >= bounds[2] || bounds[1] >= bounds[3] {
+        return Err("capture region must be nonempty");
+    }
+    Ok(Operation::CaptureRegion {
+        output: name(map, "resultVariable")?,
+        bounds,
+    })
+}
 impl Operation {
     pub(crate) fn validate(
         &self,
@@ -144,6 +177,11 @@ impl Operation {
         flow: &str,
     ) -> Result<(), &'static str> {
         let fields: Vec<(&str, ProjectVariableType)> = match self {
+            Self::CaptureRegion { output, .. } => vec![(output, ProjectVariableType::Image)],
+            Self::Info { source, output } => vec![
+                (source, ProjectVariableType::Image),
+                (output, ProjectVariableType::String),
+            ],
             Self::LoadImage { path, output } => {
                 if manifest
                     .flows
@@ -188,6 +226,8 @@ impl Operation {
         quote: impl Fn(&str) -> Result<String, CompileError>,
     ) -> Result<String, CompileError> {
         Ok(match self {
+            Self::CaptureRegion {output,bounds:[l,t,r,b]} => format!("__vars[{}]=Screen.cache(Screen.captureRegion({l},{t},{r},{b}))",quote(output)?),
+            Self::Info {source,output} => format!("__vars[{}]=Screen.frameInfo(__vars[{}])",quote(output)?,quote(source)?),
             Self::LoadImage {path,output} => format!("__vars[{}]=Screen.loadImage({})",quote(output)?,quote(path)?),
             Self::Crop {source,output,bounds:[l,t,r,b]}=>format!("__vars[{}]=Screen.crop(__vars[{}],{l},{t},{r},{b})",quote(output)?,quote(source)?),
             Self::Series {output,count,duration,fps,partial}=>format!("do local __series=Screen.captureSeries({count},{duration},{fps},{partial}); local __parts={{}}; for __i,__sample in ipairs(__series.frames) do __parts[__i]=string.format('{{\"frame\":%d,\"timestampNanos\":%d}}',__sample.frame,__sample.timestampNanos) end; __vars[{}]='{{\"frames\":['..table.concat(__parts,',')..'],\"droppedFrames\":'..tostring(__series.droppedFrames)..',\"partial\":'..tostring(__series.partial)..'}}' end",quote(output)?),
@@ -197,5 +237,35 @@ impl Operation {
                 format!("do local __frames=Data.getJson(__vars[{key}],'frames'); local __n=Data.length(__frames); assert(__n<=120,'系列超过上限'); for __i=1,__n do local __sample=Data.getJson(__frames,tostring(__i)); Screen.release(assert(math.tointeger(tonumber(Data.get(__sample,'frame'))))) end; __vars[{key}]='' end")
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn region_capture_is_explicit_typed_and_does_not_hide_a_full_capture() {
+        let args =
+            json!({"resultVariable":"区域图", "left":149, "top":407, "right":546, "bottom":879});
+        let operation = parse("screen.captureregion", &args).unwrap();
+        let rendered = operation.render(|text| Ok(format!("\"{text}\""))).unwrap();
+        assert_eq!(
+            rendered,
+            "__vars[\"区域图\"]=Screen.cache(Screen.captureRegion(149,407,546,879))"
+        );
+        for (key, value) in [
+            ("left", json!(-1)),
+            ("right", json!(149)),
+            ("top", json!(879)),
+            ("bottom", json!(16385)),
+            ("hidden", json!(1)),
+            ("resultVariable", json!("bad name")),
+        ] {
+            let mut invalid = args.clone();
+            invalid[key] = value;
+            assert!(parse("screen.captureregion", &invalid).is_err(), "{key}");
+        }
     }
 }

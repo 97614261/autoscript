@@ -1,26 +1,51 @@
 package com.autoscript.studio
 
 import com.autoscript.project.store.ProjectSnapshot
+import com.autoscript.project.store.ProjectGlyphColor
 import com.autoscript.runtime.api.RecognitionPreviewReply
 import com.google.gson.JsonObject
 import java.io.File
 
 internal data class ImageToolOcrConfig(
-    val operation: Int = RecognitionPreviewReply.ALPHANUMERIC,
+    val operation: Int = RecognitionPreviewReply.LATIN_TEXT,
     val dictionaryPath: String = "",
     val foregroundRgb: Int = 0xFFFFFF,
     val tolerance: Int = 16,
     val threshold: Int = 500,
     val spaceGapColumns: Int = 2,
+    val additionalColors: String = "",
 ) {
-    val kind: String get() = if (operation == RecognitionPreviewReply.GLYPH) "ocr.glyph" else "ocr.alphanumeric"
-    fun options(roi: ImageToolCodeGen.Roi): IntArray = intArrayOf(roi.left, roi.top, roi.right, roi.bottom,
-        threshold, foregroundRgb, tolerance, spaceGapColumns)
+    val kind: String get() = when(operation) {RecognitionPreviewReply.GLYPH->"ocr.glyph";RecognitionPreviewReply.ALPHANUMERIC_V5->"ocr.alphanumericv5";else->"ocr.alphanumeric"}
+    /** Only recognition settings cross authoring contexts, never sample geometry or output names. */
+    fun applyGlyphSettings(arguments: JsonObject): JsonObject {
+        require(operation == RecognitionPreviewReply.GLYPH)
+        this.arguments(ImageToolCodeGen.Roi(0, 0, 1, 1)) // validate the saved path and numeric settings
+        return arguments.deepCopy().apply {
+            addProperty("dictionaryPath", dictionaryPath)
+            addProperty("foregroundRgb", foregroundRgb)
+            addProperty("tolerance", tolerance)
+            addProperty("similarityPermille", threshold)
+            addProperty("spaceGapColumns", spaceGapColumns)
+            remove("additionalColors")
+            if (additionalColors.isNotEmpty()) addProperty("additionalColors", additionalColors)
+        }
+    }
+    fun options(roi: ImageToolCodeGen.Roi): IntArray {
+        require(operation == RecognitionPreviewReply.GLYPH || additionalColors.isEmpty())
+        val extra = ProjectGlyphColor.decodeAdditional(additionalColors, foregroundRgb)
+        return intArrayOf(roi.left, roi.top, roi.right, roi.bottom, threshold, foregroundRgb, tolerance, spaceGapColumns) +
+            extra.flatMap { listOf(it.rgb, it.tolerance) }.toIntArray()
+    }
     fun arguments(roi: ImageToolCodeGen.Roi): JsonObject {
-        require(operation in setOf(RecognitionPreviewReply.GLYPH, RecognitionPreviewReply.ALPHANUMERIC) &&
+        require(operation in setOf(RecognitionPreviewReply.GLYPH, RecognitionPreviewReply.ALPHANUMERIC,RecognitionPreviewReply.ALPHANUMERIC_V5,RecognitionPreviewReply.LATIN_TEXT) &&
             RecognitionPreviewReply.validOptions(operation, options(roi)))
         return JsonObject().apply {
             addProperty("frameVariable", "frame")
+            if(operation==RecognitionPreviewReply.ALPHANUMERIC_V5) {
+                addProperty("resultVariable","ocrResult");addProperty("minimumScorePermille",threshold)
+                addProperty("left",roi.left);addProperty("top",roi.top);addProperty("right",roi.right);addProperty("bottom",roi.bottom)
+                return@apply
+            }
             addProperty("textVariable", "ocrText")
             addProperty("scoreVariable", "ocrScore")
             add("region", JsonObject().apply {
@@ -36,9 +61,11 @@ internal data class ImageToolOcrConfig(
                 addProperty("similarityPermille", threshold)
                 addProperty("spaceGapColumns", spaceGapColumns)
                 addProperty("coverageVariable", "ocrCoverage")
+                if (additionalColors.isNotEmpty()) addProperty("additionalColors", additionalColors)
             } else {
                 addProperty("minimumConfidencePermille", threshold)
                 addProperty("autoCapture", true)
+                addProperty("includeSymbols", operation == RecognitionPreviewReply.LATIN_TEXT)
             }
         }
     }
@@ -47,13 +74,19 @@ internal data class ImageToolOcrConfig(
         require(roi.right <= frameWidth && roi.bottom <= frameHeight)
         val bounds = "${roi.left}, ${roi.top}, ${roi.right}, ${roi.bottom}"
         val code = buildString {
+            if (operation == RecognitionPreviewReply.GLYPH && additionalColors.isNotEmpty())
+                appendLine("if Ocr.glyphPaletteVersion ~= 1 then error('GLYPH_PALETTE_UNSUPPORTED') end")
             if (operation == RecognitionPreviewReply.GLYPH) appendLine("local dictionary = Ocr.loadDictionary(${ImageToolCodeGen.luaString(dictionaryPath)})")
             appendLine("local frame = Screen.capture()")
             if (operation == RecognitionPreviewReply.GLYPH) {
-                appendLine("local result = Ocr.glyph(frame, dictionary, ${ImageToolCodeGen.formatRgb(foregroundRgb)}, $tolerance, $threshold, $bounds, $spaceGapColumns)")
+                val extra = if (additionalColors.isEmpty()) "" else ", ${ImageToolCodeGen.luaString(additionalColors)}"
+                appendLine("local result = Ocr.glyph(frame, dictionary, ${ImageToolCodeGen.formatRgb(foregroundRgb)}, $tolerance, $threshold, $bounds, $spaceGapColumns$extra)")
                 appendLine("local ocrText, ocrCoverage, ocrScore = result.text, result.coveragePermille, result.averageScorePermille")
+            } else if(operation==RecognitionPreviewReply.ALPHANUMERIC_V5) {
+                appendLine("local ocrResult = Ocr.alphanumericV5(frame, $bounds, $threshold)")
             } else {
-                appendLine("local result = Ocr.alphanumeric(frame, $bounds, $threshold)")
+                val api = if (operation == RecognitionPreviewReply.LATIN_TEXT) "latinText" else "alphanumeric"
+                appendLine("local result = Ocr.$api(frame, $bounds, $threshold)")
                 appendLine("local ocrText, ocrScore = result.text, result.averageScorePermille")
             }
             append("Screen.release(frame)")
@@ -72,7 +105,9 @@ internal fun imageRecognitionDictionary(snapshot: ProjectSnapshot, path: String)
 }
 
 internal fun recognitionPreviewMessage(reply: RecognitionPreviewReply): String = when (reply.status) {
-    RecognitionPreviewReply.SUCCESS -> if (reply.operation in setOf(RecognitionPreviewReply.TEMPLATE, RecognitionPreviewReply.GRAY_TEMPLATE))
+    RecognitionPreviewReply.SUCCESS -> if(reply.operation==RecognitionPreviewReply.SCALED_TEMPLATE)
+        "已找到：(${reply.x}, ${reply.y}) · ${reply.scorePermille}‰ · 比例"+runCatching {com.google.gson.JsonParser.parseString(reply.text).asJsonArray[0].asJsonObject["scalePermille"].asInt.toString()}.getOrDefault("未知")+"‰"
+    else if (reply.operation in setOf(RecognitionPreviewReply.TEMPLATE, RecognitionPreviewReply.GRAY_TEMPLATE,RecognitionPreviewReply.FEATURE_TEMPLATE))
         "已找到：(${reply.x}, ${reply.y}) · ${reply.scorePermille}‰" else
         "识别文本：${if(reply.operation==RecognitionPreviewReply.GLYPH_DETAILS) runCatching { com.google.gson.JsonParser.parseString(reply.text).asJsonObject["text"].asString }.getOrDefault("逐字结果无效") else reply.text}\n得分 ${reply.scorePermille}‰" + if (reply.operation in setOf(RecognitionPreviewReply.GLYPH,RecognitionPreviewReply.GLYPH_DETAILS)) " · 覆盖率 ${reply.coveragePermille}‰" else ""
     RecognitionPreviewReply.NOT_FOUND -> "未识别到符合阈值的文字或模板"
@@ -97,7 +132,7 @@ internal fun recognitionEngineFailure(code: String): String = when (com.autoscri
 }
 
 /** Glyph lacks an implicit-capture property, so insert a balanced frame lifecycle. */
-internal fun ocrRecognitionSequence(kind: String, arguments: JsonObject) = if (kind == "ocr.glyph") listOf(
+internal fun ocrRecognitionSequence(kind: String, arguments: JsonObject) = if (kind in setOf("ocr.glyph","ocr.alphanumericv5")) listOf(
     requireNotNull(BlockCatalog.find("screen.capture")) to JsonObject().apply { addProperty("resultVariable", arguments.get("frameVariable").asString) },
     requireNotNull(BlockCatalog.find(kind)) to arguments.deepCopy(),
     requireNotNull(BlockCatalog.find("screen.release")) to JsonObject().apply { addProperty("frameVariable", arguments.get("frameVariable").asString) },

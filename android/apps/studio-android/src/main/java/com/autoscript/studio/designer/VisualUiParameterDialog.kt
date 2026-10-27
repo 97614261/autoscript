@@ -40,7 +40,7 @@ internal fun uiParameterChoices(model: ScriptUiDefinition): List<Pair<String, St
 internal fun uiParameterReadError(model: ScriptUiDefinition?, id: String, target: String, variables: List<CalculationVariable>): String? = when {
     model == null || model.fields.isEmpty() -> "请先在界面设计器添加控件并保存"
     model.fields.none { it.id == id } -> "请选择已保存界面里的控件，原控件可能已删除"
-    !target.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")) -> "请选择或输入结果变量名"
+    !target.matches(com.autoscript.project.store.ProjectNames.pattern) -> "请选择或输入结果变量名"
     variables.none { it.name == target && it.type == ProjectVariableType.STRING } -> "结果需写入已声明的字符串变量，请先维护变量"
     else -> null
 }

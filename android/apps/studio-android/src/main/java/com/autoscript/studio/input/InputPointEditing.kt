@@ -16,14 +16,16 @@ import com.google.gson.JsonObject
 internal data class InputInsertionDraft(
     val projectId: String, val flowId: String, val source: String, val anchorNodeId: String?,
     val snippet: ImageToolCodeGen.Snippet,
+    val preferredChildSlot: String? = null,
 ) {
     fun matches(projectId: String, flowId: String, editor: VisualEditorState): Boolean =
         this.projectId == projectId && this.flowId == flowId && source == editor.currentSource &&
             (anchorNodeId == null || editor.rows.any { it.nodeId == anchorNodeId })
 }
 
-internal data class InputPickTarget(val projectId: String, val flowId: String, val source: String, val anchorNodeId: String?) {
-    fun draft(snippet: ImageToolCodeGen.Snippet) = InputInsertionDraft(projectId, flowId, source, anchorNodeId, snippet)
+internal data class InputPickTarget(val projectId: String, val flowId: String, val source: String, val anchorNodeId: String?,
+    val preferredChildSlot: String? = null) {
+    fun draft(snippet: ImageToolCodeGen.Snippet) = InputInsertionDraft(projectId, flowId, source, anchorNodeId, snippet, preferredChildSlot)
 }
 
 internal fun inputPointAction(mode: ImageToolMode): InputPointAction = when (mode) {
@@ -74,14 +76,21 @@ internal fun InputInsertPositionDialog(draft: InputInsertionDraft, editor: Visua
     onDismiss: () -> Unit, onConfirm: (EditorInsertPosition, String?) -> Unit) {
     var selectingChild by remember(draft) { mutableStateOf(false) }
     val children = draft.anchorNodeId?.let(editor::childBlockNames).orEmpty()
+    val preferred = draft.preferredChildSlot?.takeIf { it in children }
+    val previewNodes = remember(draft) { editor.programDisplayNodes().toEditorTreeNodes() }
     if (selectingChild) {
         EditorOptionDialog(title = "选择内部位置", options = children.map { it to childBlockLabel(it) },
             onDismiss = { selectingChild = false },
+            preview = { slot -> EditorInsertionPreview(previewNodes, draft.anchorNodeId, EditorInsertPosition.INSIDE, slot) },
             onConfirm = { slot -> onConfirm(EditorInsertPosition.INSIDE, slot) })
     } else {
         EditorInsertPositionDialog(hasSelection = draft.anchorNodeId != null, canInsertInside = children.isNotEmpty(),
+            previewNodes = previewNodes, previewAnchorId = draft.anchorNodeId, previewChildSlot = preferred,
+            initialPosition = if (preferred != null) EditorInsertPosition.INSIDE else EditorInsertPosition.LIST_BOTTOM,
+            insideLabel = preferred?.let { "加入${childBlockLabel(it)}" } ?: "选择行里面",
             allowReplace = false, onDismiss = onDismiss, onConfirm = { position ->
-                if (position == EditorInsertPosition.INSIDE && children.size > 1) selectingChild = true
+                if (position == EditorInsertPosition.INSIDE && preferred != null) onConfirm(position, preferred)
+                else if (position == EditorInsertPosition.INSIDE && children.size > 1) selectingChild = true
                 else onConfirm(position, if (position == EditorInsertPosition.INSIDE) children.singleOrNull() else null)
             })
     }

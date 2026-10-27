@@ -38,8 +38,6 @@ import com.google.gson.JsonParser
 
 internal const val VARIABLE_CALCULATION_HINT = "--@autoscript-variable:"
 
-internal fun variableCalculationHint(arguments: JsonObject) = "$VARIABLE_CALCULATION_HINT$arguments\n"
-
 internal fun variableCalculationArguments(hint: String): JsonObject? = runCatching {
     val line = hint.lineSequence().firstOrNull().orEmpty()
     require(line.startsWith(VARIABLE_CALCULATION_HINT))
@@ -48,7 +46,7 @@ internal fun variableCalculationArguments(hint: String): JsonObject? = runCatchi
     require(args.keySet() == setOf("name", "expression"))
     require(args["name"].isJsonPrimitive && args["name"].asJsonPrimitive.isString)
     require(args["expression"].isJsonPrimitive && args["expression"].asJsonPrimitive.isString)
-    require(args["name"].asString.matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")))
+    require(args["name"].asString.matches(com.autoscript.project.store.ProjectNames.pattern))
     require(args["expression"].asString.toByteArray(Charsets.UTF_8).size in 1..1024)
     args
 }.getOrNull()
@@ -139,7 +137,8 @@ internal fun calculationTypeLabel(type: ProjectVariableType) = when (type) {
 /** Maintenance-only reference extraction; this is not the expression validator. */
 internal fun calculationReferencedNames(source: String): Set<String> {
     val withoutStrings = Regex("\"(?:[^\"\\\\]|\\\\.)*\"").replace(source.take(1024), " ")
-    return Regex("(?<![A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*").findAll(withoutStrings)
+    val names = com.autoscript.project.store.ProjectNames
+    return Regex("(?<![${names.PART}.])[${names.START}][${names.PART}]*").findAll(withoutStrings)
         .filter { match -> withoutStrings.substring(match.range.last + 1).trimStart().firstOrNull() != '(' }
         .map { it.value }.toSet()
 }
@@ -254,7 +253,7 @@ internal fun VisualVariableCalculationDialog(
         }
     } else if (picker != null) {
         Dialog(onDismissRequest = { picker = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            BoxWithConstraints(Modifier.fillMaxSize().padding(10.dp), contentAlignment = Alignment.Center) {
+            BoxWithConstraints(Modifier.fillMaxSize().imePadding().padding(10.dp), contentAlignment = Alignment.Center) {
                 Surface(Modifier.widthIn(max = 540.dp).fillMaxWidth().heightIn(max = maxHeight * .8f), color = Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 10.dp) {
                     Column {
                         Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -263,7 +262,7 @@ internal fun VisualVariableCalculationDialog(
                         }
                         HorizontalDivider(thickness = hairline(), color = AutoScriptPalette.Divider)
                         Row(Modifier.weight(1f, fill = false).heightIn(max = 340.dp)) {
-                            Column(Modifier.width(85.dp).fillMaxHeight()) {
+                            Column(Modifier.width(85.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
                                 listOf("局部", "全局", "参数").forEach { label -> CalculationFooter("${label}变量", Modifier.fillMaxWidth().height(42.dp), primary = scope == label) { scope = label; selected = null } }
                             }
                             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {

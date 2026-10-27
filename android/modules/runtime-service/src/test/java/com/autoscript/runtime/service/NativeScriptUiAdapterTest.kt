@@ -7,6 +7,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeScriptUiAdapterTest {
+    @Test fun imageEventWaitDoesNotBlockOrdinaryCloseOrShareCancellation() {
+        val entered=CountDownLatch(1);val result=AtomicReference<ByteArray>()
+        val adapter=NativeScriptUiAdapter(post={it();true},currentToken={1},beforeRequest={},submit={_,_,_,_,_,_->fail("not UI")},
+            toolsSubmit={_,operation,_,_,complete->if(operation=="imageEvent") entered.countDown() else {assertEquals("imageClose",operation);complete(Result.success(""))}})
+        val worker=Thread {result.set(adapter.dispatch(1,"runtime-tools","imageEvent","""{"name":"sample","timeoutMs":60000}"""))}.apply {start()}
+        assertTrue(entered.await(1,TimeUnit.SECONDS))
+        assertArrayEquals(byteArrayOf(0),adapter.dispatch(2,"runtime-tools","imageClose","sample"))
+        adapter.cancel(2);assertTrue(worker.isAlive)
+        adapter.cancelEvent(1);worker.join(1000)
+        assertFalse(worker.isAlive);assertArrayEquals(failure("UI_CANCELLED"),result.get())
+    }
     @Test fun runtimeToolsDoNotBorrowUiControlEpochAndCancellationAbortsOnlyTheirWork() {
         var tool = false
         var aborted = 0L

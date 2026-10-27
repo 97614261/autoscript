@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.urlencode",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.urlencode/1/text.urlencode.schema.json",
+  "title": "URL编码",
+  "category": "variable",
+  "summary": "按UTF-8百分号编码；component保留RFC3986非保留字符，空格为%20；form空格为+。输入/输出最多64KiB，不编码整条URL的结构。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Text.urlEncode",
+    "URL编码"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "智构 A"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "mode",
+      "label": "编码方式",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "component"
+    },
+    {
+      "path": "modeVariable",
+      "label": "编码方式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.betweennth",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.betweennth/1/text.betweennth.schema.json",
+  "title": "取第N段标记文字",
+  "category": "variable",
+  "summary": "查找第N个不重叠左标记，再取其后第一个右标记之前的文字；不支持嵌套配对，任一标记缺失返回空文本。原文64KiB、标记各1–4096字节。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Text.betweenNth",
+    "取第N段标记文字"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "[甲][乙]"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "left",
+      "label": "左标记",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "["
+    },
+    {
+      "path": "leftVariable",
+      "label": "左标记来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "right",
+      "label": "右标记",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "]"
+    },
+    {
+      "path": "rightVariable",
+      "label": "右标记来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "occurrence",
+      "label": "第几个左标记",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "2"
+    },
+    {
+      "path": "occurrenceVariable",
+      "label": "第几个左标记来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

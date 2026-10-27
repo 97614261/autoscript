@@ -26,15 +26,95 @@ class EditorWindowChromeTest {
         assertEquals(EditorPanelPlacement(0f, 0f, 1f, 1f), invalid)
     }
 
-    @Test fun maximizedChromeStaysOutsideSystemBarsAndPreservesSavedSmallWindow() {
-        val safe = editorWorkArea(720, 1280, 0, 24, 0, 48)
-        assertEquals(EditorPanelPlacement(0f, 24f, 720f, 1208f),
-            editorPanelDisplayBounds(normal, EditorPanelMode.MAXIMIZED, 720f, 1280f, safe))
-        assertEquals(normal, editorPanelDisplayBounds(normal, EditorPanelMode.NORMAL, 720f, 1280f, safe))
-        val landscape = editorWorkArea(1280, 720, 48, 24, 48, 0)
-        assertEquals(EditorPanelPlacement(48f, 24f, 1184f, 696f),
+    @Test fun chromeUsesPhysicalScreenWithoutReservedSystemBarSpaceAndPreservesSmallWindow() {
+        val screen = editorWorkArea(720, 1280)
+        assertEquals(androidx.compose.ui.geometry.Rect(0f, 0f, 720f, 1280f), screen)
+        assertEquals(EditorPanelPlacement(0f, 0f, 720f, 1280f),
+            editorPanelDisplayBounds(normal, EditorPanelMode.MAXIMIZED, 720f, 1280f, screen))
+        assertEquals(normal, editorPanelDisplayBounds(normal, EditorPanelMode.NORMAL, 720f, 1280f, screen))
+        val landscape = editorWorkArea(1280, 720)
+        assertEquals(EditorPanelPlacement(0f, 0f, 1280f, 720f),
             editorPanelDisplayBounds(normal, EditorPanelMode.MAXIMIZED, 1280f, 720f, landscape))
-        assertEquals(androidx.compose.ui.geometry.Rect(0f, 0f, 1f, 1f), editorWorkArea(0, 0, 500, 500, 500, 500))
+        assertEquals(androidx.compose.ui.geometry.Rect(0f, 0f, 1f, 1f), editorWorkArea(0, 0))
+    }
+
+    @Test fun onlyTheVisibleStatusBarRestrictsDraggingAndMaximize() {
+        val area = editorWorkArea(720, 1280, 48)
+        assertEquals(androidx.compose.ui.geometry.Rect(0f, 48f, 720f, 1280f), area)
+        val range = editorPanelDragArea(area, normal.width, normal.height)
+        assertEquals(48f, range.top, 0f)
+        assertEquals(1280f - normal.height, range.bottom, 0f)
+        assertEquals(EditorPanelPlacement(0f, 48f, 720f, 1232f),
+            editorPanelDisplayBounds(normal, EditorPanelMode.MAXIMIZED, 720f, 1280f, area))
+        assertEquals(normal, editorPanelDisplayBounds(normal, EditorPanelMode.NORMAL, 720f, 1280f, area))
+        assertEquals(0f, editorPanelDragArea(editorWorkArea(720, 1280, 0), normal.width, normal.height).top, 0f)
+    }
+
+    @Test fun invalidStatusBarValuesNeverProduceAnEmptyOrOffScreenWorkArea() {
+        assertEquals(editorWorkArea(720, 1280), editorWorkArea(720, 1280, -30))
+        assertEquals(androidx.compose.ui.geometry.Rect(0f, 1279f, 720f, 1280f), editorWorkArea(720, 1280, Int.MAX_VALUE))
+        assertEquals(androidx.compose.ui.geometry.Rect(0f, 0f, 1f, 1f), editorWorkArea(0, 0, 48))
+    }
+
+    @Test fun legacyVisibilityRemovesTheInsetAndLocalZeroCannotMakeItOscillate() {
+        assertEquals(48, editorLegacyStatusBarTop(true, 0, 48, 0))
+        assertEquals(48, editorLegacyStatusBarTop(true, 12, 48, 48))
+        assertEquals(48, editorLegacyStatusBarTop(null, 0, 48, 48))
+        assertEquals(0, editorLegacyStatusBarTop(false, 48, 48, 48))
+        assertEquals(48, editorLegacyStatusBarTop(true, 0, 48, 0))
+    }
+
+    @Test fun legacyMeasurementsDoNotMistakeTheSmallWindowOriginForAStatusBar() {
+        assertEquals(0, editorLegacyStatusBarTop(null, 300, 48, 0))
+        assertEquals(0, editorLegacyStatusBarTop(null, 0, 48, 0))
+        assertEquals(48, editorLegacyStatusBarTop(null, 48, 48, 0))
+        assertEquals(32, editorLegacyStatusBarTop(true, 0, 32, 48))
+        assertEquals(0, editorLegacyStatusBarTop(null, 300, 0, 48))
+    }
+
+    @Test fun statusBarObservationUsesDisplayMetricsAndKeepsInsetsAndCleanupOwnedByTheEditor() {
+        val observer = File("src/main/java/com/autoscript/studio/editor/EditorStatusBarObserver.kt").readText()
+        assertTrue(observer.contains("manager.maximumWindowMetrics.windowInsets"))
+        assertTrue(observer.contains("insets.isVisible(WindowInsets.Type.statusBars())"))
+        assertTrue(observer.contains("enqueue(); insets"))
+        assertTrue(observer.contains("setOnSystemUiVisibilityChangeListener"))
+        assertTrue(observer.contains("view.removeCallbacks(refresh)"))
+        assertTrue(observer.contains("removeOnGlobalLayoutListener(layoutListener)"))
+        assertFalse(observer.contains("getInsetsIgnoringVisibility"))
+        assertFalse(observer.contains("manager.addView"))
+        assertFalse(observer.contains("postDelayed"))
+        val service = File("src/main/java/com/autoscript/studio/editor/EditorOverlayService.kt").readText()
+        assertTrue(service.contains("EditorStatusBarObserver(container, manager, ::updateWindow)"))
+        assertTrue(service.contains("statusBar?.configurationChanged()"))
+        assertTrue(service.contains("statusBar?.close(); statusBar = null"))
+        assertTrue(service.contains("editorWorkArea(point.x, point.y, statusBar?.top ?: 0)"))
+        val dock = editorDockTestSources()
+        assertTrue(dock.contains("Size(maxWidthPx, maxHeightPx)"))
+        assertTrue(dock.contains("panelY.coerceIn(minPanelY, maxPanelY)"))
+    }
+
+    @Test fun draggingToAnyEdgeKeepsTheWholeWindowOnScreenInEitherOrientation() {
+        for (screen in listOf(editorWorkArea(720, 1280), editorWorkArea(1280, 720), editorWorkArea(320, 240))) {
+            val width = EDITOR_DEFAULT_WIDTH_DP.toFloat().coerceAtMost(screen.width)
+            val height = EDITOR_DEFAULT_HEIGHT_DP.toFloat().coerceAtMost(screen.height)
+            val range = editorPanelDragArea(screen, width, height)
+            assertEquals(0f, range.top, 0f)
+            assertEquals(screen.right - width, range.right, 0f)
+            assertEquals(screen.bottom - height, range.bottom, 0f)
+            for (x in listOf(-100f, 10000f)) for (y in listOf(-100f, 10000f)) {
+                val placedX = x.coerceIn(range.left, range.right)
+                val placedY = y.coerceIn(range.top, range.bottom)
+                assertTrue(placedX >= 0f && placedY >= 0f)
+                assertTrue(placedX + width <= screen.right)
+                assertTrue(placedY + height <= screen.bottom)
+            }
+        }
+    }
+
+    @Test fun aScreenSizedPanelCannotBeDraggedOutsideItsViewport() {
+        val screen = editorWorkArea(320, 240)
+        assertEquals(androidx.compose.ui.geometry.Rect.Zero, editorPanelDragArea(screen, 320f, 240f))
+        assertEquals(androidx.compose.ui.geometry.Rect.Zero, editorPanelDragArea(editorWorkArea(0, 0), 1f, 1f))
     }
 
     @Test fun leftSettingsAndThreeRightControlsAreExcludedButTitleAndOuterGapsCanDrag() {
@@ -66,9 +146,9 @@ class EditorWindowChromeTest {
     }
 
     @Test fun headerGesturesIconsAndCallbacksStaySemanticallySeparated() {
-        val source = File("src/main/java/com/autoscript/studio/editor/EditorDock.kt").readText()
+        val source = editorDockTestSources()
         val header = source.substringAfter(".pointerInput(projectName, headerDensity.density, \"titlebar-drag\")")
-            .substringBefore("executionStatus?.let")
+            .substringBefore("Row(Modifier.fillMaxWidth().weight(1f))")
         assertTrue(header.contains("awaitFirstDown(requireUnconsumed = false)"))
         assertTrue(header.contains("editorHeaderIsButtonArea"))
         assertTrue(header.contains("currentOnDragStart(down.position)"))

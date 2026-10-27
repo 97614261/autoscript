@@ -1,0 +1,25 @@
+{
+  "name": "zhigou-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.14.0",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "dev": "node scripts/generate.mjs && vitepress dev --host 127.0.0.1",
+    "build": "node scripts/generate.mjs && vitepress build && node scripts/check-built.mjs",
+    "preview": "vitepress preview --host 127.0.0.1",
+    "generate": "node scripts/generate.mjs",
+    "prepare:download": "node scripts/prepare-download.mjs",
+    "archive:download": "node scripts/archive-download.mjs",
+    "package": "npm run build && node scripts/package-site.mjs",
+    "package:publisher": "node scripts/package-publisher.mjs",
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "devDependencies": {
+    "@vue/theme": "2.4.0",
+    "vitepress": "1.6.4",
+    "vue": "3.5.44"
+  },
+  "overrides": { "vite": "6.4.4" }
+}

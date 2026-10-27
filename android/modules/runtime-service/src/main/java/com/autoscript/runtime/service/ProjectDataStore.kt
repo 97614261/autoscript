@@ -224,6 +224,16 @@ internal class ProjectDataStore(
         return size
     }
 
+    fun modifiedTime(path: String, check: () -> Unit): Long {
+        check()
+        val file=resolve(path)
+        if(ops.kind(file)!=ProjectDataKind.FILE) fail("FILE_NOT_FOUND")
+        val time=file.lastModified()
+        check()
+        if(ops.kind(file)!=ProjectDataKind.FILE || time !in 0..253402300799999L) fail("FILE_UNAVAILABLE")
+        return time
+    }
+
     fun directoryStats(path: String, check: () -> Unit): String {
         val directory = resolve(path)
         val totals = usage(directory, check)

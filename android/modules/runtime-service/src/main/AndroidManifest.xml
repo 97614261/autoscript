@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <queries>
         <intent>
@@ -11,7 +13,12 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
-    <application>
+    <application android:usesCleartextTraffic="true">
+        <service android:name=".RuntimeInputMethodService" android:label="智构输入法"
+            android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true" android:process=":runner">
+            <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/zhigou_input_method" />
+        </service>
         <service
             android:name=".AutomationRuntimeService"
             android:exported="false"

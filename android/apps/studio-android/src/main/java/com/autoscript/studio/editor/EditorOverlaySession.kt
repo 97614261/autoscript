@@ -18,6 +18,8 @@ internal object EditorOverlaySessions {
 }
 
 internal val LocalEditorOverlay = staticCompositionLocalOf<EditorOverlaySession?> { null }
+// Descendant pickers belong above their own prompt, not behind it.
+internal val LocalStudioPrompt = staticCompositionLocalOf { false }
 
 internal interface EditorSessionWindow {
     fun visibility(visible: Boolean)
@@ -43,10 +45,13 @@ internal class EditorOverlaySession(private val updateWindow: () -> Unit, privat
     var closeRequest: (() -> Unit)? = null
     var panelExpanded by mutableStateOf(true)
         private set
+    var realtimeLogRequested by mutableStateOf(false)
+    val shouldSampleRealtimeLog: Boolean get() = realtimeLogRequested && panelExpanded && !hidden && !closed
     private var suppressionKey: String? = null
     private var restored = false
     private var systemRequest = false
     private val dialogs = linkedSetOf<Dialog>()
+    private val dialogOrder = StudioDialogOrder<Any>()
     private val childWindows = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<EditorSessionWindow, Boolean>())
     private var observerWindow: EditorObserverWindow? = null
     private var closed = false
@@ -60,14 +65,21 @@ internal class EditorOverlaySession(private val updateWindow: () -> Unit, privat
         if (closed) return
         hidden = systemRequest || (suppressionKey != null && !restored)
         // Android Dialog.hide keeps isShowing=true; show must be unconditional to restore its decor.
-        dialogs.toList().forEach { dialog ->
-            runCatching { if (hidden) dialog.hide() else dialog.show() }.onFailure { windowFailed() }
+        dialogOrder.windows.forEach { window ->
+            if (!closed && dialogOrder.contains(window)) present(window)
         }
-        childWindows.toList().forEach { window ->
-            runCatching { window.visibility(!hidden) }.onFailure { windowFailed() }
-        }
-        observerWindow?.let { runCatching { it.visibility(!hidden) }.onFailure { windowFailed() } }
+        observerWindow?.let { runCatching { it.visibility(!hidden && !dialogOrder.hasPrompt) }.onFailure { windowFailed() } }
         updateWindow()
+    }
+    private fun present(window: Any): Boolean {
+        val visible = !hidden && dialogOrder.canPresent(window)
+        return runCatching {
+            when (window) {
+                is Dialog -> if (visible) window.show() else window.hide()
+                is EditorSessionWindow -> window.visibility(visible)
+            }
+            if (visible) dialogOrder.presented(window)
+        }.onFailure { windowFailed() }.isSuccess
     }
     fun suppress(key: String?) {
         if (closed) return
@@ -76,6 +88,7 @@ internal class EditorOverlaySession(private val updateWindow: () -> Unit, privat
         restored = false
         applyVisibility()
     }
+    fun releaseSuppression(key: String) { if (!closed && suppressionKey == key) suppress(null) }
     fun systemRequest(active: Boolean) { if (closed) return; systemRequest = active; applyVisibility() }
     fun restore() { if (closed) return; restored = true; panelExpanded = true; restoreRequest++; applyVisibility() }
     fun panel(value: Boolean) { if (!closed && panelExpanded != value) { panelExpanded = value; updateWindow() } }
@@ -83,15 +96,19 @@ internal class EditorOverlaySession(private val updateWindow: () -> Unit, privat
     fun dockLayout(modal: Boolean) { if (!closed && dockModal != modal) { dockModal = modal; updateWindow() } }
     fun workArea(value: Rect) { if (!closed && workArea != value) workArea = value }
     fun canvas(value: Boolean) { if (!closed && canvasVisible != value) { canvasVisible = value; updateWindow() } }
-    fun register(dialog: Dialog) {
+    fun register(dialog: Dialog, prompt: Boolean = false) {
         if (closed) { runCatching { dialog.dismiss() }; return }
         if (dialog in dialogs) return
         if (dialogs.size + childWindows.size >= 16) { windowFailed(); return }
         dialogs += dialog
-        if (!hidden) runCatching { dialog.show() }.onFailure { windowFailed() }
+        dialogOrder.register(dialog, prompt)
+        applyVisibility()
     }
-    fun unregister(dialog: Dialog) { dialogs -= dialog; runCatching { dialog.dismiss() } }
-    fun registerChild(window: EditorSessionWindow): Boolean {
+    fun unregister(dialog: Dialog) {
+        dialogs -= dialog; dialogOrder.remove(dialog); runCatching { dialog.dismiss() }
+        applyVisibility()
+    }
+    fun registerChild(window: EditorSessionWindow, prompt: Boolean = false): Boolean {
         if (window in childWindows) return true
         if (closed || dialogs.size + childWindows.size >= 16) {
             runCatching { window.close() }
@@ -99,18 +116,30 @@ internal class EditorOverlaySession(private val updateWindow: () -> Unit, privat
             return false
         }
         childWindows += window
-        if (runCatching { window.visibility(!hidden) }.onFailure { windowFailed() }.isSuccess) return true
+        dialogOrder.register(window, prompt)
+        if (present(window)) {
+            observerWindow?.let { runCatching { it.visibility(!hidden && !dialogOrder.hasPrompt) }.onFailure { windowFailed() } }
+            return !closed && childWindows.contains(window)
+        }
+        dialogOrder.remove(window)
         if (childWindows.remove(window)) runCatching { window.close() }
         return false
     }
     fun unregisterChild(window: EditorSessionWindow) {
+        dialogOrder.remove(window)
         if (childWindows.remove(window)) runCatching { window.close() }
+        applyVisibility()
+    }
+    fun refreshChild(window: EditorSessionWindow) {
+        if (!closed && childWindows.contains(window)) present(window)
     }
     fun registerObserver(window: EditorObserverWindow): Boolean {
         if (observerWindow === window && !closed) return true
         if (closed || observerWindow != null) { runCatching { window.close() }; return false }
         observerWindow = window
-        if (runCatching { window.visibility(!hidden) }.onFailure { windowFailed() }.isSuccess) return true
+        if (runCatching { window.visibility(!hidden && !dialogOrder.hasPrompt) }.onFailure { windowFailed() }.isSuccess) {
+            return true
+        }
         if (observerWindow === window) {
             observerWindow = null
             runCatching { window.close() }
@@ -125,6 +154,7 @@ internal class EditorOverlaySession(private val updateWindow: () -> Unit, privat
     fun closeDialogs() {
         if (closed) return
         closed = true; hidden = true; panelExpanded = false; canvasVisible = false; dockModal = false
+        dialogOrder.clear()
         dialogs.toList().forEach { runCatching { it.dismiss() } }; dialogs.clear(); closeRequest = null
         val children = childWindows.toList(); childWindows.clear()
         val observer = observerWindow; observerWindow = null

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18000,
+  "name": "System.info",
+  "since": "1.8",
+  "capability": "device.info",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "读取设备/显示/电池/网络/存储/授权的有界JSON快照，不返回设备唯一标识。permissions分别报告系统悬浮/通知授权、Root就绪和后端输入特性；特性支持不代表截图/输入实测成功。",
+  "params": [
+    {
+      "name": "section",
+      "type": "string",
+      "required": true,
+      "summary": "查询项目：device=设备型号与系统、display=屏幕方向与密度、battery=电池、network=网络状态、storage=私有存储所在卷、permissions=系统授权与输入能力"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "读取设备/显示/电池/网络/存储/授权的有界JSON快照，不返回设备唯一标识。permissions分别报告系统悬浮/通知授权、Root就绪和后端输入特性；特性支持不代表截图/输入实测成功。"
+  },
+  "legacyAliases": []
+}

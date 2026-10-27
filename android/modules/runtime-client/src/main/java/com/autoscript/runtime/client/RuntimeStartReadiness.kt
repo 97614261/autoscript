@@ -10,6 +10,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 internal enum class RuntimeStartReadiness { WAITING, READY, REJECTED, TIMEOUT }
 
+internal fun captureUnavailableMessage(state: RuntimeConnectionState): String = when {
+    state.phase != RuntimeConnectionPhase.CONNECTED -> "Runner 连接已断开，请到运行环境重新连接"
+    state.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING) ->
+        "脚本正在运行或暂停，请先停止脚本再截图"
+    state.rootState == RuntimeRootState.FAILED -> "Root 后端启动失败；请确认 Root 授权，运行环境 / 调试详情可查看具体阶段"
+    state.rootState != RuntimeRootState.READY -> "Root 后端尚未就绪，请在运行环境查看启动状态"
+    else -> "Root 已认证，但截图采集失败 [CAPTURE_BACKEND_FAILED]；请查看运行环境 / 调试详情"
+}
+
 internal fun runtimeStartReadiness(state: RuntimeConnectionState, generation: Long): RuntimeStartReadiness = when {
     state.phase != RuntimeConnectionPhase.CONNECTED || state.sessionGeneration != generation -> RuntimeStartReadiness.REJECTED
     state.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING) -> RuntimeStartReadiness.REJECTED

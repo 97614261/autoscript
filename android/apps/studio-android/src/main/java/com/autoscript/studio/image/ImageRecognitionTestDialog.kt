@@ -42,9 +42,6 @@ internal fun imageRecognitionFile(snapshot: ProjectSnapshot, path: String): File
     return file
 }
 
-internal fun recognitionBlockArguments(path: String, tolerance: Int, similarity: Int, width: Int, height: Int) =
-    RecognitionPreviewConfiguration(Reply.TEMPLATE, path, tolerance, similarity, width, height).arguments()
-
 internal fun recognitionBlockSequence(arguments: JsonObject) = listOf(
     requireNotNull(BlockCatalog.find("screen.capture")) to JsonObject().apply { addProperty("resultVariable", arguments.get("frameVariable").asString) },
     requireNotNull(BlockCatalog.find("vision.findimage")) to arguments.deepCopy(),
@@ -65,7 +62,7 @@ internal fun ImageRecognitionTestDialog(
     visible: Boolean = true,
     onConfigureResultReader: ((JsonObject)->Unit)? = null,
 ) {
-    val resourceIdentity = snapshot.manifest.resources.toString()
+    val resourceIdentity = snapshot.manifest.resources.toString() + ":" + snapshot.resourceRevision
     val paths = remember(resourceIdentity) {
         snapshot.manifest.resources.filter { it.get("kind")?.asString == "image" }.mapNotNull { it.get("path")?.asString }.sorted()
     }

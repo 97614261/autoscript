@@ -146,6 +146,8 @@ data class ProjectSnapshot(
     val luaSources: Map<String, String> = emptyMap(),
     val luaDirectories: List<String> = emptyList(),
     val flowSources: Map<String, String>,
+    /** UI invalidation after in-place resource replacement; never persisted in the project schema. */
+    val resourceRevision: String = "",
 )
 
 /** 本地备份槽位（参考新版每个项目 3 个槽位）；`createdAt == null` 表示空槽。 */

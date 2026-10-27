@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "input.imestatus",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/input.imestatus/1/input.imestatus.schema.json",
+  "title": "读取智构输入法状态",
+  "category": "task",
+  "summary": "读取智构输入法是否已启用、已选中以及当前输入连接是否存在的JSON；不枚举其他输入法，不读取输入内容，不自动启用或切换。",
+  "searchTerms": [
+    "输入法",
+    "IME",
+    "文字",
+    "Input.imeStatus"
+  ],
+  "requiredCapabilities": [
+    "input.ime"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

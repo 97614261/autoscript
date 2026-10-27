@@ -3,12 +3,153 @@ use flow_ir::{load_jsonl, parse_project_manifest, LoadOptions};
 use serde_json::{json, Value};
 
 fn project() -> Value {
-    json!({"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.7","projectId":"utility-test","name":"Utility",
+    json!({"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.8","projectId":"utility-test","name":"Utility",
         "sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root","params":[],"returns":null}],
         "capabilities":["core.math","core.task","device.display"],"variables":[
             {"name":"i","type":"integer","scope":"global"},{"name":"n","type":"number","scope":"global"},
             {"name":"s","type":"string","scope":"global"},{"name":"w","type":"integer","scope":"global"},{"name":"h","type":"integer","scope":"global"}],
         "design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"}})
+}
+
+#[test]
+fn number_at_uses_declared_typed_operands_and_round_trips() {
+    let args = json!({"text":"100(+100) 180","textVariable":"s","index":2,"resultVariable":"s"});
+    let output = compile(&project(), &[("text.numberat", args.clone())]).unwrap();
+    let lua = String::from_utf8(output.main_lua).unwrap();
+    assert!(lua.contains("Text.numberAt(__vars[\"s\"],2)"));
+    for (key, value) in [
+        ("index", json!(0)),
+        ("index", json!(65)),
+        ("resultVariable", json!("i")),
+        ("textVariable", json!("i")),
+        ("textVariable", json!("missing")),
+    ] {
+        let mut bad = args.clone();
+        bad[key] = value;
+        assert!(
+            compile(&project(), &[("text.numberat", bad)]).is_err(),
+            "{key}"
+        );
+    }
+    let mut old = project();
+    old["runtimeApi"] = json!("1.7");
+    assert!(compile(&old, &[("text.numberat", args)]).is_err());
+}
+
+#[test]
+fn glyph_palette_is_explicit_validated_and_old_engines_fail_before_loading() {
+    let mut manifest = project();
+    manifest["capabilities"] = json!(["core.task", "ocr.glyph"]);
+    manifest["resources"] = json!([{"kind":"glyphDictionary","path":"dictionaries/main.asglyph"}]);
+    for (name, kind) in [
+        ("frame", "image"),
+        ("score", "integer"),
+        ("coverage", "integer"),
+    ] {
+        manifest["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":name,"type":kind,"scope":"global"}));
+    }
+    let mut args = json!({"frameVariable":"frame","dictionaryPath":"dictionaries/main.asglyph","foregroundRgb":16_711_680,
+        "tolerance":0,"similarityPermille":1000,"region":{"left":0,"top":0,"right":3,"bottom":3},"spaceGapColumns":0,
+        "textVariable":"s","coverageVariable":"coverage","scoreVariable":"score","additionalColors":"00FF00:8"});
+    let output = compile(&manifest, &[("ocr.glyph", args.clone())]).unwrap();
+    let lua = String::from_utf8(output.main_lua).unwrap();
+    assert!(lua.contains("Ocr.glyphPaletteVersion ~= 1") && lua.contains("00FF00:8"));
+    for bad in ["FF0000:8", "00FF00:256", "00FF00:8;00ff00:9", "00FF00:"] {
+        args["additionalColors"] = json!(bad);
+        assert!(
+            compile(&manifest, &[("ocr.glyph", args.clone())]).is_err(),
+            "{bad}"
+        );
+    }
+    args.as_object_mut().unwrap().remove("additionalColors");
+    let old =
+        String::from_utf8(compile(&manifest, &[("ocr.glyph", args)]).unwrap().main_lua).unwrap();
+    assert!(!old.contains("glyphPaletteVersion"));
+}
+
+#[test]
+fn codec_additions_cannot_claim_the_older_api_minor() {
+    let mut manifest = project();
+    let args = json!({"text":"public","resultVariable":"s"});
+    assert!(compile(&manifest, &[("text.tohex", args.clone())]).is_ok());
+    manifest["runtimeApi"] = json!("1.7");
+    assert!(compile(&manifest, &[("text.tohex", args)]).is_err());
+}
+
+#[test]
+fn loaded_frame_information_and_release_do_not_require_screen_capture() {
+    let mut manifest = project();
+    manifest["capabilities"] = json!(["core.task", "vision.template"]);
+    manifest["resources"] = json!([{"kind":"image","path":"assets/images/public.png"}]);
+    manifest["variables"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"frame","type":"image","scope":"global"}));
+    let result = compile(
+        &manifest,
+        &[
+            (
+                "screen.loadimage",
+                json!({"imagePath":"assets/images/public.png","resultVariable":"frame"}),
+            ),
+            (
+                "screen.frameinfo",
+                json!({"frameVariable":"frame","resultVariable":"s"}),
+            ),
+            ("screen.release", json!({"frameVariable":"frame"})),
+        ],
+    )
+    .unwrap();
+    let lua = String::from_utf8(result.main_lua).unwrap();
+    assert!(lua.contains("Screen.frameInfo") && lua.contains("Screen.release"));
+    assert!(!lua.contains("Screen.capture()"));
+    assert!(compile(
+        &manifest,
+        &[("screen.capture", json!({"resultVariable":"frame"}))]
+    )
+    .is_err());
+}
+
+#[test]
+fn frame_queries_and_scaled_templates_are_typed_and_emit_the_new_fixed_apis() {
+    let mut manifest = project();
+    manifest["capabilities"] = json!([
+        "core.task",
+        "screen.capture",
+        "vision.pixel",
+        "vision.template"
+    ]);
+    manifest["resources"] = json!([{"kind":"image","path":"assets/images/public.png"}]);
+    for name in ["frame", "previous"] {
+        manifest["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":name,"type":"image","scope":"global"}));
+    }
+    let compare = json!({"frameVariable":"frame","previousFrameVariable":"previous","left":0,"top":0,"right":2,"bottom":2,"tolerance":0,"resultVariable":"s"});
+    let map = json!({"frameVariable":"frame","x":0,"y":0,"xVariable":"i","yVariable":"","resultVariable":"s"});
+    let scaled = json!({"frameVariable":"frame","imagePath":"assets/images/public.png","left":0,"top":0,"right":2,"bottom":2,"tolerance":0,"similarityPermille":1000,"direction":0,"minScalePermille":750,"maxScalePermille":1250,"stepPermille":125,"resultVariable":"s"});
+    let output=compile(&manifest,&[("screen.compareframes",compare.clone()),("screen.mappoint",map.clone()),("vision.findscaled",scaled.clone()),
+        ("vision.readresult",json!({"sourceVariable":"s","shape":"SCALED_IMAGE","index":0,"field":"count","resultVariable":"i"}))]).unwrap();
+    let lua = String::from_utf8(output.main_lua).unwrap();
+    assert!(
+        lua.contains("Screen.compareFrames")
+            && lua.contains("Screen.mapPoint")
+            && lua.contains("pcall(Screen.findScaled")
+    );
+    assert!(!lua.contains("Input.tap") && !lua.contains("Screen.capture()"));
+    let mut bad = scaled;
+    bad["stepPermille"] = json!(1);
+    assert!(compile(&manifest, &[("vision.findscaled", bad)]).is_err());
+    let mut bad = map;
+    bad["xVariable"] = json!("s");
+    assert!(compile(&manifest, &[("screen.mappoint", bad)]).is_err());
+    let mut bad = compare;
+    bad["previousFrameVariable"] = json!("frame");
+    assert!(compile(&manifest, &[("screen.compareframes", bad)]).is_err());
 }
 
 #[test]
@@ -86,7 +227,11 @@ fn utility_blocks_freeze_and_execute_with_real_variable_outputs() {
     use runtime_executor::{ExecutorConfig, RuntimeExecutor, VirtualHost};
     use runtime_scheduler::{ManualClock, MonoTime, SchedulerConfig, TaskState};
     let mut nodes = Vec::new();
-    for (kind, spec) in SPECS {
+    for (kind, spec) in SPECS
+        .iter()
+        .chain(crate::pure_utility_specs::SPECS.iter())
+        .chain(crate::codec_utility_specs::SPECS.iter())
+    {
         let mut args = json!({});
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../schema/block-catalog/blocks")
@@ -186,6 +331,45 @@ fn typed_sources_capabilities_old_api_and_unknown_fields_are_rejected() {
         &[(
             "system.screensize",
             json!({"widthVariable":"w","heightVariable":"w"})
+        )]
+    )
+    .is_err());
+}
+
+#[test]
+fn pure_utilities_validate_operation_choices_sources_outputs_and_capabilities() {
+    let args = json!({"operation":"sqrt","value":9,"valueVariable":"i","resultVariable":"n"});
+    let output = compile(&project(), &[("math.unary", args.clone())]).unwrap();
+    assert!(String::from_utf8(output.main_lua)
+        .unwrap()
+        .contains("Math.unary(\"sqrt\",__vars[\"i\"])"));
+    for (key, value) in [
+        ("operation", json!("os.execute")),
+        ("value", json!(1e13)),
+        ("valueVariable", json!("s")),
+        ("resultVariable", json!("i")),
+        ("resultVariable", json!("missing")),
+    ] {
+        let mut bad = args.clone();
+        bad[key] = value;
+        assert!(compile(&project(), &[("math.unary", bad)]).is_err());
+    }
+    let mut manifest = project();
+    manifest["capabilities"] = json!(["core.task"]);
+    assert!(compile(&manifest, &[("math.unary", args)]).is_err());
+    let text =
+        json!({"text":"甲12","pattern":"[0-9]+","replacement":"\"$1\n","resultVariable":"s"});
+    assert!(compile(&project(), &[("text.regexreplace", text.clone())]).is_ok());
+    let mut bad = text;
+    bad["pattern"] = json!("a".repeat(129));
+    assert!(compile(&project(), &[("text.regexreplace", bad)]).is_err());
+    let mut manifest = project();
+    manifest["capabilities"] = json!(["core.math"]);
+    assert!(compile(
+        &manifest,
+        &[(
+            "data.encode",
+            json!({"value":"x","mode":"text","resultVariable":"s"})
         )]
     )
     .is_err());
@@ -722,6 +906,120 @@ fn threshold_transform_accepts_bounded_value_and_keeps_legacy_options() {
         )],
     )
     .is_err());
+}
+
+#[test]
+fn filter_transform_validates_rules_and_embeds_an_immutable_runtime_spec() {
+    let mut manifest = project();
+    manifest["capabilities"] = json!(["screen.capture"]);
+    for name in ["source", "result"] {
+        manifest["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":name,"type":"image","scope":"global"}));
+    }
+    let filter = json!({"version":1,"space":"absolute","output":"binary","invert":false,"rules":[{"rgb":16_777_215,"redTolerance":16,"greenTolerance":16,"blueTolerance":16,"exclude":false,"space":"absolute"}]}).to_string();
+    let args = json!({"frameVariable":"source","resultVariable":"result","mode":"filter","width":0,"height":0,"filter":filter});
+    let compiled = compile(&manifest, &[("screen.transform", args.clone())]).unwrap();
+    let lua = std::str::from_utf8(&compiled.main_lua).unwrap();
+    assert!(lua.contains("Screen.transform"));
+    assert!(lua.contains("redTolerance"));
+    let mut bad = args.clone();
+    bad["mode"] = json!("gray");
+    assert!(compile(&manifest, &[("screen.transform", bad)]).is_err());
+    let mut bad = args.clone();
+    bad.as_object_mut().unwrap().remove("filter");
+    assert!(compile(&manifest, &[("screen.transform", bad)]).is_err());
+    let mut bad = args;
+    bad["filter"] = json!("{}");
+    assert!(compile(&manifest, &[("screen.transform", bad)]).is_err());
+}
+
+#[test]
+fn compiled_filter_then_template_match_runs_real_rust_and_releases_all_frames() {
+    use automation_core::{FrameFormat, FrameMetadata, Rotation};
+    use runtime_executor::{ExecutorConfig, RuntimeExecutor, VirtualHost};
+    use runtime_scheduler::{ManualClock, MonoTime, SchedulerConfig, TaskState};
+    use std::sync::Arc;
+    let mut manifest = project();
+    manifest["capabilities"] = json!(["core.task", "vision.template", "screen.capture"]);
+    manifest["resources"] = json!([{"kind":"image","path":"assets/images/source.png"},{"kind":"image","path":"assets/images/template.png"}]);
+    for name in ["source", "result"] {
+        manifest["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":name,"type":"image","scope":"global"}));
+    }
+    for name in ["found", "foundX", "foundY"] {
+        manifest["variables"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":name,"type":"integer","scope":"global"}));
+    }
+    let filter=json!({"version":1,"space":"absolute","output":"binary","invert":false,"rules":[{"rgb":16_711_680,"redTolerance":0,"greenTolerance":0,"blueTolerance":0,"exclude":false,"space":"absolute"}]}).to_string();
+    let bundle=compile(&manifest,&[
+        ("screen.loadimage",json!({"imagePath":"assets/images/source.png","resultVariable":"source"})),
+        ("screen.transform",json!({"frameVariable":"source","resultVariable":"result","mode":"filter","width":0,"height":0,"filter":filter})),
+        ("screen.release",json!({"frameVariable":"source"})),
+        ("vision.findimage",json!({"imagePath":"assets/images/template.png","frameVariable":"result","tolerance":0,"similarityPermille":1000,"region":{"left":0,"top":0,"right":3,"bottom":1},"foundVariable":"found","xVariable":"foundX","yVariable":"foundY"})),
+        ("screen.release",json!({"frameVariable":"result"})),
+        ("task.message",json!({"expression":"text(foundX)","channel":"console"})),
+    ]).unwrap();
+    let mut runtime = RuntimeExecutor::new(
+        ManualClock::new(MonoTime::ZERO),
+        SchedulerConfig::default(),
+        lua_runtime::LuaRuntimeConfig::default(),
+        ExecutorConfig::default(),
+        VirtualHost::new(3, 1),
+    )
+    .unwrap();
+    for (path, width, pixels) in [
+        (
+            "assets/images/source.png",
+            3,
+            vec![0, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255],
+        ),
+        ("assets/images/template.png", 1, vec![255, 255, 255, 255]),
+    ] {
+        runtime
+            .frame_pool()
+            .lock()
+            .unwrap()
+            .register_template(
+                path,
+                FrameMetadata {
+                    width,
+                    height: 1,
+                    row_stride: width * 4,
+                    pixel_stride: 4,
+                    format: FrameFormat::Rgba8888,
+                    rotation: Rotation::Degrees0,
+                    timestamp_nanos: 0,
+                    snapshot_id: 1,
+                },
+                Arc::from(pixels),
+            )
+            .unwrap();
+    }
+    runtime
+        .set_allowed_capabilities(&[
+            "core.task".into(),
+            "vision.template".into(),
+            "screen.capture".into(),
+        ])
+        .unwrap();
+    let task = runtime
+        .start_entry_chunk(&bundle.main_lua, "public-color-filter-pipeline")
+        .unwrap();
+    runtime.drive().unwrap();
+    assert_eq!(
+        runtime.task_state(task),
+        Some(TaskState::Completed),
+        "{:?}",
+        runtime.task_failure(task)
+    );
+    assert_eq!(runtime.drain_script_logs(), ["脚本/INFO: 1"]);
+    assert_eq!(runtime.resources().resource_count(), 0);
 }
 
 #[test]

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "opcode": 6104,
+  "name": "Ocr.alphanumericV5",
+  "since": "1.8",
+  "capability": "ocr.onnx",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "none",
+  "timeoutMs": 5000,
+  "resourceOwnership": "borrowed_frame",
+  "summary": "显式选择固定PP-OCRv5英文移动ONNX候选，仅输出A-Z/a-z/0-9，不替换默认v4。单行ROI、最多960×48预处理宽度、5秒期限，返回text/averageScorePermille JSON。历史公开合成集v5整行准确率低于v4，不能保证更准或修复l/1。当前需内置full/onnx候选资源；旧外置组件不自动降级到其他模型。",
+  "params": [
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "frame"
+    },
+    {
+      "name": "left",
+      "type": "integer",
+      "required": true,
+      "summary": "left"
+    },
+    {
+      "name": "top",
+      "type": "integer",
+      "required": true,
+      "summary": "top"
+    },
+    {
+      "name": "right",
+      "type": "integer",
+      "required": true,
+      "summary": "right"
+    },
+    {
+      "name": "bottom",
+      "type": "integer",
+      "required": true,
+      "summary": "bottom"
+    },
+    {
+      "name": "minimumConfidencePermille",
+      "type": "integer",
+      "required": true,
+      "summary": "minimumConfidencePermille"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "显式选择固定PP-OCRv5英文移动ONNX候选，仅输出A-Z/a-z/0-9，不替换默认v4。单行ROI、最多960×48预处理宽度、5秒期限，返回text/averageScorePermille JSON。历史公开合成集v5整行准确率低于v4，不能保证更准或修复l/1。当前需内置full/onnx候选资源；旧外置组件不自动降级到其他模型。"
+  },
+  "legacyAliases": []
+}

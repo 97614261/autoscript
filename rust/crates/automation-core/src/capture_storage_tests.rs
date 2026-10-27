@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use runtime_scheduler::{TaskGeneration, TaskId, TaskResourceRegistry, TaskToken};
+use runtime_scheduler::{ResourceOwner, TaskGeneration, TaskId, TaskResourceRegistry, TaskToken};
 
 use crate::{
     CaptureSeriesConfig, FrameError, FrameFormat, FrameMetadata, FramePool, FramePoolConfig,
@@ -91,6 +91,83 @@ fn malformed_owned_frame_is_not_published_or_charged() {
         Err(FrameError::InvalidGeometry)
     );
     assert_eq!(pool.total_bytes(), 0);
+}
+
+#[test]
+fn repeated_capture_release_and_task_cleanup_drop_final_storage_owners() {
+    let mut pool = FramePool::new(FramePoolConfig::default());
+    let mut resources = TaskResourceRegistry::default();
+    for index in 1..=20_000 {
+        let owner = task(index);
+        let pixels: Arc<[u8]> = Arc::from([37; 16]);
+        let retired = Arc::downgrade(&pixels);
+        let capture = pool.publish_capture_owned(metadata(), pixels).unwrap();
+        let handle = pool.cache(owner, capture, &mut resources).unwrap();
+        let view = pool.view(owner, handle, &resources).unwrap();
+        if index % 2 == 0 {
+            for resource in resources.release_owner(ResourceOwner::Task(owner)) {
+                assert!(pool.release_resource(resource));
+            }
+        } else {
+            assert!(resources
+                .release_lease(ResourceOwner::Task(owner), handle.resource_id)
+                .unwrap());
+            assert!(pool.release_resource(handle.resource_id));
+        }
+        assert_eq!(resources.resource_count(), 0);
+        assert!(pool.frame_count() <= 2);
+        assert!(pool.total_bytes() <= 32);
+        pool.reclaim_expired(u64::MAX);
+        assert_eq!(pool.frame_count(), 0);
+        assert_eq!(pool.total_bytes(), 0);
+        assert!(retired.upgrade().is_some(), "in-flight view remains valid");
+        assert_eq!(view.pixels.as_ref(), &[37; 16]);
+        drop(view);
+        assert!(retired.upgrade().is_none(), "no retained frame allocation");
+    }
+}
+
+#[test]
+fn region_publication_preserves_owned_storage_budget_and_screen_lineage() {
+    let mut pool = FramePool::new(FramePoolConfig {
+        max_total_bytes: 64,
+        ..FramePoolConfig::default()
+    });
+    let mut resources = TaskResourceRegistry::default();
+    let mut pixels = Vec::with_capacity(64);
+    pixels.extend_from_slice(&[7; 16]);
+    let address = pixels.as_ptr();
+    let capture = pool
+        .publish_region_capture(metadata(), pixels, (720, 1280), (149, 407), Some(1))
+        .unwrap();
+    assert_eq!(pool.total_bytes(), 64);
+    let handle = pool.cache(task(1), capture, &mut resources).unwrap();
+    let view = pool.view(task(1), handle, &resources).unwrap();
+    assert_eq!(view.pixels.as_ptr(), address);
+    let origin = view.origin.as_ref().unwrap();
+    assert_eq!((origin.screen_width, origin.screen_height), (720, 1280));
+    assert_eq!(
+        origin.map_point(crate::PixelPoint { x: 1, y: 1 }).unwrap(),
+        crate::PixelPoint { x: 150, y: 408 }
+    );
+    assert!(pool.view(task(2), handle, &resources).is_err());
+    pool.release_resource(handle.resource_id);
+    pool.reclaim_expired(u64::MAX);
+    assert_eq!(pool.total_bytes(), 0);
+    assert_eq!(view.pixels.as_ptr(), address);
+    for (offset, rotation) in [((719, 0), None), ((0, 0), Some(4))] {
+        assert_eq!(
+            pool.publish_region_capture(metadata(), vec![1; 16], (720, 1280), offset, rotation),
+            Err(FrameError::InvalidGeometry)
+        );
+        assert_eq!(pool.total_bytes(), 0);
+    }
+    let mut oversized = Vec::with_capacity(65);
+    oversized.extend_from_slice(&[1; 16]);
+    assert_eq!(
+        pool.publish_region_capture(metadata(), oversized, (720, 1280), (0, 0), None),
+        Err(FrameError::FrameBudgetExceeded)
+    );
 }
 
 #[test]

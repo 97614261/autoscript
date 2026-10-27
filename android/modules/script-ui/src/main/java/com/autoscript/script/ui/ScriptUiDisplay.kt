@@ -1,6 +1,7 @@
 package com.autoscript.script.ui
 
 import android.content.Context
+import android.graphics.Rect
 import android.os.Build
 import android.util.DisplayMetrics
 import android.view.View
@@ -42,8 +43,13 @@ object ScriptUiDisplay {
         @Suppress("DEPRECATION") val bottom = maxOf(if (landscape) 0 else nav, if (includeKeyboard) insets?.systemWindowInsetBottom ?: 0 else 0)
         @Suppress("DEPRECATION") val left = insets?.systemWindowInsetLeft ?: 0
         @Suppress("DEPRECATION") val right = maxOf(if (landscape) nav else 0, insets?.systemWindowInsetRight ?: 0)
-        return UiScreenBounds(left + margin, status + margin,
+        val bounds = UiScreenBounds(left + margin, status + margin,
             (metrics.widthPixels - left - right - margin * 2).coerceAtLeast(1),
             (metrics.heightPixels - status - bottom - margin * 2).coerceAtLeast(1))
+        if (!includeKeyboard || view?.isAttachedToWindow != true) return bounds
+        // Legacy TYPE_PHONE windows may receive zero IME insets even with ADJUST_RESIZE.
+        val visible = Rect().also(view::getWindowVisibleDisplayFrame)
+        return ScriptUiGeometry.withVisibleDisplayFrame(bounds,
+            UiScreenBounds(visible.left, visible.top, visible.width(), visible.height()), margin)
     }
 }

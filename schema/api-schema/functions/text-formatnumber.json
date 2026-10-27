@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14225,
+  "name": "Text.formatNumber",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "固定小数位 0–9、整数部分最少 1–32 位（不足补零，负号在前），半值远离零；不使用千位或本地化分隔符，不产生负零。输入绝对值不超过 10^12。",
+  "params": [
+    {
+      "name": "value",
+      "type": "number",
+      "required": true,
+      "summary": "数值"
+    },
+    {
+      "name": "digits",
+      "type": "integer",
+      "required": true,
+      "summary": "小数位数"
+    },
+    {
+      "name": "minIntegerDigits",
+      "type": "integer",
+      "required": true,
+      "summary": "整数最少位数"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "固定小数位 0–9、整数部分最少 1–32 位（不足补零，负号在前），半值远离零；不使用千位或本地化分隔符，不产生负零。输入绝对值不超过 10^12。"
+  },
+  "legacyAliases": []
+}

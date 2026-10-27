@@ -22,12 +22,12 @@ internal enum class ImageToolMode(
     CROP(
         label = "裁剪",
         icon = R.drawable.tool_crop_24,
-        hint = "拖动框选要裁出的区域",
+        hint = "拖出选区；框内拖动移位，边点调整大小",
     ),
     REGION(
         label = "范围",
         icon = R.drawable.tool_region_24,
-        hint = "拖动框选搜索范围",
+        hint = "拖出搜索范围；框内拖动移位，边点调整大小",
     ),
     COLOR(
         label = "取色",
@@ -65,7 +65,7 @@ internal enum class ImageToolMode(
     OCR(
         label = "取字",
         icon = R.drawable.tool_region_24,
-        hint = "框选区域识别文字",
+        hint = "框选识字区域；框内拖动移位，边点调整大小",
     ),
     NODE(
         label = "节点",

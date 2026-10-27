@@ -9,6 +9,9 @@ import com.autoscript.studio.generated.BlockContract
 import com.google.gson.JsonObject
 import com.autoscript.runtime.client.VisualCompileResult
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.autoscript.project.store.ProjectSnapshot
@@ -24,10 +27,11 @@ internal class ImageBlockInsertionRequest private constructor(
     val origin: ImageInsertionOrigin,
     private val eligibility: () -> Boolean,
     private val trees: List<VisualBlockTree>? = null,
+    val preferredChildSlot: String? = null,
 ) {
     companion object {
         fun createTrees(projectId: String, flowId: String, editor: VisualEditorState, trees: List<VisualBlockTree>,
-            origin: ImageInsertionOrigin): ImageBlockInsertionRequest? {
+            origin: ImageInsertionOrigin, preferredChildSlot: String? = null): ImageBlockInsertionRequest? {
             var count = 0
             fun bounded(tree: VisualBlockTree, depth: Int): Boolean {
                 if (++count > 256 || depth > 32 || !tree.contract.childBlocks.containsAll(tree.children.keys)) return false
@@ -38,14 +42,15 @@ internal class ImageBlockInsertionRequest private constructor(
             if (flat.isEmpty() || flat.size > 256) return null
             return ImageBlockInsertionRequest(flat.map { it.contract to it.arguments.deepCopy() },
                 EditorPasteRequest(projectId, flowId, editor.currentSource, editor.selectedNodeId, editor.selectedNodeIds.toSet()),
-                origin, { true }, trees.map(VisualBlockTree::frozen))
+                origin, { true }, trees.map(VisualBlockTree::frozen), preferredChildSlot)
         }
         fun create(projectId: String, flowId: String, editor: VisualEditorState,
             blocks: List<Pair<BlockContract, JsonObject>>, origin: ImageInsertionOrigin,
-            eligibility: () -> Boolean = { true }): ImageBlockInsertionRequest? {
+            eligibility: () -> Boolean = { true }, preferredChildSlot: String? = null): ImageBlockInsertionRequest? {
             if (blocks.isEmpty() || blocks.size > 256) return null
             return ImageBlockInsertionRequest(blocks.map { it.first to it.second.deepCopy() },
-                EditorPasteRequest(projectId, flowId, editor.currentSource, editor.selectedNodeId, editor.selectedNodeIds.toSet()), origin, eligibility)
+                EditorPasteRequest(projectId, flowId, editor.currentSource, editor.selectedNodeId, editor.selectedNodeIds.toSet()), origin, eligibility,
+                preferredChildSlot = preferredChildSlot)
         }
     }
 
@@ -75,25 +80,42 @@ internal class ImageBlockInsertionRequest private constructor(
 /** Exact staged identities are validated before one live-draft commit. */
 internal suspend fun applyValidatedImageInsertion(request: ImageBlockInsertionRequest, editor: VisualEditorState,
     projectId: String, flowId: String, capabilities: Set<String>, position: EditorInsertPosition, childSlot: String?,
-    canApply: () -> Boolean, validate: suspend (String) -> VisualCompileResult): String? = withTimeout(15_000) {
-    if (!canApply() || !request.isEligible()) return@withTimeout "编辑、测试会话或运行状态已变化，未加入"
-    val candidate = request.stage(editor, projectId, flowId, capabilities, position, childSlot)
-        ?: return@withTimeout "加入位置、能力或选择已变化，未加入"
-    applyValidatedPluginSource(editor, request.context.source, candidate,
-        canApply = { canApply() && request.isEligible() && request.context.matches(projectId, flowId, editor) }, validate = { validate(candidate) })
+    canApply: () -> Boolean, validate: suspend (String) -> VisualCompileResult): String? {
+    currentCoroutineContext().ensureActive()
+    if (!canApply() || !request.isEligible()) return "编辑、测试会话或运行状态已变化，未加入"
+    val previousIds = editor.rows.mapTo(hashSetOf()) { it.nodeId }
+    var candidate: String? = null
+    // Only prepare/validate in the timed child. A timeout must never race a live-draft commit.
+    val proof = try {
+        withTimeout(15_000) {
+            candidate = request.stage(editor, projectId, flowId, capabilities, position, childSlot)
+            val source = candidate ?: return@withTimeout VisualCompileResult.Unavailable("加入位置、能力或选择已变化，未加入")
+            validate(source)
+        }
+    } catch (_: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive() // Parent/session cancellation remains cancellation.
+        return "加入校验超时，原草稿保留；请重试"
+    }
+    val source = candidate ?: return (proof as? VisualCompileResult.Unavailable)?.message ?: "未能准备加入积木"
+    val problem = applyValidatedPluginSource(editor, request.context.source, source,
+        canApply = { canApply() && request.isEligible() && request.context.matches(projectId, flowId, editor) }, validate = { proof })
+    if (problem == null) editor.rows.firstOrNull { it.nodeId !in previousIds }?.let { editor.selectOnly(it.nodeId) }
+    return problem
 }
 
 internal class ImageWorkbenchInsertionTarget(
     val flowId: String,
     val editor: VisualEditorState,
     val onManageVariables: () -> Unit,
+    val preferredChildSlot: String? = null,
     val apply: suspend (ImageBlockInsertionRequest, EditorInsertPosition, String?) -> String?,
 )
 
 internal fun validatedWorkbenchTarget(store: ProjectStore, client: RuntimeClient, projectId: String, flowId: String,
     editor: VisualEditorState, currentSnapshot: () -> ProjectSnapshot?, drafts: () -> Map<String, String>,
-    canApply: () -> Boolean, onManageVariables: () -> Unit, onCommitted: () -> Unit): ImageWorkbenchInsertionTarget =
-    ImageWorkbenchInsertionTarget(flowId, editor, onManageVariables) { request, position, slot ->
+    canApply: () -> Boolean, onManageVariables: () -> Unit, onCommitted: () -> Unit,
+    preferredChildSlot: String? = null): ImageWorkbenchInsertionTarget =
+    ImageWorkbenchInsertionTarget(flowId, editor, onManageVariables, preferredChildSlot) { request, position, slot ->
         val inspected = currentSnapshot()
         if (inspected == null || inspected.manifest.projectId != projectId) "项目已变化，未加入"
         else {
@@ -133,15 +155,23 @@ internal fun validatedWorkbenchTarget(store: ProjectStore, client: RuntimeClient
 internal fun ImageInsertionPositionDialog(request: ImageBlockInsertionRequest, editor: VisualEditorState,
     onDismiss: () -> Unit, onConfirm: (EditorInsertPosition, String?) -> Unit) {
     val slots = request.context.primary?.let(editor::childBlockNames).orEmpty()
+    val preferred = request.preferredChildSlot?.takeIf { it in slots }
+    val previewNodes = remember(request) { editor.programDisplayNodes().toEditorTreeNodes() }
     var choosingBranch by remember(request) { mutableStateOf(false) }
     if (choosingBranch) EditorOptionDialog("选择子积木区", slots.map { it to childBlockLabel(it) },
-        onDismiss = { choosingBranch = false }, onConfirm = { onConfirm(EditorInsertPosition.INSIDE, it) })
+        onDismiss = { choosingBranch = false },
+        preview = { slot -> EditorInsertionPreview(previewNodes, request.context.primary, EditorInsertPosition.INSIDE, slot) },
+        onConfirm = { onConfirm(EditorInsertPosition.INSIDE, it) })
     else EditorInsertPositionDialog(
         hasSelection = request.context.primary != null,
         canInsertInside = slots.isNotEmpty(), allowReplace = false, title = "图像加入位置",
-        initialPosition = if (request.context.primary == null) EditorInsertPosition.LIST_BOTTOM else EditorInsertPosition.BELOW,
+        previewNodes = previewNodes, previewAnchorId = request.context.primary, previewChildSlot = preferred,
+        initialPosition = if (preferred != null) EditorInsertPosition.INSIDE
+            else if (request.context.primary == null) EditorInsertPosition.LIST_BOTTOM else EditorInsertPosition.BELOW,
+        insideLabel = preferred?.let { "加入${childBlockLabel(it)}" } ?: "选择行里面",
         onDismiss = onDismiss, onConfirm = { position ->
-            if (position == EditorInsertPosition.INSIDE && slots.size > 1) choosingBranch = true
+            if (position == EditorInsertPosition.INSIDE && preferred != null) onConfirm(position, preferred)
+            else if (position == EditorInsertPosition.INSIDE && slots.size > 1) choosingBranch = true
             else onConfirm(position, if (position == EditorInsertPosition.INSIDE) slots.singleOrNull() else null)
         },
     )

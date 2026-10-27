@@ -14,6 +14,14 @@ internal fun recognitionTemplateSource(inputs: Map<String, String>): Recognition
     else -> RecognitionTemplateSource.SINGLE
 }
 
+internal fun recognitionSelectedTemplatePaths(inputs: Map<String, String>, resources: List<JsonObject>): List<String> =
+    when (recognitionTemplateSource(inputs)) {
+        RecognitionTemplateSource.SINGLE -> listOfNotNull(inputs["imagePath"]?.takeIf(String::isNotBlank))
+        RecognitionTemplateSource.LIST -> recognitionTemplatePaths(inputs["imagePaths"].orEmpty())
+        RecognitionTemplateSource.DIRECTORY -> resourcePaths(resources, com.autoscript.studio.generated.BlockResourceKind.IMAGE)
+            .filter { it.startsWith(inputs["imageDirectory"].orEmpty()) }
+    }
+
 internal fun recognitionSelectTemplates(inputs: Map<String, String>, paths: List<String>): Map<String, String> =
     inputs + mapOf("imagePaths" to recognitionTemplateJson(paths), "imageDirectory" to "",
         "imagePath" to paths.firstOrNull().orEmpty())
@@ -62,7 +70,7 @@ internal fun recognitionUsesOwnCapture(kind: String): Boolean = kind in setOf(
 
 /** Reading results is not recognition: it must never insert a capture or require capture permission. */
 internal fun recognitionImageEntryBlocks(contract: BlockContract, arguments: JsonObject, capture: Boolean = true): List<Pair<BlockContract, JsonObject>> {
-    if (contract.kind in setOf("vision.result","vision.readresult","vision.resultaction","ocr.findtext") || contract.kind.startsWith("screen.")) return listOf(contract to arguments.deepCopy())
+    if (contract.kind in setOf("vision.result","vision.readresult","vision.resultaction","ocr.findtext") || contract.kind.startsWith("screen.") || contract.kind in visualUtilityKinds) return listOf(contract to arguments.deepCopy())
     if (recognitionUsesOwnCapture(contract.kind)) return listOf(contract to arguments.deepCopy().apply { addProperty("autoCapture", capture) })
     if (!capture) return listOf(contract to arguments.deepCopy())
     val frame = arguments["frameVariable"]?.asString ?: "frame"
@@ -82,6 +90,6 @@ internal fun recognitionAlgorithmHelp(kind: String): String = when (kind) {
     "vision.findimage" -> "像素匹配按模板顺序返回首个命中，不是最高分。频次N表示首次及之后每N次访问识别，跳过轮次不截图或执行动作。裁剪图像覆盖时释放，插件结束清理；动作偏移使用原始屏幕像素。"
     "vision.findgray" -> "灰度最高分匹配，不缩放、不旋转；模板≤256K像素，范围≤400万像素，超出计算预算明确报错。是否找到为1/0。"
     "vision.findallimages" -> "按模板顺序及方向保留结果（包括重叠），最多64项；truncated表示存在未保留项。结果集合需声明为字变量。动作默认作用首项，开启全结果才逐项执行；按住仅限首项。等待可取消，动作前释放临时帧，成功/失败分支互斥。"
-    "ocr.alphanumeric" -> "仅识别指定单行的A–Z、a–z、0–9，不做文字检测，宽高比≤20，标点过滤。置信度为已接受字符的平均值。"
+    "ocr.alphanumeric" -> "识别指定单行英文、数字，宽高比≤20；开启保留符号后可输出括号、加减号、小数点、百分号、空格等ASCII字符（内置ONNX/V3组件）。结果写入文本变量，可交给通用文本工具提取、拆分或替换。置信度为已接受字符平均值，不代表正确率；不做中文或文字检测。"
     else -> "坐标使用原始屏幕像素，范围右/下边界不包含。已有帧由脚本管理；图像输出不与参考软件未知格式混用。"
 }

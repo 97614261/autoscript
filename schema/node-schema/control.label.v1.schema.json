@@ -4,5 +4,5 @@
   "type": "object", "required": ["kind", "nodeVersion", "args"],
   "properties": { "kind": { "const": "control.label" }, "nodeVersion": { "const": 1 },
     "args": { "type": "object", "additionalProperties": false, "required": ["name"],
-      "properties": { "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" } } } }
+      "properties": { "name": { "type": "string", "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$" } } } }
 }

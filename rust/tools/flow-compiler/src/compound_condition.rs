@@ -7,13 +7,9 @@ pub(crate) fn valid(value: &Value) -> bool {
     serde_json::to_vec(value).is_ok_and(|v| v.len() <= 8192) && walk(value, 1, &mut count)
 }
 fn name(value: Option<&Value>) -> bool {
-    value.and_then(Value::as_str).is_some_and(|s| {
-        let mut b = s.bytes();
-        s.len() <= 64
-            && b.next()
-                .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-            && b.all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    })
+    value
+        .and_then(Value::as_str)
+        .is_some_and(flow_ir::valid_user_name)
 }
 fn walk(v: &Value, depth: usize, count: &mut usize) -> bool {
     *count += 1;

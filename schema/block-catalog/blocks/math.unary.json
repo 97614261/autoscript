@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.unary",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.unary/1/math.unary.schema.json",
+  "title": "单值数学运算",
+  "category": "variable",
+  "summary": "支持 abs/ceil/floor/sqrt/ln/log10/exp/sin/cos/tan/asin/acos/atan/deg/rad。三角函数使用弧度，deg/rad 显式转换；输入及结果绝对值不超过 10^12，定义域或非有限结果报错。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "单值数学运算"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "operation",
+      "label": "运算",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "abs"
+    },
+    {
+      "path": "operationVariable",
+      "label": "运算来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "value",
+      "label": "数值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "-3"
+    },
+    {
+      "path": "valueVariable",
+      "label": "数值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

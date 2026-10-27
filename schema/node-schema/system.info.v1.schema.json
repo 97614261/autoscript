@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/system.info/1/system.info.schema.json",
+  "title": "system.info node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "system.info"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section",
+        "resultVariable"
+      ],
+      "properties": {
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "enum": [
+            "device",
+            "display",
+            "battery",
+            "network",
+            "storage",
+            "permissions"
+          ]
+        },
+        "sectionVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

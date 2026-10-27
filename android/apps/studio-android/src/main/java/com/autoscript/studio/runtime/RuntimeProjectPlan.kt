@@ -35,22 +35,6 @@ internal data class RuntimeProjectPlan(
         if (snapshot.manifest.sourceMode == ProjectSourceMode.VISUAL && snapshot.manifest.runnerUi != null) {
             copy(luaSource = ("__ui_debug_skip_events = true\n" + luaSource.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8))
         } else this
-    fun forSingleStep(flowId: String? = null, nodeId: String? = null, executeTarget: Boolean = true): RuntimeProjectPlan {
-        val source = "__ui_debug_skip_events = true\n" + luaSource.toString(Charsets.UTF_8)
-        require(source.contains("__autoscript_debug_capture = true\n__autoscript_debug_step = false\n")) { "单步仅支持可视化插件" }
-        if (nodeId != null) {
-            require(!flowId.isNullOrBlank()) { "请选择当前插件中的积木" }
-            require(flowId.length <= 128 && nodeId.length <= 128) { "插件或积木标识过长" }
-            val flow = com.google.gson.JsonPrimitive(flowId).toString()
-            val node = com.google.gson.JsonPrimitive(nodeId).toString()
-            require(source.contains("__autoscript_debug_execute_target") && source.contains("__checkpoint($flow, $node,")) {
-                "所选积木不可执行（可能已禁用），请重新编译并选择"
-            }
-            return copy(luaSource = source.replaceFirst("__autoscript_debug_step = false\n",
-                "__autoscript_debug_step = false\n__autoscript_debug_target_flow = $flow\n__autoscript_debug_target_node = $node\n__autoscript_debug_execute_target = $executeTarget\n").toByteArray(Charsets.UTF_8))
-        }
-        return copy(luaSource = source.replaceFirst("__autoscript_debug_step = false\n", "__autoscript_debug_step = true\n").toByteArray(Charsets.UTF_8))
-    }
     companion object {
         fun fromSnapshot(snapshot: ProjectSnapshot, source: String): RuntimeProjectPlan {
             require(snapshot.manifest.sourceMode == ProjectSourceMode.LUA) {
@@ -95,7 +79,7 @@ internal data class RuntimeProjectPlan(
             require(sourceMapGeneration == generationId) { "source map代次不匹配" }
             val expectedHeader = "-- generationId: $generationId\n".toByteArray(Charsets.UTF_8)
             require(lua.indexOf(expectedHeader) >= 0) { "生成Lua代次不匹配" }
-            val plan = create(snapshot, if (testNodeId == null) withSelectedVisualEntry(snapshot, lua, selectedFlowId) else ("__ui_debug_skip_events = true\n" + lua.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8), applyStartupDelay = testNodeId == null)
+            val plan = create(snapshot, if (testNodeId == null) withSelectedVisualEntry(snapshot, lua, selectedFlowId) else ("__ui_debug_skip_events = true\n" + lua.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8), applyStartupDelay = testNodeId == null, lifecyclePrompts = testNodeId == null)
                 .copy(requiredVisionComponents = compiledVisionRequirements(sourceMapDocument),
                     requiresPointerInput = visualPointerInputRequired(snapshot.flowSources, sourceMapDocument))
             return if (testNodeId == null || !snapshot.manifest.debugSettings.showRunPrompts) plan
@@ -131,7 +115,7 @@ internal data class RuntimeProjectPlan(
             return (prefix + replacement).toByteArray(Charsets.UTF_8)
         }
 
-        private fun create(snapshot: ProjectSnapshot, luaSource: ByteArray, applyStartupDelay: Boolean = true): RuntimeProjectPlan {
+        private fun create(snapshot: ProjectSnapshot, luaSource: ByteArray, applyStartupDelay: Boolean = true, lifecyclePrompts: Boolean = true): RuntimeProjectPlan {
             require(luaSource.size <= MAX_LUA_SOURCE_BYTES) { "Lua源码超过16 MiB" }
             val projectRoot = snapshot.directory.canonicalFile
             require(projectRoot.isDirectory) { "项目目录不存在" }
@@ -164,7 +148,10 @@ internal data class RuntimeProjectPlan(
             require(capabilities.all { it.length <= 128 && CAPABILITY.matches(it) }) {
                 "项目能力声明格式无效"
             }
-            val debugSettings = snapshot.manifest.debugSettings
+            val savedDebugSettings = snapshot.manifest.debugSettings
+            // An isolated step is not a plugin launch; keep explicit prompt nodes and other filters.
+            val debugSettings = if (lifecyclePrompts) savedDebugSettings else savedDebugSettings.copy(
+                runPromptFilters = savedDebugSettings.runPromptFilters.copy(flowStart = false, flowReturn = false))
             val withPrompts = withRunPromptVisibility(luaSource, debugSettings.showRunPrompts)
             // Visual compilation already freezes style and accounts for its source-map lines.
             val withToastStyle = if (snapshot.manifest.sourceMode == ProjectSourceMode.VISUAL) {

@@ -7,11 +7,15 @@ import com.google.gson.JsonPrimitive
 
 /** Typed editor-only hints. Existing pipe-separated jump hints remain readable. */
 internal object JumpPanelCode {
-    private val namePattern = Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")
+    private val namePattern = com.autoscript.project.store.ProjectNames.pattern
     private val channelKinds = setOf("flow.argument.set", "flow.return.set")
     private val readKinds = setOf("flow.argument.get", "flow.return.get")
 
     fun validName(name: String): Boolean = namePattern.matches(name)
+
+    fun canSelectAction(initialKind: String?, initialAction: Int, action: Int): Boolean =
+        initialKind == null || action == initialAction ||
+            (initialKind == "flow.status.return" && action in 5..6)
 
     fun nextLabel(existing: Collection<String>): String = (1..100_000)
         .asSequence().map { "mark_$it" }.first { it !in existing }
@@ -37,6 +41,10 @@ internal object JumpPanelCode {
     }
 
     fun statusSnippet(success: Boolean): String = hint("flow.status.return", JsonObject().apply { addProperty("success", success) })
+
+    fun waitSnippet(milliseconds: Long): String? = milliseconds.takeIf { it >= 0 }?.let { value ->
+        hint("task.sleep", JsonObject().apply { addProperty("milliseconds", value) })
+    }
 
     fun setSnippet(kind: String, index: Int, text: String, variable: String?): String? {
         if (kind !in channelKinds || index !in 1..99) return null

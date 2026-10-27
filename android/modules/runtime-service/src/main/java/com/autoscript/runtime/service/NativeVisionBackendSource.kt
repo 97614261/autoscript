@@ -11,6 +11,6 @@ internal class BundledNativeVisionSource(assets: AssetManager) : NativeVisionBac
     private val gray = createGrayBackend()
     private val onnx = createOnnxBackend(assets)
     override fun resolve(operation: Int, work: NativeVisionWork): NativeVisionBackend =
-        (if (operation == 5108) gray else onnx) ?: throw NativeVisionComponentMissing()
+        (if (operation in setOf(5108,5109)) gray else onnx) ?: throw NativeVisionComponentMissing()
     override fun close() = releaseVisionResources({ gray?.close() }, { onnx?.close() })
 }

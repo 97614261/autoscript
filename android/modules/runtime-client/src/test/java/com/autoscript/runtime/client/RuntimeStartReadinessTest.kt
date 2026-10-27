@@ -43,4 +43,14 @@ class RuntimeStartReadinessTest {
         states.value = starting.copy(rootState = RuntimeRootState.READY)
         assertTrue(request.isCancelled)
     }
+
+    @Test fun captureErrorsDistinguishRootStartupFromActualCaptureFailure() {
+        assertTrue(captureUnavailableMessage(starting).contains("尚未就绪"))
+        assertTrue(captureUnavailableMessage(starting.copy(rootState = RuntimeRootState.FAILED)).contains("启动失败"))
+        val ready = starting.copy(rootState = RuntimeRootState.READY)
+        assertTrue(captureUnavailableMessage(ready).contains("CAPTURE_BACKEND_FAILED"))
+        assertFalse(captureUnavailableMessage(ready).contains("无Root"))
+        assertTrue(captureUnavailableMessage(ready.copy(engineState = RuntimeEngineState.PAUSED)).contains("先停止"))
+        assertTrue(captureUnavailableMessage(ready.copy(phase = RuntimeConnectionPhase.DISCONNECTED)).contains("断开"))
+    }
 }

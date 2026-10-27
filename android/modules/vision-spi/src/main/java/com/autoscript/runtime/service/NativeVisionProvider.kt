@@ -11,8 +11,13 @@ interface NativeVisionProvider {
 
 fun interface NativeVisionModelSource { fun open(): InputStream }
 
+/** V2 fixed second model; no caller-selected names or paths. */
+interface NativeVisionModelSet : NativeVisionModelSource { fun openV5(): InputStream }
+
 object NativeVisionSpi {
-    const val VERSION = 1
+    const val VERSION = 3
+    const val V5_BYTES = 7_872_351
+    const val V5_SHA256 = "c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8"
     const val OPENCV_FACTORY = "com.autoscript.runtime.service.components.OptionalOpenCvProvider"
     const val ONNX_FACTORY = "com.autoscript.runtime.service.components.OptionalOnnxProvider"
     const val MODEL_BYTES = 7_653_044

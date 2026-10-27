@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "screen.frameinfo",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/screen.frameinfo/1/screen.frameinfo.schema.json",
+  "title": "读取帧与图片尺寸",
+  "category": "screen",
+  "summary": "读取当前任务所属真实帧的width/height/rowStride/rotation/format/hasScreenOrigin JSON；截图、已加载图片和处理帧均可，不截图、不识别、不释放。尺寸为原像素，不是设计画布；有屏幕来源不代表任意处理坐标可直接点击。",
+  "searchTerms": [
+    "图片宽高",
+    "原像素",
+    "尺寸",
+    "帧信息"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "frameVariable",
+      "label": "图像变量",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "resultVariable",
+      "label": "帧信息结果（字符变量）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

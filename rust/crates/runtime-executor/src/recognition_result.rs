@@ -76,6 +76,14 @@ fn number(value: &Value, key: &str, max: u64) -> Result<u64, String> {
 fn item_valid(item: &Value, shape: &str) -> Result<(), String> {
     let keys: &[&str] = match shape {
         "COLORS" => &["x", "y"],
+        "SCALED_IMAGE" => &[
+            "x",
+            "y",
+            "width",
+            "height",
+            "scorePermille",
+            "scalePermille",
+        ],
         "COMPONENTS" => &["area", "left", "top", "right", "bottom"],
         "TEXT_ITEM" => &["text", "left", "top", "right", "bottom"],
         "GLYPH_ITEM" => &[
@@ -108,7 +116,7 @@ fn item_valid(item: &Value, shape: &str) -> Result<(), String> {
                     return Err("RECOGNITION_RESULT_INVALID_FIELD".into());
                 }
             }
-            "score" => {
+            "score" | "scorePermille" => {
                 number(item, key, 1000)?;
             }
             "area" => {
@@ -121,7 +129,14 @@ fn item_valid(item: &Value, shape: &str) -> Result<(), String> {
             }
         }
     }
-    if shape != "COLORS"
+    if shape == "SCALED_IMAGE" {
+        if number(item, "width", 4096)? == 0
+            || number(item, "height", 4096)? == 0
+            || !(250..=4000).contains(&number(item, "scalePermille", 4000)?)
+        {
+            return Err("RECOGNITION_RESULT_INVALID_FIELD".into());
+        }
+    } else if shape != "COLORS"
         && (item["left"].as_u64() >= item["right"].as_u64()
             || item["top"].as_u64() >= item["bottom"].as_u64())
     {
@@ -147,6 +162,9 @@ fn arguments(args: &[LuaScalar]) -> Result<(&[u8], &str, i64, &str), String> {
         "TEXT_ITEM",
         "COLORS",
         "COMPONENTS",
+        "FRAME_DIFF",
+        "SCREEN_POINT",
+        "SCALED_IMAGE",
     ]
     .contains(&shape)
     {
@@ -222,6 +240,42 @@ fn parse_shallow(bytes: &[u8]) -> Result<Value, String> {
 }
 
 fn validate_root(root: &Value, shape: &str) -> Result<(), String> {
+    if matches!(shape, "FRAME_DIFF" | "SCREEN_POINT") {
+        let fields: &[(&str, u64)] = if shape == "FRAME_DIFF" {
+            &[
+                ("changedPixels", 4_194_304),
+                ("totalPixels", 4_194_304),
+                ("ratioPermille", 1000),
+                ("fresh", 1),
+                ("elapsedUs", i64::MAX as u64),
+            ]
+        } else {
+            &[
+                ("x", 32768),
+                ("y", 32768),
+                ("screenWidth", 32768),
+                ("screenHeight", 32768),
+            ]
+        };
+        if root.as_object().is_none_or(|r| r.len() != fields.len()) {
+            return Err("RECOGNITION_RESULT_INVALID_SHAPE".into());
+        }
+        for (field, max) in fields {
+            number(root, field, *max)?;
+        }
+        if shape == "FRAME_DIFF" {
+            let total = number(root, "totalPixels", 4_194_304)?;
+            let changed = number(root, "changedPixels", total)?;
+            if total == 0 || number(root, "ratioPermille", 1000)? != changed * 1000 / total {
+                return Err("RECOGNITION_RESULT_INVALID_FIELD".into());
+            }
+        } else if number(root, "x", 32768)? >= number(root, "screenWidth", 32768)?
+            || number(root, "y", 32768)? >= number(root, "screenHeight", 32768)?
+        {
+            return Err("RECOGNITION_RESULT_INVALID_BOUNDS".into());
+        }
+        return Ok(());
+    }
     let glyph = matches!(shape, "GLYPH_SUMMARY" | "GLYPH_ITEM");
     let items = if glyph {
         let object = root.as_object().ok_or("RECOGNITION_RESULT_INVALID_SHAPE")?;
@@ -235,7 +289,9 @@ fn validate_root(root: &Value, shape: &str) -> Result<(), String> {
         root.as_array()
     }
     .ok_or("RECOGNITION_RESULT_INVALID_SHAPE")?;
-    let limit = if matches!(shape, "COLORS" | "COMPONENTS") {
+    let limit = if shape == "SCALED_IMAGE" {
+        1
+    } else if matches!(shape, "COLORS" | "COMPONENTS") {
         256
     } else {
         2048
@@ -250,6 +306,19 @@ fn validate_root(root: &Value, shape: &str) -> Result<(), String> {
 }
 
 fn read_root(root: &Value, shape: &str, index: i64, field: &str) -> Result<LuaInput, String> {
+    if matches!(shape, "FRAME_DIFF" | "SCREEN_POINT") {
+        if index != 0 {
+            return Err("RECOGNITION_RESULT_AGGREGATE_INDEX".into());
+        }
+        let value = root
+            .get(field)
+            .filter(|v| v.is_u64())
+            .ok_or("RECOGNITION_RESULT_INVALID_FIELD")?;
+        return Ok(LuaInput::Values(vec![
+            LuaScalar::Boolean(true),
+            LuaScalar::Bytes(value.to_string().into_bytes()),
+        ]));
+    }
     let items = if matches!(shape, "GLYPH_SUMMARY" | "GLYPH_ITEM") {
         root["matches"].as_array()
     } else {
@@ -273,6 +342,14 @@ fn read_root(root: &Value, shape: &str, index: i64, field: &str) -> Result<LuaIn
             .ok_or("RECOGNITION_RESULT_INDEX_OUT_OF_RANGE")?;
         let item = &items[index - 1];
         match field {
+            "centerX" | "centerY" if shape == "SCALED_IMAGE" => {
+                let (a, b) = if field == "centerX" {
+                    ("x", "width")
+                } else {
+                    ("y", "height")
+                };
+                json!(number(item, a, 32768)? + number(item, b, 4096)? / 2)
+            }
             "centerX" | "centerY" if shape != "COLORS" => {
                 let (a, b) = if field == "centerX" {
                     ("left", "right")
@@ -313,6 +390,22 @@ mod tests {
             LuaScalar::Integer(index),
             LuaScalar::Bytes(field.as_bytes().to_vec()),
         ])
+    }
+    #[test]
+    fn new_shapes_remain_exact_bounded_and_separate() {
+        let difference =
+            json!({"changedPixels":1,"totalPixels":2,"ratioPermille":500,"fresh":0,"elapsedUs":10});
+        assert!(read_value(&difference, "FRAME_DIFF", 0, "fresh").is_ok());
+        assert!(read_value(&difference, "FRAME_DIFF", 1, "fresh").is_err());
+        assert!(read_value(&difference, "SCREEN_POINT", 0, "x").is_err());
+        let point = json!({"x":3,"y":4,"screenWidth":8,"screenHeight":6});
+        assert!(read_value(&point, "SCREEN_POINT", 0, "x").is_ok());
+        let scaled =
+            json!([{"x":2,"y":3,"width":4,"height":6,"scorePermille":900,"scalePermille":1500}]);
+        assert!(read_value(&scaled, "SCALED_IMAGE", 1, "centerX").is_ok());
+        assert!(read_value(&scaled, "IMAGES", 1, "x").is_err());
+        assert!(read_value(&json!([scaled[0], scaled[0]]), "SCALED_IMAGE", 1, "x").is_err());
+        assert!(read_value(&json!({"changedPixels":1,"totalPixels":2,"ratioPermille":501,"fresh":1,"elapsedUs":10}),"FRAME_DIFF",0,"fresh").is_err());
     }
     #[test]
     fn large_valid_results_do_not_use_data_item_budget() {

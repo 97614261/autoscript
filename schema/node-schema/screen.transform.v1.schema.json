@@ -25,11 +25,28 @@
         "height",
         "resultVariable"
       ],
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "mask" } }, "required": ["mode"] },
+          "then": { "required": ["mask"] },
+          "else": { "not": { "required": ["mask"] } }
+        },
+        {
+          "if": { "properties": { "mode": { "enum": ["despeckle","erode","dilate","open","close"] } }, "required": ["mode"] },
+          "then": { "required": ["cleanup"] },
+          "else": { "not": { "required": ["cleanup"] } }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "filter" } }, "required": ["mode"] },
+          "then": { "required": ["filter"] },
+          "else": { "not": { "required": ["filter"] } }
+        }
+      ],
       "properties": {
         "frameVariable": {
           "type": "string",
           "maxLength": 64,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
         "mode": {
           "type": "string",
@@ -41,6 +58,8 @@
             "flipY",
             "gray",
             "threshold",
+            "filter",
+            "mask", "despeckle", "erode", "dilate", "open", "close",
             "resize"
           ]
         },
@@ -60,10 +79,17 @@
           "maximum": 255,
           "default": 128
         },
+        "filter": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "mask": { "type": "string", "minLength": 1, "maxLength": 15000 },
+        "cleanup": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "resultVariable": {
           "type": "string",
           "maxLength": 64,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         }
       }
     }

@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EditorToolbarModelTest {
+    @Test fun sidebarLabelsDescribeTheirToolsAndAiRemainsVisible() {
+        val content = java.io.File("src/main/java/com/autoscript/studio/editor/EditorDockContent.kt").readText()
+        val actions = Regex("EditorDockAction\\(\"([^\"]+)\"").findAll(content).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("变量", "触控", "图像", "条件", "循环", "流程", "输出", "函数", "AI"), actions)
+        val button = content.substringAfter("internal fun EditorDockAction(").substringBefore("internal fun EditorDockHeaderButton(")
+        assertTrue(button.contains(".heightIn(min = 27.dp)"))
+        assertFalse(button.contains(".height(27.dp)"))
+        assertTrue(button.contains(".border(1.dp, EditorBorder"))
+        assertFalse(button.contains("EditorToolButton("))
+        assertFalse(button.contains(".padding(vertical = 4.dp)"))
+    }
+
+    @Test fun everyEditorCommandHasARealToolbarProducer() {
+        val dock = editorDockTestSources()
+        val emitted = Regex("onCommand\\(EditorProgramCommand\\.(\\w+)\\)")
+            .findAll(dock).map { it.groupValues[1] }.toSet()
+        assertEquals(EditorProgramCommand.entries.map { it.name }.toSet(), emitted)
+    }
+
     @Test fun stopRemainsIndependentOfOrdinaryControlBusy() {
         val entries = editorToolbarEntries(true, false, false, false, false, true, false, stopEnabled = true)
         assertEquals(EditorToolbarAction.STOP, entries.first().action)
@@ -29,8 +48,6 @@ class EditorToolbarModelTest {
 
     @Test fun footerGroupsAllEditingCommandsIntoOneEntry() {
         assertEquals(listOf("运行", "单步", "编辑", "日志", "更多"), toolbar().map { it.action.label })
-        assertEquals(listOf("撤销", "重做", "复制", "粘贴", "删除", "上移", "下移", "多选"),
-            editorEditingEntries(1, true, true, true, true).map { it.action.label })
     }
 
     @Test fun narrowWindowsWrapAllActionsInsteadOfHidingAny() {
@@ -60,27 +77,6 @@ class EditorToolbarModelTest {
         assertFalse(toolbar(paused = true).any { it.action == EditorToolbarAction.EDIT })
         assertFalse(toolbar(source = false).first { it.action == EditorToolbarAction.STEP }.enabled)
         assertTrue(toolbar(source = false).first { it.action == EditorToolbarAction.MORE }.enabled)
-    }
-
-    @Test fun groupedEditingCommandsRespectSelectionHistoryClipboardAndHostSupport() {
-        fun entries(selection: Int = 0, undo: Boolean = true, redo: Boolean = true,
-            paste: Boolean = true, commands: Boolean = true) =
-            editorEditingEntries(selection, undo, redo, paste, commands).associate { it.action to it.enabled }
-        val empty = entries()
-        assertTrue(empty.getValue(EditorToolbarAction.UNDO))
-        assertTrue(empty.getValue(EditorToolbarAction.PASTE))
-        assertTrue(empty.getValue(EditorToolbarAction.ORGANIZE))
-        for (action in listOf(EditorToolbarAction.COPY, EditorToolbarAction.DELETE,
-            EditorToolbarAction.MOVE_UP, EditorToolbarAction.MOVE_DOWN)) {
-            assertFalse(empty.getValue(action))
-            assertTrue(entries(selection = 2).getValue(action))
-        }
-        assertFalse(entries(undo = false).getValue(EditorToolbarAction.UNDO))
-        assertFalse(entries(redo = false).getValue(EditorToolbarAction.REDO))
-        assertFalse(entries(paste = false).getValue(EditorToolbarAction.PASTE))
-        val unsupported = entries(selection = 1, commands = false)
-        assertTrue(unsupported.getValue(EditorToolbarAction.DELETE))
-        assertTrue(unsupported.filterKeys { it != EditorToolbarAction.DELETE }.values.none { it })
     }
 
     @Test fun failureBadgeUsesLifecycleDiagnosticsNotAnyUserMentionOfError() {

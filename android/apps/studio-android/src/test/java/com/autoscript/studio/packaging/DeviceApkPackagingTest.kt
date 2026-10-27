@@ -48,9 +48,8 @@ class DeviceApkPackagingTest {
                 assertEquals(expected, entries.filter { it.startsWith("lib/") }.map { it.split('/')[1] }.toSet())
                 expected.forEach { assertTrue(entries.contains("lib/$it/libengine_jni.so")) }
             }
-            val artifacts = File(requireNotNull(System.getProperty("autoscript.artifactRoot"))).also { check(it.mkdirs() || it.isDirectory) }
-            signed.copyTo(File(artifacts, "native-workflow-runner.apk"), overwrite = true)
-            File(artifacts, "runner-verification.txt").writeText("Public fixture only; disposable test signing identity; not installed.\n$verified\n$probe\n")
+            PackagingTestEvidence.write(evidenceRoot(), "public-workflow", signed,
+                "Public fixture only; disposable test signing identity; not installed.\n$verified\n$probe")
         } finally { work.deleteRecursively() }
     }
     @Test fun compiledRunnerWithFrozenReleaseGetsValidV2SignatureAndAlignedAbis() {
@@ -87,11 +86,8 @@ class DeviceApkPackagingTest {
             RandomAccessFile(tampered, "rw").use { file -> file.seek(100); val byte = file.read(); file.seek(100); file.write(byte xor 1) }
             assertThrows(IllegalArgumentException::class.java) { ApkV2Signer.verify(tampered) }
             assertThrows(IllegalStateException::class.java) { run(java, "-jar", apksigner.path, "verify", "--min-sdk-version", "24", tampered.path) }
-            val artifactRoot = requireNotNull(File(requireNotNull(System.getProperty("autoscript.artifactRoot"))).parentFile)
-            val artifacts = artifactRoot.resolve("device-packaging-verification").also { check(it.mkdirs() || it.isDirectory) }
-            val artifact = signed.copyTo(File(artifacts, "hello-runner-${UUID.randomUUID()}.apk"))
-            File(artifacts, artifact.name + ".verification.txt").writeText("Template bytes: ${template.length()}\nAPK bytes: ${signed.length()}\nCertificate SHA-256: ${ApkV2Signer.verify(signed).certificateSha256}\n$independent\n$probe\n${badging.lineSequence().filter { it.startsWith("package:") || it.startsWith("minSdkVersion:") || it.startsWith("sdkVersion:") }.joinToString("\n")}\n")
-            println("Verified Runner APK: ${artifact.absolutePath}")
+            PackagingTestEvidence.write(evidenceRoot(), "compiled-runner", signed,
+                "Template bytes: ${template.length()}\nCertificate SHA-256: ${ApkV2Signer.verify(signed).certificateSha256}\n$independent\n$probe\n${badging.lineSequence().filter { it.startsWith("package:") || it.startsWith("minSdkVersion:") || it.startsWith("sdkVersion:") }.joinToString("\n")}")
         } finally { work.deleteRecursively() }
     }
 
@@ -119,6 +115,9 @@ class DeviceApkPackagingTest {
         } finally { work.deleteRecursively() }
     }
 
+    private fun evidenceRoot() = requireNotNull(File(requireNotNull(System.getProperty("autoscript.artifactRoot"))).parentFile)
+        .resolve("packaging-test-evidence")
+
     private fun identity(work: File): ApkSigningIdentity {
         val password = UUID.randomUUID().toString()
         val key = File(work, "generated-test-key.p12")
@@ -131,7 +130,11 @@ class DeviceApkPackagingTest {
     }
     private val executableSuffix get() = if (requireNotNull(System.getProperty("os.name")).startsWith("Windows")) ".exe" else ""
     private fun probeRunner(root: File, apk: File): String {
-        val flags = if (System.getProperty("autoscript.expectedAbis") == "arm64-v8a") listOf("--arm64-only") else emptyList()
+        val flags = when (System.getProperty("autoscript.expectedAbis")) {
+            "arm64-v8a" -> listOf("--arm64-only")
+            "x86_64" -> listOf("--x86-only")
+            else -> emptyList()
+        }
         return run(hostTool(root, "package-probe"), *(flags + listOf("--require-embedded-release", apk.path)).toTypedArray())
     }
     private fun javaTool(name: String) = File(requireNotNull(System.getProperty("java.home")), "bin/$name$executableSuffix")

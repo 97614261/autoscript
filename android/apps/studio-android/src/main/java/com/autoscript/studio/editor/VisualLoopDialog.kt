@@ -50,7 +50,7 @@ internal fun loopInsertionFromHint(hint: String): LoopInsertion? = runCatching {
     if (line.startsWith(FunctionCatalog.LOOP_HINT_PREFIX + "metric:")) {
         val parts = line.removePrefix(FunctionCatalog.LOOP_HINT_PREFIX).split(':')
         require(parts.size == 3 && parts[1] in setOf("count", "elapsed"))
-        require(parts[2].matches(Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")))
+        require(parts[2].matches(com.autoscript.project.store.ProjectNames.pattern))
         return@runCatching LoopInsertion("control.loopmetric", JsonObject().apply {
             addProperty("metric", parts[1]); addProperty("name", parts[2]); addProperty("unit", "milliseconds")
         })
@@ -291,7 +291,7 @@ internal fun VisualLoopDialog(
                         LoopButton(confirmLabel, {
                             val result = buildLoopInsertion(draft, choices)
                             error = result.error
-                            result.insertion?.let { onInsert(it.hint()); onDismiss() }
+                            result.insertion?.let { onInsert(it.hint()) }
                         }, Modifier.weight(1f).fillMaxHeight())
                     }
                 }
@@ -306,18 +306,16 @@ internal fun VisualLoopDialog(
             "delayPreset" -> listOf("0", "50", "100", "200", "500", "1000", "3000")
             else -> listOf("0.5", "1", "2", "3", "5", "10", "30", "60", "300")
         }
-        Dialog(onDismissRequest = { picker = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.widthIn(max = 420.dp).fillMaxWidth(.92f).heightIn(max = 420.dp), color = Color.White, shape = RoundedCornerShape(3.dp)) {
-                Column {
-                    Text(if (preset) "选择预设" else "选择变量", color = AutoScriptPalette.Accent, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
+        StudioPanelDialog(if (preset) "选择预设" else "选择变量", { picker = null }, showFooter = false, compactHeader = true) {
+                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                     if (!preset) {
                         Row(Modifier.fillMaxWidth().height(34.dp)) {
                             listOf("局部", "全局", "参数").forEach { item -> LoopButton(item, { pickerScope = item }, Modifier.weight(1f).fillMaxHeight(), selected = pickerScope == item) }
                             onManageVariables?.let { LoopButton("＋维护", it, Modifier.weight(1f).fillMaxHeight()) }
                         }
-                        Text("仅显示类型匹配的变量；参数/局部优先于同名全局。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp))
                     }
                     Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+                        if (!preset) Text("仅显示类型匹配的变量；参数/局部优先于同名全局。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, modifier = Modifier.padding(vertical = 5.dp))
                         val filtered = eligible.filter { it.scope == pickerScope }
                         if (!preset && filtered.isEmpty()) Text("暂无匹配变量，可点＋维护添加后返回选择。", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 14.dp))
                         val entries = if (preset) values.map { it to if (key.contains("Count", true) || key == "countPreset") "$it 次" else if (key == "delayPreset") "$it 毫秒" else "$it 秒" }
@@ -340,7 +338,6 @@ internal fun VisualLoopDialog(
                     }
                     LoopButton("取消", { picker = null }, Modifier.fillMaxWidth().height(40.dp), muted = true)
                 }
-            }
         }
     }
 }

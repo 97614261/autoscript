@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.numberat",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.numberat/1/text.numberat.schema.json",
+  "title": "按序提取数字",
+  "category": "variable",
+  "summary": "从任意文本或文本变量按顺序提取数字，序号从1起；保留紧邻正负号、前导零和小数位，无该项为空文本。不限于识别结果；自定义规则或提取全部请用通用文本提取。不计算表达式，不解析千分位/科学计数或百分比；输入最多4096 UTF-8字节，最多64项，超限整次拒绝。",
+  "searchTerms": [
+    "提取数字",
+    "OCR",
+    "识别数字",
+    "取数",
+    "符号",
+    "正负号"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "index",
+      "label": "第几个数字（1–64）",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "1"
+    },
+    {
+      "path": "indexVariable",
+      "label": "序号来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

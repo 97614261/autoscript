@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14226,
+  "name": "Text.regexReplace",
+  "since": "1.7",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "全部匹配替换为字面文本（$1 等不展开）。原文 4096 字节、表达式 1–128 字节、替换文 4096 字节，最多 1024 次匹配、输出 64KiB；有限自动机，不支持回溯引用和环视。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "原文"
+    },
+    {
+      "name": "pattern",
+      "type": "string",
+      "required": true,
+      "summary": "正则表达式"
+    },
+    {
+      "name": "replacement",
+      "type": "string",
+      "required": true,
+      "summary": "替换为（字面文本）"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "全部匹配替换为字面文本（$1 等不展开）。原文 4096 字节、表达式 1–128 字节、替换文 4096 字节，最多 1024 次匹配、输出 64KiB；有限自动机，不支持回溯引用和环视。"
+  },
+  "legacyAliases": []
+}

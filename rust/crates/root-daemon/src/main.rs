@@ -23,7 +23,7 @@ mod android {
         CommandDispatcher, DaemonSession, DaemonSessionConfig, DispatchError, DispatchResponse,
         SessionActivity, SessionState,
     };
-    use root_protocol::{Capabilities, CaptureFailure, Command, Frame, StatusCode};
+    use root_protocol::{Capabilities, CaptureFailure, Command, Frame, InputFailure, StatusCode};
 
     const INPUT_BINARY: &str = "/system/bin/input";
     const GETPROP_BINARY: &str = "/system/bin/getprop";
@@ -108,9 +108,15 @@ mod android {
             | Capabilities::CAPTURE_FAILURE_DETAILS
             | Capabilities::CAPTURE_TRANSFER_TIMINGS
             | Capabilities::CAPTURE_CONTROL_DETAILS
+            | Capabilities::CAPTURE_PIPELINED
+            | Capabilities::CAPTURE_REGION
+            | Capabilities::INPUT_FAILURE_DETAILS
             | Capabilities::INPUT_PRIORITY_STOP;
         if input_bridge.is_some() || supports_pointer_commands() {
             capability_bits |= Capabilities::INPUT_POINTER_SINGLE;
+        }
+        if input_bridge.is_some() {
+            capability_bits |= Capabilities::INPUT_MULTI_TOUCH;
         }
         let recording = Arc::new(super::input_recording::RecordingHub::default());
         let dispatcher = Arc::new(Mutex::new(AndroidDispatcher {
@@ -121,8 +127,12 @@ mod android {
                 .and_then(|apk| RootInputProcess::start_capture(apk).ok()),
             next_capture_id: 0,
             capture: None,
+            reusable_capture_pixels: Vec::new(),
+            capture_read_wait_us: 0,
             active_pointer: None,
+            multi_active: std::collections::BTreeMap::new(),
             pointer_owner: 0,
+            input_failure: None,
             cancellation: InputCancellation::default(),
             recording: recording.clone(),
         }));
@@ -190,9 +200,10 @@ mod android {
                 {
                     break;
                 }
-                transfer.encode_us = transfer
-                    .encode_us
-                    .saturating_add(elapsed_micros(encode_started));
+                transfer.encode_us = transfer.encode_us.saturating_add(
+                    elapsed_micros(encode_started)
+                        .saturating_sub(session.take_capture_read_wait_us()),
+                );
                 let write_started = Instant::now();
                 write_packet(&mut stream, &capture_packet)
                     .map_err(|e| format!("capture stream write failed: {e:?}"))?;
@@ -370,11 +381,18 @@ mod android {
         capture_bridge: Option<RootInputProcess>,
         next_capture_id: u64,
         capture: Option<StagedCapture>,
+        /// Reuses the last released bridge frame allocation without retaining pixels as a frame.
+        /// The buffer is only moved back after an explicit ReleaseCapture, so an active frame
+        /// never aliases a subsequent capture.
+        reusable_capture_pixels: Vec<u8>,
         active_pointer: Option<(u8, i32, i32)>,
+        multi_active: std::collections::BTreeMap<u8, (i32, i32)>,
         input_bridge: Option<RootInputProcess>,
         pointer_owner: u64,
+        input_failure: Option<InputFailure>,
         cancellation: InputCancellation,
         recording: Arc<super::input_recording::RecordingHub>,
+        capture_read_wait_us: u64,
     }
 
     struct SharedDispatcher {
@@ -415,6 +433,18 @@ mod android {
         )
     }
     impl CommandDispatcher for SharedDispatcher {
+        fn take_capture_read_wait_us(&mut self) -> u64 {
+            self.dispatcher
+                .lock()
+                .map_or(0, |mut d| std::mem::take(&mut d.capture_read_wait_us))
+        }
+        fn dispatch_capture_stream(
+            &mut self,
+            frame: &Frame,
+            pipelined: bool,
+        ) -> Result<DispatchResponse, DispatchError> {
+            self.dispatch_with_pipeline(frame, pipelined)
+        }
         fn capture_failure_reason(&self) -> Option<CaptureFailure> {
             self.fence
                 .is_failed()
@@ -427,7 +457,7 @@ mod android {
             output: &mut Vec<u8>,
         ) -> Result<StatusCode, DispatchError> {
             output.clear();
-            let dispatcher = self.dispatcher.lock().map_err(|_| DispatchError)?;
+            let mut dispatcher = self.dispatcher.lock().map_err(|_| DispatchError)?;
             if !self.fence.request_allowed(frame.request_id) {
                 return Ok(if self.fence.is_failed() {
                     StatusCode::BackendFailure
@@ -439,6 +469,15 @@ mod android {
         }
 
         fn dispatch(&mut self, frame: &Frame) -> Result<DispatchResponse, DispatchError> {
+            self.dispatch_with_pipeline(frame, false)
+        }
+    }
+    impl SharedDispatcher {
+        fn dispatch_with_pipeline(
+            &mut self,
+            frame: &Frame,
+            pipelined: bool,
+        ) -> Result<DispatchResponse, DispatchError> {
             let mut dispatcher = self.dispatcher.lock().map_err(|_| DispatchError)?;
             if frame.command == Command::CaptureChunk
                 && !self.fence.request_allowed(frame.request_id)
@@ -447,7 +486,11 @@ mod android {
             }
             let capture = matches!(frame.command, Command::Capture | Command::CaptureStream);
             if !input_command(frame.command) && !capture {
-                return dispatcher.dispatch(frame);
+                let response = dispatcher.dispatch(frame);
+                if frame.command == Command::ReleaseCapture {
+                    self.fence.finish(frame.request_id);
+                }
+                return response;
             }
             if dispatcher.recording.active() && !capture {
                 return Ok(empty_response(StatusCode::InvalidRequest));
@@ -455,6 +498,14 @@ mod android {
             let Some(token) = self.fence.begin(frame.request_id) else {
                 if capture && self.fence.is_failed() {
                     return Ok(capture_failure_response(CaptureFailure::ControlUnavailable));
+                }
+                if self.fence.is_failed() && frame.command != Command::RecordingStart {
+                    return Ok(DispatchResponse {
+                        status: StatusCode::BackendFailure,
+                        payload: (InputFailure::ControlUnavailable as u32)
+                            .to_le_bytes()
+                            .to_vec(),
+                    });
                 }
                 return Ok(empty_response(if self.fence.is_failed() {
                     StatusCode::BackendFailure
@@ -464,9 +515,28 @@ mod android {
             };
             dispatcher.cancellation = token.clone();
             dispatcher.pointer_owner = frame.request_id;
-            let result = dispatcher.dispatch(frame);
-            self.fence.finish(frame.request_id);
+            let result =
+                if pipelined && frame.command == Command::CaptureStream && frame.payload.is_empty()
+                {
+                    Ok(dispatcher.capture(true, true, None))
+                } else {
+                    dispatcher.dispatch(frame)
+                };
+            // Keep the watchdog's cancellation token owned by the stream until its trailer/release.
+            if !result
+                .as_ref()
+                .is_ok_and(|r| r.status == StatusCode::Ok && r.payload.first() == Some(&3))
+            {
+                self.fence.finish(frame.request_id);
+            }
             if token.is_cancelled() {
+                self.fence.finish(frame.request_id);
+                if capture {
+                    if let Some(id) = dispatcher.capture.as_ref().map(|capture| capture.id) {
+                        // No metadata was sent: abandon this stream and its private bridge bytes.
+                        let _ = dispatcher.release_capture(&id.to_le_bytes());
+                    }
+                }
                 if capture && self.fence.is_failed() {
                     return Ok(capture_failure_response(CaptureFailure::ControlUnavailable));
                 }
@@ -587,6 +657,7 @@ mod android {
     }
 
     struct StagedCapture {
+        region: Option<root_protocol::capture_region::CaptureRegionMetadata>,
         id: u64,
         width: u32,
         height: u32,
@@ -594,6 +665,55 @@ mod android {
         format: u8,
         pixels: Vec<u8>,
         stages_us: Option<[u64; 6]>,
+        pipeline: Option<BridgeCapturePipeline>,
+    }
+
+    fn crop_region_capture(
+        mut capture: StagedCapture,
+        region: Option<root_protocol::capture_region::CaptureRegionRequest>,
+    ) -> Result<StagedCapture, CaptureFailure> {
+        let Some(region) = region else {
+            return Ok(capture);
+        };
+        if capture.region.is_some() {
+            return Ok(capture);
+        }
+        if capture.pipeline.is_some()
+            || capture.width != region.screen_width
+            || capture.height != region.screen_height
+        {
+            return Err(CaptureFailure::InvalidFrame);
+        }
+        let width = region.right - region.left;
+        let height = region.bottom - region.top;
+        let row_bytes = width as usize * 4;
+        for row in 0..height as usize {
+            let start = (region.top as usize + row) * capture.row_stride as usize
+                + region.left as usize * 4;
+            capture
+                .pixels
+                .copy_within(start..start + row_bytes, row * row_bytes);
+        }
+        capture.pixels.truncate(row_bytes * height as usize);
+        capture.width = width;
+        capture.height = height;
+        capture.row_stride = width * 4;
+        capture.region = Some(root_protocol::capture_region::CaptureRegionMetadata {
+            request: region,
+            rotation: None,
+            regional_readback: false,
+        });
+        Ok(capture)
+    }
+
+    struct BridgeCapturePipeline {
+        length: usize,
+        received: usize,
+        started: Instant,
+        receive_started: Instant,
+        deadline: Instant,
+        watchdog: CaptureWatchdogLease,
+        acquisition_us: Option<u64>,
     }
 
     impl CommandDispatcher for AndroidDispatcher {
@@ -613,22 +733,41 @@ mod android {
                 }
                 Command::RecordingFinish => return Ok(empty_response(StatusCode::InvalidRequest)),
                 Command::Capture | Command::CaptureStream => {
-                    return Ok(self.capture(frame.command == Command::CaptureStream))
+                    let region =
+                        root_protocol::capture_region::CaptureRegionRequest::decode(&frame.payload);
+                    return Ok(self.capture(
+                        frame.command == Command::CaptureStream,
+                        false,
+                        region,
+                    ));
                 }
                 Command::CaptureChunk => return Ok(self.capture_chunk(&frame.payload)),
                 Command::ReleaseCapture => return Ok(self.release_capture(&frame.payload)),
                 _ => {}
             }
+            self.input_failure = None;
             let response = match frame.command {
+                Command::Tap | Command::Swipe if self.active_pointer.is_some() => {
+                    StatusCode::InvalidRequest
+                }
                 Command::Tap => {
                     let x = read_i32(&frame.payload, 0);
                     let y = read_i32(&frame.payload, 4);
                     self.active_pointer = Some((0, x, y));
-                    let status = run_input_once(
-                        &["tap".to_owned(), x.to_string(), y.to_string()],
-                        &self.cancellation,
-                    )
-                    .0;
+                    let status = if self.input_bridge.is_some() {
+                        let cancellation = self.cancellation.clone();
+                        root_daemon::tap::inject_tap(
+                            || cancellation.is_cancelled(),
+                            |action| self.inject_pointer(action, x, y),
+                        )
+                    } else {
+                        let (status, _, reason) = run_input_once(
+                            &["tap".to_owned(), x.to_string(), y.to_string()],
+                            &self.cancellation,
+                        );
+                        self.input_failure = reason;
+                        status
+                    };
                     if status == StatusCode::Ok {
                         self.active_pointer = None;
                     }
@@ -638,7 +777,7 @@ mod android {
                     let duration = read_u32(&frame.payload, 16);
                     self.active_pointer =
                         Some((0, read_i32(&frame.payload, 8), read_i32(&frame.payload, 12)));
-                    let status = run_input_once(
+                    let (status, _, reason) = run_input_once(
                         &[
                             "swipe".to_owned(),
                             read_i32(&frame.payload, 0).to_string(),
@@ -648,8 +787,8 @@ mod android {
                             duration.to_string(),
                         ],
                         &self.cancellation,
-                    )
-                    .0;
+                    );
+                    self.input_failure = reason;
                     if status == StatusCode::Ok {
                         self.active_pointer = None;
                     }
@@ -678,7 +817,26 @@ mod android {
             };
             Ok(DispatchResponse {
                 status: response,
-                payload: Vec::new(),
+                payload: if matches!(
+                    response,
+                    StatusCode::BackendFailure | StatusCode::BackendUnavailable
+                ) && matches!(
+                    frame.command,
+                    Command::Tap
+                        | Command::Swipe
+                        | Command::KeyEvent
+                        | Command::PointerDown
+                        | Command::PointerMove
+                        | Command::PointerUp
+                ) {
+                    (self
+                        .input_failure
+                        .unwrap_or(InputFailure::InjectionRejected) as u32)
+                        .to_le_bytes()
+                        .to_vec()
+                } else {
+                    Vec::new()
+                },
             })
         }
     }
@@ -688,6 +846,22 @@ mod android {
             let Some((pointer_id, x, y)) = parse_pointer_position(payload) else {
                 return StatusCode::InvalidRequest;
             };
+            if self.input_bridge.is_some() {
+                if x < 0
+                    || y < 0
+                    || self.multi_active.contains_key(&pointer_id)
+                    || self.multi_active.len() >= 5
+                    || self.multi_active.is_empty() && self.active_pointer.is_some()
+                {
+                    return StatusCode::InvalidRequest;
+                }
+                self.multi_active.insert(pointer_id, (x, y));
+                self.active_pointer = Some((pointer_id, x, y));
+                return self.inject_multi(0, pointer_id, x, y);
+            }
+            if pointer_id != 0 {
+                return StatusCode::BackendUnavailable;
+            }
             if self.active_pointer.is_some() {
                 return StatusCode::InvalidRequest;
             }
@@ -703,6 +877,17 @@ mod android {
             let Some((pointer_id, x, y)) = parse_pointer_position(payload) else {
                 return StatusCode::InvalidRequest;
             };
+            if self.input_bridge.is_some() {
+                if x < 0 || y < 0 || !self.multi_active.contains_key(&pointer_id) {
+                    return StatusCode::InvalidRequest;
+                }
+                let status = self.inject_multi(2, pointer_id, x, y);
+                if status == StatusCode::Ok {
+                    self.multi_active.insert(pointer_id, (x, y));
+                    self.active_pointer = Some((pointer_id, x, y));
+                }
+                return status;
+            }
             if !self
                 .active_pointer
                 .is_some_and(|(active_id, _, _)| active_id == pointer_id)
@@ -720,6 +905,21 @@ mod android {
             let Some(pointer_id) = parse_pointer_id(payload) else {
                 return StatusCode::InvalidRequest;
             };
+            if self.input_bridge.is_some() {
+                let Some(&(x, y)) = self.multi_active.get(&pointer_id) else {
+                    return StatusCode::InvalidRequest;
+                };
+                let status = self.inject_multi(1, pointer_id, x, y);
+                if status == StatusCode::Ok {
+                    self.multi_active.remove(&pointer_id);
+                    self.active_pointer = self
+                        .multi_active
+                        .iter()
+                        .next()
+                        .map(|(&id, &(x, y))| (id, x, y));
+                }
+                return status;
+            }
             let Some((active_id, x, y)) = self.active_pointer else {
                 return StatusCode::InvalidRequest;
             };
@@ -734,10 +934,25 @@ mod android {
         }
 
         fn inject_pointer(&mut self, action: i32, x: i32, y: i32) -> StatusCode {
+            if action == 1 && !self.multi_active.is_empty() {
+                let status = self.inject_multi(3, 0, 0, 0);
+                if status == StatusCode::Ok {
+                    self.multi_active.clear();
+                }
+                return status;
+            }
             if let Some(bridge) = self.input_bridge.as_mut() {
-                return bridge
-                    .inject(action, x, y)
-                    .unwrap_or(StatusCode::BackendUnavailable);
+                return match bridge.inject(action, x, y) {
+                    Ok(status) => status,
+                    Err(error) => {
+                        self.input_failure = Some(if error.kind() == io::ErrorKind::TimedOut {
+                            InputFailure::Deadline
+                        } else {
+                            InputFailure::BridgeTransport
+                        });
+                        StatusCode::BackendUnavailable
+                    }
+                };
             }
             run_pointer(
                 match action {
@@ -751,7 +966,35 @@ mod android {
             )
         }
 
-        fn capture(&mut self, streamed: bool) -> DispatchResponse {
+        fn inject_multi(&mut self, action: i32, id: u8, x: i32, y: i32) -> StatusCode {
+            if action == 3 {
+                let points = self
+                    .multi_active
+                    .iter()
+                    .map(|(&id, &(x, y))| (id, x, y))
+                    .collect::<Vec<_>>();
+                return self
+                    .input_bridge
+                    .as_mut()
+                    .and_then(|bridge| bridge.cancel_pointers(&points).ok())
+                    .unwrap_or(StatusCode::BackendUnavailable);
+            }
+            self.input_bridge
+                .as_mut()
+                .and_then(|bridge| {
+                    bridge
+                        .inject(0x10000 | (i32::from(id) << 8) | action, x, y)
+                        .ok()
+                })
+                .unwrap_or(StatusCode::BackendUnavailable)
+        }
+
+        fn capture(
+            &mut self,
+            streamed: bool,
+            pipelined: bool,
+            region: Option<root_protocol::capture_region::CaptureRegionRequest>,
+        ) -> DispatchResponse {
             if self.cancellation.is_cancelled() {
                 return empty_response(StatusCode::Cancelled);
             }
@@ -761,10 +1004,22 @@ mod android {
                 return capture_failure_response(CaptureFailure::IdExhausted);
             };
             let mut backend = 1_u32;
-            let bridge_capture = self
-                .capture_bridge
-                .as_mut()
-                .and_then(|bridge| bridge.capture(id, self.cancellation.clone()).ok());
+            let bridge_capture = self.capture_bridge.as_mut().and_then(|bridge| {
+                if pipelined {
+                    bridge
+                        .begin_capture_pipeline(id, self.cancellation.clone(), started)
+                        .ok()
+                } else {
+                    bridge
+                        .capture(
+                            id,
+                            self.cancellation.clone(),
+                            &mut self.reusable_capture_pixels,
+                            region,
+                        )
+                        .ok()
+                }
+            });
             let capture = if let Some(capture) = bridge_capture {
                 backend = 2;
                 Ok(capture)
@@ -780,25 +1035,37 @@ mod android {
                 }
                 run_screencap(id, self.cancellation.clone(), remaining)
             };
-            // Stop wins over backend errors; neither diagnostics nor fallback may revive a request.
-            if self.cancellation.is_cancelled() {
-                return empty_response(StatusCode::Cancelled);
-            }
-            let capture = match capture {
+            let capture = match capture.and_then(|capture| crop_region_capture(capture, region)) {
                 Ok(capture) => capture,
                 Err(reason) => {
+                    // Stop wins over backend errors; diagnostics cannot revive a request.
+                    if self.cancellation.is_cancelled() {
+                        return empty_response(StatusCode::Cancelled);
+                    }
                     return capture_failure_response(if started.elapsed() >= CAPTURE_TIMEOUT {
                         CaptureFailure::Deadline
                     } else {
                         reason
-                    })
+                    });
                 }
             };
             if self.cancellation.is_cancelled() {
+                if capture.pipeline.is_some() {
+                    // Metadata is still private: discard the unread bridge stream as well.
+                    if let Some(bridge) = self.capture_bridge.as_mut() {
+                        bridge.abort_capture();
+                    }
+                }
                 return empty_response(StatusCode::Cancelled);
             }
             self.next_capture_id = id;
-            let byte_length = u64::try_from(capture.pixels.len()).expect("capture is bounded");
+            let byte_length = u64::try_from(
+                capture
+                    .pipeline
+                    .as_ref()
+                    .map_or(capture.pixels.len(), |p| p.length),
+            )
+            .expect("capture is bounded");
             let mut payload = Vec::with_capacity(32);
             payload.extend_from_slice(&capture.id.to_le_bytes());
             payload.extend_from_slice(&capture.width.to_le_bytes());
@@ -809,17 +1076,24 @@ mod android {
             payload.extend_from_slice(&byte_length.to_le_bytes());
             if streamed {
                 payload.extend_from_slice(
-                    &u64::try_from(started.elapsed().as_micros())
-                        .unwrap_or(u64::MAX)
-                        .to_le_bytes(),
+                    &(if capture.pipeline.is_some() {
+                        0
+                    } else {
+                        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+                    })
+                    .to_le_bytes(),
                 );
                 payload.extend_from_slice(&backend.to_le_bytes());
                 payload.extend_from_slice(&[0; 4]);
-                payload.insert(0, 0);
+                payload.insert(0, if capture.pipeline.is_some() { 3 } else { 0 });
                 if let Some(stages) = capture.stages_us {
                     for duration in stages {
                         payload.extend_from_slice(&duration.to_le_bytes());
                     }
+                }
+                if let Some(region) = capture.region {
+                    payload[0] = 5;
+                    payload.extend_from_slice(&region.encode());
                 }
             }
             self.capture = Some(capture);
@@ -829,7 +1103,7 @@ mod android {
             }
         }
 
-        fn capture_chunk(&self, payload: &[u8]) -> DispatchResponse {
+        fn capture_chunk(&mut self, payload: &[u8]) -> DispatchResponse {
             let mut output = Vec::new();
             let status = self.fill_capture_chunk(payload, &[], &mut output);
             DispatchResponse {
@@ -839,16 +1113,17 @@ mod android {
         }
 
         fn fill_capture_chunk(
-            &self,
+            &mut self,
             payload: &[u8],
             prefix: &[u8],
             output: &mut Vec<u8>,
         ) -> StatusCode {
             output.clear();
+            self.capture_read_wait_us = 0;
             let id = read_u64(payload, 0);
             let offset = usize::try_from(read_u32(payload, 8)).unwrap_or(usize::MAX);
             let length = usize::try_from(read_u32(payload, 12)).unwrap_or(usize::MAX);
-            let Some(capture) = self.capture.as_ref().filter(|capture| capture.id == id) else {
+            let Some(capture) = self.capture.as_mut().filter(|capture| capture.id == id) else {
                 return StatusCode::InvalidRequest;
             };
             if length == 0 || length > MAX_CAPTURE_CHUNK_BYTES {
@@ -857,6 +1132,63 @@ mod android {
             let Some(end) = offset.checked_add(length) else {
                 return StatusCode::InvalidRequest;
             };
+            if let Some(pipeline) = capture.pipeline.as_mut() {
+                if offset != pipeline.received
+                    || end > pipeline.length
+                    || pipeline.acquisition_us.is_some()
+                {
+                    return StatusCode::InvalidRequest;
+                }
+                if self.cancellation.is_cancelled() {
+                    return StatusCode::Cancelled;
+                }
+                output.extend_from_slice(prefix);
+                output.resize(prefix.len() + length, 0);
+                let Some(bridge) = self.capture_bridge.as_mut() else {
+                    return StatusCode::BackendFailure;
+                };
+                let read_started = Instant::now();
+                let read = (|| -> io::Result<()> {
+                    bridge.read_bounded(
+                        &mut output[prefix.len()..],
+                        pipeline.deadline.saturating_duration_since(Instant::now()),
+                    )?;
+                    pipeline.received = end;
+                    if end == pipeline.length {
+                        let mut trailer = [0; 40];
+                        bridge.read_bounded(
+                            &mut trailer,
+                            pipeline.deadline.saturating_duration_since(Instant::now()),
+                        )?;
+                        capture.stages_us = Some(
+                            root_daemon::decode_capture_stage_trailer(
+                                &trailer,
+                                elapsed_micros(pipeline.receive_started),
+                            )
+                            .ok_or_else(|| io::Error::other("invalid capture timings"))?,
+                        );
+                        pipeline.acquisition_us = Some(elapsed_micros(pipeline.started));
+                        pipeline.watchdog.finish();
+                    }
+                    Ok(())
+                })();
+                self.capture_read_wait_us = elapsed_micros(read_started);
+                if read.is_err() {
+                    pipeline.watchdog.finish();
+                    bridge.abort_capture();
+                    output.clear();
+                    return if self.cancellation.is_cancelled() {
+                        StatusCode::Cancelled
+                    } else {
+                        StatusCode::BackendFailure
+                    };
+                }
+                if self.cancellation.is_cancelled() {
+                    output.clear();
+                    return StatusCode::Cancelled;
+                }
+                return StatusCode::Ok;
+            }
             let Some(chunk) = capture.pixels.get(offset..end) else {
                 return StatusCode::InvalidRequest;
             };
@@ -872,7 +1204,39 @@ mod android {
                 .as_ref()
                 .is_some_and(|capture| capture.id == id)
             {
-                self.capture = None;
+                // Release is the ownership hand-off point. Until now the frame remains
+                // addressable by CaptureChunk and must not be reused by another request.
+                if let Some(capture) = self.capture.take() {
+                    if let Some(pipeline) = capture.pipeline {
+                        if let (Some(acquisition_us), Some(stages_us)) =
+                            (pipeline.acquisition_us, capture.stages_us)
+                        {
+                            return DispatchResponse {
+                                status: StatusCode::Ok,
+                                payload: root_protocol::CapturePipelineCompletion {
+                                    capture_id: id,
+                                    pixel_bytes: pipeline.length as u64,
+                                    acquisition_us,
+                                    stages_us,
+                                    transfer: root_protocol::CaptureTransferSummary {
+                                        encode_us: 0,
+                                        write_us: 0,
+                                        packets: (pipeline.length as u64)
+                                            .div_ceil(MAX_CAPTURE_CHUNK_BYTES as u64),
+                                    },
+                                }
+                                .encode()
+                                .to_vec(),
+                            };
+                        }
+                        pipeline.watchdog.finish();
+                        if let Some(bridge) = self.capture_bridge.as_mut() {
+                            bridge.abort_capture();
+                        }
+                        return empty_response(StatusCode::BackendFailure);
+                    }
+                    self.reusable_capture_pixels = capture.pixels;
+                }
                 DispatchResponse::success()
             } else {
                 empty_response(StatusCode::InvalidRequest)
@@ -890,20 +1254,103 @@ mod android {
         }
     }
 
+    use root_daemon::capture_watchdog::{CaptureWatchdog, CaptureWatchdogLease};
+
     struct RootInputProcess {
         apk: PathBuf,
         child: Child,
         input: Option<ChildStdin>,
         output: ChildStdout,
+        capture_watchdog: Option<CaptureWatchdog>,
         failed: bool,
     }
 
     impl RootInputProcess {
+        fn abort_capture(&mut self) {
+            if let Some(watchdog) = self.capture_watchdog.as_ref() {
+                watchdog.finish_active();
+            }
+            self.failed = true;
+            self.input.take();
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+
+        fn begin_capture_pipeline(
+            &mut self,
+            id: u64,
+            cancellation: InputCancellation,
+            started: Instant,
+        ) -> io::Result<StagedCapture> {
+            if self.failed || cancellation.is_cancelled() {
+                return Err(io::Error::other("capture bridge unavailable"));
+            }
+            let pid = i32::try_from(self.child.id())
+                .map_err(|_| io::Error::other("invalid capture PID"))?;
+            let deadline = started + CAPTURE_TIMEOUT;
+            let watchdog = self
+                .capture_watchdog
+                .as_ref()
+                .ok_or_else(|| io::Error::other("capture watchdog unavailable"))?
+                .arm(pid, cancellation, deadline)?;
+            let result = (|| -> io::Result<_> {
+                let input = self
+                    .input
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("capture pipe closed"))?;
+                input.write_all(&2_u32.to_be_bytes())?;
+                input.flush()?;
+                let mut status = [0; 4];
+                self.read_bounded(
+                    &mut status,
+                    deadline.saturating_duration_since(Instant::now()),
+                )?;
+                if u32::from_be_bytes(status) != 0 {
+                    return Err(io::Error::other("capture rejected"));
+                }
+                let mut header = [0; 20];
+                self.read_bounded(
+                    &mut header,
+                    deadline.saturating_duration_since(Instant::now()),
+                )?;
+                let geometry = root_daemon::decode_capture_bridge_header(&header)
+                    .ok_or_else(|| io::Error::other("invalid capture header"))?;
+                Ok(geometry)
+            })();
+            match result {
+                Ok([width, height, row_stride, length]) => Ok(StagedCapture {
+                    region: None,
+                    id,
+                    width,
+                    height,
+                    row_stride,
+                    format: 2,
+                    pixels: Vec::new(),
+                    stages_us: None,
+                    pipeline: Some(BridgeCapturePipeline {
+                        length: length as usize,
+                        received: 0,
+                        started,
+                        receive_started: Instant::now(),
+                        deadline,
+                        watchdog,
+                        acquisition_us: None,
+                    }),
+                }),
+                Err(error) => {
+                    watchdog.finish();
+                    self.abort_capture();
+                    Err(error)
+                }
+            }
+        }
+
         fn start(apk: &Path) -> io::Result<Self> {
             Self::start_entry(
                 apk,
                 "com.autoscript.runtime.service.RootInputBridge",
-                0x41534931,
+                0x41534932,
+                false,
             )
         }
 
@@ -912,10 +1359,16 @@ mod android {
                 apk,
                 "com.autoscript.runtime.service.RootCaptureBridge",
                 0x41534331,
+                true,
             )
         }
 
-        fn start_entry(apk: &Path, entry: &str, magic: u32) -> io::Result<Self> {
+        fn start_entry(
+            apk: &Path,
+            entry: &str,
+            magic: u32,
+            capture_watchdog: bool,
+        ) -> io::Result<Self> {
             let name = apk
                 .to_str()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid APK path"))?;
@@ -930,6 +1383,19 @@ mod android {
                     "bridge requires an installed APK",
                 ));
             }
+            // Allocate the persistent watchdog before spawning the bridge so a worker-start
+            // failure cannot leave an unowned app_process child behind.
+            let capture_watchdog = capture_watchdog
+                .then(|| {
+                    CaptureWatchdog::new(|pid| {
+                        // SAFETY: the lease completion gate finishes before this owned
+                        // child can be reaped, so its PID cannot yet be reused.
+                        unsafe {
+                            libc::kill(pid, libc::SIGKILL);
+                        }
+                    })
+                })
+                .transpose()?;
             let mut child = ProcessCommand::new("/system/bin/app_process")
                 .env("CLASSPATH", apk)
                 .arg("/system/bin")
@@ -951,6 +1417,7 @@ mod android {
                 child,
                 input: Some(input),
                 output,
+                capture_watchdog,
                 failed: false,
             };
             let mut hello = [0; 4];
@@ -965,41 +1432,33 @@ mod android {
             &mut self,
             id: u64,
             cancellation: InputCancellation,
+            reusable_pixels: &mut Vec<u8>,
+            region: Option<root_protocol::capture_region::CaptureRegionRequest>,
         ) -> io::Result<StagedCapture> {
             if self.failed || cancellation.is_cancelled() {
                 return Err(io::Error::other("capture bridge unavailable"));
             }
-            let finished = Arc::new(AtomicBool::new(false));
-            let signal = finished.clone();
             let pid = i32::try_from(self.child.id())
                 .map_err(|_| io::Error::other("invalid capture PID"))?;
             let deadline = Instant::now() + CAPTURE_TIMEOUT;
-            let watchdog = std::thread::Builder::new()
-                .name("root-capture-deadline".into())
-                .spawn(move || {
-                    cancellation.register_watchdog(std::thread::current());
-                    loop {
-                        if signal.load(Ordering::Acquire) {
-                            break;
-                        }
-                        if cancellation.is_cancelled() || Instant::now() >= deadline {
-                            // SAFETY: this child remains owned/unreaped until the watchdog joins.
-                            unsafe {
-                                libc::kill(pid, libc::SIGKILL);
-                            }
-                            break;
-                        }
-                        std::thread::park_timeout(
-                            deadline.saturating_duration_since(Instant::now()),
-                        );
-                    }
-                })?;
+            let watchdog = self
+                .capture_watchdog
+                .as_ref()
+                .ok_or_else(|| io::Error::other("capture watchdog unavailable"))?
+                .arm(pid, cancellation, deadline)?;
             let result = (|| {
                 let input = self
                     .input
                     .as_mut()
                     .ok_or_else(|| io::Error::other("capture pipe closed"))?;
-                input.write_all(&2_u32.to_be_bytes())?;
+                input.write_all(&(if region.is_some() { 3_u32 } else { 2 }).to_be_bytes())?;
+                if let Some(region) = region {
+                    for word in region.encode().chunks_exact(4) {
+                        input.write_all(
+                            &u32::from_le_bytes(word.try_into().expect("fixed word")).to_be_bytes(),
+                        )?;
+                    }
+                }
                 input.flush()?;
                 let mut status = [0; 4];
                 self.read_bounded(&mut status, CAPTURE_TIMEOUT)?;
@@ -1024,9 +1483,36 @@ mod android {
                 {
                     return Err(io::Error::other("invalid capture header"));
                 }
-                let mut pixels = vec![0; length as usize];
+                let geometry = if let Some(region) = region {
+                    let mut bytes = [0; 16];
+                    self.read_bounded(&mut bytes, CAPTURE_TIMEOUT)?;
+                    let word = |offset| {
+                        u32::from_be_bytes(
+                            bytes[offset..offset + 4].try_into().expect("fixed word"),
+                        )
+                    };
+                    if word(0) != region.screen_width
+                        || word(4) != region.screen_height
+                        || word(8) > 3
+                        || word(12) != 1
+                        || width != region.right - region.left
+                        || height != region.bottom - region.top
+                    {
+                        return Err(io::Error::other("invalid region geometry"));
+                    }
+                    Some(root_protocol::capture_region::CaptureRegionMetadata {
+                        request: region,
+                        rotation: Some(word(8)),
+                        regional_readback: true,
+                    })
+                } else {
+                    None
+                };
+                // Keep the allocation owned by the dispatcher between captures. The bytes are
+                // only moved out after the complete bounded read succeeds.
+                reusable_pixels.resize(length as usize, 0);
                 let receive_started = Instant::now();
-                self.read_bounded(&mut pixels, CAPTURE_TIMEOUT)?;
+                self.read_bounded(reusable_pixels, CAPTURE_TIMEOUT)?;
                 let mut trailer = [0; 40];
                 self.read_bounded(&mut trailer, CAPTURE_TIMEOUT)?;
                 let stages_us = root_daemon::decode_capture_stage_trailer(
@@ -1034,7 +1520,9 @@ mod android {
                     u64::try_from(receive_started.elapsed().as_micros()).unwrap_or(u64::MAX),
                 )
                 .ok_or_else(|| io::Error::other("invalid capture timings"))?;
+                let pixels = std::mem::take(reusable_pixels);
                 Ok(StagedCapture {
+                    region: geometry,
                     id,
                     width,
                     height,
@@ -1042,11 +1530,10 @@ mod android {
                     format: 2,
                     pixels,
                     stages_us: Some(stages_us),
+                    pipeline: None,
                 })
             })();
-            finished.store(true, Ordering::Release);
-            watchdog.thread().unpark();
-            let _ = watchdog.join();
+            watchdog.finish();
             if result.is_err() {
                 self.failed = true;
                 self.input.take();
@@ -1107,6 +1594,32 @@ mod android {
         }
 
         fn inject(&mut self, action: i32, x: i32, y: i32) -> io::Result<StatusCode> {
+            let mut request = [0; 12];
+            request[..4].copy_from_slice(&action.to_be_bytes());
+            request[4..8].copy_from_slice(&x.to_be_bytes());
+            request[8..].copy_from_slice(&y.to_be_bytes());
+            self.input_request(&request)
+        }
+        fn cancel_pointers(&mut self, points: &[(u8, i32, i32)]) -> io::Result<StatusCode> {
+            if points.is_empty() || points.len() > 5 {
+                return Err(io::Error::other("invalid cancellation snapshot"));
+            }
+            let mut request = Vec::with_capacity(12 + points.len() * 12);
+            request.extend_from_slice(&0x10004_i32.to_be_bytes());
+            request.extend_from_slice(
+                &i32::try_from(points.len())
+                    .expect("five contacts")
+                    .to_be_bytes(),
+            );
+            request.extend_from_slice(&0_i32.to_be_bytes());
+            for &(id, x, y) in points {
+                request.extend_from_slice(&i32::from(id).to_be_bytes());
+                request.extend_from_slice(&x.to_be_bytes());
+                request.extend_from_slice(&y.to_be_bytes());
+            }
+            self.input_request(&request)
+        }
+        fn input_request(&mut self, request: &[u8]) -> io::Result<StatusCode> {
             if self.failed {
                 // A fresh bridge may send UP even without an acknowledged DOWN, to clear an
                 // uncertain injection. The arbiter flushes this release before new business input.
@@ -1117,11 +1630,7 @@ mod android {
                     .input
                     .as_mut()
                     .ok_or_else(|| io::Error::other("input bridge closed"))?;
-                let mut request = [0; 12];
-                request[..4].copy_from_slice(&action.to_be_bytes());
-                request[4..8].copy_from_slice(&x.to_be_bytes());
-                request[8..].copy_from_slice(&y.to_be_bytes());
-                input.write_all(&request)?;
+                input.write_all(request)?;
                 input.flush()?;
                 let mut reply = [0; 4];
                 self.read_bounded(&mut reply, Duration::from_secs(2))?;
@@ -1144,6 +1653,9 @@ mod android {
 
     impl Drop for RootInputProcess {
         fn drop(&mut self) {
+            // Stop the deadline worker before killing/reaping the child. This keeps the
+            // watchdog's PID ownership fence valid even during bridge teardown.
+            self.capture_watchdog.take();
             self.input.take();
             if !self.failed {
                 // EOF lets the bridge release its pointer; bound exit even if Android Binder hangs.
@@ -1334,12 +1846,14 @@ mod android {
             };
             let pixels = bytes.split_off(header_bytes);
             Ok(StagedCapture {
+                region: None,
                 id,
                 width,
                 height,
                 row_stride,
                 format,
                 pixels,
+                pipeline: None,
                 stages_us: None,
             })
         })();
@@ -1367,9 +1881,9 @@ mod android {
     fn run_input_once(
         arguments: &[String],
         cancellation: &InputCancellation,
-    ) -> (StatusCode, bool) {
+    ) -> (StatusCode, bool, Option<InputFailure>) {
         if cancellation.is_cancelled() {
-            return (StatusCode::Cancelled, false);
+            return (StatusCode::Cancelled, false, None);
         }
         let timeout = if arguments.first().is_some_and(|value| value == "swipe") {
             Duration::from_millis(
@@ -1393,28 +1907,46 @@ mod android {
             cancellation.clone(),
         ) {
             Ok(child) => child,
-            Err(_) => return (StatusCode::BackendUnavailable, false),
+            Err(_) => {
+                return (
+                    StatusCode::BackendUnavailable,
+                    false,
+                    Some(InputFailure::ProcessStart),
+                )
+            }
         };
         let result = child.wait();
         if cancellation.is_cancelled() {
-            return (StatusCode::Cancelled, false);
+            return (StatusCode::Cancelled, false, None);
         }
         let timed_out = child.timed_out.load(Ordering::Acquire);
         match result {
-            Ok(status) if status.success() && !timed_out => (StatusCode::Ok, false),
-            Ok(_) => (StatusCode::BackendFailure, !timed_out),
-            Err(_) => (StatusCode::BackendUnavailable, false),
+            Ok(status) if status.success() && !timed_out => (StatusCode::Ok, false, None),
+            Ok(_) => (
+                StatusCode::BackendFailure,
+                !timed_out,
+                Some(if timed_out {
+                    InputFailure::Deadline
+                } else {
+                    InputFailure::ProcessExit
+                }),
+            ),
+            Err(_) => (
+                StatusCode::BackendUnavailable,
+                false,
+                Some(InputFailure::ProcessExit),
+            ),
         }
     }
 
     fn run_input_retryable(arguments: &[String], cancellation: &InputCancellation) -> StatusCode {
-        let (mut status, mut retryable) = run_input_once(arguments, cancellation);
+        let (mut status, mut retryable, _) = run_input_once(arguments, cancellation);
         for delay in INPUT_RETRY_DELAYS {
             if !retryable {
                 break;
             }
             std::thread::sleep(delay);
-            (status, retryable) = run_input_once(arguments, cancellation);
+            (status, retryable, _) = run_input_once(arguments, cancellation);
         }
         status
     }
@@ -1450,7 +1982,7 @@ mod android {
 
     fn parse_pointer_id(payload: &[u8]) -> Option<u8> {
         let pointer_id = *payload.first()?;
-        (pointer_id == 0 && payload.get(1..4) == Some(&[0, 0, 0])).then_some(pointer_id)
+        (pointer_id <= 4 && payload.get(1..4) == Some(&[0, 0, 0])).then_some(pointer_id)
     }
 
     fn read_i32(bytes: &[u8], offset: usize) -> i32 {

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "network.request",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/network.request/1/network.request.schema.json",
+  "title": "HTTP请求",
+  "category": "variable",
+  "summary": "有界异步HTTP/HTTPS，系统TLS校验不可关闭，不自动重定向/重试/下载。请求正文UTF-8最多8KiB、头4KiB/32项；GET/HEAD不得带正文。响应JSON含status、headers、bodyBase64、elapsedMs；正文最多16KiB（超限报错），用Text.fromBase64读取UTF-8响应。响应头最多1KiB，整体32KiB；停止取消连接，不记录网址/头/正文。",
+  "searchTerms": [
+    "系统",
+    "网络",
+    "文件",
+    "Network.request",
+    "HTTP请求"
+  ],
+  "requiredCapabilities": [
+    "network.http"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "method",
+      "label": "请求方式",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "GET"
+    },
+    {
+      "path": "methodVariable",
+      "label": "请求方式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "url",
+      "label": "http/https网址",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "https://example.com"
+    },
+    {
+      "path": "urlVariable",
+      "label": "http/https网址来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "headersJson",
+      "label": "请求头JSON对象",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "{}"
+    },
+    {
+      "path": "headersJsonVariable",
+      "label": "请求头JSON对象来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "body",
+      "label": "请求正文（UTF-8）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    },
+    {
+      "path": "bodyVariable",
+      "label": "请求正文（UTF-8）来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "timeoutMs",
+      "label": "总超时毫秒",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "10000"
+    },
+    {
+      "path": "timeoutMsVariable",
+      "label": "总超时毫秒来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "maxResponseBytes",
+      "label": "响应正文上限字节",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "8192"
+    },
+    {
+      "path": "maxResponseBytesVariable",
+      "label": "响应正文上限字节来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

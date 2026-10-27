@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/ocr.alphanumericv5/1/ocr.alphanumericv5.schema.json",
+  "title": "ocr.alphanumericv5 node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ocr.alphanumericv5"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameVariable",
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "minimumScorePermille",
+        "resultVariable"
+      ],
+      "properties": {
+        "frameVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "bottom": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "minimumScorePermille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

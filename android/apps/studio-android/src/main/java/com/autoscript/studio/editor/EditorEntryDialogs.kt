@@ -1,14 +1,14 @@
 package com.autoscript.studio
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -21,37 +21,34 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectDebugSettings
 import com.autoscript.project.store.ProjectVariable
 import com.autoscript.project.store.ProjectFlow
-import com.autoscript.project.store.ProjectVariableScope
 import com.autoscript.project.store.ProjectVariableType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,9 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.autoscript.studio.StudioDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.isActive
 
 private val EntryBlue = Color(0xFF3D5AFE)
 private val EntryAccent = Color(0xFF3A6EFF)
@@ -111,727 +106,79 @@ internal fun ConfiguredEntryArgumentsDialog(
     }
     if (debug) {
         // The owner of the draft must own every close path, including system Back and outside taps.
-        DebugPage(onDismiss, accept, knownVariables, true, debugSettings, {}, kind, arguments, confirmLabel, standalone = true)
+        DebugPage(onDismiss, accept, knownVariables, debugSettings, { _, complete ->
+            complete(Result.failure(IllegalStateException("当前入口不保存项目配置")))
+        }, kind, arguments, confirmLabel,
+            expressionVariables = calculationVariables(variables, currentFlowId, flows)
+                .filter { it.type != ProjectVariableType.IMAGE })
         return true
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 560.dp).heightIn(max = 540.dp).fillMaxHeight(.68f),
             color = Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 9.dp) {
-            CommonPage(onDismiss, accept, true, knownVariables, knownLabels, currentFlowId, flows,
+            CommonPage(onDismiss, accept, knownVariables, knownLabels, currentFlowId, flows,
                 variables, onManageVariables, kind, arguments, confirmLabel)
         }
     }
     return true
 }
 
+/** Only live visual-editor entry points. File resources and screenshots have their own owners. */
 @Composable
 internal fun EditorEntryDialog(
     entry: EditorToolPanel,
-    projectName: String,
-    files: List<StudioProjectFile>,
     onDismiss: () -> Unit,
-    onInsert: (String) -> Unit,
-    onOpenFile: (StudioProjectFile) -> Unit = {},
-    onDeleteFiles: (List<StudioProjectFile>) -> Unit = {},
     onOpenImageTools: ((Long) -> Unit)? = null,
-    onOpenImageToolMode: ((ImageToolMode, Long) -> Unit)? = null,
     onCreateImageBlock: ((String) -> Unit)? = null,
     onOpenImageLibrary: (() -> Unit)? = null,
     onTestRecognition: (() -> Unit)? = null,
-    onRemoveCaptureOverlay: (() -> Unit)? = null,
     availableVariables: List<String> = emptyList(),
     availableLabels: List<String> = emptyList(),
     projectVariables: List<ProjectVariable> = emptyList(),
     currentFlowId: String = "",
     projectFlows: List<ProjectFlow> = emptyList(),
     onManageVariables: (() -> Unit)? = null,
-    /** The visual editor exposes Flow variables through the generated `__vars` table. */
-    visualMode: Boolean = false,
     debugSettings: ProjectDebugSettings = ProjectDebugSettings(),
-    onSaveDebugSettings: (ProjectDebugSettings) -> Unit = {},
+    onSaveDebugSettings: (ProjectDebugSettings, (Result<ProjectDebugSettings>) -> Unit) -> Unit = { _, complete ->
+        complete(Result.failure(IllegalStateException("当前没有可保存的项目")))
+    },
+    onInsert: (String) -> Unit,
 ) {
-    if (entry == EditorToolPanel.LOOP) {
-        VisualLoopDialog(projectVariables, currentFlowId, projectFlows, onDismiss, onInsert, onManageVariables)
-        return
-    }
-    if (entry in setOf(EditorToolPanel.DATA_BACKFILL, EditorToolPanel.VARIABLE_CHECK, EditorToolPanel.RUNTIME_VARIABLES)) {
-        // Live inspectors require a project/runtime owner and are routed before this shared form.
-        StudioPanelDialog(title = "需要项目上下文", onDismiss = onDismiss, showFooter = false) {
-            Text("请从项目的可视化编辑器打开此功能。", fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+    when (entry) {
+        EditorToolPanel.LOOP -> VisualLoopDialog(projectVariables, currentFlowId, projectFlows, onDismiss, onInsert, onManageVariables)
+        EditorToolPanel.VARIABLE_CHECK, EditorToolPanel.RUNTIME_VARIABLES -> {
+            StudioPanelDialog(title = "需要项目上下文", onDismiss = onDismiss, showFooter = false) {
+                Text("请从项目的可视化编辑器打开此功能。", fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+            }
         }
-        return
-    }
-    if (entry == EditorToolPanel.IMAGE && onCreateImageBlock != null) {
-        VisualImageHomeDialog(onDismiss, onCreateImageBlock,
-            onCapture = onOpenImageTools?.let { open -> { open(0L) } },
-            onLibrary = onOpenImageLibrary,
-            onTest = onTestRecognition)
-        return
-    }
-    if (entry == EditorToolPanel.DEBUG) {
-        DebugPage(onDismiss, onInsert, availableVariables, visualMode,
-            debugSettings, onSaveDebugSettings, standalone = true)
-        return
-    }
-    if (entry == EditorToolPanel.AI) {
-        StudioPanelDialog("AI · 尚未开放", onDismiss, compactHeader = true) {
+        EditorToolPanel.IMAGE -> if (onCreateImageBlock != null) {
+            VisualImageHomeDialog(onDismiss, onCreateImageBlock,
+                onCapture = onOpenImageTools?.let { open -> { open(0L) } },
+                onLibrary = onOpenImageLibrary, onTest = onTestRecognition)
+        } else {
+            StudioPanelDialog("需要项目上下文", onDismiss, showFooter = false) {
+                Text("请从项目的可视化编辑器打开图像工具。", fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+            }
+        }
+        EditorToolPanel.DEBUG -> DebugPage(onDismiss, onInsert, availableVariables,
+            debugSettings, onSaveDebugSettings,
+            expressionVariables = calculationVariables(projectVariables, currentFlowId, projectFlows)
+                .filter { it.type != ProjectVariableType.IMAGE })
+        EditorToolPanel.AI -> StudioPanelDialog("AI · 尚未开放", onDismiss, compactHeader = true) {
             Text("AI 功能已延期，当前不提供发送、附件、账号或服务配置；不会生成或插入模拟结果。",
                 fontSize = 12.sp, color = EntryMuted, modifier = Modifier.padding(12.dp))
         }
-        return
-    }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        val panelModifier = when (entry) {
-            EditorToolPanel.FILES -> Modifier.fillMaxWidth(.96f).fillMaxHeight(.88f).widthIn(max = 520.dp)
-            EditorToolPanel.JUDGMENT -> Modifier.width(132.dp).height(132.dp)
-            EditorToolPanel.COMMON -> Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp)
-            EditorToolPanel.IMAGE -> Modifier.fillMaxWidth(.96f).widthIn(max = 550.dp).height(310.dp)
-            else -> Modifier.fillMaxWidth(.90f).widthIn(max = 520.dp).height(
+        else -> Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(if (entry == EditorToolPanel.JUDGMENT) Modifier.width(132.dp).height(132.dp)
+                else Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp),
+                color = Color.White, shape = RoundedCornerShape(2.dp), shadowElevation = 8.dp) {
                 when (entry) {
-                    // 工具页按单屏内容量固定，避免卡片之间留出大段无用空白。
-                    EditorToolPanel.TOOLS -> 342.dp
-                    else -> 390.dp
-                },
-            )
-        }
-        Surface(
-            modifier = panelModifier,
-            color = Color.White,
-            shape = RoundedCornerShape(2.dp),
-            shadowElevation = 8.dp,
-        ) {
-            when (entry) {
-                EditorToolPanel.FILES -> FileManagerPage(projectName, files, onDismiss, onOpenFile, onDeleteFiles)
-                EditorToolPanel.TOOLS -> ToolSettingsPage(
-                    onDismiss,
-                    onInsert,
-                    onOpenImageTools,
-                    onOpenImageLibrary,
-                    onRemoveCaptureOverlay,
-                    onTestRecognition,
-                )
-                EditorToolPanel.IMAGE -> ImageRecognitionPage(onDismiss, onInsert, files, onOpenImageTools)
-                EditorToolPanel.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
-                EditorToolPanel.LOOP -> Unit // Shared adaptive dialog is handled above.
-                EditorToolPanel.COMMON -> CommonPage(onDismiss, onInsert, visualMode, availableVariables,
-                    availableLabels, currentFlowId, projectFlows, projectVariables, onManageVariables)
-                else -> Unit
-            }
-        }
-    }
-}
-
-private sealed interface FileRow {
-    val key: String
-
-    data class Up(override val key: String = "..") : FileRow
-    data class Folder(val name: String, val path: String, val count: Int) : FileRow {
-        override val key: String get() = "d:$path"
-    }
-    data class Entry(val file: StudioProjectFile) : FileRow {
-        override val key: String get() = "f:${file.path}"
-    }
-}
-
-/**
- * `service_tk_xt_wj_gl_layout.xml`：40dp 路径行 + 菜单、可隐藏的搜索行、常驻“已选择N项 / 全选”、
- * 45dp 的文件夹/文件/返回行，以及“取消”与多选图标行两套底栏。
- * 数据来自项目清单（[projectFileCatalog]），目录按路径推导，`.studio`、`generated` 不会出现。
- * 清单里的源文件、Lua 入口和 project.json 由各自的管理入口负责，这里只能删除图片/字库资源。
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun FileManagerPage(
-    projectName: String,
-    files: List<StudioProjectFile>,
-    onDismiss: () -> Unit,
-    onOpenFile: (StudioProjectFile) -> Unit,
-    onDeleteFiles: (List<StudioProjectFile>) -> Unit,
-) {
-    var currentDir by remember(projectName) { mutableStateOf("") }
-    var selectedKeys by remember(projectName) { mutableStateOf<List<String>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var menuVisible by remember { mutableStateOf(false) }
-    var reverseSort by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    val timestamp = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
-    val rows = remember(files, currentDir, query, reverseSort) {
-        val prefix = if (currentDir.isEmpty()) "" else "$currentDir/"
-        val inScope = files.filter { it.path.startsWith(prefix) }
-        val folders = inScope
-            .mapNotNull { file -> file.path.removePrefix(prefix).substringBefore('/', "").takeIf(String::isNotEmpty) }
-            .distinct()
-            .map { name -> FileRow.Folder(name, prefix + name, inScope.count { it.path.startsWith("$prefix$name/") }) }
-        val entries = inScope.filter { !it.path.removePrefix(prefix).contains('/') }.map(FileRow::Entry)
-        val needle = query.trim()
-        val visibleFolders = folders
-            .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }
-            .sortedBy { it.name.lowercase(Locale.ROOT) }
-        val visibleEntries = entries
-            .filter { needle.isEmpty() || it.file.path.substringAfterLast('/').contains(needle, ignoreCase = true) }
-            .sortedBy { it.file.path.lowercase(Locale.ROOT) }
-        buildList {
-            if (currentDir.isNotEmpty()) add(FileRow.Up())
-            addAll(if (reverseSort) visibleFolders.asReversed() else visibleFolders)
-            addAll(if (reverseSort) visibleEntries.asReversed() else visibleEntries)
-        }
-    }
-    val selectableKeys = rows.filterNot { it is FileRow.Up }.map(FileRow::key)
-    val selectionMode = selectedKeys.isNotEmpty()
-    val selectedPaths = selectedKeys.filter { it.startsWith("f:") }.map { it.removePrefix("f:") }.toSet()
-    val selectedFiles = files.filter { it.path in selectedPaths }
-    val selectedFolders = selectedKeys.count { it.startsWith("d:") }
-    val allSelected = selectableKeys.isNotEmpty() && selectableKeys.all(selectedKeys::contains)
-    val deletable = selectedFolders == 0 && selectedFiles.isNotEmpty() && selectedFiles.all {
-        it.kind == StudioProjectFileKind.IMAGE || it.kind == StudioProjectFileKind.GLYPH_DICTIONARY
-    }
-
-    fun toggle(key: String) {
-        selectedKeys = if (key in selectedKeys) selectedKeys - key else selectedKeys + key
-    }
-
-    Column(Modifier.fillMaxSize()) {
-        // line_tk_xt_wj_gl_layout_1：路径 + 菜单
-        Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "/$projectName" + (if (currentDir.isEmpty()) "" else "/$currentDir"),
-                color = EntryBlue,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Box {
-                HeaderIconAction(R.drawable.editor_menu_24, "文件菜单") { menuVisible = true }
-                DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }, containerColor = Color.White) {
-                    DropdownMenuItem(text = { Text("新建", fontSize = 13.sp) }, onClick = {
-                        menuVisible = false
-                        notice = "插件请点击标题进入插件列表新建；图片和字库请在项目设置中导入"
-                    })
-                    DropdownMenuItem(text = { Text("刷新", fontSize = 13.sp) }, onClick = { menuVisible = false; notice = "已刷新" })
-                    DropdownMenuItem(text = { Text("搜索", fontSize = 13.sp) }, onClick = { menuVisible = false; searching = true })
-                    DropdownMenuItem(text = { Text("排序", fontSize = 13.sp) }, onClick = { menuVisible = false; reverseSort = !reverseSort })
+                    EditorToolPanel.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
+                    EditorToolPanel.COMMON -> CommonPage(onDismiss, onInsert, availableVariables,
+                        availableLabels, currentFlowId, projectFlows, projectVariables, onManageVariables)
+                    else -> Unit
                 }
             }
-        }
-        // line_tk_xt_wj_gl_search
-        if (searching) {
-            Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-                BasicTextField(
-                    value = query,
-                    onValueChange = { query = it.take(60) },
-                    singleLine = true,
-                    textStyle = TextStyle(fontSize = 12.sp, color = Color(0xFF202839)),
-                    decorationBox = { inner -> Box(contentAlignment = Alignment.CenterStart) { if (query.isEmpty()) Text("关键字搜索", color = EntryMuted, fontSize = 12.sp); inner() } },
-                    modifier = Modifier.weight(1f).padding(end = 5.dp),
-                )
-                Text(
-                    "取消",
-                    color = EntryBlue,
-                    fontSize = 13.sp,
-                    modifier = Modifier.fillMaxHeight().clickable { searching = false; query = "" }.padding(horizontal = 15.dp, vertical = 11.dp),
-                )
-            }
-        }
-        // line_tk_xt_wj_gl_layout_2：已选择N项 / 全选（常驻）
-        Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("已选择${selectedKeys.size}项", color = EntryBlue, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            Text("全选", fontSize = 14.sp, color = Color.Black)
-            Checkbox(
-                checked = allSelected,
-                onCheckedChange = {
-                    selectedKeys = if (allSelected) selectedKeys - selectableKeys.toSet() else (selectedKeys + selectableKeys).distinct()
-                },
-                enabled = selectableKeys.isNotEmpty(),
-                colors = CheckboxDefaults.colors(checkedColor = EntryBlue, uncheckedColor = EntryMuted),
-                modifier = Modifier.padding(end = 9.dp).size(32.dp),
-            )
-        }
-        DividerLine()
-        if (rows.isEmpty()) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text(if (query.isBlank()) "无内容" else "没有匹配的文件", color = EntryMuted, fontSize = 13.sp)
-            }
-        } else {
-            LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(1.dp)) {
-                items(rows, key = FileRow::key) { row ->
-                    when (row) {
-                        is FileRow.Up -> FileUpRow { currentDir = currentDir.substringBeforeLast('/', "") }
-                        is FileRow.Folder -> FileFolderRow(
-                            name = row.name,
-                            count = row.count,
-                            checked = row.key in selectedKeys,
-                            onClick = { if (selectionMode) toggle(row.key) else currentDir = row.path },
-                            onLongClick = { toggle(row.key) },
-                            onCheck = { toggle(row.key) },
-                        )
-                        is FileRow.Entry -> FileEntryRow(
-                            file = row.file,
-                            timestamp = timestamp,
-                            checked = row.key in selectedKeys,
-                            onClick = { if (selectionMode) toggle(row.key) else onOpenFile(row.file) },
-                            onLongClick = { toggle(row.key) },
-                            onCheck = { toggle(row.key) },
-                        )
-                    }
-                }
-            }
-        }
-        notice?.let { Text(it, color = EntryBlue, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) }
-        DividerLine()
-        if (selectionMode) {
-            // line_tk_xt_wj_gl_layout_4，七项顺序照抄：移动 · 粘贴 · 重命名 · 删除 · 取消 · 复制 · 移动。
-            // 参考里首尾两个“移动”是同一图标（yidong2 / yidong），分别对应剪切式移动和移动到目录。
-            // 清单文件由 Store 管理，移动/粘贴/重命名/复制在这里没有安全语义，明确禁用；只有资源可删除。
-            Row(Modifier.fillMaxWidth().height(40.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                FileIconAction(R.drawable.editor_file_move_24, "移动", false) {}
-                FileIconAction(R.drawable.editor_file_paste_24, "粘贴", false) {}
-                FileIconAction(R.drawable.editor_edit_24, "重命名", false) {}
-                FileIconAction(R.drawable.editor_delete_24, "删除", deletable) { confirmDelete = true }
-                FileIconAction(R.drawable.editor_close_24, "取消", true) { selectedKeys = emptyList() }
-                FileIconAction(R.drawable.editor_file_copy_24, "复制", false) {}
-                FileIconAction(R.drawable.editor_file_move_24, "移动", false) {}
-            }
-        } else {
-            FooterButtons(listOf("取消" to onDismiss), fontSize = 13)
-        }
-    }
-
-    if (confirmDelete) {
-        Dialog(onDismissRequest = { confirmDelete = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(.82f).widthIn(max = 420.dp),
-                color = Color.White,
-                shape = RoundedCornerShape(2.dp),
-                shadowElevation = 9.dp,
-            ) {
-                Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
-                    Text("是否删除所选 ${selectedFiles.size} 项文件?", color = Color(0xFF202839), fontSize = 15.sp, modifier = Modifier.padding(horizontal = 25.dp))
-                    Text("仍被积木或脚本引用的资源会被拒绝删除。", color = EntryMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 25.dp, end = 25.dp, top = 6.dp))
-                    Row(Modifier.fillMaxWidth().padding(start = 15.dp, top = 14.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("取消", color = Color(0xFF3F51B5), fontSize = 14.sp, modifier = Modifier.clickable { confirmDelete = false }.padding(horizontal = 15.dp, vertical = 8.dp))
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "删除",
-                            color = Color(0xFF3F51B5),
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(end = 15.dp).clickable {
-                                confirmDelete = false
-                                val targets = selectedFiles
-                                selectedKeys = emptyList()
-                                onDeleteFiles(targets)
-                            }.padding(horizontal = 15.dp, vertical = 8.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** item_tree_list_file_3 */
-@Composable
-private fun FileUpRow(onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(45.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
-        Icon(painterResource(R.drawable.editor_folder_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.padding(horizontal = 5.dp).size(35.dp))
-        Text("..", fontSize = 14.sp, color = Color.Black)
-    }
-}
-
-/** item_tree_list_file_1 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun FileFolderRow(name: String, count: Int, checked: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onCheck: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(45.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(painterResource(R.drawable.editor_folder_24), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.padding(horizontal = 5.dp).size(35.dp))
-        Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Text(name, fontSize = 14.sp, color = Color.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("$count 项 · 文件夹", color = EntryMuted, fontSize = 8.sp)
-        }
-        Checkbox(
-            checked = checked,
-            onCheckedChange = { onCheck() },
-            colors = CheckboxDefaults.colors(checkedColor = EntryBlue, uncheckedColor = EntryMuted),
-            modifier = Modifier.padding(start = 2.dp, end = 8.dp).size(32.dp),
-        )
-    }
-}
-
-/** item_tree_list_file_2 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun FileEntryRow(
-    file: StudioProjectFile,
-    timestamp: SimpleDateFormat,
-    checked: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onCheck: () -> Unit,
-) {
-    val icon = when (file.kind) {
-        StudioProjectFileKind.IMAGE -> R.drawable.editor_recognition_preview_24
-        else -> R.drawable.editor_code_file_24
-    }
-    Row(
-        Modifier.fillMaxWidth().height(45.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.padding(start = 5.dp, top = 5.dp, bottom = 5.dp).size(35.dp).padding(1.dp), contentAlignment = Alignment.Center) {
-            Icon(painterResource(icon), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(28.dp))
-        }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(start = 3.dp, top = 4.dp, bottom = 5.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Text(file.path.substringAfterLast('/'), fontSize = 14.sp, color = Color.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row {
-                Text(
-                    file.lastModified?.let { timestamp.format(Date(it)) } ?: file.kind.label,
-                    color = EntryMuted,
-                    fontSize = 8.sp,
-                )
-                Text(formatEntrySize(file.sizeBytes), color = EntryMuted, fontSize = 8.sp, modifier = Modifier.padding(start = 10.dp))
-            }
-        }
-        Checkbox(
-            checked = checked,
-            onCheckedChange = { onCheck() },
-            colors = CheckboxDefaults.colors(checkedColor = EntryBlue, uncheckedColor = EntryMuted),
-            modifier = Modifier.padding(start = 2.dp, end = 8.dp).size(32.dp),
-        )
-    }
-}
-
-@Composable
-private fun FileIconAction(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 15.dp, vertical = 3.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(painterResource(icon), contentDescription = label, tint = if (enabled) EntryBlue else EntryMuted, modifier = Modifier.size(20.dp))
-        Text(label, fontSize = 8.sp, color = if (enabled) Color.Black else EntryMuted)
-    }
-}
-
-private fun formatEntrySize(bytes: Long): String = when {
-    bytes < 1024 -> "${bytes}B"
-    bytes < 1024 * 1024 -> "${bytes / 1024}KB"
-    else -> "%.1fMB".format(Locale.ROOT, bytes / 1024.0 / 1024.0)
-}
-
-@Composable
-private fun HeaderIconAction(icon: Int, description: String, onClick: () -> Unit) {
-    Icon(
-        painterResource(icon),
-        contentDescription = description,
-        tint = Color.Unspecified,
-        modifier = Modifier.size(36.dp).clickable(onClick = onClick).padding(6.dp),
-    )
-}
-
-
-private const val LEGACY_ENTRY_COMMAND_PREFIX = "--@autoscript-editor:"
-
-@Composable
-private fun ToolSettingsPage(
-    onDismiss: () -> Unit,
-    onInsert: (String) -> Unit,
-    onOpenImageTools: ((Long) -> Unit)?,
-    onOpenImageLibrary: (() -> Unit)?,
-    onRemoveCaptureOverlay: (() -> Unit)?,
-    onTestRecognition: (() -> Unit)?,
-) {
-    var captureDelay by remember { mutableStateOf("0秒") }
-    var picker by remember { mutableStateOf<PickerRequest?>(null) }
-    Column(Modifier.fillMaxSize()) {
-        Text("工具", color = EntryBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(31.dp).padding(horizontal = 14.dp, vertical = 6.dp))
-        DividerLine()
-        Column(Modifier.weight(1f).padding(start = 8.dp, top = 3.dp, end = 8.dp, bottom = 3.dp)) {
-            ToolPanel("截屏工具") {
-                ToolActionRow(R.drawable.editor_capture_camera_24, "截屏延迟", trailing = captureDelay) {
-                    picker = PickerRequest("截屏延迟", listOf("0秒", "1秒", "2秒", "3秒", "5秒"), captureDelay) { captureDelay = it }
-                }
-            }
-            Spacer(Modifier.height(2.dp))
-            ToolPanel("识别工具") {
-                ToolActionRow(R.drawable.editor_recognition_preview_24, if (onTestRecognition != null) "测试识别 · 模板找图" else "测试识别（未接入）", enabled = onTestRecognition != null) {
-                    onTestRecognition?.invoke()
-                }
-            }
-            Spacer(Modifier.height(2.dp))
-            // 「标注截屏」「图像处理」进图像工具悬浮窗（取图/取色/多点/坐标）；
-            // 「打开标注库」进项目图片列表页，两者职责不同，不再指向同一个回调。
-            // 宿主没提供对应入口时退回选项预览。
-            ToolPanel("图像工具") {
-                ToolActionRow(R.drawable.editor_recognition_preview_24, "标注截屏") {
-                    if (onOpenImageTools != null) onOpenImageTools(captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L) else picker = PickerRequest("标注截屏", listOf("立即截屏", "延迟截屏", "导入图片")) {}
-                }
-                DividerLine()
-                ToolActionRow(R.drawable.editor_annotation_24, if (onOpenImageLibrary != null) "打开标注库" else "打开标注库（未接入）", enabled = onOpenImageLibrary != null) {
-                    onOpenImageLibrary?.invoke()
-                }
-                DividerLine()
-                ToolActionRow(R.drawable.editor_image_processing_24, "图像处理") {
-                    if (onOpenImageTools != null) onOpenImageTools(captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L) else picker = PickerRequest("图像处理", listOf("裁剪", "缩放", "灰度", "二值化", "颜色过滤")) {}
-                }
-            }
-        }
-        // 参考的“屏幕截图”是打开截屏工具；本项目对应的真实 API 是 Screen.capture()。
-        ToolSettingsFooter(
-            dismiss = { onRemoveCaptureOverlay?.invoke() ?: onDismiss() },
-            onCapture = {
-                val delayMillis = captureDelay.filter(Char::isDigit).toLongOrNull()?.times(1_000) ?: 0L
-                if (onOpenImageTools != null) onOpenImageTools(delayMillis) else {
-                    onInsert("local captureId = Screen.capture()\n")
-                    onDismiss()
-                }
-            },
-        )
-    }
-    picker?.let { request -> PickerDialog(request) { picker = null } }
-}
-
-@Composable
-private fun ToolPanel(title: String, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp)).border(1.dp, EntryBorder, RoundedCornerShape(3.dp))) {
-        Text(title, color = EntryAccent, fontSize = 9.sp, modifier = Modifier.fillMaxWidth().height(20.dp).padding(start = 10.dp, top = 4.dp))
-        content()
-    }
-}
-
-@Composable
-private fun ToolActionRow(
-    icon: Int,
-    label: String,
-    trailing: String? = null,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    val rowColor = if (enabled) AutoScriptPalette.TextPrimary else EntryMuted
-    val iconColor = if (enabled) EntryAccent else EntryBorder
-    Row(Modifier.fillMaxWidth().height(31.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(19.dp).background(iconColor, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(icon), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(14.dp))
-        }
-        Text(label, color = rowColor, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp).weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (trailing != null) {
-            DenseSpinner(trailing, Modifier.width(92.dp), arrow = false, onClick = onClick)
-        } else {
-            Text(if (enabled) "›" else "—", color = EntryMuted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 4.dp))
-        }
-    }
-}
-
-@Composable
-private fun ToolSettingsFooter(dismiss: () -> Unit, onCapture: () -> Unit) {
-    DividerLine()
-    Row(Modifier.fillMaxWidth().height(32.dp)) {
-        CenteredFooterAction("移除悬浮球", AutoScriptPalette.Danger, dismiss, Modifier.weight(1f))
-        DividerVertical()
-        CenteredFooterAction("屏幕截图", EntryAccent, onCapture, Modifier.weight(1f), bold = true)
-    }
-}
-
-@Composable
-private fun ImageRecognitionPage(
-    onDismiss: () -> Unit,
-    onInsert: (String) -> Unit,
-    files: List<StudioProjectFile>,
-    onOpenImageTools: ((Long) -> Unit)?,
-) {
-    val pages = listOf("区域找图", "多点找色", "字库识字", "ONNX OCR")
-    var page by remember { mutableStateOf(0) }
-    var recognitionFrequency by remember { mutableStateOf("识别频率[1]") }
-    var captureDelaySeconds by remember { mutableStateOf(0) }
-    val imageFiles = files.filter { it.kind == StudioProjectFileKind.IMAGE && it.sizeBytes > 0 }
-    var template by remember(imageFiles) {
-        mutableStateOf(imageFiles.maxByOrNull { it.lastModified ?: 0L }?.path ?: "未选择")
-    }
-    var imageMode by remember { mutableStateOf("普通找图") }
-    var colorMode by remember { mutableStateOf("多点找色") }
-    var filterMode by remember { mutableStateOf("未加载") }
-    var onnxModel by remember { mutableStateOf("未开放") }
-    var ocrLanguage by remember { mutableStateOf("未开放") }
-    var similarity by remember { mutableStateOf("0.8") }
-    var direction by remember { mutableStateOf("左上到右下") }
-    var successAction by remember { mutableStateOf("不执行") }
-    var returnType by remember { mutableStateOf("无") }
-    var range by remember { mutableStateOf("全屏  0,0,-1,-1") }
-    var colorData by remember { mutableStateOf("请选择多点数据") }
-    var glyphLibrary by remember { mutableStateOf("未选择") }
-    var picker by remember { mutableStateOf<PickerRequest?>(null) }
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            DenseSpinner(
-                value = recognitionFrequency,
-                modifier = Modifier.weight(1f),
-                arrow = false,
-                onClick = {
-                    picker = PickerRequest(
-                        "识别频率",
-                        (1..12).map { "循环${it}次，识别1次" },
-                        "循环${recognitionFrequency.substringAfter('[').substringBefore(']')}次，识别1次",
-                    ) { selected ->
-                        recognitionFrequency = "识别频率[${selected.substringAfter("循环").substringBefore("次")}]"
-                    }
-                },
-                centered = true,
-            )
-            Text("图像识别", color = EntryBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(.72f))
-            DenseSpinner(
-                value = pages[page],
-                modifier = Modifier.weight(1f),
-                onClick = {
-                picker = PickerRequest("识别页面", pages, pages[page]) { page = pages.indexOf(it).coerceAtLeast(0) }
-                },
-            )
-        }
-        DividerLine()
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 6.dp, top = 2.dp, end = 6.dp, bottom = 4.dp)) {
-            when (page) {
-                0 -> {
-                    DenseImageSourceBlock(
-                        firstLabel = "模版选择:", firstValue = template, secondLabel = "识别方式:", secondValue = imageMode, preview = "预览",
-                        onFirst = {
-                            picker = PickerRequest("选择模板图片", imageFiles.map { it.path } + "从截屏中创建", template) {
-                                if (it == "从截屏中创建") onOpenImageTools?.invoke(captureDelaySeconds * 1_000L) else template = it
-                            }
-                        },
-                        onSecond = { picker = PickerRequest("识别方式", listOf("普通找图", "透明图", "灰度图", "特征匹配"), imageMode) { imageMode = it } },
-                    )
-                    DenseRangeRow(range) { picker = PickerRequest("识别范围", listOf("全屏  0,0,-1,-1", "手动选择区域", "使用范围变量", "跟随上次结果"), range) { range = it } }
-                    DenseDirectionRow(direction, similarity,
-                        onDirection = { picker = PickerRequest("查找方向", imageDirections, direction) { direction = it } },
-                        onSimilarity = { picker = PickerRequest("相似度", similarities, similarity) { similarity = it } },
-                    )
-                    DenseSuccessRow(successAction, returnType,
-                        onAction = { picker = PickerRequest("识别成功", successActions, successAction) { successAction = it } },
-                        onReturnType = { picker = PickerRequest("返回值", imageReturnTypes, returnType) { returnType = it } },
-                    )
-                    if (successAction == "找到后点击") DenseSingleVariableRow("随机偏移:", "5")
-                    when (returnType) {
-                        "图像" -> DenseSingleVariableRow("图像变量:", "选择图像变量")
-                        "布尔值" -> DenseSingleVariableRow("结果变量:", "选择布尔变量")
-                        else -> DenseVariableRow("坐标变量:", "选择X变量", "选择Y变量")
-                    }
-                }
-                1 -> {
-                    DenseImageSourceBlock(
-                        firstLabel = "多点数据:", firstValue = colorData, secondLabel = "识别方式:", secondValue = colorMode, preview = "预览",
-                        onFirst = { picker = PickerRequest("颜色数据", listOf("请选择多点数据", "从屏幕取色", "编辑多点颜色", "从文件导入"), colorData) { colorData = it } },
-                        onSecond = { picker = PickerRequest("识别方式", listOf("单点找色", "多点找色", "多点比色", "区域颜色统计"), colorMode) { colorMode = it } },
-                    )
-                    DenseRangeRow(range) { picker = PickerRequest("识别范围", listOf("全屏  0,0,-1,-1", "手动选择区域", "使用范围变量"), range) { range = it } }
-                    DenseDirectionRow(direction, similarity,
-                        onDirection = { picker = PickerRequest("查找方向", imageDirections, direction) { direction = it } },
-                        onSimilarity = { picker = PickerRequest("相似度", similarities, similarity) { similarity = it } },
-                    )
-                    DenseSuccessRow(successAction, returnType,
-                        onAction = { picker = PickerRequest("识别成功", successActions, successAction) { successAction = it } },
-                        onReturnType = { picker = PickerRequest("返回值", imageReturnTypes, returnType) { returnType = it } },
-                    )
-                    if (successAction == "找到后点击") DenseSingleVariableRow("随机偏移:", "5")
-                    when (returnType) {
-                        "图像" -> DenseSingleVariableRow("图像变量:", "选择图像变量")
-                        "布尔值" -> DenseSingleVariableRow("结果变量:", "选择布尔变量")
-                        else -> DenseVariableRow("坐标变量:", "选择X变量", "选择Y变量")
-                    }
-                }
-                2 -> {
-                    DenseImageSourceBlock(
-                        firstLabel = "字库选择:", firstValue = if (glyphLibrary == "未选择") "请选择字库" else glyphLibrary,
-                        secondLabel = "滤色数组:", secondValue = filterMode, preview = "首字",
-                        onFirst = { picker = PickerRequest("选择字库", listOf("default.txt", "数字字库.txt", "新建字库", "导入字库"), glyphLibrary) { glyphLibrary = it } },
-                        onSecond = { picker = PickerRequest("滤色数组", listOf("未加载", "不处理", "二值化", "指定颜色", "灰度", "反色"), filterMode) { filterMode = it } },
-                    )
-                    DenseRangeRow(range) { picker = PickerRequest("识别范围", listOf("全屏  0,0,-1,-1", "手动选择区域", "使用范围变量"), range) { range = it } }
-                    DenseDirectionRow(direction, similarity,
-                        onDirection = { picker = PickerRequest("查找方向", imageDirections, direction) { direction = it } },
-                        onSimilarity = { picker = PickerRequest("相似度", similarities, similarity) { similarity = it } },
-                    )
-                    DenseTextReturnRow()
-                }
-                else -> {
-                    Text(
-                        "ONNX 高级 OCR 属于后续阶段（基础字库 OCR 请用“字库识字”页），下方选项仅为版式预留，不会插入任何调用。",
-                        color = AutoScriptPalette.Danger,
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                    )
-                    DenseImageSourceBlock(
-                        firstLabel = "模型选择:", firstValue = onnxModel,
-                        secondLabel = "识别语言:", secondValue = ocrLanguage, preview = "OCR",
-                        onFirst = { picker = PickerRequest("ONNX 模型", listOf("未开放"), onnxModel) { onnxModel = it } },
-                        onSecond = { picker = PickerRequest("识别语言", listOf("未开放"), ocrLanguage) { ocrLanguage = it } },
-                    )
-                    DenseRangeRow(range) { picker = PickerRequest("识别范围", listOf("全屏  0,0,-1,-1", "手动选择区域", "使用范围变量"), range) { range = it } }
-                    DenseDirectionRow(direction, similarity,
-                        onDirection = { picker = PickerRequest("查找方向", imageDirections, direction) { direction = it } },
-                        onSimilarity = { picker = PickerRequest("相似度", similarities, similarity) { similarity = it } },
-                    )
-                    DenseTextReturnRow()
-                }
-            }
-        }
-        // 片段只用契约里真实存在的 Screen.* / Ocr.* 签名；相似度按 API 口径换算成千分位。
-        // ONNX OCR 是后续阶段，没有对应 API，这里不生成任何调用。
-        Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("截图延迟：${captureDelaySeconds}秒  ▾", color = EntryAccent, fontSize = 11.sp,
-                modifier = Modifier.clickable {
-                    picker = PickerRequest("截图延迟", listOf("0秒", "1秒", "3秒", "5秒"), "${captureDelaySeconds}秒") {
-                        captureDelaySeconds = it.removeSuffix("秒").toInt()
-                    }
-                }.padding(horizontal = 6.dp))
-        }
-        FooterButtons(listOf("取消" to onDismiss, "截图取图" to {
-            onOpenImageTools?.invoke(captureDelaySeconds * 1_000L)
-        }, "加入" to {
-            val permille = ((similarity.toDoubleOrNull() ?: 0.8) * 1000).toInt().coerceIn(1, 1000)
-            val code = when (page) {
-                0 -> "local template = Screen.loadImage(\"assets/images/${legacyLuaEscape(template.takeUnless { it == "未选择" } ?: "template.png")}\")\n" +
-                    "local hit = Screen.findImage(frame, template, 16, $permille, 0, 0, -1, -1)\n"
-                1 -> "local hit = Screen.findMultiColor(frame, \"${legacyLuaEscape(colorData.substringBefore('-').trim())}\", 16, samples, 0, 0, -1, -1)\n"
-                2 -> "local dictionary = Ocr.loadDictionary(\"dictionaries/${legacyLuaEscape(glyphLibrary.takeUnless { it == "未选择" } ?: "main.asglyph")}\")\n" +
-                    "local text = Ocr.glyph(frame, dictionary, \"FFFFFF\", 16, $permille, 0, 0, -1, -1, 2)\n"
-                else -> "-- ONNX OCR 属于后续阶段，当前契约没有对应 API\n"
-            }
-            onInsert(code); onDismiss()
-        }), fontSize = 10)
-    }
-    picker?.let { request -> PickerDialog(request) { picker = null } }
-}
-
-private val imageDirections = listOf("左上到右下", "右上到左下", "左下到右上", "右下到左上", "中心向四周")
-private val similarities = listOf("1.0", "0.98", "0.95", "0.9", "0.85", "0.8")
-private val successActions = listOf("不执行", "找到后点击", "找到后停止脚本", "找到后继续")
-private val imageReturnTypes = listOf("无", "坐标", "图像", "布尔值")
-
-@Composable
-private fun DenseImageSourceBlock(
-    firstLabel: String,
-    firstValue: String,
-    secondLabel: String,
-    secondValue: String,
-    preview: String,
-    onFirst: () -> Unit,
-    onSecond: () -> Unit,
-) {
-    Row(Modifier.fillMaxWidth().height(76.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            DenseLabeledRow(firstLabel, firstValue, onFirst)
-            Spacer(Modifier.height(6.dp))
-            DenseLabeledRow(secondLabel, secondValue, onSecond, arrow = true)
-        }
-        Box(
-            Modifier.padding(start = 8.dp).size(70.dp)
-                .background(Color(0xFFF4F6F9), RoundedCornerShape(2.dp))
-                .border(1.dp, EntryBorder, RoundedCornerShape(2.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(preview, fontSize = 10.sp, color = EntryMuted)
         }
     }
 }
@@ -841,75 +188,6 @@ private fun DenseLabeledRow(label: String, value: String, onClick: () -> Unit, a
     Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
         DenseLabel(label)
         DenseSpinner(value, Modifier.weight(1f), arrow, onClick)
-    }
-}
-
-@Composable
-private fun DenseRangeRow(range: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(38.dp).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        DenseLabel("选取范围:")
-        val values = if (range.startsWith("全屏")) listOf("x:0", "y:0", "w:0", "h:0") else listOf("x:--", "y:--", "w:--", "h:--")
-        values.forEachIndexed { index, value ->
-            DenseSpinner(
-                value,
-                Modifier.weight(1f).padding(start = if (index == 0) 0.dp else 2.dp, end = if (index == values.lastIndex) 0.dp else 2.dp),
-                arrow = false,
-                onClick = onClick,
-                centered = true,
-            )
-        }
-    }
-}
-
-@Composable
-private fun DenseDirectionRow(
-    direction: String,
-    similarity: String,
-    onDirection: () -> Unit,
-    onSimilarity: () -> Unit,
-) {
-    Row(Modifier.fillMaxWidth().height(38.dp).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        DenseLabel("查找方向:")
-        DenseSpinner(direction, Modifier.weight(1f), arrow = true, onClick = onDirection)
-        DenseLabel("相似度:", Modifier.padding(start = 8.dp))
-        DenseSpinner(similarity, Modifier.weight(.55f), arrow = true, onClick = onSimilarity, centered = true)
-    }
-}
-
-@Composable
-private fun DenseSuccessRow(action: String, returnType: String, onAction: () -> Unit, onReturnType: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(38.dp).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        DenseLabel("识别成功:")
-        DenseSpinner(action, Modifier.weight(1.3f), arrow = true, onClick = onAction)
-        DenseLabel("返回值:", Modifier.padding(start = 8.dp))
-        DenseSpinner(returnType, Modifier.weight(1f), arrow = true, onClick = onReturnType)
-    }
-}
-
-@Composable
-private fun DenseSingleVariableRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().height(38.dp).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        DenseLabel(label)
-        DenseSpinner(value, Modifier.weight(1f), arrow = false, onClick = {})
-    }
-}
-
-@Composable
-private fun DenseTextReturnRow() {
-    Row(Modifier.fillMaxWidth().height(38.dp).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        DenseLabel("字符变量:")
-        DenseSpinner("选择字符变量", Modifier.weight(1.2f), arrow = false, onClick = {})
-        DenseLabel("返回值:", Modifier.padding(start = 8.dp))
-        DenseSpinner("文本", Modifier.weight(1f), arrow = true, onClick = {})
-    }
-}
-
-@Composable
-private fun DenseVariableRow(label: String, first: String, second: String) {
-    Row(Modifier.fillMaxWidth().height(38.dp).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        DenseLabel(label)
-        DenseSpinner(first, Modifier.weight(1f), onClick = {})
-        DenseSpinner(second, Modifier.weight(1f).padding(start = 6.dp), onClick = {})
     }
 }
 
@@ -970,11 +248,6 @@ private fun JudgmentPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
 }
 
 
-private fun legacyLuaEscape(value: String): String = value
-    .replace("\\", "\\\\")
-    .replace("\"", "\\\"")
-
-
 private fun variablePicker(
     variables: List<String>,
     selected: String?,
@@ -985,7 +258,6 @@ private fun variablePicker(
 private fun CommonPage(
     onDismiss: () -> Unit,
     onInsert: (String) -> Unit,
-    visualMode: Boolean,
     availableVariables: List<String>,
     availableLabels: List<String>,
     currentFlowId: String,
@@ -996,8 +268,7 @@ private fun CommonPage(
     initialArguments: com.google.gson.JsonObject? = null,
     confirmLabel: String = "加入",
 ) {
-    val tabs = if (visualMode) listOf("流程操作", "调用插件", "设置调用参数", "读取调用参数", "设置返回参数", "读取返回参数")
-        else listOf("流程操作")
+    val tabs = listOf("流程操作", "调用插件", "设置调用参数", "读取调用参数", "设置返回参数", "读取返回参数")
     val targets = projectFlows.filter { it.flowId != currentFlowId }
     fun text(key: String, fallback: String = "") = initialArguments?.get(key)?.takeIf { it.isJsonPrimitive }?.asString ?: fallback
     val initialTab = when (initialKind) { "flow.call", "flow.call.branch" -> 1; "flow.argument.set" -> 2; "flow.argument.get" -> 3; "flow.return.set" -> 4; "flow.return.get" -> 5; else -> 0 }
@@ -1007,9 +278,7 @@ private fun CommonPage(
     var callBranches by remember { mutableStateOf(initialKind == "flow.call.branch") }
     var waitValue by remember { mutableStateOf(text("millisecondsVariable", text("milliseconds", "500"))) }
     var waitIsVariable by remember { mutableStateOf(initialArguments?.has("millisecondsVariable") == true) }
-    val autoLabel = remember(availableLabels, visualMode) {
-        if (visualMode) JumpPanelCode.nextLabel(availableLabels) else "mark_${System.currentTimeMillis()}"
-    }
+    val autoLabel = remember(availableLabels) { JumpPanelCode.nextLabel(availableLabels) }
     var labelName by remember(autoLabel) { mutableStateOf(text("name", autoLabel)) }
     var customLabel by remember { mutableStateOf(initialKind == "control.label") }
     var jumpError by remember { mutableStateOf<String?>(null) }
@@ -1029,7 +298,7 @@ private fun CommonPage(
         if (options.isEmpty()) jumpError = "没有符合类型的变量，请先维护变量"
         else picker = variablePicker(options, parameterVariable) { update(it); jumpError = null }
     }
-    SplitEntryPage("跳转 · 插件调用", tabs, selected, { if (initialKind == null || it == initialTab) { selected = it; jumpError = null } else jumpError = "修改时请保留原积木类型" }, onDismiss, {
+    SplitEntryPage("流程 · 插件调用", tabs, selected, { if (initialKind == null || it == initialTab) { selected = it; jumpError = null } else jumpError = "修改时请保留原积木类型" }, onDismiss, {
         val index = parameterIndex.toIntOrNull()
         val snippet = when (selected) {
             0 -> when (action) {
@@ -1037,8 +306,8 @@ private fun CommonPage(
                 1 -> {
                     val name = if (customLabel) labelName else autoLabel
                     when {
-                        !JumpPanelCode.validName(name) -> jumpError = "标记名须以英文字母或下划线开头，最多 64 字符"
-                        visualMode && name in availableLabels && name != text("name") -> jumpError = "当前插件已有同名标记"
+                        !JumpPanelCode.validName(name) -> jumpError = "标记名支持中文、英文字母及下划线开头，后续可含数字，最多64字符"
+                        name in availableLabels && name != text("name") -> jumpError = "当前插件已有同名标记"
                     }
                     "::$name::\n"
                 }
@@ -1048,7 +317,7 @@ private fun CommonPage(
                 7 -> "${FunctionCatalog.BLOCK_HINT_PREFIX}control.continue\n{}\n"
                 3 -> {
                     if (!JumpPanelCode.validName(labelName)) jumpError = "请输入有效的标记名"
-                    else if (visualMode && labelName !in availableLabels) jumpError = "请先在当前插件放置该标记"
+                    else if (labelName !in availableLabels) jumpError = "请先在当前插件放置该标记"
                     "goto $labelName\n"
                 }
                 else -> {
@@ -1059,7 +328,7 @@ private fun CommonPage(
                         "${FunctionCatalog.BLOCK_HINT_PREFIX}task.sleep\nvariable:$waitValue"
                     } else {
                         if (waitValue.toLongOrNull()?.takeIf { it >= 0 } == null) jumpError = "等待时间须为非负整数毫秒"
-                        "Task.sleep($waitValue)\n"
+                        waitValue.toLongOrNull()?.let(JumpPanelCode::waitSnippet)
                     }
                 }
             }
@@ -1090,12 +359,14 @@ private fun CommonPage(
                 ) else null
             }
         }
-        if (jumpError == null && snippet != null) { onInsert(snippet); onDismiss() }
-    }, headerHint = if (visualMode) "当前插件内操作" else null, confirmLabel = confirmLabel) {
+        if (jumpError == null && snippet != null) onInsert(snippet)
+    }, headerHint = "当前插件内操作", confirmLabel = confirmLabel) {
         when (selected) {
             0 -> {
-                DenseFlowActions(action, visualMode) {
-                    if (initialKind != null && it != initialAction) { jumpError = "修改时请保留原积木类型"; return@DenseFlowActions }
+                DenseFlowActions(action) {
+                    if (!JumpPanelCode.canSelectAction(initialKind, initialAction, it)) {
+                        jumpError = "修改时请保留原积木类型"; return@DenseFlowActions
+                    }
                     action = it
                     jumpError = null
                     if (it == 3) labelName = availableLabels.firstOrNull().orEmpty()
@@ -1116,7 +387,7 @@ private fun CommonPage(
                     7 -> DenseNotice("跳过最近一层循环的剩余积木，开始下一轮；停止和让步仍然生效。", "结束本次循环")
                     3 -> {
                         DenseTypedValue("标记", labelName, { labelName = it; jumpError = null },
-                            if (visualMode) "选择标记" else "") {
+                            "选择标记") {
                             if (availableLabels.isEmpty()) jumpError = "当前插件没有标记，请先放置标记"
                             else picker = PickerRequest("选择当前插件标记", availableLabels, labelName) {
                                 labelName = it; jumpError = null
@@ -1133,7 +404,7 @@ private fun CommonPage(
                             if (numericVariables.isEmpty()) jumpError = "没有数值变量，请先维护变量"
                             else picker = variablePicker(numericVariables, waitValue) { waitValue = it; jumpError = null }
                         }
-                        if (waitIsVariable && visualMode && onManageVariables != null) {
+                        if (waitIsVariable && onManageVariables != null) {
                             Text("维护变量", color = EntryAccent, fontSize = 11.sp,
                                 modifier = Modifier.clickable { onDismiss(); onManageVariables() }.padding(vertical = 6.dp))
                         }
@@ -1145,7 +416,8 @@ private fun CommonPage(
                     if (initialKind == null) callBranches = it
                     else if (it != callBranches) jumpError = "修改时保留原子区；请新建分支调用积木"
                 }
-                DenseNotice("先设置调用参数，再加入调用；调用后可读取返回参数。加入调用积木后仍可编辑参数。", "调用顺序")
+                DenseNotice(if (callBranches) "子插件返回成功走成功分支，返回失败走失败分支；正常结束默认成功，异常或取消中止。"
+                    else "先设置调用参数，再加入调用；调用后可读取返回参数。", if (callBranches) "分支规则" else "调用顺序")
                 val selectedTarget = targets.firstOrNull { it.flowId == targetFlowId }
                 DenseLabeledRow("目标插件", selectedTarget?.displayName() ?: "未创建", {
                     if (targets.isEmpty()) jumpError = "请先创建另一个插件"
@@ -1192,8 +464,8 @@ private fun CommonPage(
 }
 
 @Composable
-private fun DenseFlowActions(selected: Int, visualMode: Boolean, onSelected: (Int) -> Unit) {
-    val actions = listOf("跳出循环", "放置标记", "返回上层", "跳转标记", "等待时间") + if (visualMode) listOf("返回成功", "返回失败", "结束本次循环") else emptyList()
+private fun DenseFlowActions(selected: Int, onSelected: (Int) -> Unit) {
+    val actions = listOf("跳出循环", "放置标记", "返回上层", "跳转标记", "等待时间", "返回成功", "返回失败", "结束本次循环")
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         actions.chunked(2).forEachIndexed { rowIndex, rowItems ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1273,43 +545,75 @@ private fun DebugPage(
     onDismiss: () -> Unit,
     onInsert: (String) -> Unit,
     availableVariables: List<String>,
-    visualMode: Boolean,
     initialSettings: ProjectDebugSettings,
-    onSaveSettings: (ProjectDebugSettings) -> Unit,
+    onSaveSettings: (ProjectDebugSettings, (Result<ProjectDebugSettings>) -> Unit) -> Unit,
     initialKind: String? = null,
     initialArguments: com.google.gson.JsonObject? = null,
     confirmLabel: String = "加入",
-    standalone: Boolean = false,
+    expressionVariables: List<CalculationVariable>,
 ) {
-    val pages = if (initialKind != null) listOf(0) else if (visualMode) listOf(0, 1, 2) else listOf(0, 2)
+    val currentExpressionVariables by rememberUpdatedState(expressionVariables)
+    val pages = if (initialKind != null) listOf(0) else listOf(0, 1, 2)
     val tabs = pages.map { when (it) { 1 -> "对话框"; 2 -> "弹窗样式"; else -> "运行提示" } }
     var selected by remember { mutableStateOf(0) }
     val selectedPage = pages[selected]
     var fullScreen by remember { mutableStateOf(false) }
-    val initialOutputMode = when (initialKind) { "task.prompt" -> DebugOutputCode.TOAST; "task.log" -> DebugOutputCode.LOG; "task.comment" -> DebugOutputCode.COMMENT; "task.message" -> DebugOutputCode.expressionOutputMode(initialArguments); else -> DebugOutputCode.RUN_PROMPT }
+    val initialOutput = remember { DebugOutputDraft.from(initialKind, initialArguments) }
+    val initialOutputMode = initialOutput.mode
     var outputMode by remember { mutableStateOf(initialOutputMode) }
-    var outputText by remember { mutableStateOf(initialArguments?.get(if (initialKind == "task.message") "expression" else "message")?.asString.orEmpty()) }
-    var expressionMode by remember { mutableStateOf(initialKind == "task.message") }
-    var outputVariable by remember { mutableStateOf(initialArguments?.get("valueVariable")?.asString) }
-    val initialLogLevel = initialArguments?.get("level")?.asString ?: "info"
-    var logLevel by remember { mutableStateOf(initialLogLevel) }
+    var outputField by remember { mutableStateOf(TextFieldValue(initialOutput.text, TextRange(initialOutput.text.length))) }
+    val outputText = outputField.text
+    var expressionMode by remember { mutableStateOf(initialOutput.expression) }
+    var outputVariable by remember { mutableStateOf(initialOutput.variable) }
+    var logLevel by remember { mutableStateOf(initialOutput.logLevel) }
     var outputError by remember { mutableStateOf<String?>(null) }
-    // Log settings may change while this window is open; they must not erase unsubmitted style text.
-    var popupDraft by remember(initialSettings.popupStyle) { mutableStateOf(PopupStyleDraft.from(initialSettings.popupStyle)) }
-    var settingsError by remember { mutableStateOf<String?>(null) }
+    val formScope = rememberCoroutineScope()
+    var popupSave by remember { mutableStateOf(PopupStyleSaveState(PopupStyleDraft.from(initialSettings.popupStyle))) }
+    LaunchedEffect(initialSettings.popupStyle) { popupSave = popupSave.observe(initialSettings.popupStyle) }
+    val popupDraft = popupSave.draft
     var variablePicker by remember { mutableStateOf<PickerRequest?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var pendingDialogKind by remember { mutableStateOf<String?>(null) }
-    val settingsDirty = popupDraft != PopupStyleDraft.from(initialSettings.popupStyle)
-    val outputDirty = outputMode != initialOutputMode ||
-        outputText != initialArguments?.get(if (initialKind == "task.message") "expression" else "message")?.asString.orEmpty() ||
-        outputVariable != initialArguments?.get("valueVariable")?.asString || expressionMode != (initialKind == "task.message") ||
-        logLevel != initialLogLevel
+    val settingsDirty = popupSave.dirty
+    val outputDirty = DebugOutputDraft(outputMode, outputText, outputVariable, expressionMode, logLevel)
+        .needsDiscard(initialOutput, editingExisting = initialKind != null)
+    fun editExpression(edit: (TextFieldValue) -> TextFieldValue?) {
+        val updated = edit(outputField)
+        if (updated == null) outputError = "无法插入：请勿截断变量名或转义字符；转文字和运算符需放在引号外，表达式最多1024字节。原内容已保留。"
+        else { outputField = updated; outputError = null }
+    }
+    fun pickVariable(labeled: Boolean) {
+        val choices = if (expressionMode) expressionVariables.map { it.name } else availableVariables
+        if (choices.isEmpty()) {
+            outputError = if (expressionMode) "没有可用的数值或文字变量，请先在“变量”中创建。图像变量不能直接打印。"
+                else "当前没有可用变量，请先创建变量"
+            return
+        }
+        val field = outputField
+        val expression = expressionMode
+        variablePicker = PickerRequest(
+            title = if (expression && labeled) "插入名称=值" else "选择变量",
+            options = choices,
+            selected = outputVariable,
+        ) { name ->
+            if (formScope.isActive && expressionMode == expression && outputField.text == field.text && outputField.selection == field.selection) {
+                if (expression) {
+                    val chosen = expressionVariables.singleOrNull { it.name == name }
+                    if (chosen == null || currentExpressionVariables.singleOrNull { it.name == name } != chosen)
+                        outputError = "变量范围或类型已变化，请重新选择。原内容已保留。"
+                    else editExpression { DebugOutputExpression.variable(it, chosen, labeled) }
+                }
+                else { outputVariable = name; outputError = null }
+            }
+        }
+    }
     fun requestClose() {
+        if (popupSave.pending != null) return
         pendingDialogKind = null
         if (settingsDirty || outputDirty) confirmDiscard = true else onDismiss()
     }
     fun chooseDialog(kind: String) {
+        if (popupSave.pending != null) return
         val hint = scriptDialogInsertionHint(kind) ?: return
         if (settingsDirty || outputDirty) {
             pendingDialogKind = kind
@@ -1319,7 +623,7 @@ private fun DebugPage(
     val page: @Composable () -> Unit = {
     Column(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else Modifier.heightIn(max = 460.dp))) {
         DebugNavigation(tabs, selected) { selected = it; outputError = null }
-        if (selectedPage != 2) Text(when (selectedPage) {
+        if (selectedPage == 1) Text(when (selectedPage) {
             0 -> "加入输出积木，不修改项目配置"
             1 -> "选择对话框功能 · 配置后加入，不在这里执行"
             else -> "项目配置 · 保存后用于后续运行"
@@ -1335,38 +639,22 @@ private fun DebugPage(
                                 outputMode = it; outputError = null
                                 if (it == DebugOutputCode.COMMENT) expressionMode = false
                             }
-                            else outputError = "修改时请保留输出类型；其他类型请从调试入口新增"
+                            else outputError = "修改时请保留输出类型；其他类型请从输出入口新增"
                         },
-                        outputText = outputText,
+                        outputField = outputField,
                         expressionMode = expressionMode,
-                        expressionAvailable = visualMode && initialKind == null,
+                        expressionAvailable = initialKind == null,
                         onExpressionModeChange = { enabled ->
                             if (initialKind == null) { expressionMode = enabled; outputVariable = null; outputError = null }
                         },
-                        onOutputTextChange = { outputText = it; outputError = null },
+                        onOutputTextChange = { outputField = it; outputError = null },
+                        onExpressionEdit = ::editExpression,
                         selectedVariable = outputVariable,
                         logLevel = logLevel,
                         onLogLevelChange = { logLevel = it; outputError = null },
                         error = outputError,
                         onClearVariable = { outputVariable = null; outputError = null },
-                        onPickVariable = {
-                            if (availableVariables.isNotEmpty()) {
-                                variablePicker = PickerRequest(
-                                    title = "选择变量",
-                                    options = availableVariables,
-                                    selected = outputVariable,
-                                ) {
-                                    if (expressionMode) {
-                                        val appended = DebugOutputCode.appendExpressionVariable(outputText, it)
-                                        if (appended == null) outputError = "表达式超过1024字节或变量无效，原内容保留"
-                                        else { outputText = appended; outputError = null }
-                                    } else outputVariable = it
-                                    if (!expressionMode) outputError = null
-                                }
-                            } else {
-                                outputError = "当前没有可用变量，请先创建变量"
-                            }
-                        },
+                        onPickVariable = ::pickVariable,
                     )
                     1 -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1390,56 +678,82 @@ private fun DebugPage(
                             fontSize = 10.sp, color = EntryMuted)
                     }
                     2 -> DebugPopupStyleEditor(popupDraft, initialSettings.popupStyle) {
-                        popupDraft = it; settingsError = null
+                        popupSave = popupSave.edit(it)
                     }
                     else -> Unit
                 }
             }
         }
-        if (selectedPage == 2) settingsError?.let {
-            Text(it, color = AutoScriptPalette.Danger, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp))
+        if (selectedPage == 2) {
+            popupSave.error?.let {
+                Text(it, color = AutoScriptPalette.Danger, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp))
+            }
+            popupSave.message?.let {
+                Text(it, color = AutoScriptPalette.Accent, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp))
+            }
         }
-        if (selectedPage == 1) FooterButtons(listOf("关闭" to ::requestClose)) else FooterButtons(
+        if (selectedPage == 1) {
+            FooterButtons(listOf("关闭" to ::requestClose))
+        } else {
+            FooterButtons(
             listOf(
                 "关闭" to ::requestClose,
-                (if (selectedPage == 0) confirmLabel else "保存配置") to {
+                (if (selectedPage == 0) confirmLabel else if (popupSave.pending != null) "保存中…" else "保存配置") to {
                     if (selectedPage != 0) {
-                        val parsed = popupDraft.parse()
-                        if (parsed == null) settingsError = "请完成红框内的尺寸、坐标或颜色输入后再保存"
-                        else onSaveSettings(initialSettings.copy(popupStyle = parsed))
+                        if (popupSave.pending == null) {
+                            popupSave = popupSave.submit(initialSettings)
+                            popupSave.pending?.let { request ->
+                                onSaveSettings(request.settings) { result ->
+                                    if (formScope.isActive) popupSave = popupSave.complete(request, result)
+                                }
+                            }
+                        }
                     } else {
-                        outputError = if (expressionMode) DebugOutputCode.expressionError(outputMode, outputText, visualMode)
+                        outputError = if (expressionMode) DebugOutputCode.expressionError(outputMode, outputText, true)
                             else DebugOutputCode.error(outputMode, outputText, outputVariable, logLevel)
                         if (outputError == null) {
-                            if (expressionMode) DebugOutputCode.expressionSnippet(outputMode, outputText, visualMode)?.let(onInsert)
-                            else DebugOutputCode.snippet(outputMode, outputText, outputVariable, visualMode, logLevel)?.let(onInsert)
+                            if (expressionMode) DebugOutputCode.expressionSnippet(outputMode, outputText, true)?.let(onInsert)
+                            else DebugOutputCode.snippet(outputMode, outputText, outputVariable, true, logLevel)?.let(onInsert)
                         }
                     }
                 },
             ),
-        )
+            )
+        }
     }
     }
-    if (standalone) StudioPanelDialog("调试",
+    StudioPanelDialog("输出",
         ::requestClose, showFooter = false, fullScreen = fullScreen,
         onToggleFullScreen = { fullScreen = !fullScreen }, content = page)
-    else page()
     if (confirmDiscard) StudioConfirmDialog(
-        onDismissRequest = { confirmDiscard = false; pendingDialogKind = null }, title = { Text("放弃未保存内容？") },
-        text = { Text("尚未加入的输出及未保存的调试配置将被丢弃，现有积木和项目配置不会改变。") },
+        onDismissRequest = { confirmDiscard = false; pendingDialogKind = null }, title = { Text(when {
+            settingsDirty && outputDirty -> "放弃未保存内容？"
+            settingsDirty -> "放弃未保存的样式？"
+            initialKind != null -> "放弃输出修改？"
+            else -> "放弃待加入的输出？"
+        }) },
+        text = { Text(when {
+            settingsDirty && outputDirty -> "尚未加入的输出及未保存的弹窗样式将被丢弃，现有积木和项目配置不会改变。"
+            settingsDirty -> "本次弹窗样式修改尚未保存，关闭将丢弃修改。"
+            initialKind != null -> "输出修改尚未确认，关闭会丢弃本次修改，原积木不变。"
+            else -> "运行提示页还有尚未加入积木的输出内容；关闭会丢弃该内容，已保存的弹窗样式不受影响。"
+        }) },
         confirmButton = { androidx.compose.material3.TextButton(onClick = {
             val hint = pendingDialogKind?.let(::scriptDialogInsertionHint)
             confirmDiscard = false; pendingDialogKind = null
             if (hint == null) onDismiss() else onInsert(hint)
         }) { Text(if (pendingDialogKind == null) "放弃并关闭" else "放弃并继续") } },
-        dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmDiscard = false; pendingDialogKind = null }) { Text("继续编辑") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = {
+            if (!settingsDirty && outputDirty) selected = 0
+            confirmDiscard = false; pendingDialogKind = null
+        }) { Text(if (!settingsDirty && outputDirty) "查看输出内容" else "继续编辑") } },
     )
     variablePicker?.let { request -> PickerDialog(request) { variablePicker = null } }
 }
 
 @Composable
 private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(36.dp).background(EntryPanel)) {
+    Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(32, LocalDensity.current.fontScale).dp).background(EntryPanel)) {
         tabs.forEachIndexed { index, label ->
             Box(
                 Modifier.weight(1f).fillMaxHeight().clickable { onSelected(index) },
@@ -1463,113 +777,91 @@ private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int)
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun DebugOutputPanel(
     outputMode: Int,
     onOutputModeChange: (Int) -> Unit,
-    outputText: String,
+    outputField: TextFieldValue,
     expressionMode: Boolean,
     expressionAvailable: Boolean,
     onExpressionModeChange: (Boolean) -> Unit,
-    onOutputTextChange: (String) -> Unit,
+    onOutputTextChange: (TextFieldValue) -> Unit,
+    onExpressionEdit: ((TextFieldValue) -> TextFieldValue?) -> Unit,
     selectedVariable: String?,
     logLevel: String,
     onLogLevelChange: (String) -> Unit,
     error: String?,
     onClearVariable: () -> Unit,
-    onPickVariable: () -> Unit,
+    onPickVariable: (Boolean) -> Unit,
 ) {
-    Column(Modifier.fillMaxSize()) {
+    val outputText = outputField.text
+    val scroll = rememberScrollState()
+    var showOperators by remember { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val short = studioShortViewport(maxHeight.value)
+    val availableWidth = maxWidth
+    val columns = debugOutputChoiceColumns(maxWidth.value, LocalDensity.current.fontScale)
+    Column(Modifier.fillMaxSize().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val channels = listOf("运行提示", "弹出提示", "开发日志", "添加说明")
-        Column(Modifier.fillMaxWidth().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp)) {
-            repeat(2) { row ->
-                Row(Modifier.fillMaxWidth().height(34.dp)) {
-                    repeat(2) { column ->
-                        val value = row * 2 + column
-                        val label = channels[value]
-                        Box(
-                            Modifier.weight(1f).fillMaxHeight()
-                                .background(if (outputMode == value) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
-                                .clickable { onOutputModeChange(value) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                label,
-                                color = if (outputMode == value) EntryAccent else EntryMuted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Clip,
-                                style = CenteredDialogButtonTextStyle,
-                            )
-                        }
+        Column(Modifier.fillMaxWidth().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            channels.withIndex().toList().chunked(columns).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    row.forEach { (value, label) ->
+                        DebugOutputChoice(label, outputMode == value, { onOutputModeChange(value) }, Modifier.weight(1f))
                     }
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
         Text(when (outputMode) {
-            0 -> "运行状态持续显示给脚本使用者；不进入开发日志。"
-            1 -> "按弹窗样式显示，到时自动消失。"
-            2 -> "写入 Runner 开发日志，不弹出给脚本使用者。"
-            else -> "仅添加文字说明，不禁用其他积木；停止本行执行请用编辑→注释执行。"
+            0 -> "运行中更新同一窗口，脚本结束即关闭。识别后的最终结果请用“弹出提示”。"
+            1 -> "短时弹出，正常结束后保留至到期；适合打印识别结果。主动停止会关闭。"
+            2 -> "只写脚本日志，不显示提示窗。"
+            else -> "只加说明，不会禁用积木；禁用请用“注释执行”。"
         }, color = EntryMuted, fontSize = 10.sp)
         if (outputMode == DebugOutputCode.LOG && !expressionMode) {
-            Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("级别", fontSize = 10.sp, color = EntryMuted, modifier = Modifier.width(40.dp))
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf("info" to "信息", "warn" to "警告", "error" to "错误").forEach { (value, label) ->
-                    Box(Modifier.weight(1f).fillMaxHeight().clickable { onLogLevelChange(value) }, contentAlignment = Alignment.Center) {
-                        Text(if (logLevel == value) "● $label" else label, fontSize = 11.sp,
-                            color = if (logLevel == value) EntryAccent else EntryMuted, style = CenteredDialogButtonTextStyle)
-                    }
+                    DebugOutputChoice(label, logLevel == value, { onLogLevelChange(value) })
                 }
             }
         }
         if (outputMode != DebugOutputCode.COMMENT) {
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("内容来源", fontSize = 11.sp, color = EntryMuted, modifier = Modifier.weight(1f))
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                DebugOutputChoice(selectedVariable?.let { "变量：$it" } ?: if (expressionMode) "变量值" else "选择变量", selectedVariable != null,
+                    { onPickVariable(false) }, Modifier.widthIn(max = availableWidth))
+                if (expressionMode) DebugOutputChoice("名称=值", false, { onPickVariable(true) })
                 if (expressionAvailable) {
-                    Text(if (expressionMode) "表达式 ✓" else "表达式", color = EntryAccent, fontSize = 11.sp,
-                        modifier = Modifier.clickable { onExpressionModeChange(!expressionMode) }.padding(horizontal = 6.dp))
+                    DebugOutputChoice("表达式", expressionMode, { onExpressionModeChange(!expressionMode) })
                 }
                 if (selectedVariable != null) {
-                    Text("改用文字", color = EntryAccent, fontSize = 11.sp,
-                        modifier = Modifier.clickable(onClick = onClearVariable).padding(horizontal = 8.dp))
-                }
-                Box(
-                    Modifier.width(96.dp).fillMaxHeight().border(1.dp, EntryBorder, RoundedCornerShape(3.dp))
-                        .clickable(onClick = onPickVariable),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        selectedVariable ?: "选择变量",
-                        color = EntryAccent,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = CenteredDialogButtonTextStyle,
-                    )
+                    DebugOutputChoice("改用文字", false, onClearVariable)
                 }
             }
         }
-        if (expressionMode) Text("字符用 .. 连接；数值用 text()。如：\"进度：\" .. text(count)。保存后由编译器验证。", color = EntryMuted, fontSize = 10.sp)
+        if (expressionMode) Text("按光标插入，选中文字可替换；字符串直接拼接，数字自动转文字，读取运行时的值。", color = EntryMuted, fontSize = 10.sp)
         if (selectedVariable != null && outputMode != DebugOutputCode.COMMENT) {
             Text("将输出变量当前值；下方文字仅用作编辑器中的说明。", color = EntryMuted, fontSize = 10.sp)
         }
         if (error != null) Text(error, color = Color(0xFFD13232), fontSize = 11.sp)
-        Spacer(Modifier.height(6.dp))
+        Text(if (expressionMode) "表达式内容" else if (selectedVariable != null && outputMode != DebugOutputCode.COMMENT) "编辑器说明（可选）" else "文字内容",
+            color = EntryMuted, fontSize = 10.sp)
         Box(
-            Modifier.fillMaxWidth().weight(1f).border(1.dp, EntryBorder, RoundedCornerShape(4.dp)).padding(10.dp),
+            Modifier.fillMaxWidth().border(1.dp, EntryBorder, RoundedCornerShape(4.dp)).padding(8.dp),
         ) {
             BasicTextField(
-                value = outputText,
+                value = outputField,
                 onValueChange = onOutputTextChange,
                 textStyle = TextStyle(fontSize = 13.sp, color = Color(0xFF202839)),
-                modifier = Modifier.fillMaxSize(),
+                minLines = if (expressionMode) { if (short) 2 else 3 } else if (short) 3 else 5,
+                maxLines = 10,
+                modifier = Modifier.fillMaxWidth(),
                 decorationBox = { field ->
-                    Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxWidth()) {
                         if (outputText.isEmpty()) Text(
-                            when (outputMode) {
+                            if (expressionMode) "例如：\"进度：\" .. text(次数)" else when (outputMode) {
                                 0 -> "输入持续显示的运行提示"
                                 1 -> "输入到时自动消失的弹窗内容"
                                 2 -> "输入供开发调试查看的脚本日志"
@@ -1583,6 +875,39 @@ private fun DebugOutputPanel(
                 },
             )
         }
+        if (expressionMode) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                DebugOutputChoice("插入文字", false, { onExpressionEdit { DebugOutputExpression.literal(it, "", editInside = true) } })
+                DebugOutputChoice("换行", false, { onExpressionEdit { DebugOutputExpression.literal(it, "\n") } })
+                DebugOutputChoice("空格", false, { onExpressionEdit { DebugOutputExpression.literal(it, " ") } })
+                DebugOutputChoice("转文字 text()", false, { onExpressionEdit(DebugOutputExpression::asText) })
+                DebugOutputChoice("运算符", showOperators, { showOperators = !showOperators })
+            }
+            if (showOperators) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("+" to " + ", "−" to " - ", "×" to " * ", "÷" to " / ", "(" to "(", ")" to ")", "拼接 .." to " .. ").forEach { (label, token) ->
+                        DebugOutputChoice(label, false, { onExpressionEdit { DebugOutputExpression.token(it, token) } })
+                    }
+                }
+                Text("数值计算后选中结果表达式，点“转文字 text()”再拼接；不修改变量本身。", color = EntryMuted, fontSize = 10.sp)
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun DebugOutputChoice(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.heightIn(min = 30.dp)
+        .background(if (selected) Color.White else EntryPanel, RoundedCornerShape(4.dp))
+        .border(1.dp, if (selected) EntryAccent else EntryBorder, RoundedCornerShape(4.dp))
+        .selectable(selected = selected, onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center) {
+        Text(label, color = if (selected) EntryAccent else EntryMuted, fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
+            style = CenteredDialogButtonTextStyle)
     }
 }
 
@@ -1626,26 +951,18 @@ private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onS
 @Composable
 private fun PickerDialog(request: PickerRequest, onDismiss: () -> Unit) {
     var selected by remember(request.title, request.selected) { mutableStateOf(request.selected) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(.78f).widthIn(max = 390.dp),
-            color = Color.White,
-            shape = RoundedCornerShape(2.dp),
-            shadowElevation = 10.dp,
-        ) {
-            Column {
-                Text(request.title, color = EntryBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp, vertical = 10.dp))
-                DividerLine()
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).height((request.options.size.coerceIn(1, 6) * 40).dp)) {
+    StudioPanelDialog(request.title, onDismiss, showFooter = false, compactHeader = true) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())) {
                     if (request.options.isEmpty()) {
                         Text("暂无可选变量，请先在“变量”中添加。", color = EntryMuted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center))
                     } else {
                         request.options.forEach { option ->
                             Row(
-                                Modifier.fillMaxWidth().height(40.dp)
+                                Modifier.fillMaxWidth().heightIn(min = 36.dp)
                                     .background(if (selected == option) Color(0xFFEAF0FF) else Color.White)
                                     .clickable { selected = option }
-                                    .padding(horizontal = 12.dp),
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(option, color = Color(0xFF202839), fontSize = 12.sp, modifier = Modifier.weight(1f))
@@ -1660,7 +977,6 @@ private fun PickerDialog(request: PickerRequest, onDismiss: () -> Unit) {
                     onDismiss()
                 }))
             }
-        }
     }
 }
 

@@ -281,10 +281,4 @@ class ImageToolCodeGenTest {
         snippets.forEach { assertNull("${it.summary} 被门禁拦下：${it.rejection}", it.rejection) }
     }
 
-    @Test
-    fun channelDistanceUsesMaximumChannelDelta() {
-        assertEquals(0, channelDistance(0x3A6EFF, 0x3A6EFF))
-        assertEquals(255, channelDistance(0x000000, 0xFF0000))
-        assertEquals(0x10, channelDistance(0x102030, 0x102040))
-    }
 }

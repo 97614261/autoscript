@@ -15,8 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal fun recognitionComponent(kind: String): String? = when (kind) {
-    "vision.findgray" -> "opencv"
-    "ocr.alphanumeric" -> "onnx"
+    "vision.findgray", "vision.findfeatures" -> "opencv"
+    "ocr.alphanumeric", "ocr.alphanumericv5" -> "onnx"
     else -> null
 }
 
@@ -37,7 +37,7 @@ internal suspend fun prepareRecognitionPreview(client: RuntimeClient, operation:
         throw RecognitionUnavailable("运行服务尚未连接，请检查运行环境")
     if (state.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING))
         throw RecognitionUnavailable("脚本运行或停止清理中，请稍后测试")
-    val kind = when (operation) { Reply.GRAY_TEMPLATE -> "vision.findgray"; Reply.ALPHANUMERIC -> "ocr.alphanumeric"; else -> "" }
+    val kind = when (operation) { Reply.GRAY_TEMPLATE -> "vision.findgray"; Reply.FEATURE_TEMPLATE -> "vision.findfeatures";Reply.ALPHANUMERIC,Reply.LATIN_TEXT -> "ocr.alphanumeric";Reply.ALPHANUMERIC_V5 -> "ocr.alphanumericv5"; else -> "" }
     val component = recognitionComponent(kind) ?: return
     val inventory = withContext(Dispatchers.IO) { client.visionAvailability() }
     if (client.runtimeStates.value.sessionGeneration != state.sessionGeneration)

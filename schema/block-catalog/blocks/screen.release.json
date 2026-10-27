@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1, "kind": "screen.release", "nodeVersion": 1,
   "nodeSchemaId": "https://autoscript.local/schema/node/screen.release/1/screen.release.schema.json",
-  "title": "释放截图", "category": "screen", "summary": "释放帧变量持有的任务级截图租约。",
+  "title": "释放图像帧", "category": "screen", "summary": "释放当前任务持有的截图、项目图片或处理帧租约；不另要求截图能力。",
   "searchTerms": ["release", "截图", "释放", "内存"],
-  "requiredCapabilities": ["screen.capture"], "childBlocks": [],
+  "requiredCapabilities": ["core.task"], "childBlocks": [],
   "properties": [
     { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" }
   ], "migrations": []

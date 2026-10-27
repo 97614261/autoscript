@@ -1,5 +1,6 @@
 package com.autoscript.studio
 
+import androidx.compose.runtime.saveable.SaveableStateRegistry
 import com.autoscript.runtime.api.RuntimeDebugReply
 import com.autoscript.runtime.api.RuntimeDebugValue
 import com.autoscript.runtime.api.RuntimeProtocol
@@ -12,6 +13,29 @@ class RuntimeVariableWatchStateTest {
     private fun sample(flow: String = "main", run: Long = 1, generation: Long = 7, global: String = "1", local: String = "1") =
         RuntimeDebugReply(RuntimeDebugReply.SUCCESS, flow, "node", listOf(value("global", global), value("local", local)),
             RuntimeProtocol.STATE_RUNNING, generation, run)
+
+    @Test fun firstNonEmptySampleUsesSaveableListKeysWithoutPersistingVariableValues() {
+        val state = RuntimeVariableWatchState()
+        assertTrue(state.values("local", "", null).isEmpty())
+        assertTrue(state.sample(sample().copy(variables = listOf(value("local", "PUBLIC_QA_VALUE_NOT_AN_ID", "string")))))
+        val local = state.values("local", "", null).single()
+        val registry = SaveableStateRegistry(null) { it is String }
+        assertFalse(registry.canBeSaved(local.watchKey(state.reply.flowId)))
+        assertTrue(registry.canBeSaved(local.watchListKey(state.reply.flowId)))
+        assertFalse(local.watchListKey(state.reply.flowId).contains(local.value))
+        assertEquals(local.watchListKey("main"), local.copy(value = "2", type = "number").watchListKey("main"))
+    }
+
+    @Test fun listKeysKeepScopeAndPluginIdentityWithChineseNamesAndAmbiguousSeparators() {
+        val global = RuntimeDebugValue("global", "分数", "integer", "1")
+        val local = global.copy(scope = "local")
+        assertEquals(global.watchListKey("main"), global.watchListKey("child"))
+        assertNotEquals(global.watchListKey("main"), local.watchListKey("main"))
+        assertNotEquals(local.watchListKey("main"), local.watchListKey("child"))
+        assertNotEquals(local.copy(name = "b:c").watchListKey("a"), local.copy(name = "c").watchListKey("a:b"))
+        val rows = listOf(global, local)
+        assertEquals(rows.size, rows.map { it.watchListKey("main") }.toSet().size)
+    }
 
     @Test fun firstSampleIsBaselineAndChangeIsBoundedAndCumulative() {
         val state = RuntimeVariableWatchState()

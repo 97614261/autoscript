@@ -297,6 +297,18 @@ mod tests {
     }
 
     #[test]
+    fn studio_authoring_fixture_has_the_exact_canonical_layout() {
+        // Same fixed fixture as Studio GlyphDictionaryMakerTest, not a new file format.
+        let bytes = [
+            0x41, 0x53, 0x47, 0x4c, 0x59, 0x50, 0x48, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0, 3, 0,
+            0, 0, 2, 0, 0, 0, 0x41, 0x57, 0x80,
+        ];
+        let dictionary = decode_dictionary(&bytes).expect("Studio v1 fixture");
+        assert_eq!(dictionary.glyphs()[0].label, "A");
+        assert_eq!(encode_dictionary(&[source()]), Ok(bytes.to_vec()));
+    }
+
+    #[test]
     fn non_zero_padding_and_trailing_bytes_are_rejected() {
         let mut source = source();
         source.packed_bits[1] |= 1;

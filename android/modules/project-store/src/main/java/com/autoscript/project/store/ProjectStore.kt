@@ -6,6 +6,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.Locale
+import java.util.LinkedHashMap
 import java.util.Properties
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -19,12 +20,30 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.autoscript.script.ui.CompactId
 
 class ProjectStore(
     private val rootDirectory: File,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val idFactory: () -> String = { "project-${UUID.randomUUID()}" },
+    private val idFactory: () -> String = { CompactId.next("project") },
 ) {
+    private data class VisualIdIndex(val nodeIds: Set<String>, val blockIds: Set<String>)
+    private data class FlowIdentityIndex(val source: String, val nodeIds: Set<String>, val blockIds: Set<String>)
+    private data class ProjectDirectoryStamp(
+        val name: String,
+        val directoryModified: Long,
+        val manifestModified: Long,
+        val manifestLength: Long,
+        val stateModified: Long,
+        val stateLength: Long,
+    )
+
+    // The project page refreshes frequently. Cache decoded summaries while retaining cheap
+    // manifest/state stamps so external edits still invalidate the cache.
+    private var projectListStamp: List<ProjectDirectoryStamp>? = null
+    private var projectListCache: List<ProjectSummary>? = null
+    private val flowIdentityIndexCache = object : LinkedHashMap<String, FlowIdentityIndex>(32, .75f, true) {}
+
     private val json: Gson = GsonBuilder()
         .setPrettyPrinting()
         .disableHtmlEscaping()
@@ -34,10 +53,14 @@ class ProjectStore(
     @Synchronized
     fun listProjects(): List<ProjectSummary> {
         ensureRoot()
-        return rootDirectory.listFiles()
+        val directories = rootDirectory.listFiles()
             .orEmpty()
-            .asSequence()
             .filter { it.isDirectory && !it.name.startsWith('.') && PROJECT_ID.matches(it.name) }
+            .sortedBy(File::getName)
+        val stamp = directories.map(::projectDirectoryStamp)
+        if (stamp == projectListStamp) return projectListCache.orEmpty()
+        val result = directories
+            .asSequence()
             .mapNotNull { directory ->
                 runCatching {
                     val decoded = readManifest(directory, recover = false).manifest
@@ -62,6 +85,27 @@ class ProjectStore(
                     .thenBy { it.name.lowercase(Locale.ROOT) }
                     .thenBy { it.projectId },
             ).toList()
+        projectListStamp = stamp
+        projectListCache = result
+        return result
+    }
+
+    private fun projectDirectoryStamp(directory: File): ProjectDirectoryStamp {
+        val manifest = File(directory, MANIFEST)
+        val state = File(directory, STATE)
+        return ProjectDirectoryStamp(
+            name = directory.name,
+            directoryModified = directory.lastModified(),
+            manifestModified = manifest.lastModified(),
+            manifestLength = manifest.length(),
+            stateModified = state.lastModified(),
+            stateLength = state.length(),
+        )
+    }
+
+    private fun invalidateProjectListCache() {
+        projectListStamp = null
+        projectListCache = null
     }
 
     @Synchronized
@@ -107,10 +151,9 @@ class ProjectStore(
                 )
                 ProjectSourceMode.VISUAL -> {
                     val flow = manifest.flows.single()
-                    val node = initialVisualNode(flow.rootBlockId)
                     writeAtomic(
                         File(staging, flow.path),
-                        "$node\n".toByteArray(Charsets.UTF_8),
+                        byteArrayOf(),
                         backup = null,
                     )
                 }
@@ -197,16 +240,32 @@ class ProjectStore(
                 else readLuaFile(directory, path)
             }
         } else emptyMap()
-        return ProjectSnapshot(
+        val flowSources = manifest.flows.associate { flow ->
+            flow.flowId to File(directory, flow.path).readText(Charsets.UTF_8)
+        }
+        val snapshot = ProjectSnapshot(
             directory = directory,
             manifest = manifest,
             luaSource = manifest.entryPoint?.let(luaSources::get),
             luaSources = luaSources,
             luaDirectories = manifest.luaDirectories,
-            flowSources = manifest.flows.associate { flow ->
-                flow.flowId to File(directory, flow.path).readText(Charsets.UTF_8)
-            },
+            flowSources = flowSources,
         )
+        // Older Studio builds saved these tools without promoting their manifest API.
+        if (manifest.sourceMode == ProjectSourceMode.VISUAL &&
+            manifest.runtimeApi.substringBefore('.') == "1" &&
+            manifest.runtimeApi.substringAfter('.').toInt() < 8 &&
+            flowSources.values.any { source ->
+                source.lineSequence().filter(String::isNotBlank).any { line ->
+                    runCatching { usesApi18TextTool(JsonParser.parseString(line).asJsonObject) }.getOrDefault(false)
+                }
+            }
+        ) {
+            val promoted = manifest.copy(runtimeApi = "1.8")
+            commitVariableTransaction(snapshot, promoted, emptyMap())
+            return snapshot.copy(manifest = promoted)
+        }
+        return snapshot
     }
 
     @Synchronized
@@ -229,12 +288,10 @@ class ProjectStore(
         source: InputStream,
         expectedResourcePaths: Set<String>,
         imageDirectory: String = "",
+        mode: ResourceImportMode = ResourceImportMode.Numbered,
     ): ProjectSnapshot {
         val current = openProject(projectId)
         requireResourcePathsMatch(current, expectedResourcePaths)
-        require(current.manifest.resources.size < MAX_PROJECT_RESOURCES) {
-            "资源数量不能超过 $MAX_PROJECT_RESOURCES"
-        }
         val staging = File(current.directory, ".studio/import/${UUID.randomUUID()}.tmp")
         checkContained(staging)
         try {
@@ -244,11 +301,6 @@ class ProjectStore(
                 ProjectResourceKind.AUDIO -> MAX_AUDIO_RESOURCE_BYTES
             }
             writeBoundedAndSync(staging, source, maximumBytes)
-            if (kind == ProjectResourceKind.AUDIO) {
-                val audioBytes = current.manifest.resources.filter { it.get("kind")?.asString == "audio" }
-                    .sumOf { File(current.directory, it.get("path").asString).length() }
-                require(audioBytes + staging.length() <= 64L * 1024 * 1024) { "项目音频总量超过64MiB" }
-            }
             val extension = validateImportedResource(kind, staging)
             val normalizedImageDirectory = if (kind == ProjectResourceKind.IMAGE) {
                 validateImageResourceDirectory(imageDirectory)
@@ -256,18 +308,34 @@ class ProjectStore(
                 require(imageDirectory.isEmpty()) { "字库资源不能指定图片目录" }
                 ""
             }
-            val fileName = uniqueResourceFileName(
-                current,
-                kind,
-                sanitizeResourceStem(sourceName),
-                extension,
-                normalizedImageDirectory,
-            )
-            val path = when (kind) {
-                ProjectResourceKind.IMAGE -> "assets/images/${normalizedImageDirectory}$fileName"
-                ProjectResourceKind.GLYPH_DICTIONARY -> "dictionaries/$fileName"
-                ProjectResourceKind.AUDIO -> "assets/audio/$fileName"
+            val stem = sanitizeResourceStem(sourceName)
+            val prefix = when (kind) {
+                ProjectResourceKind.IMAGE -> "assets/images/$normalizedImageDirectory"
+                ProjectResourceKind.GLYPH_DICTIONARY -> "dictionaries/"
+                ProjectResourceKind.AUDIO -> "assets/audio/"
             }
+            val sameNamePath = "$prefix$stem$extension"
+            val replacement = (mode as? ResourceImportMode.Replace)?.expected
+            var conflict: ResourceReplacement? = null
+            if (mode != ResourceImportMode.Numbered && (replacement != null || File(current.directory, sameNamePath).exists() || sameNamePath in expectedResourcePaths)) {
+                val old = current.manifest.resources.singleOrNull { it.get("path")?.asString == sameNamePath }
+                require(old?.get("kind")?.asString == resourceManifestKind(kind)) { "同名位置不是已登记的同类型资源，不能覆盖" }
+                val target = File(current.directory, sameNamePath)
+                checkContained(target)
+                require(target.isFile && target.length() in 1..maximumBytes) { "原资源不存在或超过预算，不能覆盖" }
+                val proof = ResourceReplacement(sameNamePath, resourceDigest(target, maximumBytes), resourceDigest(staging, maximumBytes))
+                conflict = proof
+                if (mode is ResourceImportMode.Replace) require(replacement == proof) { "原文件或待保存内容已变化，请重新保存并确认覆盖" }
+            }
+            require(conflict != null || current.manifest.resources.size < MAX_PROJECT_RESOURCES) { "资源数量不能超过 $MAX_PROJECT_RESOURCES" }
+            if (kind == ProjectResourceKind.AUDIO) {
+                val audioBytes = current.manifest.resources.filter { it.get("kind")?.asString == "audio" && it.get("path")?.asString != conflict?.path }
+                    .sumOf { File(current.directory, it.get("path").asString).length() }
+                require(audioBytes + staging.length() <= 64L * 1024 * 1024) { "项目音频总量超过64MiB" }
+            }
+            if (mode == ResourceImportMode.Ask && conflict != null) throw ResourceImportConflictException(conflict)
+            if (replacement != null) return replaceResource(current, staging, replacement, maximumBytes)
+            val path = prefix + uniqueResourceFileName(current, kind, stem, extension, normalizedImageDirectory)
             val target = File(current.directory, path)
             checkContained(target)
             target.parentFile?.let { parent ->
@@ -299,18 +367,75 @@ class ProjectStore(
         }
     }
 
+    private fun resourceDigest(file: File, maximum: Long): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(32 * 1024)
+            var total = 0L
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                require(total <= maximum) { "资源已变化或超过预算，不能覆盖" }
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
+
+    private fun replaceResource(current: ProjectSnapshot, staged: File, expected: ResourceReplacement, maximum: Long): ProjectSnapshot {
+        val target = File(current.directory, expected.path)
+        checkContained(target)
+        val previous = File(staged.parentFile, "${staged.name}.rollback")
+        require(!previous.exists()) { "资源回滚位置已被占用" }
+        var committed = false
+        var rollbackReady = false
+        var retainRollback = false
+        try {
+            target.inputStream().use { writeBoundedAndSync(previous, it, maximum) }
+            rollbackReady = resourceDigest(previous, maximum) == expected.previousSha256
+            require(rollbackReady && resourceDigest(target, maximum) == expected.previousSha256) { "原文件已变化，请重新保存并确认覆盖" }
+            invalidateGeneration(current.directory)
+            commitResourceFile(staged, target)
+            committed = true
+            touchProject(current.directory)
+            return openProject(current.manifest.projectId).copy(resourceRevision = UUID.randomUUID().toString())
+        } catch (failure: Throwable) {
+            if (rollbackReady && (committed || !target.isFile)) try { commitResourceFile(previous, target) }
+            catch (restore: Throwable) {
+                retainRollback = true
+                throw ProjectStoreException("资源覆盖未完成，旧内容保留在回滚文件中，请勿继续覆盖", restore)
+            }
+            throw failure
+        } finally { if (!retainRollback) previous.delete() }
+    }
+
+    private fun commitResourceFile(staged: File, target: File) {
+        if (staged.renameTo(target)) return
+        val displaced = File(staged.parentFile, "${staged.name}.displaced")
+        require(!displaced.exists()) { "资源事务位置已被占用" }
+        if (!target.renameTo(displaced)) throw ProjectStoreException("无法暂存原资源，原文件保留")
+        if (!staged.renameTo(target)) {
+            if (!displaced.renameTo(target)) throw ProjectStoreException("资源提交失败，旧内容保留在事务文件中")
+            throw ProjectStoreException("资源提交失败，原文件已恢复")
+        }
+        displaced.delete()
+    }
+
     @Synchronized
     fun deleteResource(
         projectId: String,
         path: String,
         expectedResourcePaths: Set<String>,
+        draftFlowSources: Map<String, String> = emptyMap(),
     ): ProjectSnapshot {
         val current = openProject(projectId)
         requireResourcePathsMatch(current, expectedResourcePaths)
         val declaration = current.manifest.resources.singleOrNull {
             it.get("path")?.asString == path
         } ?: throw IllegalArgumentException("资源不在项目清单中：$path")
-        require(!isResourceReferenced(current, path)) { "资源仍被脚本或积木引用：$path" }
+        val usages = resourceUsages(current, path, draftFlowSources)
+        if (usages.totalCount > 0) throw ProjectResourceInUseException(usages)
         val target = File(current.directory, path)
         checkContained(target)
         require(target.isFile) { "资源文件不存在：$path" }
@@ -695,6 +820,13 @@ class ProjectStore(
             val node = JsonParser.parseString(line).asJsonObject
             val kind = node.get("kind")?.asString
             when {
+                usesApi18TextTool(node) -> 8
+                kind in setOf("text.urlencode","text.urldecode","text.tohex","text.fromhex","text.tobase64","text.frombase64","text.findnth","text.betweennth","path.name","path.parent","path.normalize","path.join","screen.frameinfo","screen.captureregion") -> 8
+                kind=="ui.command" && node.getAsJsonObject("args")?.get("operation")?.asString in setOf("get:pages","get:controls") -> 8
+                kind in setOf("input.touchdown","input.touchmove","input.touchup") -> 8
+                kind in setOf("floating.image","floating.waitevent","floating.closeimage") -> 8
+                kind in setOf("input.imestatus","input.imetext","vision.findfeatures","ocr.alphanumericv5") -> 8
+                kind in setOf("files.modifiedtime","system.info","system.keepawake","app.openurl","network.request") -> 8
                 node.has("randomization") || kind in setOf("files.getsize", "files.getextension", "files.directorystats", "files.tobase64", "files.frombase64", "files.zip", "files.unzip", "input.pastetext", "clipboard.gettext", "clipboard.settext", "app.info", "app.open", "floating.show", "floating.hide", "floating.close", "floating.bounds") -> 8
                 kind in setOf("task.spawn", "task.cancel", "timer.every", "timer.cancel", "vision.findgray", "vision.findallimages", "vision.result", "ocr.alphanumeric", "ui.get", "ui.set", "ui.command") ||
                     kind == "vision.findimage" && (node.get("nodeVersion")?.asInt ?: 1) >= 2 ||
@@ -703,6 +835,11 @@ class ProjectStore(
             }
         }.getOrDefault(0)
     } ?: 0
+
+    private fun usesApi18TextTool(node: JsonObject): Boolean =
+        node.get("kind")?.asString == "text.numberat" ||
+            node.get("kind")?.asString == "ocr.alphanumeric" &&
+            node.getAsJsonObject("args")?.get("includeSymbols")?.asBoolean == true
 
     /**
      * 新建 Flow。`flowId` 是引用身份（ASCII），`fileName` 是源文件管理里显示的名字（允许中文），
@@ -727,17 +864,19 @@ class ProjectStore(
         require(current.manifest.flows.size < MAX_PROJECT_FLOWS) { "插件数量不能超过 256" }
         val path = flowPathForName(fileName)
         require(current.manifest.flows.none { it.path == path }) { "源文件名已存在：$fileName" }
+        val identities = visualIdIndex(current.flowSources)
+        val reservedBlocks = identities.blockIds + current.manifest.flows.map { it.rootBlockId }
         val declaration = ProjectFlow(
             flowId = flowId,
             path = path,
-            rootBlockId = "block-${UUID.randomUUID()}",
+            rootBlockId = CompactId.nextNumeric("block", reservedBlocks),
         )
         val flowFile = File(current.directory, declaration.path)
         checkContained(flowFile)
         require(!flowFile.exists()) { "插件文件已存在：${declaration.path}" }
         writeAtomic(
             flowFile,
-            "${initialVisualNode(declaration.rootBlockId)}\n".toByteArray(Charsets.UTF_8),
+            byteArrayOf(),
             backup = null,
         )
         try {
@@ -962,8 +1101,11 @@ class ProjectStore(
 
         val originSource = current.flowSources[sourceFlowId]
             ?: throw ProjectStoreException("插件源码缺失：$sourceFlowId")
-        val rootBlockId = "block-${UUID.randomUUID()}"
-        val copied = reidentifyFlowSource(originSource, origin.rootBlockId, rootBlockId, sourceFlowId)
+        val identities = visualIdIndex(current.flowSources)
+        val reservedBlocks = identities.blockIds + current.manifest.flows.map { it.rootBlockId }
+        val rootBlockId = CompactId.nextNumeric("block", reservedBlocks)
+        val copied = reidentifyFlowSource(originSource, origin.rootBlockId, rootBlockId, sourceFlowId,
+            identities.nodeIds, reservedBlocks)
         val declaration = ProjectFlow(
             flowId = targetFlowId,
             path = target,
@@ -1001,6 +1143,7 @@ class ProjectStore(
         if (!directory.deleteRecursively() && directory.exists()) {
             throw ProjectStoreException("删除项目失败：$projectId")
         }
+        invalidateProjectListCache()
     }
 
     /** Authoritative files plus portable organization; generated output and transient editor state are omitted. */
@@ -1009,7 +1152,7 @@ class ProjectStore(
         val current = openProject(projectId)
         val directories = readImageDirectories(projectId)
         if (directories.isNotEmpty()) writeImageDirectories(current.directory, directories)
-        val organization = listOf(SOURCE_GROUPS, IMAGE_DIRECTORIES).filter { File(current.directory, it).isFile }.toSet()
+        val organization = listOf(SOURCE_GROUPS, IMAGE_DIRECTORIES, IMAGE_FILTER_PRESETS, IMAGE_RECIPES).filter { File(current.directory, it).isFile }.toSet()
         validateOrganization(current.directory, current.manifest, organization)
         val paths = backupPaths(current.manifest) + organization.sorted()
         var totalBytes = 0L
@@ -1021,7 +1164,7 @@ class ProjectStore(
                     checkContained(file)
                     require(file.isFile && file.canRead()) { "备份文件不存在：$path" }
                     val maximum = backupEntryLimit(path)
-                    require(file.length() in 1..maximum) { "备份文件大小无效：$path" }
+                    require(file.length() in backupEntryMinimum(path)..maximum) { "备份文件大小无效：$path" }
                     archive.putNextEntry(ZipEntry(path).apply { time = ZIP_EPOCH_MILLIS })
                     file.inputStream().use { input ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -1036,7 +1179,7 @@ class ProjectStore(
                             require(totalBytes <= MAX_PROJECT_BACKUP_BYTES) { "项目备份超过 512 MiB" }
                             archive.write(buffer, 0, count)
                         }
-                        require(entryBytes > 0) { "备份文件为空：$path" }
+                        require(entryBytes >= backupEntryMinimum(path)) { "备份文件为空：$path" }
                     }
                     archive.closeEntry()
                 }
@@ -1059,7 +1202,7 @@ class ProjectStore(
             val extracted = extractProjectBackup(source, staging)
             require(MANIFEST in extracted) { "备份缺少 project.json" }
             val loaded = readManifest(staging, recover = false)
-            val organization = extracted.intersect(setOf(SOURCE_GROUPS, IMAGE_DIRECTORIES))
+            val organization = extracted.intersect(setOf(SOURCE_GROUPS, IMAGE_DIRECTORIES, IMAGE_FILTER_PRESETS, IMAGE_RECIPES))
             val expected = backupPaths(loaded.manifest).toSet() + organization
             require(extracted == expected) {
                 val unexpected = (extracted - expected).sorted().firstOrNull()
@@ -1236,7 +1379,7 @@ class ProjectStore(
                 require(extracted.add(path)) { "备份文件重复：$path" }
                 require(extracted.size <= MAX_PROJECT_BACKUP_ENTRIES) { "备份文件数量超过上限" }
                 val maximum = backupEntryLimit(path)
-                if (entry.size >= 0) require(entry.size in 1..maximum) { "备份文件大小无效：$path" }
+                if (entry.size >= 0) require(entry.size in backupEntryMinimum(path)..maximum) { "备份文件大小无效：$path" }
                 val target = File(staging, path)
                 require(isDescendant(staging, target)) {
                     "备份路径越界：$path"
@@ -1257,7 +1400,7 @@ class ProjectStore(
                         require(totalBytes <= MAX_PROJECT_BACKUP_BYTES) { "项目备份超过 512 MiB" }
                         output.write(buffer, 0, count)
                     }
-                    require(entryBytes > 0) { "备份文件为空：$path" }
+                    require(entryBytes >= backupEntryMinimum(path)) { "备份文件为空：$path" }
                     output.flush()
                     output.fd.sync()
                 }
@@ -1275,7 +1418,7 @@ class ProjectStore(
             }
             ProjectSourceMode.VISUAL -> manifest.flows.forEach { flow ->
                 val file = File(directory, flow.path)
-                require(file.length() in 1..MAX_FLOW_SOURCE_BYTES.toLong()) {
+                require(file.length() in 0..MAX_FLOW_SOURCE_BYTES.toLong()) {
                     "插件文件大小无效：${flow.path}"
                 }
                 file.readText(Charsets.UTF_8)
@@ -1306,15 +1449,19 @@ class ProjectStore(
         require(path.length in 1..256 && '\\' !in path && '\u0000' !in path) { "非法备份路径" }
         require(path.split('/').none { it.isEmpty() || it == "." || it == ".." }) { "备份路径越界" }
         require(
-            path == MANIFEST || path in setOf(SOURCE_GROUPS, IMAGE_DIRECTORIES) || isValidLuaPath(path) ||
+            path == MANIFEST || path in setOf(SOURCE_GROUPS, IMAGE_DIRECTORIES, IMAGE_FILTER_PRESETS, IMAGE_RECIPES) || isValidLuaPath(path) ||
                 (path.startsWith("visual/flows/") && path.endsWith(".jsonl")) ||
                 path.startsWith("assets/images/") || path.startsWith("dictionaries/") || path.startsWith("assets/audio/"),
         ) { "备份包含非法文件：$path" }
         return path
     }
 
+    private fun backupEntryMinimum(path: String): Long = if (isValidFlowPath(path)) 0 else 1
+
     private fun backupEntryLimit(path: String): Long = when {
         path == MANIFEST -> MAX_PROJECT_MANIFEST_BYTES
+        path == IMAGE_FILTER_PRESETS -> MAX_IMAGE_FILTER_PRESET_BYTES.toLong()
+        path == IMAGE_RECIPES -> MAX_IMAGE_RECIPE_BYTES.toLong()
         path in setOf(SOURCE_GROUPS, IMAGE_DIRECTORIES) -> MAX_ORGANIZATION_BYTES
         isValidLuaPath(path) -> MAX_LUA_SOURCE_BYTES.toLong()
         path.startsWith("visual/flows/") -> MAX_FLOW_SOURCE_BYTES.toLong()
@@ -1695,6 +1842,8 @@ class ProjectStore(
     }
 
     private fun validateOrganization(directory: File, manifest: ProjectManifestDocument, paths: Set<String>) {
+        if(IMAGE_RECIPES in paths) readRecipes(File(directory,IMAGE_RECIPES)).forEach {it.validateResources(manifest.resources)}
+        if (IMAGE_FILTER_PRESETS in paths) readFilterPresets(File(directory, IMAGE_FILTER_PRESETS))
         if (IMAGE_DIRECTORIES in paths) decodeImageDirectories(File(directory, IMAGE_DIRECTORIES))
         if (SOURCE_GROUPS !in paths) return
         require(manifest.sourceMode == ProjectSourceMode.VISUAL) { "Lua 项目不能包含插件分组" }
@@ -1722,31 +1871,70 @@ class ProjectStore(
         }
     }
 
+    @Synchronized
+    fun readImageFilterPresets(projectId: String): List<ProjectImageFilterPreset> =
+        readFilterPresets(File(existingProjectDirectory(projectId), IMAGE_FILTER_PRESETS))
+
+    @Synchronized
+    fun updateImageFilterPresets(projectId: String, submitted: List<ProjectImageFilterPreset>, expected: List<ProjectImageFilterPreset>) {
+        val directory = existingProjectDirectory(projectId)
+        val file = File(directory, IMAGE_FILTER_PRESETS)
+        if (readFilterPresets(file) != expected) throw ProjectManifestConflictException()
+        val encoded = encodeImageFilterPresets(submitted)
+        writeAtomic(file, encoded, backup = null)
+        touchProject(directory)
+    }
+
+    private fun readFilterPresets(file: File): List<ProjectImageFilterPreset> {
+        checkContained(file)
+        if (!file.exists()) return emptyList()
+        require(file.isFile && file.length() in 1..MAX_IMAGE_FILTER_PRESET_BYTES.toLong()) { "滤色方案文件大小无效，原文件保留" }
+        val bytes = readBoundedStoreFile(file, MAX_IMAGE_FILTER_PRESET_BYTES.toLong())
+        val text = Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+        return decodeImageFilterPresets(text)
+    }
+
+    @Synchronized
+    fun readImageRecipes(projectId:String):List<ProjectImageRecipe> = readRecipes(File(existingProjectDirectory(projectId),IMAGE_RECIPES))
+
+    @Synchronized
+    fun updateImageRecipes(projectId:String,submitted:List<ProjectImageRecipe>,expected:List<ProjectImageRecipe>) {
+        val snapshot=openProject(projectId)
+        val file=File(snapshot.directory,IMAGE_RECIPES)
+        if(readRecipes(file)!=expected) throw ProjectManifestConflictException()
+        submitted.forEach {it.validateResources(snapshot.manifest.resources)}
+        val bytes=encodeImageRecipes(submitted)
+        writeAtomic(file,bytes,backup=null);touchProject(snapshot.directory)
+    }
+
+    private fun readRecipes(file:File):List<ProjectImageRecipe> {
+        checkContained(file);if(!file.exists()) return emptyList()
+        require(file.isFile && file.length() in 1..MAX_IMAGE_RECIPE_BYTES.toLong()) {"图像方案文件大小无效，原文件保留"}
+        val bytes=readBoundedStoreFile(file,MAX_IMAGE_RECIPE_BYTES.toLong())
+        return decodeImageRecipes(Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString())
+    }
+
     private fun resourceManifestKind(kind: ProjectResourceKind): String = when (kind) {
         ProjectResourceKind.IMAGE -> "image"
         ProjectResourceKind.GLYPH_DICTIONARY -> "glyphDictionary"
         ProjectResourceKind.AUDIO -> "audio"
     }
 
-    private fun isResourceReferenced(snapshot: ProjectSnapshot, path: String): Boolean =
-        snapshot.manifest.runnerUi?.let { com.autoscript.script.ui.ScriptUiDefinition.parse(it.toString()).fields.any { field -> field.control == com.autoscript.script.ui.UiControl.IMAGE && field.initialValue == path } } == true ||
-        when (snapshot.manifest.sourceMode) {
-            ProjectSourceMode.LUA -> snapshot.luaSources.values.any { it.contains(path) }
-            ProjectSourceMode.VISUAL -> snapshot.flowSources.any { (flowId, source) ->
-                source.lineSequence().filter(String::isNotBlank).any { line ->
-                    val node = runCatching { JsonParser.parseString(line).asJsonObject }
-                        .getOrElse { throw ProjectStoreException("插件 $flowId 损坏，不能安全删除资源") }
-                    jsonContainsString(node.get("args"), path)
-                }
-            }
-        }
+    @Synchronized
+    fun findResourceUsages(projectId: String, path: String, draftFlowSources: Map<String, String> = emptyMap(),
+        checkCancelled: () -> Unit = {}): ProjectResourceUsageReport =
+        resourceUsages(openProject(projectId), path, draftFlowSources, checkCancelled)
 
-    private fun jsonContainsString(value: com.google.gson.JsonElement?, target: String): Boolean = when {
-        value == null || value.isJsonNull -> false
-        value.isJsonPrimitive -> value.asJsonPrimitive.isString && value.asString == target
-        value.isJsonArray -> value.asJsonArray.any { jsonContainsString(it, target) }
-        value.isJsonObject -> value.asJsonObject.entrySet().any { jsonContainsString(it.value, target) }
-        else -> false
+    private fun resourceUsages(snapshot: ProjectSnapshot, path: String, drafts: Map<String, String>,
+        checkCancelled: () -> Unit = {}): ProjectResourceUsageReport {
+        require(snapshot.manifest.resources.any { it.get("path")?.asString == path }) { "图片已变化或不在项目中，请刷新后重试" }
+        drafts.values.forEach {
+            checkCancelled()
+            require(it.toByteArray(Charsets.UTF_8).size <= MAX_FLOW_SOURCE_BYTES) { "插件草稿超过预算，不能安全检查图片引用" }
+        }
+        val recipes = try { readRecipes(File(snapshot.directory, IMAGE_RECIPES)) }
+        catch (_: Exception) { throw ProjectStoreException("图像方案文件损坏或超出预算，无法检查图片引用，原图片保留") }
+        return scanResourceUsages(snapshot, path, drafts, recipes, checkCancelled)
     }
 
     private fun touchProject(directory: File) {
@@ -1766,6 +1954,8 @@ class ProjectStore(
         originRootBlockId: String,
         targetRootBlockId: String,
         sourceFlowId: String,
+        reservedNodeIds: Set<String>,
+        reservedBlockIds: Set<String>,
     ): String {
         fun corrupt() = ProjectStoreException("插件 $sourceFlowId 损坏，不能安全复制")
         fun text(node: JsonObject, key: String): String? =
@@ -1774,18 +1964,20 @@ class ProjectStore(
         val nodes = source.lineSequence().filter(String::isNotBlank).map { line ->
             runCatching { JsonParser.parseString(line).asJsonObject }.getOrElse { throw corrupt() }
         }.toList()
-        if (nodes.isEmpty()) throw corrupt()
+        if (nodes.isEmpty()) return source
 
         val nodeIds = HashMap<String, String>()
+        val usedNodeIds = reservedNodeIds.toMutableSet()
         val blockIds = hashMapOf(originRootBlockId to targetRootBlockId)
+        val usedBlockIds = (reservedBlockIds + targetRootBlockId).toMutableSet()
         nodes.forEach { node ->
             val nodeId = text(node, "nodeId") ?: throw corrupt()
-            nodeIds.getOrPut(nodeId) { "node-${UUID.randomUUID()}" }
+            nodeIds.getOrPut(nodeId) { CompactId.nextNumeric("node", usedNodeIds).also(usedNodeIds::add) }
             val blockId = text(node, "blockId") ?: throw corrupt()
-            blockIds.getOrPut(blockId) { "block-${UUID.randomUUID()}" }
+            blockIds.getOrPut(blockId) { CompactId.nextNumeric("block", usedBlockIds).also(usedBlockIds::add) }
             node.getAsJsonObject("childBlocks")?.entrySet()?.forEach { slot ->
                 val childBlockId = slot.value?.takeIf { it.isJsonPrimitive }?.asString ?: throw corrupt()
-                blockIds.getOrPut(childBlockId) { "block-${UUID.randomUUID()}" }
+                blockIds.getOrPut(childBlockId) { CompactId.nextNumeric("block", usedBlockIds).also(usedBlockIds::add) }
             }
         }
 
@@ -1875,12 +2067,12 @@ class ProjectStore(
         checkContained(previous)
         if (!previous.isFile) return
         require(!File(target.parentFile, "${target.name}.tmp").exists()) { "插件存在未提交草稿，请先备份并检查恢复副本" }
-        require(previous.length() in 1..MAX_FLOW_SOURCE_BYTES.toLong()) { "插件恢复副本超过预算" }
+        require(previous.length() in 0..MAX_FLOW_SOURCE_BYTES.toLong()) { "插件恢复副本超过预算" }
         val bytes = readBoundedStoreFile(previous, MAX_FLOW_SOURCE_BYTES.toLong())
-        require(bytes.size in 1..MAX_FLOW_SOURCE_BYTES) { "插件恢复副本超过预算" }
+        require(bytes.size in 0..MAX_FLOW_SOURCE_BYTES) { "插件恢复副本超过预算" }
         val source = Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString()
         val nodeIds = HashSet<String>()
-        var hasRoot = false
+        var hasRoot = source.isBlank()
         source.lineSequence().filter(String::isNotBlank).forEach { line ->
             val node = JsonParser.parseString(line).asJsonObject
             val nodeId = node.get("nodeId")?.asString
@@ -2040,7 +2232,7 @@ class ProjectStore(
         require(variables.size <= 512) { "变量数量超过512" }
         val keys = mutableSetOf<Pair<ProjectVariableScope, String>>()
         variables.forEach { variable ->
-            require(PARAMETER_NAME.matches(variable.name) && variable.name.length <= 64) { "非法变量名：${variable.name}" }
+            require(ProjectNames.valid(variable.name)) { "非法变量名：${variable.name}" }
             require(keys.add(variable.scope to "${variable.flowId.orEmpty()}:${variable.name}")) { "变量声明重复：${variable.name}" }
             if (variable.scope == ProjectVariableScope.GLOBAL) require(variable.flowId == null) { "全局变量不能指定插件" }
             else require(variable.flowId != null && flows.any { it.flowId == variable.flowId }) { "局部变量缺少有效插件" }
@@ -2104,7 +2296,7 @@ class ProjectStore(
             "运行提示变量类型无效"
         }
         require(filters.variableName == "all" ||
-            (filters.variableName.length <= 64 && PARAMETER_NAME.matches(filters.variableName))) {
+            ProjectNames.valid(filters.variableName)) {
             "运行提示变量名称无效"
         }
     }
@@ -2262,7 +2454,7 @@ class ProjectStore(
                 require(value.keySet() == setOf("name", "type", "required")) {
                     "插件参数含未知字段"
                 }
-                require(PARAMETER_NAME.matches(value.get("name").asString)) { "非法插件参数名" }
+                require(ProjectNames.valid(value.get("name").asString)) { "非法插件参数名" }
                 require(value.get("type").asString in VALUE_TYPES) { "非法插件参数类型" }
                 require(value.get("required").isJsonPrimitive && value.get("required").asJsonPrimitive.isBoolean) {
                     "插件参数 required 必须是布尔值"
@@ -2292,7 +2484,7 @@ class ProjectStore(
     )
 
     private fun visualManifest(projectId: String, name: String, design: ProjectDesign): ProjectManifestDocument {
-        val rootBlockId = "block-${UUID.randomUUID()}"
+        val rootBlockId = "block-1"
         return ProjectManifestDocument(
             projectId = projectId,
             name = name,
@@ -2309,9 +2501,42 @@ class ProjectStore(
         )
     }
 
-    private fun initialVisualNode(rootBlockId: String): String {
-        val nodeId = "node-${UUID.randomUUID()}"
-        return """{"flowSchemaVersion":1,"nodeId":"$nodeId","blockId":"$rootBlockId","parentId":null,"orderKey":"a0","kind":"task.noop","nodeVersion":1,"depth":0,"args":{}}"""
+    private fun visualIdIndex(sources: Map<String, String>): VisualIdIndex {
+        val nodeIds = linkedSetOf<String>()
+        val blockIds = linkedSetOf<String>()
+        sources.forEach { (flowId, source) ->
+            val cacheable = source.length <= 1_048_576
+            val cached = if (cacheable) synchronized(flowIdentityIndexCache) {
+                flowIdentityIndexCache[flowId]?.takeIf { it.source == source }
+            } else null
+            val index = cached ?: run {
+                val flowNodes = linkedSetOf<String>()
+                val flowBlocks = linkedSetOf<String>()
+                source.lineSequence().filter(String::isNotBlank).forEachIndexed { lineIndex, line ->
+                    val node = runCatching { JsonParser.parseString(line).asJsonObject }
+                        .getOrElse { throw ProjectStoreException("插件 $flowId 第 ${lineIndex + 1} 行损坏，无法建立身份索引") }
+                    node.get("nodeId")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                        ?.asString?.let(flowNodes::add)
+                    node.get("blockId")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                        ?.asString?.let(flowBlocks::add)
+                    node.getAsJsonObject("childBlocks")?.entrySet()?.forEach { entry ->
+                        entry.value.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                            ?.asString?.let(flowBlocks::add)
+                    }
+                }
+                FlowIdentityIndex(source, flowNodes, flowBlocks).also {
+                    if (cacheable) synchronized(flowIdentityIndexCache) {
+                        flowIdentityIndexCache[flowId] = it
+                        while (flowIdentityIndexCache.size > 256) {
+                            flowIdentityIndexCache.remove(flowIdentityIndexCache.entries.iterator().next().key)
+                        }
+                    }
+                }
+            }
+            nodeIds += index.nodeIds
+            blockIds += index.blockIds
+        }
+        return VisualIdIndex(nodeIds = nodeIds, blockIds = blockIds)
     }
 
     private fun ensureRoot() {
@@ -2509,6 +2734,7 @@ class ProjectStore(
             state.lastOpenedAt?.let { append("lastOpenedAt=$it\n") }
         }
         writeAtomic(File(directory, STATE), text.toByteArray(Charsets.UTF_8), backup = null)
+        invalidateProjectListCache()
     }
 
     private data class LoadedManifest(
@@ -2563,6 +2789,8 @@ class ProjectStore(
         const val SOURCE_GROUPS_VERSION = 1
         const val MAX_SOURCE_GROUPS = 64
         const val IMAGE_DIRECTORIES = ".studio/image-directories.json"
+        const val IMAGE_FILTER_PRESETS = ".studio/image-filters.json"
+        const val IMAGE_RECIPES = ".studio/image-recipes.json"
         const val MAX_IMAGE_DIRECTORIES = 256
         const val MAX_ORGANIZATION_BYTES = 64L * 1024
         const val BACKUP_ROOT = ".backups"
@@ -2577,7 +2805,7 @@ class ProjectStore(
         const val MAX_PROJECT_CAPABILITIES = 64
         const val MAX_CAPABILITY_LENGTH = 128
         val RUNNER_UI_KINDS = setOf("text", "integer", "boolean", "choice")
-        const val MAX_PROJECT_BACKUP_ENTRIES = 516
+        const val MAX_PROJECT_BACKUP_ENTRIES = 517
         const val MAX_IMPORT_ID_ATTEMPTS = 32
         const val BACKUP_COMPRESSION_LEVEL = 6
         const val ZIP_EPOCH_MILLIS = 315_532_800_000L

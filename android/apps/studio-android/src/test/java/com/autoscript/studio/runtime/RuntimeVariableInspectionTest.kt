@@ -34,17 +34,13 @@ class RuntimeVariableInspectionTest {
         assertTrue(state.reply.variables.isEmpty())
     }
 
-    @Test fun nilUnsupportedAndTruncationAreVisibleAndCannotBeBackfilled() {
+    @Test fun nilUnsupportedAndTruncationAreVisible() {
         val nil = RuntimeDebugValue("local", "unset", "nil", "", declaredType = "boolean")
         val unsupported = RuntimeDebugValue("local", "tableValue", "unsupported", "table")
         val truncated = RuntimeDebugValue("local", "text", "string", "partial", true)
         assertTrue(runtimeDebugValueText(nil).contains("未赋值"))
         assertTrue(runtimeDebugValueText(unsupported).contains("table"))
         assertTrue(runtimeDebugValueText(truncated).contains("截断"))
-        val field = backfillFields(BlockCatalog.find("task.log")).single { it.path == "message" }
-        for (value in listOf(nil, unsupported, truncated)) {
-            assertTrue(runCatching { backfillArguments(com.google.gson.JsonObject(), field, value) }.isFailure)
-        }
         assertTrue(runtimeDebugSummary(snapshot()).contains("真实值"))
         assertTrue(runtimeDebugSummary(snapshot().copy(runtimeState = RuntimeProtocol.STATE_RUNNING)).contains("最近检查点"))
     }

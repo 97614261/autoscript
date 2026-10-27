@@ -72,7 +72,7 @@ internal fun VisualInputActionDialog(
                 color = Color.White, shape = RoundedCornerShape(5.dp), shadowElevation = 9.dp) {
                 Column {
                     Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 12.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("按键", color = blue, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("触控", color = blue, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Text(if (backendFeatures == null && canPickPoint) "读取中" else if (basicReason != null) "未就绪" else if (pointerReason == null) "Root · 单指" else "Root · 基础输入",
                             color = if (basicReason == null) blue else muted, fontSize = 10.sp,
                             modifier = Modifier.background(Color(0xFFF3F5F8), RoundedCornerShape(3.dp)).padding(horizontal = 7.dp, vertical = 3.dp))

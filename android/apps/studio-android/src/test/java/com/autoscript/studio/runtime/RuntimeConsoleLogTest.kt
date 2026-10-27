@@ -9,6 +9,18 @@ import org.junit.Test
 
 class RuntimeConsoleLogTest {
     @Test
+    fun `overlap matches maximal suffix prefix for duplicates empty and rolling snapshots`() {
+        val variants = (0..6).flatMap { size -> (0 until (1 shl size)).map { bits ->
+            List(size) { index -> if (bits and (1 shl index) == 0) "重复😀" else "other" }
+        } } + listOf(List(200) { "same" }, List(200) { "line$it" })
+        for (previous in variants) for (next in variants) {
+            val expected = (minOf(previous.size, next.size) downTo 0)
+                .first { previous.takeLast(it) == next.take(it) }
+            assertEquals(expected, runtimeConsoleOverlap(previous, next))
+        }
+    }
+
+    @Test
     fun `first snapshot logs only known fields`() {
         val delta = runtimeConsoleDelta(
             previous = null,

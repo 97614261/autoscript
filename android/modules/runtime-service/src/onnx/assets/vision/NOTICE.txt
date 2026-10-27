@@ -8,6 +8,15 @@ Model weights: Baidu / applicable PaddleOCR rights holders, Apache License 2.0.
 Converted to ONNX and packaged by RapidOCR; this repository does not modify the weights.
 No endorsement by PaddlePaddle, Baidu, RapidOCR, OpenCV or Microsoft is implied.
 
+Explicit optional English/digit candidate: en_PP-OCRv5_rec_mobile.onnx
+SHA256: c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8
+Size: 7872351 bytes
+Source registry: https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml
+Artifact: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv5/rec/en_PP-OCRv5_rec_mobile.onnx
+Upstream: PaddlePaddle/PaddleOCR, English mobile recognition, Apache License 2.0.
+Converted to ONNX by RapidOCR; weights are unmodified. Not the default model.
+Historical synthetic comparison does not recommend replacing V4; accuracy is input-dependent.
+
 OpenCV 4.10.0: Apache License 2.0, https://opencv.org/license/
 ONNX Runtime Android 1.19.2: MIT, https://github.com/microsoft/onnxruntime/blob/v1.19.2/LICENSE
 Runtime code and model weights are separate licensed works.

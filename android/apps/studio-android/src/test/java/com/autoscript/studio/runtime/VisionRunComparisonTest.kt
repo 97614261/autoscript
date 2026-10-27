@@ -73,4 +73,16 @@ class VisionRunComparisonTest {
         assertFalse(VisionRunComparison.hasTemplateIdentity(parameters + ("templateCount" to "2")))
         assertFalse(VisionRunComparison.hasTemplateIdentity(parameters + ("templateFingerprints" to "[1]")))
     }
+    @Test fun regionalCaptureComparisonRequiresActualBoundsAndReadbackMode() {
+        val fields = mapOf("frame" to "[230,152]", "captureBackend" to "surface-control", "captureTransport" to "authenticated-stream",
+            "captureRegion" to "[10,20,240,172]", "captureReadback" to "region")
+        fun region(parameters: Map<String, String>) = VisionRunComparison.Sample(metadata,
+            VisionRunStatistics.Report(listOf(VisionRunStatistics.Group("capture-region-host-roundtrip",
+                parameters.entries.sortedBy { it.key }.joinToString(), "completed", 100, 8.0, 12.0, 20.0, parameters, "ms")), 0, 0, 0))
+        assertEquals(1, VisionRunComparison.compare(region(fields), region(fields)).rows.size)
+        for (key in listOf("captureRegion", "captureReadback"))
+            assertTrue(VisionRunComparison.compare(region(fields - key), region(fields - key)).rows.isEmpty())
+        assertTrue(VisionRunComparison.compare(region(fields), region(fields + ("captureReadback" to "full-fallback"))).rows.isEmpty())
+        assertTrue(VisionRunComparison.compare(region(fields), region(fields + ("captureRegion" to "[20,20,250,172]"))).rows.isEmpty())
+    }
 }

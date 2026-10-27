@@ -9,6 +9,55 @@ import org.junit.Test
 
 class DebugOutputCodeTest {
 
+    @Test fun emptyNewOutputChoicesDoNotBlockCloseOrOpeningDialogArguments() {
+        val initial = DebugOutputDraft.from(null, null)
+        assertFalse(initial.needsDiscard(initial, editingExisting = false))
+        for (mode in DebugOutputCode.RUN_PROMPT..DebugOutputCode.COMMENT) {
+            for (expression in listOf(false, true)) {
+                for (level in listOf("info", "warn", "error")) {
+                    assertFalse(initial.copy(mode = mode, expression = expression, logLevel = level)
+                        .needsDiscard(initial, editingExisting = false))
+                }
+            }
+        }
+    }
+
+    @Test fun realNewOutputIncludingIncompleteTextAndVariableBindingIsProtected() {
+        val initial = DebugOutputDraft()
+        for (text in listOf("运行中", " ", "\"进度\" ..", "\n")) {
+            assertTrue(initial.copy(text = text).needsDiscard(initial, editingExisting = false))
+        }
+        assertTrue(initial.copy(variable = "状态").needsDiscard(initial, editingExisting = false))
+        assertTrue(initial.copy(mode = DebugOutputCode.COMMENT, variable = "状态")
+            .needsDiscard(initial, editingExisting = false))
+        assertFalse(initial.copy(text = "changed").copy(text = "").needsDiscard(initial, editingExisting = false))
+    }
+
+    @Test fun existingOutputChangesAndClearingContentStillRequireConfirmation() {
+        val arguments = JsonObject().apply { addProperty("message", "原提示") }
+        val initial = DebugOutputDraft.from("task.prompt", arguments)
+        assertFalse(initial.needsDiscard(initial, editingExisting = true))
+        assertTrue(initial.copy(text = "").needsDiscard(initial, editingExisting = true))
+        assertTrue(initial.copy(text = "新提示").needsDiscard(initial, editingExisting = true))
+        val emptyLog = DebugOutputDraft.from("task.log", JsonObject())
+        assertTrue(emptyLog.copy(logLevel = "warn").needsDiscard(emptyLog, editingExisting = true))
+        arguments.addProperty("message", "迟到快照")
+        assertEquals("原提示", initial.text)
+    }
+
+    @Test fun expressionEditingBaselinePreservesOriginalChannelAndText() {
+        val arguments = JsonObject().apply {
+            addProperty("expression", "text(count)")
+            addProperty("channel", "popup")
+        }
+        val initial = DebugOutputDraft.from("task.message", arguments)
+        assertEquals(DebugOutputCode.TOAST, initial.mode)
+        assertTrue(initial.expression)
+        assertEquals("text(count)", initial.text)
+        assertFalse(initial.needsDiscard(initial, editingExisting = true))
+        assertTrue(initial.copy(mode = DebugOutputCode.LOG).needsDiscard(initial, editingExisting = true))
+    }
+
     @Test fun logSeverityIsEditablePreservedAndValidatedWithoutChangingPromptChannels() {
         val contract = requireNotNull(BlockCatalog.find("task.log"))
         for (level in listOf("info", "warn", "error")) {
@@ -44,10 +93,6 @@ class DebugOutputCodeTest {
         assertNull(DebugOutputCode.expressionSnippet(1, expression, false))
         assertNull(DebugOutputCode.expressionSnippet(3, expression, true))
         assertNull(DebugOutputCode.expressionSnippet(1, "中".repeat(342), true))
-        assertEquals("\"进度\" .. text(count)", DebugOutputCode.appendExpressionVariable("\"进度\"", "count"))
-        assertEquals("\"进度\" ..text(count)", DebugOutputCode.appendExpressionVariable("\"进度\" .. ", "count"))
-        assertNull(DebugOutputCode.appendExpressionVariable("x".repeat(1024), "count"))
-        assertNull(DebugOutputCode.appendExpressionVariable("", "x);shell"))
     }
     @Test
     fun visualOutputHasFourDistinctTypedKindsAndPreservesMessage() {

@@ -202,6 +202,10 @@ internal class RuntimeScriptUiController(
                 completion(runCatching {
                     check(accepts(token) && active && !cancelled()) { "UI_SESSION_STALE" }
                     val view = requireNotNull(runtimeView(token)).renderer
+                    if(operation in setOf("get:pages","get:controls")) {
+                        require(id=="window")
+                        return@runCatching if(operation=="get:pages") {require(value.isEmpty());view.describePages()} else view.describeControls(value)
+                    }
                     if(operation in setOf("windowPosition","bubblePosition","get:windowPosition","get:bubblePosition")) {
                         require(id=="window" && !dialogs.isOpen) {"窗口位置当前不可修改或查询"}
                         return@runCatching positionCommand(operation,value)

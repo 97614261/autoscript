@@ -37,7 +37,7 @@ internal fun RecognitionResultReaderDialog(project: ProjectSnapshot, flowId: Str
         Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 900.dp else 420.dp).verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             DesignerChoice("结果类型", shape.label, RecognitionResultShape.entries.map { it.name to it.label }, true) {
                 val previousType=recognitionResultType(field)
-                shape = RecognitionResultShape.valueOf(it); field = shape.fields.first(); index = if (field == "count" || shape == RecognitionResultShape.GLYPH_SUMMARY) "0" else "1"
+                shape = RecognitionResultShape.valueOf(it); field = shape.fields.first(); index = if (field == "count" || shape.isSummary()) "0" else "1"
                 if(previousType!=recognitionResultType(field)) target=""
                 error = null
             }
@@ -45,11 +45,11 @@ internal fun RecognitionResultReaderDialog(project: ProjectSnapshot, flowId: Str
             Text(recognitionResultProducerHint(shape),fontSize=10.sp)
             DesignerChoice("读取属性", recognitionResultFieldLabel(field), shape.fields.map { it to recognitionResultFieldLabel(it) }, true) {
                 val previousType=recognitionResultType(field)
-                field = it; index = if (it in setOf("count", "truncated") || shape == RecognitionResultShape.GLYPH_SUMMARY) "0" else index.takeIf { value -> value.toIntOrNull()?.let { n -> n>0 }==true } ?: "1"
+                field = it; index = if (it in setOf("count", "truncated") || shape.isSummary()) "0" else index.takeIf { value -> value.toIntOrNull()?.let { n -> n>0 }==true } ?: "1"
                 if(previousType!=recognitionResultType(field)) target=""
                 error = null
             }
-            if (shape != RecognitionResultShape.GLYPH_SUMMARY && field !in setOf("count", "truncated"))
+            if (!shape.isSummary() && field !in setOf("count", "truncated"))
                 DesignerInput("结果序号 · 从1开始", index, true, Modifier.fillMaxWidth(), numeric = true) { index = it; error = null }
             DesignerChoice("接收 · ${calculationTypeLabel(recognitionResultType(field))}", target.ifEmpty { "请选择" }, choices(recognitionResultType(field)).filter { it.first!=source }, true) { target = it; error = null }
             DesignerAction("维护变量", onClick = onManageVariables)

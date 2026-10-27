@@ -10,6 +10,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StudioEntryModelTest {
+    private val profileStudioEntries get() = studioProfileSections.flatMap { it.entries }
     @Test
     fun `compact project ids are display hints and leave full identities unchanged`() {
         val fullId = "project-01234567-89ab-cdef-0123-456789abcdef"
@@ -24,21 +25,6 @@ class StudioEntryModelTest {
     private fun project(id: String, updated: Long = 10, opened: Long? = null,
         name: String = id, mode: ProjectSourceMode = ProjectSourceMode.VISUAL) =
         ProjectSummary(id, name, mode, 720, 1280, 1, updated, opened)
-
-    @Test
-    fun `recent projects are bounded and historical source projects stay excluded`() {
-        val entries = listOf(project("old", 999, mode = ProjectSourceMode.LUA), project("a", 11),
-            project("b", 12), project("c", 13), project("d", 14))
-        assertEquals(listOf("d", "c", "b"), recentStudioProjects(entries).map { it.projectId })
-        assertEquals(5, entries.size)
-    }
-
-    @Test
-    fun `last edit access determines recent order with deterministic tie breaking`() {
-        assertEquals(listOf("opened", "a", "b"), recentStudioProjects(listOf(
-            project("b", 20), project("opened", 10, opened = 30), project("a", 20),
-        )).map { it.projectId })
-    }
 
     @Test
     fun `project search trims query ignores case and cannot expose historical editor entry`() {
@@ -82,9 +68,10 @@ class StudioEntryModelTest {
 
     @Test
     fun `profile exposes real local entries and home only draws its theme`() {
-        assertEquals(6, profileStudioEntries.toSet().size)
+        assertEquals(5, profileStudioEntries.toSet().size)
         assertTrue(profileStudioEntries.containsAll(listOf(StudioEntry.PERMISSIONS, StudioEntry.ENVIRONMENT, StudioEntry.BACKUPS, StudioEntry.DOCS)))
-        assertTrue(profileStudioEntries.containsAll(listOf(StudioEntry.GUIDE, StudioEntry.ABOUT)))
+        assertTrue(profileStudioEntries.contains(StudioEntry.ABOUT))
+        assertFalse(StudioEntry.entries.any { it.title == "使用指南" })
         assertTrue(StudioEntry.entries.all { it.title.isNotBlank() && it.detail.isNotBlank() })
         val source = java.io.File("src/main/java/com/autoscript/studio/navigation/StudioLandingScreens.kt").readText()
         val home = source.substringAfter("internal fun StudioHomePage(").substringBefore("@Composable")
@@ -98,11 +85,26 @@ class StudioEntryModelTest {
     @Test
     fun `profile sections contain each real settings entry exactly once`() {
         assertEquals(listOf("设备与运行", "项目与数据", "帮助与应用"), studioProfileSections.map { it.title })
-        assertEquals(6, profileStudioEntries.size)
-        assertEquals(6, profileStudioEntries.toSet().size)
+        assertEquals(5, profileStudioEntries.size)
+        assertEquals(5, profileStudioEntries.toSet().size)
         assertEquals(listOf(StudioEntry.PERMISSIONS, StudioEntry.ENVIRONMENT), studioProfileSections.first().entries)
         assertFalse(profileStudioEntries.any { it in listOf(StudioEntry.PROJECTS, StudioEntry.CREATE, StudioEntry.IMPORT) })
-        assertTrue(profileStudioEntries.containsAll(listOf(StudioEntry.BACKUPS, StudioEntry.DOCS, StudioEntry.GUIDE, StudioEntry.ABOUT)))
+        assertTrue(profileStudioEntries.containsAll(listOf(StudioEntry.BACKUPS, StudioEntry.DOCS, StudioEntry.ABOUT)))
+        assertEquals("版本号与应用更新", StudioEntry.ABOUT.detail)
+    }
+
+    @Test
+    fun `about contains installed version and updater without old profile subpages`() {
+        val source = java.io.File("src/main/java/com/autoscript/studio/navigation/StudioAboutScreen.kt").readText()
+        assertTrue(source.contains("getPackageInfo(context.packageName, 0).versionName"))
+        assertTrue(source.contains("BuildConfig.VERSION_CODE"))
+        assertTrue(source.contains("StudioUpdateCard()"))
+        for (removed in listOf("技术架构", "运行边界", "本地存储", "协议与隐私说明", "函数文档", "使用指南"))
+            assertFalse(removed, source.contains(removed))
+        assertFalse(java.io.File("src/main/java/com/autoscript/studio/navigation/ProfileScreens.kt").exists())
+        val navigation = java.io.File("src/main/java/com/autoscript/studio/navigation/MainActivity.kt").readText()
+        assertFalse(navigation.contains("ProfileSubpage"))
+        assertTrue(navigation.contains("StudioAboutScreen(onBack = { aboutVisible = false }"))
     }
 
     @Test

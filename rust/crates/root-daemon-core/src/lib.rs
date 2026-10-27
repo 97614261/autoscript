@@ -4,6 +4,10 @@ pub mod priority;
 pub mod recording;
 
 #[cfg(test)]
+mod capture_pipeline_tests;
+#[cfg(test)]
+mod capture_region_tests;
+#[cfg(test)]
 mod session_idle_tests;
 
 use std::sync::{
@@ -68,6 +72,20 @@ impl From<ProtocolError> for DaemonError {
 
 /// Receives only already-authenticated, shape-checked, whitelisted commands.
 pub trait CommandDispatcher {
+    /// Removes pipe wait from packet encode timing when readback overlaps transfer.
+    fn take_capture_read_wait_us(&mut self) -> u64 {
+        0
+    }
+    /// Selects an explicitly negotiated pipeline; legacy implementations remain buffered.
+    /// # Errors
+    /// Returns the same backend error as `dispatch`.
+    fn dispatch_capture_stream(
+        &mut self,
+        frame: &Frame,
+        _pipelined: bool,
+    ) -> Result<DispatchResponse, DispatchError> {
+        self.dispatch(frame)
+    }
     /// Optional fixed reason for a failed stream dispatch; never includes process text.
     fn capture_failure_reason(&self) -> Option<root_protocol::CaptureFailure> {
         None
@@ -143,6 +161,8 @@ pub struct DaemonSession<D> {
     capture_stream: Option<CaptureStreamState>,
     capture_payload: Vec<u8>,
     pending_transfer_summary: Option<(u64, u64)>,
+    pipeline_identity: Option<(u64, u64)>,
+    pipeline_completion: Option<root_protocol::CapturePipelineCompletion>,
 }
 
 struct CaptureStreamState {
@@ -182,6 +202,8 @@ impl<D: CommandDispatcher> DaemonSession<D> {
             capture_stream: None,
             capture_payload: Vec::new(),
             pending_transfer_summary: None,
+            pipeline_identity: None,
+            pipeline_completion: None,
         })
     }
 
@@ -198,6 +220,10 @@ impl<D: CommandDispatcher> DaemonSession<D> {
     #[must_use]
     pub const fn dispatcher(&self) -> &D {
         &self.dispatcher
+    }
+
+    pub fn take_capture_read_wait_us(&mut self) -> u64 {
+        self.dispatcher.take_capture_read_wait_us()
     }
 
     /// Attach before Hello; unauthenticated connections never inherit or refresh activity.
@@ -293,6 +319,18 @@ impl<D: CommandDispatcher> DaemonSession<D> {
                 }
                 let response = if command_capability(frame.command)
                     .is_some_and(|capability| !self.negotiated_capabilities.supports(capability))
+                    || (frame.command == Command::CaptureStream
+                        && !frame.payload.is_empty()
+                        && !self
+                            .negotiated_capabilities
+                            .supports(Capabilities::CAPTURE_REGION_REQUIREMENTS))
+                    || (matches!(
+                        frame.command,
+                        Command::PointerDown | Command::PointerMove | Command::PointerUp
+                    ) && frame.payload.first().is_some_and(|id| *id != 0)
+                        && !self
+                            .negotiated_capabilities
+                            .supports(Capabilities::INPUT_MULTI_TOUCH))
                     || (frame.command == Command::RecordingStart
                         && root_protocol::recording::RecordingConfig::decode(&frame.payload)
                             .is_ok_and(|c| c.deadline_success)
@@ -305,12 +343,19 @@ impl<D: CommandDispatcher> DaemonSession<D> {
                         payload: Vec::new(),
                     }
                 } else {
-                    self.dispatcher
-                        .dispatch(&frame)
-                        .unwrap_or(DispatchResponse {
-                            status: StatusCode::BackendFailure,
-                            payload: Vec::new(),
-                        })
+                    (if frame.command == Command::CaptureStream {
+                        self.dispatcher.dispatch_capture_stream(
+                            &frame,
+                            self.negotiated_capabilities
+                                .supports(Capabilities::CAPTURE_PIPELINE_REQUIREMENTS),
+                        )
+                    } else {
+                        self.dispatcher.dispatch(&frame)
+                    })
+                    .unwrap_or(DispatchResponse {
+                        status: StatusCode::BackendFailure,
+                        payload: Vec::new(),
+                    })
                 };
                 if frame.command == Command::Shutdown {
                     self.state = SessionState::Closed;
@@ -320,20 +365,9 @@ impl<D: CommandDispatcher> DaemonSession<D> {
             SessionState::Closed => return Err(DaemonError::SessionClosed),
         };
         self.record_activity(now_ms);
-        if matches!(frame.command, Command::Capture | Command::CaptureStream)
-            && response.status == StatusCode::BackendFailure
-            && (!self
-                .negotiated_capabilities
-                .supports(Capabilities::CAPTURE_FAILURE_DETAILS)
-                || root_protocol::CaptureFailure::decode(&response.payload)
-                    == Some(root_protocol::CaptureFailure::ControlUnavailable)
-                    && !self
-                        .negotiated_capabilities
-                        .supports(Capabilities::CAPTURE_CONTROL_DETAILS))
-        {
-            response.payload.clear();
-        }
+        strip_unnegotiated_details(frame.command, self.negotiated_capabilities, &mut response);
         if frame.command == Command::CaptureStream && response.status == StatusCode::Ok {
+            validate_stream_region(&frame.payload, &response.payload)?;
             self.begin_capture_stream(frame.request_id, &mut response.payload, now_ms)?;
         }
         self.channel
@@ -359,7 +393,26 @@ impl<D: CommandDispatcher> DaemonSession<D> {
         {
             payload.truncate(49);
         }
-        if !matches!(payload.len(), 49 | 97) || payload[0] != 0 {
+        let pipelined = payload.first() == Some(&3);
+        if pipelined
+            && (!self
+                .negotiated_capabilities
+                .supports(Capabilities::CAPTURE_PIPELINE_REQUIREMENTS)
+                || payload.len() != 49
+                || payload[33..41] != [0; 8]
+                || payload[41..45] != 2_u32.to_le_bytes()
+                || payload[45..49] != [0; 4])
+        {
+            return Err(DaemonError::DispatchFailed);
+        }
+        let regional = payload.first() == Some(&5)
+            && self
+                .negotiated_capabilities
+                .supports(Capabilities::CAPTURE_REGION_REQUIREMENTS)
+            && matches!(payload.len(), 81 | 129);
+        if (!regional && !matches!(payload.len(), 49 | 97))
+            || (!pipelined && payload[0] != if regional { 5 } else { 0 })
+        {
             return Err(DaemonError::DispatchFailed);
         }
         let id = u64::from_le_bytes(
@@ -375,6 +428,8 @@ impl<D: CommandDispatcher> DaemonSession<D> {
         if id == 0 || length == 0 || length > 64 * 1024 * 1024 {
             return Err(DaemonError::DispatchFailed);
         }
+        self.pipeline_identity = pipelined.then_some((id, length));
+        self.pipeline_completion = None;
         self.capture_stream = Some(CaptureStreamState {
             request_id,
             capture_id: id,
@@ -480,7 +535,7 @@ impl<D: CommandDispatcher> DaemonSession<D> {
             if status != StatusCode::Ok || encoded.is_err() {
                 self.pending_transfer_summary = None;
             }
-            let _ = self.dispatcher.dispatch(&Frame {
+            let released = self.dispatcher.dispatch(&Frame {
                 kind: FrameKind::Request,
                 command: Command::ReleaseCapture,
                 status: StatusCode::Ok,
@@ -488,6 +543,14 @@ impl<D: CommandDispatcher> DaemonSession<D> {
                 sequence: 0,
                 payload: stream.capture_id.to_le_bytes().to_vec(),
             });
+            if status == StatusCode::Ok
+                && encoded.is_ok()
+                && self.pipeline_identity.is_some()
+                && self.accept_pipeline_completion(released).is_err()
+            {
+                packet.clear();
+                return Err(DaemonError::DispatchFailed);
+            }
         } else {
             stream.offset += length;
             self.capture_stream = Some(stream);
@@ -499,6 +562,22 @@ impl<D: CommandDispatcher> DaemonSession<D> {
         encoded?;
         self.record_activity(now_ms);
         Ok(true)
+    }
+
+    fn accept_pipeline_completion(
+        &mut self,
+        released: Result<DispatchResponse, DispatchError>,
+    ) -> Result<(), DaemonError> {
+        self.pipeline_completion = released
+            .ok()
+            .filter(|r| r.status == StatusCode::Ok)
+            .and_then(|r| root_protocol::CapturePipelineCompletion::decode(&r.payload))
+            .filter(|c| self.pipeline_identity == Some((c.capture_id, c.pixel_bytes)));
+        if self.pipeline_completion.is_none() {
+            self.state = SessionState::Closed;
+            return Err(DaemonError::DispatchFailed);
+        }
+        Ok(())
     }
 
     /// Emits the negotiated authenticated summary only after the complete pixel stream.
@@ -523,14 +602,86 @@ impl<D: CommandDispatcher> DaemonSession<D> {
             self.state = SessionState::Closed;
             return Err(DaemonError::DispatchFailed);
         }
+        let completion = if self.pipeline_identity.take().is_some() {
+            let Some(mut completion) = self.pipeline_completion.take() else {
+                self.state = SessionState::Closed;
+                return Err(DaemonError::DispatchFailed);
+            };
+            completion.transfer = summary;
+            Some(completion.encode())
+        } else {
+            None
+        };
         self.channel.encode_response_into(
             Command::CaptureStream,
             request_id,
             StatusCode::Ok,
-            &payload,
+            completion
+                .as_ref()
+                .map_or(payload.as_slice(), |c| c.as_slice()),
             packet,
         )?;
         Ok(true)
+    }
+}
+
+fn validate_stream_region(request: &[u8], response: &[u8]) -> Result<(), DaemonError> {
+    use root_protocol::capture_region::{CaptureRegionMetadata, CaptureRegionRequest};
+    let requested = CaptureRegionRequest::decode(request);
+    if response.first() != Some(&5) {
+        return if requested.is_none() {
+            Ok(())
+        } else {
+            Err(DaemonError::DispatchFailed)
+        };
+    }
+    if !matches!(response.len(), 81 | 129) {
+        return Err(DaemonError::DispatchFailed);
+    }
+    let returned = CaptureRegionMetadata::decode(&response[response.len() - 32..])
+        .ok_or(DaemonError::DispatchFailed)?;
+    let word = |offset| {
+        u32::from_le_bytes(
+            response[offset..offset + 4]
+                .try_into()
+                .expect("fixed metadata length"),
+        )
+    };
+    let width = word(9);
+    let height = word(13);
+    if requested != Some(returned.request)
+        || !returned.matches_dimensions(width, height)
+        || returned.regional_readback != (word(41) == 2)
+    {
+        return Err(DaemonError::DispatchFailed);
+    }
+    Ok(())
+}
+
+fn strip_unnegotiated_details(
+    command: Command,
+    capabilities: Capabilities,
+    response: &mut DispatchResponse,
+) {
+    let input = matches!(
+        command,
+        Command::Tap
+            | Command::Swipe
+            | Command::KeyEvent
+            | Command::PointerDown
+            | Command::PointerMove
+            | Command::PointerUp
+    );
+    let capture = matches!(command, Command::Capture | Command::CaptureStream)
+        && response.status == StatusCode::BackendFailure;
+    if input && !capabilities.supports(Capabilities::INPUT_FAILURE_DETAILS)
+        || capture
+            && (!capabilities.supports(Capabilities::CAPTURE_FAILURE_DETAILS)
+                || root_protocol::CaptureFailure::decode(&response.payload)
+                    == Some(root_protocol::CaptureFailure::ControlUnavailable)
+                    && !capabilities.supports(Capabilities::CAPTURE_CONTROL_DETAILS))
+    {
+        response.payload.clear();
     }
 }
 
@@ -552,6 +703,53 @@ const fn command_capability(command: Command) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn input_failure_details_are_stripped_for_legacy_clients() {
+        struct FailedTap;
+        impl CommandDispatcher for FailedTap {
+            fn dispatch(&mut self, _: &Frame) -> Result<DispatchResponse, DispatchError> {
+                Ok(DispatchResponse {
+                    status: root_protocol::StatusCode::BackendUnavailable,
+                    payload: (root_protocol::InputFailure::Deadline as u32)
+                        .to_le_bytes()
+                        .to_vec(),
+                })
+            }
+        }
+        for details in [false, true] {
+            let bits = Capabilities::INPUT_BASIC
+                | if details {
+                    Capabilities::INPUT_FAILURE_DETAILS
+                } else {
+                    0
+                };
+            let mut config = config();
+            config.server_capabilities = Capabilities::from_bits(
+                Capabilities::INPUT_BASIC | Capabilities::INPUT_FAILURE_DETAILS,
+            );
+            config.required_client_capabilities = 0;
+            let mut daemon =
+                DaemonSession::new([142; 32], config.expected_runner_uid, config, FailedTap)
+                    .unwrap();
+            let mut client = SecureChannel::new([142; 32]).unwrap();
+            let reply = daemon
+                .receive(
+                    &client
+                        .encode(Command::Hello, 1, &bits.to_le_bytes())
+                        .unwrap(),
+                    101,
+                )
+                .unwrap();
+            client.decode(&reply).unwrap();
+            let reply = daemon
+                .receive(&client.encode(Command::Tap, 2, &[0; 8]).unwrap(), 102)
+                .unwrap();
+            assert_eq!(
+                client.decode(&reply).unwrap().payload.len(),
+                if details { 4 } else { 0 }
+            );
+        }
+    }
     #[test]
     fn capture_failure_details_are_stripped_for_legacy_clients() {
         struct FailedCapture;

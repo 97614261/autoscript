@@ -6,13 +6,10 @@ import org.junit.Test
 
 class EditorContinuousEditingTest {
     @Test fun saveAndValidationBusyDisableCommandsWithoutClosingTheWindow() {
-        repeat(10) {
-            assertFalse(editorEditWindowShouldClose(false, false, true))
-            assertFalse(editorEditWindowShouldClose(true, false, true))
-        }
-        assertTrue(editorEditWindowShouldClose(false, true, true))
-        assertTrue(editorEditWindowShouldClose(false, false, false))
-        val source = File("src/main/java/com/autoscript/studio/editor/EditorDock.kt").readText()
+        val source = editorDockTestSources()
+        val lifecycle = source.substringAfter("LaunchedEffect(editingEnabled, running)").substringBefore("deleteRequest?.let")
+        assertTrue(lifecycle.contains("if (running)"))
+        assertFalse(lifecycle.contains("if (!editingEnabled)"))
         val operations = source.substringAfter("if (nodeEditorVisible) {").substringBefore("if (consoleVisible)")
         assertEquals("Only explicit dismiss may close the retained edit window", 1,
             Regex("nodeEditorVisible = false").findAll(operations).count())
@@ -25,7 +22,7 @@ class EditorContinuousEditingTest {
         assertEquals(18, editorTreeRowIndent(2))
         assertEquals(2, editorTreeRowIndent(-100))
         assertEquals(258, editorTreeRowIndent(Int.MAX_VALUE))
-        val source = File("src/main/java/com/autoscript/studio/editor/EditorDock.kt").readText()
+        val source = editorDockTestSources()
         assertTrue(source.contains(".padding(start = editorTreeRowIndent(node.depth).dp)"))
     }
 
@@ -38,7 +35,7 @@ class EditorContinuousEditingTest {
         assertEquals(10, editorTreeGuideOffset(-1))
         assertEquals(258, editorTreeGuideOffset(Int.MAX_VALUE))
         for (depth in 0..31) assertEquals(editorTreeRowIndent(depth) + EDITOR_TREE_EXPAND_WIDTH_DP / 2, editorTreeGuideOffset(depth))
-        val source = File("src/main/java/com/autoscript/studio/editor/EditorDock.kt").readText()
+        val source = editorDockTestSources()
         assertEquals(2, Regex("start = editorTreeRowIndent\\(node.depth\\).dp").findAll(source).count())
         assertEquals(2, Regex("val x = editorTreeGuideOffset\\(level\\).dp.toPx\\(\\)").findAll(source).count())
         assertEquals(2, Regex("width\\(EDITOR_TREE_EXPAND_WIDTH_DP.dp\\)").findAll(source).count())

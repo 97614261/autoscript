@@ -16,7 +16,7 @@ data class VisionComponentManifest(
     val permissionCount: Int,
 ) {
     fun check(descriptor: VisionComponentDescriptor) {
-        require(applicationId == descriptor.kind.applicationId && versionCode == 1 && versionName == descriptor.kind.sdkVersion) { "VISION_COMPONENT_IDENTITY_MISMATCH" }
+        require(applicationId == descriptor.kind.applicationId && versionCode == descriptor.componentVersion && versionName == descriptor.kind.sdkVersion) { "VISION_COMPONENT_IDENTITY_MISMATCH" }
         require(minSdk == 24) { "VISION_COMPONENT_MIN_SDK_MISMATCH" }
         require(hasCode) { "VISION_COMPONENT_CODE_MISSING" }
         require(componentCount == 0) { "VISION_COMPONENT_UNEXPECTED_ENTRYPOINT" }

@@ -28,6 +28,10 @@ class ScriptUiDialog(context: Context, val content: ScriptUiWindowView, private 
                 else { @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE })
             setBackgroundDrawableResource(android.R.color.transparent)
             addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN)
+            if (Build.VERSION.SDK_INT < 30) {
+                @Suppress("DEPRECATION")
+                addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR)
+            }
             if (systemOverlay) {
                 addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
                 clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -40,7 +44,7 @@ class ScriptUiDialog(context: Context, val content: ScriptUiWindowView, private 
         }
         content.onViewportChanged = { resize() }
         content.onDrag = { dx, dy ->
-            val bounds = ScriptUiDisplay.bounds(context, content)
+            val bounds = screenBounds()
             val size = content.desiredSize(bounds)
             val origin = position ?: bounds.centered(size)
             position = bounds.clamp(origin.first + dx.roundToInt(), origin.second + dy.roundToInt(), size)
@@ -70,13 +74,17 @@ class ScriptUiDialog(context: Context, val content: ScriptUiWindowView, private 
     }
     fun resize() {
         if (closed || hidden || !dialog.isShowing) return
-        val bounds = ScriptUiDisplay.bounds(content.context, content)
+        val bounds = screenBounds()
         val size = content.desiredSize(bounds)
         if (bounds == lastBounds && size == lastSize) return
         val previous = lastBounds
         if (previous != null && (previous.width != bounds.width || previous.height != bounds.height)) position = null
         update(bounds, size)
     }
+    private fun screenBounds(): UiScreenBounds = ScriptUiDisplay.bounds(content.context, content,
+        // Legacy decorated windows already resize their content for the IME. Their
+        // window-relative inset must not feed back into resizing the outer window.
+        includeKeyboard = Build.VERSION.SDK_INT >= 30)
     private fun update(bounds: UiScreenBounds, size: UiWindowSize) {
         val target = position?.let { bounds.clamp(it.first, it.second, size) } ?: bounds.centered(size)
         position = target; lastBounds = bounds; lastSize = size

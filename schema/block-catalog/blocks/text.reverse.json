@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.reverse",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.reverse/1/text.reverse.schema.json",
+  "title": "文本反转",
+  "category": "variable",
+  "summary": "按 Unicode 标量值反转，不按 UTF-8 字节截断；不把组合字符或复合表情当作单个字素，输入输出最多 64KiB。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "文本反转"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "智构123"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

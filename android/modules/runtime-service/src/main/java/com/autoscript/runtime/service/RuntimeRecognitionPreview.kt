@@ -33,13 +33,21 @@ internal class RuntimeRecognitionPreview(source: NativeVisionBackendSource, busy
         NativeEngineBridge.nativeCancelRecognitionPreview(id)
     }
 
+    /** Stop/restart cleanup for a preview request that has no Binder cancellation callback. */
+    fun cancelActive() {
+        gate.cancelActive()?.let { work ->
+            adapter.cancel(work.id)
+            NativeEngineBridge.nativeCancelRecognitionPreview(work.id)
+        }
+    }
+
     fun test(id: Long, expectedGeneration: Long, operation: Int, frame: ParcelFileDescriptor,
         asset: ParcelFileDescriptor?, options: IntArray): Reply = frame.use { source -> asset.use { target ->
         fun failure(status: Int) = Reply(id, expectedGeneration, status, operation)
         if (expectedGeneration != generation()) return failure(Reply.SESSION_MISMATCH)
         if (id <= 0 || !Reply.validOptions(operation, options) || source.statSize !in 1..MAX_FILE_BYTES ||
-            (operation != Reply.ALPHANUMERIC && (target == null || target.statSize !in 1..if (operation in setOf(Reply.GLYPH,Reply.GLYPH_DETAILS)) MAX_DICTIONARY_BYTES else MAX_FILE_BYTES)) ||
-            (operation == Reply.ALPHANUMERIC && target != null)) return failure(Reply.INVALID_INPUT)
+            (Reply.requiresTarget(operation) && (target == null || target.statSize !in 1..if (operation in setOf(Reply.GLYPH,Reply.GLYPH_DETAILS)) MAX_DICTIONARY_BYTES else MAX_FILE_BYTES)) ||
+            (!Reply.requiresTarget(operation) && target != null)) return failure(Reply.INVALID_INPUT)
         if (runtimeState() in setOf(RuntimeProtocol.STATE_RUNNING, RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPING)) return failure(Reply.BUSY)
         val work = gate.begin(id, expectedGeneration) ?: return failure(Reply.BUSY)
         var expiry: java.util.concurrent.ScheduledFuture<*>? = null
@@ -70,6 +78,19 @@ internal class RuntimeRecognitionPreview(source: NativeVisionBackendSource, busy
                     Reply(id, expectedGeneration, data.getInt("status"), operation, text = text,
                         scorePermille = data.getInt("score"), coveragePermille = data.getInt("coverage"))
                 }
+                Reply.SCALED_TEMPLATE -> {
+                    val template=decode(requireNotNull(target))
+                    val data=JSONObject(requireNotNull(NativeEngineBridge.nativeTestScaled(id,image.width,image.height,image.rgba,
+                        template.width,template.height,template.rgba,options)))
+                    val status=data.getInt("status");require(status in setOf(Reply.SUCCESS,Reply.NOT_FOUND,Reply.INVALID_INPUT,Reply.BUDGET_EXCEEDED,Reply.CANCELLED,Reply.TIMEOUT))
+                    val matches=data.getJSONArray("matches");require(matches.length() in 0..1)
+                    val hit=if(matches.length()==1) matches.getJSONObject(0) else null
+                    require((status==Reply.SUCCESS)==(hit!=null))
+                    if(hit!=null) require(hit.getInt("x") in options[0] until options[2] && hit.getInt("y") in options[1] until options[3] &&
+                        hit.getInt("width")>0 && hit.getInt("height")>0 && hit.getInt("x").toLong()+hit.getInt("width")<=options[2] &&
+                        hit.getInt("y").toLong()+hit.getInt("height")<=options[3] && hit.getInt("scalePermille") in 250..4000 && hit.getInt("scorePermille") in 0..1000)
+                    Reply(id,expectedGeneration,status,operation,text=matches.toString(),x=hit?.getInt("x") ?: -1,y=hit?.getInt("y") ?: -1,scorePermille=hit?.getInt("scorePermille") ?: 0)
+                }
                 Reply.TEMPLATE -> {
                     val template = decode(requireNotNull(target))
                     val cropped = crop(image, options)
@@ -80,8 +101,9 @@ internal class RuntimeRecognitionPreview(source: NativeVisionBackendSource, busy
                         y = if (found[0] == Reply.SUCCESS) found[2] + options[1] else -1, scorePermille = found[3])
                 }
                 else -> {
-                    val template = if (operation == Reply.GRAY_TEMPLATE) decode(requireNotNull(target)) else null
-                    val response = adapter.dispatch(id, if (operation == Reply.GRAY_TEMPLATE) 5108 else 6101,
+                    val template = if (operation in setOf(Reply.GRAY_TEMPLATE,Reply.FEATURE_TEMPLATE)) decode(requireNotNull(target)) else null
+                    val opcode=when(operation) {Reply.GRAY_TEMPLATE->5108;Reply.FEATURE_TEMPLATE->5109;Reply.ALPHANUMERIC_V5->6104;Reply.LATIN_TEXT->6105;else->6101}
+                    val response = adapter.dispatch(id, opcode,
                         image.direct(), image.metadata(), template?.direct(), template?.metadata() ?: intArrayOf(), options.take(5).toIntArray(), deadlineNanos = work.deadline)
                     decodeNativePreviewReply(id, expectedGeneration, operation, response)
                 }
@@ -142,16 +164,24 @@ internal fun decodeNativePreviewReply(id: Long, generation: Long, operation: Int
     }
     val payload = ByteBuffer.wrap(response, 1, response.size - 1).order(ByteOrder.LITTLE_ENDIAN)
     return when (operation) {
+        Reply.FEATURE_TEMPLATE -> if(payload.remaining()==0) Reply(id,generation,Reply.NOT_FOUND,operation,text="[]") else {
+            require(payload.remaining()==18);val x=payload.int;val y=payload.int;val width=payload.int;val height=payload.int;val score=payload.short.toInt() and 65535
+            require(x>=0 && y>=0 && width>0 && height>0 && x.toLong()+width<=32768 && y.toLong()+height<=32768 && score in 0..1000)
+            val matches=com.google.gson.JsonArray().apply {add(com.google.gson.JsonObject().apply {addProperty("x",x);addProperty("y",y);addProperty("width",width);addProperty("height",height);addProperty("scorePermille",score)})}.toString()
+            Reply(id,generation,Reply.SUCCESS,operation,text=matches,x=x,y=y,scorePermille=score)
+        }
         Reply.GRAY_TEMPLATE -> if (payload.remaining() == 0) Reply(id, generation, Reply.NOT_FOUND, operation) else {
             require(payload.remaining() == 10)
             Reply(id, generation, Reply.SUCCESS, operation, x = payload.int, y = payload.int, scorePermille = payload.short.toInt() and 0xFFFF)
         }
-        Reply.ALPHANUMERIC -> {
+        Reply.ALPHANUMERIC,Reply.ALPHANUMERIC_V5,Reply.LATIN_TEXT -> {
             require(payload.remaining() in 2..1026)
             val score = payload.short.toInt() and 0xFFFF
             val bytes = ByteArray(payload.remaining()).also(payload::get)
             val text = bytes.toString(Charsets.US_ASCII)
-            require(text.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' } && score in 0..1000)
+            require(bytes.all { val c = it.toInt() and 255
+                if (operation == Reply.LATIN_TEXT) c in 32..126 else c in 65..90 || c in 97..122 || c in 48..57
+            } && score in 0..1000)
             Reply(id, generation, if (text.isEmpty()) Reply.NOT_FOUND else Reply.SUCCESS, operation, text, scorePermille = score)
         }
         else -> error("unsupported native preview")

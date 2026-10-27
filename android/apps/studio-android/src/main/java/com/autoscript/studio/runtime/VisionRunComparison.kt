@@ -52,8 +52,11 @@ internal object VisionRunComparison {
         fun key(group: VisionRunStatistics.Group) = Triple(group.algorithm,
             group.configuration + "|" + group.parameters["templateFingerprintVersion"] + "|" + group.parameters["templateFingerprints"], group.status)
         fun complete(group: VisionRunStatistics.Group): Boolean {
-            val fields = if (group.algorithm.startsWith("capture-")) listOf("frame", "captureBackend", "captureTransport")
-                else listOf("frame", "roi", "templateCount", "templateSizes", "tolerance", "similarity", "direction", "comparisonBudget", "timeoutMs")
+            val fields = when {
+                group.algorithm == "capture-region-host-roundtrip" -> listOf("frame", "captureBackend", "captureTransport", "captureRegion", "captureReadback")
+                group.algorithm.startsWith("capture-") -> listOf("frame", "captureBackend", "captureTransport")
+                else -> listOf("frame", "roi", "templateCount", "templateSizes", "tolerance", "similarity", "direction", "comparisonBudget", "timeoutMs")
+            }
             return fields.all { !group.parameters[it].isNullOrBlank() } &&
                 (group.algorithm.startsWith("capture-") || hasTemplateIdentity(group.parameters))
         }

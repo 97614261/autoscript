@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "math.binary",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/math.binary/1/math.binary.schema.json",
+  "title": "双值数学运算",
+  "category": "variable",
+  "summary": "min/max/pow/atan2/log；atan2 为 atan2(左值 y,右值 x)，返回弧度，原点无方向；log 的左值为真数、右值为底数。输入及结果绝对值不超过 10^12，非法定义域报错。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "双值数学运算"
+  ],
+  "requiredCapabilities": [
+    "core.math"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "operation",
+      "label": "运算",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "min"
+    },
+    {
+      "path": "operationVariable",
+      "label": "运算来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "left",
+      "label": "左值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "2"
+    },
+    {
+      "path": "leftVariable",
+      "label": "左值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "right",
+      "label": "右值",
+      "editor": "number",
+      "required": true,
+      "defaultValue": "3"
+    },
+    {
+      "path": "rightVariable",
+      "label": "右值来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（浮点）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

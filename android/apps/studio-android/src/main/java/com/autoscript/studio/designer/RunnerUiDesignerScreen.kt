@@ -1,6 +1,5 @@
 package com.autoscript.studio
 
-import android.app.Activity
 import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -31,7 +30,6 @@ import com.autoscript.script.ui.MAX_SCRIPT_UI_CONTROLS
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 @Composable
 internal fun RunnerUiDesignerScreen(snapshot: ProjectSnapshot, store: ProjectStore, onSnapshotChanged: (ProjectSnapshot) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -129,7 +127,8 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
         val ids = selection.toMutableSet()
         repeat(draft.fields.size) { draft.fields.filter { it.ui.parentId in ids }.forEach { ids.add(it.id) } }
         if (draft.fields.size + ids.size > MAX_SCRIPT_UI_CONTROLS) { showMessage("控件数量超过${MAX_SCRIPT_UI_CONTROLS}"); return }
-        val names = ids.associateWith { "copy_${UUID.randomUUID().toString().replace("-", "").take(16)}" }
+        var nextCopy = nextUiNumericId("copy", draft.fields.map { it.id })
+        val names = ids.associateWith { "copy_${nextCopy++}" }
         val copies = draft.fields.filter { it.id in ids }.map { f ->
             val offset = if (f.ui.parentId in ids) 0 else 16
             f.copy(id = names.getValue(f.id), label = f.label.take(62) + "副本", ui = f.ui.copy(binding = null, parentId = names[f.ui.parentId] ?: f.ui.parentId, x = (f.ui.x + offset).coerceAtMost(4096), y = (f.ui.y + offset).coerceAtMost(8192)))
@@ -172,7 +171,7 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
     }
     fun newPage() {
         if (busy) return
-        val new = UiPage(id = "page_${UUID.randomUUID().toString().take(8)}", title = "新页面")
+        val new = UiPage(id = "page_${nextUiNumericId("page", draft.pages.map { it.id })}", title = "新页面")
         runCatching { draft.addPage(new) }.onSuccess { commit(it); selectPage(new.id) }.onFailure { showMessage(it.message) }
     }
     fun locateIssue() {
@@ -191,8 +190,9 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
     }
     Box(modifier.fillMaxSize().background(DesignerColors.Workspace).imePadding()) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().height(32.dp).background(DesignerColors.Panel).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).background(DesignerColors.Panel).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 DesignerAction("‹ 返回", enabled = !busy, onClick = ::exit)
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                 Text("UI 设计", color = DesignerColors.Ink, fontSize = 11.sp)
                 if (recoveryPending) DesignerAction("恢复草稿", enabled = !busy) { recoveryRequest++ }
                 Text(if (draft == saved && propertyInputs.firstIssue() == null) " · 已保存" else " · 未保存", color = DesignerColors.Muted, fontSize = 9.sp, modifier = Modifier.padding(end = 8.dp))
@@ -210,6 +210,7 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
                 }
                 DesignerAction("撤销", enabled = undo.isNotEmpty() && !busy) { propertyInputs.clear(); redo = (redo + draft).takeLast(100); draft = undo.last(); undo = undo.dropLast(1); selection = emptySet() }
                 DesignerAction("恢复", enabled = redo.isNotEmpty() && !busy) { propertyInputs.clear(); undo = (undo + draft).takeLast(100); draft = redo.last(); redo = redo.dropLast(1); selection = emptySet() }
+                }
                 DesignerAction("预览", enabled = draft.fields.isNotEmpty() && !busy) { preview = true }
                 DesignerAction(if (busy) "保存中" else "保存", enabled = !busy, selected = true, primary = true, onClick = ::save)
             }
@@ -220,7 +221,7 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
                         onAdd = { kind -> runCatching { draft.add(kind, page.id) }.onSuccess { commit(it); selection = setOf(it.fields.last().id); if (!narrowScreen) inspectorVisible = true }.onFailure { showMessage(it.message) } },
                     )
                     Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(Modifier.fillMaxWidth().height(24.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 24.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.width(112.dp)) { DesignerChoice("", page.title, draft.pages.map { it.id to it.title }, !busy, ::selectPage) }
                             DesignerAction("+ 页", enabled = !busy && draft.pages.size < 16, onClick = ::newPage)
                             Text("${page.width}×${page.height}", Modifier.padding(horizontal = 4.dp), fontSize = 9.sp, color = DesignerColors.Muted, maxLines = 1)
@@ -300,4 +301,9 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
         else ProjectInterfacePreview(json, snapshot.directory) { preview = false }
     }
     if (confirmExit) StudioConfirmDialog(onDismissRequest = { confirmExit = false }, title = { Text("有未保存修改") }, text = { Text("退出会丢弃本次未保存的界面修改。") }, confirmButton = { TextButton(onClick = ::leave) { Text("丢弃并退出") } }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("继续编辑") } })
+}
+
+private fun nextUiNumericId(prefix: String, used: Collection<String>): Int {
+    val pattern = Regex("^${Regex.escape(prefix)}_([0-9]+)$")
+    return ((used.asSequence().mapNotNull { pattern.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull() }.maxOrNull() ?: 0) + 1)
 }

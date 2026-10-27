@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14230,
+  "name": "Text.urlDecode",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "严格百分号解码为UTF-8；component保留+，form将+解为空格。拒绝残缺转义、非UTF-8和超64KiB。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "编码文本"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": true,
+      "summary": "编码方式：component=URL组成部分、form=表单（空格用+）"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "严格百分号解码为UTF-8；component保留+，form将+解为空格。拒绝残缺转义、非UTF-8和超64KiB。"
+  },
+  "legacyAliases": []
+}

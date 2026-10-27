@@ -1,4 +1,6 @@
 import java.security.MessageDigest
+import java.net.URI
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -10,6 +12,41 @@ val embedRunnerTemplate = providers.gradleProperty("autoscript.embedRunnerTempla
     require(it in setOf("true", "false")) { "autoscript.embedRunnerTemplate must be true or false" }
     it.toBoolean()
 }.getOrElse(false)
+val signDevelopmentRelease = providers.gradleProperty("autoscript.signDevelopmentRelease").map {
+    require(it in setOf("true", "false")) { "autoscript.signDevelopmentRelease must be true or false" }
+    it.toBoolean()
+}.getOrElse(false)
+require(!signDevelopmentRelease || rootProject.extra["autoscript.nativeProfile"] == "distribution") {
+    "Development-signed Release candidates require the isolated distribution profile"
+}
+
+val updateProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+}
+val updateSite = providers.gradleProperty("autoscript.updateSite")
+    .getOrElse(updateProperties.getProperty("autoscript.updateSite", ""))
+require(updateSite.length <= 512 && updateSite.all { it.code in 32..126 } &&
+    '"' !in updateSite && '\\' !in updateSite) { "Invalid update site configuration" }
+val updateUri = updateSite.takeIf { it.isNotBlank() }?.let(::URI)
+require(updateUri == null || (updateUri.scheme in setOf("http", "https") && updateUri.host != null &&
+    updateUri.rawUserInfo == null && updateUri.rawQuery == null && updateUri.rawFragment == null &&
+    updateUri.rawPath in setOf("", "/") && (updateUri.port == -1 || updateUri.port in 1..65535))) {
+    "Update site must be an HTTP(S) origin without credentials"
+}
+
+// Optional personal test defaults stay in ignored local.properties, not repository sources.
+val backupSite = updateProperties.getProperty("autoscript.backupSite", "").trim()
+val backupKey = updateProperties.getProperty("autoscript.backupKey", "").trim()
+require(backupSite.length <= 512 && backupSite.all { it.code in 32..126 } &&
+    '"' !in backupSite && '\\' !in backupSite) { "Invalid backup site configuration" }
+val backupUri = backupSite.takeIf { it.isNotEmpty() }?.let(::URI)
+require((backupSite.isEmpty() && backupKey.isEmpty()) ||
+    (backupUri != null && backupUri.scheme in setOf("http", "https") && backupUri.host != null &&
+        backupUri.rawUserInfo == null && backupUri.rawQuery == null && backupUri.rawFragment == null &&
+        backupUri.rawPath in setOf("", "/") && (backupUri.port == -1 || backupUri.port in 1..65535) &&
+        Regex("[a-f0-9]{64}").matches(backupKey))) {
+    "Backup defaults require an HTTP(S) origin and a separate 64-character hexadecimal key"
+}
 
 val blockCatalog = rootProject.file("../schema/block-catalog/blocks")
 val generatorExecutable = rootProject.layout.projectDirectory.file(
@@ -66,17 +103,31 @@ android {
         applicationId = "com.zhigou.kaifaban"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 22
+        versionName = "0.1.21"
         testApplicationId = "com.zhigou.kaifaban.acceptance"
-        testInstrumentationRunner = "com.autoscript.studio.StudioAcceptanceInstrumentation"
+        testInstrumentationRunner = when (providers.gradleProperty("autoscript.acceptanceSuite").getOrElse("full")) {
+            "full" -> "com.autoscript.studio.StudioAcceptanceInstrumentation"
+            "release-smoke" -> "com.autoscript.studio.StudioReleaseSmokeInstrumentation"
+            else -> error("Unsupported Studio acceptance suite")
+        }
         buildConfigField("boolean", "EMBEDDED_RUNNER_TEMPLATE", embedRunnerTemplate.toString())
+        buildConfigField("String", "UPDATE_SITE", "\"$updateSite\"")
+        buildConfigField("String", "DEFAULT_BACKUP_SITE", "\"$backupSite\"")
+        buildConfigField("String", "DEFAULT_BACKUP_KEY", "\"$backupKey\"")
         @Suppress("UNCHECKED_CAST")
         ndk { abiFilters += rootProject.extra["autoscript.abis"] as List<String> }
     }
 
     buildFeatures { compose = true; buildConfig = true }
-    packaging { jniLibs.useLegacyPackaging = false }
+    buildTypes.getByName("release") {
+        isMinifyEnabled = true
+        isShrinkResources = true
+        proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        if (signDevelopmentRelease) signingConfig = signingConfigs.getByName("debug")
+    }
+    // Root must execute the package-manager-installed daemon, not writable app data.
+    packaging { jniLibs.useLegacyPackaging = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -136,9 +187,13 @@ android.testOptions.unitTests.all {
     it.systemProperty("autoscript.runnerTemplate", runnerTemplateFile.get().asFile.absolutePath)
     it.systemProperty("autoscript.componentMatrix", providers.gradleProperty("autoscript.verifyComponentMatrix").getOrElse("false"))
     it.systemProperty("autoscript.expectedAbis", (rootProject.extra["autoscript.abis"] as List<*>).joinToString(","))
-    it.systemProperty("autoscript.artifactRoot", rootProject.layout.buildDirectory.get().asFile.resolve(
-        if (providers.gradleProperty("autoscript.abiProfile").getOrElse("development") == "arm64") "profiles/arm64/native-example" else "native-example",
-    ).absolutePath)
+    val testAbiProfile = providers.gradleProperty("autoscript.abiProfile").getOrElse("development")
+    val testArtifactRoot = if (rootProject.extra["autoscript.nativeProfile"] == "distribution") {
+        rootProject.file("../build/profiles/distribution/$testAbiProfile/native-example")
+    } else rootProject.layout.buildDirectory.get().asFile.resolve(
+        if (testAbiProfile == "arm64") "profiles/arm64/native-example" else "native-example",
+    )
+    it.systemProperty("autoscript.artifactRoot", testArtifactRoot.absolutePath)
     it.systemProperty("autoscript.apksignerJar", packageTestApkSigner?.absolutePath.orEmpty())
 }
 

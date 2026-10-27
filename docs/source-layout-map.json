@@ -181,7 +181,7 @@
     },
     {
       "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProfileScreens.kt",
-      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/ProfileScreens.kt"
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/navigation/StudioAboutScreen.kt"
     },
     {
       "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectBackupSlotsScreen.kt",
@@ -189,7 +189,8 @@
     },
     {
       "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectFileCatalog.kt",
-      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectFileCatalog.kt"
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/project/ProjectFilePaths.kt",
+      "note": "2026-10-20: retired the unreferenced file catalog; retained only shared path containment"
     },
     {
       "from": "apps/studio-android/src/main/java/com/autoscript/studio/ProjectInterfacePreview.kt",
@@ -393,7 +394,8 @@
     },
     {
       "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualDebugInspector.kt",
-      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisualDebugInspector.kt"
+      "to": "android/apps/studio-android/src/main/java/com/autoscript/studio/runtime/VisualVariableWarnings.kt",
+      "note": "移除无入口的旧数据回填及重复观察页，仅保留实际使用的变量维护诊断。"
     },
     {
       "from": "apps/studio-android/src/main/java/com/autoscript/studio/VisualEditorState.kt",
@@ -565,7 +567,8 @@
     },
     {
       "from": "apps/studio-android/src/test/java/com/autoscript/studio/ProjectFileCatalogTest.kt",
-      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/project/ProjectFileCatalogTest.kt"
+      "to": "android/apps/studio-android/src/test/java/com/autoscript/studio/project/ProjectFilePathsTest.kt",
+      "note": "2026-10-20: retained shared path containment tests after retiring the file catalog UI"
     },
     {
       "from": "apps/studio-android/src/test/java/com/autoscript/studio/ProjectSettingsModelTest.kt",

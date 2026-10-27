@@ -9,6 +9,39 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EditorDraftJournalTest {
+    @Test fun staleOrDisposedDiscardCannotDeleteNewCheckpoint() = temporary { root ->
+        val old = EditorDraftJournal(root)
+        val discarded = old.nextRevision()
+        val checkpoint = EditorDraftCheckpoint(EditorDraftJournal.hash("manifest"), listOf(
+            EditorDraftEntry("main", "root", EditorDraftJournal.hash("base"), "new draft")))
+        old.writeIfCurrent("project", checkpoint, old.nextRevision())
+        assertFalse(old.discardIfCurrent("project", discarded))
+        assertEquals(checkpoint, old.read("project"))
+        val oldTicket = old.nextRevision()
+        val replacement = EditorDraftJournal(root)
+        replacement.writeIfCurrent("project", checkpoint, replacement.nextRevision())
+        assertFalse(old.discardIfCurrent("project", oldTicket))
+        assertEquals(checkpoint, replacement.read("project"))
+        assertTrue(replacement.discardIfCurrent("project", replacement.nextRevision()))
+        assertNull(replacement.read("project"))
+    }
+
+    @Test fun frozenTextSurvivesLaterEditorChangesWithoutReadingLiveState() = temporary { root ->
+        val store = ProjectStore(File(root, "projects"))
+        val project = store.createProject("Frozen public draft", ProjectSourceMode.VISUAL)
+        val flow = project.manifest.flows.single()
+        val editor = VisualEditorState.create(project.flowSources.getValue(flow.flowId), flow.rootBlockId)
+        editor.insertNoop()
+        val first = editor.currentSource
+        val journal = EditorDraftJournal(root)
+        val frozen = journal.freeze(project, mapOf(flow.flowId to editor))
+        editor.insertNoop()
+        val checkpoint = journal.capture(project, frozen)
+        assertEquals(first, checkpoint.entries.single().source)
+        assertNotEquals(first, editor.currentSource)
+        assertEquals(EditorDraftJournal.hash(editor.savedSource), checkpoint.entries.single().baseHash)
+    }
+
     @Test fun replacedSessionCannotOverwriteOrRecreateNewSessionCheckpoint() = temporary { root ->
         val oldSession = EditorDraftJournal(root)
         val oldTicket = oldSession.nextRevision()

@@ -70,7 +70,7 @@ Studio构建时将独立Runner的`assembleRelease`未签名APK和SHA-256元数�
 
 设备构建使用[Android APK Signature Scheme v2规范](https://source.android.com/docs/security/features/apksigning/v2)的RSA PKCS#1/SHA-256算法和1MiB分块摘要，兼容minSdk24；密钥使用[AndroidKeyStore](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec)，私钥不可导出。APK内部原生库STORE并16KB对齐，资源表STORE并4字节对齐。模板最多512MiB、最终APK最多1GiB，原生库仍采用仓库的开发构建配置，包体尚未做发布体积优化，设备需预留约三份APK的暂存空间。
 
-`DeviceApkPackagingTest`使用真实模板和示例发布，调用Android SDK的独立`apksigner`验签、`aapt2`核对包名/版本/minSdk、`package-probe`核对ABI及嵌入发布，另外验证内容篡改拒绝、同签名身份连续构建、提交前取消和禁止覆盖。成功的主机测试产物保存在`build/device-packaging-verification/`；测试密钥仅在系统临时目录生成并销毁。主机验签不等于设备AndroidKeyStore、文件导出、安装/升级以及脚本运行已实测，设备验收状态需独立记录。
+`DeviceApkPackagingTest`使用真实模板和示例发布，调用Android SDK的独立`apksigner`验签、`aapt2`核对包名/版本/minSdk、`package-probe`核对ABI及嵌入发布，另外验证内容篡改拒绝、同签名身份连续构建、提交前取消和禁止覆盖。APK和一次性密钥只在所属临时目录生成并于测试结束清理，不再逐次复制大包。当前配置的`packaging-test-evidence/`仅保留两个固定小报告（默认在`android/build/`，发行配置在对应隔离目录），记录实际APK大小、SHA-256及独立验证结果，并输出到单测记录。历史测试目录不自动扫描删除，未知报告也不覆盖。主机验签不等于设备AndroidKeyStore、文件导出、安装/升级以及脚本运行已实测，设备验收状态需独立记录（ADR0151）。
 
 没有新增生产签名依赖，主机验签只使用已有Android SDK工具。远程构建、云发布、证书轮换、渠道签名、代码加密、外部Android扩展插件APK与在线授权保持未开放。
 

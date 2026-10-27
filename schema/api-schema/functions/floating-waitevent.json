@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18007,
+  "name": "Floating.waitImageEvent",
+  "since": "1.8",
+  "capability": "ui.floating.interactive",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 62000,
+  "resourceOwnership": "none",
+  "summary": "事件驱动等待图片浮窗点击/拖动，返回JSON kind=click/drag/timeout/closed及真实屏幕像素位置、localX/Y、sequence、dropped。64个事件有界队列，等待不占Root或普通浮窗控制线程；显式判断kind后调用插件，无任意代码回调。",
+  "params": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "summary": "浮窗名称"
+    },
+    {
+      "name": "timeoutMs",
+      "type": "integer",
+      "required": true,
+      "summary": "等待毫秒（0立即读取，最多60000）"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "事件驱动等待图片浮窗点击/拖动，返回JSON kind=click/drag/timeout/closed及真实屏幕像素位置、localX/Y、sequence、dropped。64个事件有界队列，等待不占Root或普通浮窗控制线程；显式判断kind后调用插件，无任意代码回调。"
+  },
+  "legacyAliases": []
+}

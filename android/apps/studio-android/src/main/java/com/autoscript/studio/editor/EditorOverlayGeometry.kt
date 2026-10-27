@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import kotlin.math.ceil
 import kotlin.math.floor
 import com.autoscript.core.model.RuntimeConnectionPhase
@@ -10,19 +11,38 @@ import com.autoscript.core.model.RuntimeEngineState
 internal data class EditorWindowBounds(val left: Int, val top: Int, val width: Int, val height: Int)
 internal data class EditorWindowVisibility(val panel: Boolean, val ball: Boolean)
 
+internal fun editorPanelSize(workArea: Rect, density: Float, resized: Size? = null, initialViewport: Size? = null): Size {
+    val width = workArea.width.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val height = workArea.height.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val scale = density.takeIf { it.isFinite() && it > 0f } ?: 1f
+    // Dragging may use the full display; the default window must not grow to fill a short viewport.
+    val initialWidth = initialViewport?.width?.takeIf { it.isFinite() && it > 0f } ?: width
+    val initialHeight = initialViewport?.height?.takeIf { it.isFinite() && it > 0f } ?: height
+    val initial = Size(minOf(EDITOR_DEFAULT_WIDTH_DP * scale, initialWidth * .9f, width),
+        minOf(EDITOR_DEFAULT_HEIGHT_DP * scale, initialHeight * .78f, height))
+    if (resized == null || !resized.width.isFinite() || !resized.height.isFinite()) return initial
+    return Size(resized.width.coerceIn(minOf(210f * scale, initial.width), width),
+        resized.height.coerceIn(minOf(260f * scale, initial.height), height))
+}
+
 /**
  * Seed the first native overlay layout before Compose has produced bounds.
  * A 1x1 bootstrap window cannot provide a useful composition constraint, so
  * waiting for onGloballyPositioned would otherwise leave the editor invisible.
  */
-internal fun defaultEditorDockBounds(screenWidth: Int, screenHeight: Int, density: Float): Rect {
+internal fun defaultEditorDockBounds(screenWidth: Int, screenHeight: Int, density: Float, workArea: Rect? = null,
+    initialViewport: Size? = null): Rect {
     val safeWidth = screenWidth.coerceAtLeast(1).toFloat()
     val safeHeight = screenHeight.coerceAtLeast(1).toFloat()
     val safeDensity = density.takeIf { it.isFinite() && it > 0f } ?: 1f
-    val width = (292f * safeDensity).coerceAtMost(safeWidth)
-    val height = (378f * safeDensity).coerceAtMost(safeHeight)
-    val x = (4f * safeDensity).coerceIn(0f, (safeWidth - width).coerceAtLeast(0f))
-    val y = (safeHeight - height - 76f * safeDensity).coerceIn(0f, (safeHeight - height).coerceAtLeast(0f))
+    val screen = Rect(0f, 0f, safeWidth, safeHeight)
+    val area = workArea?.takeIf { listOf(it.left, it.top, it.right, it.bottom).all(Float::isFinite) }
+        ?.intersect(screen)?.takeIf { it.width > 0f && it.height > 0f } ?: screen
+    val size = editorPanelSize(area, safeDensity, initialViewport = initialViewport)
+    val width = size.width
+    val height = size.height
+    val x = (4f * safeDensity).coerceIn(area.left, (area.right - width).coerceAtLeast(area.left))
+    val y = (area.bottom - height - 76f * safeDensity).coerceIn(area.top, (area.bottom - height).coerceAtLeast(area.top))
     return Rect(x, y, x + width, y + height)
 }
 

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.frombase64",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.frombase64/1/text.frombase64.schema.json",
+  "title": "Base64转文本",
+  "category": "variable",
+  "summary": "严格标准带填充Base64，拒绝空白、非规范尾位、错误填充或非UTF-8；输入/输出最多64KiB。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Text.fromBase64",
+    "Base64转文本"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "Base64文本",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "5pm65p6E"
+    },
+    {
+      "path": "textVariable",
+      "label": "Base64文本来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

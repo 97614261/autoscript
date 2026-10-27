@@ -50,8 +50,15 @@ internal class FixedVisionProviderLoader {
                 try {
                     val loader = PathClassLoader(prepared.apk.absolutePath, prepared.nativeDirectory.absolutePath,
                         NativeVisionProvider::class.java.classLoader)
-                    val source = prepared.model?.let { model -> NativeVisionModelSource { model.inputStream() } }
-                    PinnedCode(loader, source, lease, prepared::verifyRetained)
+                    val source = prepared.model?.let { model ->
+                        val candidate = prepared.candidateModel
+                        if (candidate == null) NativeVisionModelSource { model.inputStream() }
+                        else object : NativeVisionModelSet {
+                            override fun open() = model.inputStream()
+                            override fun openV5() = candidate.inputStream()
+                        }
+                    }
+                    PinnedCode(loader, source, descriptor.spiVersion, lease, prepared::verifyRetained)
                 } catch (error: Throwable) {
                     // No provider class initialization has run at this point.
                     runCatching { lease.close() }.onFailure { error.addSuppressed(it) }
@@ -76,18 +83,19 @@ internal class FixedVisionProviderLoader {
         checkpoint: () -> Unit): LoadedVisionProvider {
         code.verify(checkpoint)
         val provider = Class.forName(kind.providerClass, true, code.classLoader).getDeclaredConstructor().newInstance()
-        require(provider is NativeVisionProvider && provider.spiVersion == NativeVisionSpi.VERSION && provider.kind == kind.id) {
+        require(provider is NativeVisionProvider && provider.spiVersion == code.spiVersion && provider.kind == kind.id) {
             "VISION_PROVIDER_SPI_MISMATCH"
         }
         checkpoint()
         val backend = provider.create(code.model)
-        try { checkpoint(); return LoadedVisionProvider(backend) }
+        try { checkpoint(); return LoadedVisionProvider(backend, code.spiVersion) }
         catch (error: Throwable) { runCatching { backend.close() }.onFailure { error.addSuppressed(it) }; throw error }
     }
 
     private data class PinnedCode(
         val classLoader: ClassLoader,
         val model: NativeVisionModelSource?,
+        val spiVersion: Int,
         @Suppress("unused") val snapshotLease: AutoCloseable,
         val verify: (() -> Unit) -> Unit,
     )

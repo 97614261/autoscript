@@ -11,6 +11,28 @@ import org.junit.Test
 
 class JumpPanelCodeTest {
     @Test
+    fun fixedWaitCarriesExactBlockKindAndMillisecondsWithoutFuzzySearch() {
+        val contract = requireNotNull(BlockCatalog.find("task.sleep"))
+        val hint = requireNotNull(JumpPanelCode.waitSnippet(173))
+        assertEquals("task.sleep", FunctionCatalog.blockKindOf(hint))
+        val args = legacyDockBlockArguments(contract, hint, JsonObject().apply { addProperty("milliseconds", 0) })
+        assertEquals(173, args["milliseconds"].asInt)
+        assertNull(JumpPanelCode.waitSnippet(-1))
+        val oldVariable = legacyDockBlockArguments(contract,
+            "${FunctionCatalog.BLOCK_HINT_PREFIX}task.sleep\nvariable:delay", JsonObject())
+        assertEquals("delay", oldVariable["millisecondsVariable"].asString)
+    }
+
+    @Test
+    fun returnStatusCanSwitchWithoutChangingBlockKind() {
+        assertTrue(JumpPanelCode.canSelectAction("flow.status.return", 5, 6))
+        assertTrue(JumpPanelCode.canSelectAction("flow.status.return", 6, 5))
+        assertFalse(JumpPanelCode.canSelectAction("flow.status.return", 5, 2))
+        assertFalse(JumpPanelCode.canSelectAction("flow.return", 2, 6))
+        assertTrue(JumpPanelCode.canSelectAction(null, 0, 6))
+    }
+
+    @Test
     fun automaticLabelsAndTypedChannelValuesAreStable() {
         assertEquals("mark_3", JumpPanelCode.nextLabel(listOf("mark_1", "mark_2")))
         assertTrue(JumpPanelCode.validName("ready_2"))
@@ -94,9 +116,15 @@ class JumpPanelCodeTest {
         assertEquals(5, args.getAsJsonObject("arguments")["count"].asInt)
         val inserted = requireNotNull(editor.insertBlock(contract, args))
         assertEquals(setOf("success", "failure"), editor.childBlockNames(inserted).toSet())
-        assertTrue(editor.updateFlowCall(inserted, "next", JsonObject().apply { addProperty("count", 9) }))
-        assertEquals("next", editor.flowCallTarget(inserted))
-        assertEquals(9, editor.flowCallArguments(inserted)!!["count"].asInt)
+        val modified = requireNotNull(editor.nodeArguments(inserted)).apply {
+            addProperty("targetFlowId", "next")
+            add("arguments", JsonObject().apply { addProperty("count", 9) })
+        }
+        assertTrue(editor.updateArguments(inserted, modified))
+        modified.addProperty("targetFlowId", "must-not-alias")
+        val saved = requireNotNull(editor.nodeArguments(inserted))
+        assertEquals("next", saved["targetFlowId"].asString)
+        assertEquals(9, saved.getAsJsonObject("arguments")["count"].asInt)
         assertEquals(setOf("success", "failure"), editor.childBlockNames(inserted).toSet())
         for (success in listOf(true, false)) {
             val status = requireNotNull(BlockCatalog.find("flow.status.return"))

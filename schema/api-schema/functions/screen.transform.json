@@ -9,7 +9,7 @@
   "sideEffect": "resource_create",
   "timeoutMs": 5000,
   "resourceOwnership": "task_owned_frame",
-  "summary": "返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。阈值模式按加权灰度与0-255阈值比较并保留Alpha；最多4194304像素，源不变。",
+  "summary": "返回独立帧：旋转、镜像、灰度、二值阈值、多组滤色、透明蒙版、二值去噪/形态处理或最近邻缩放。最多4194304像素，源不变；新模式均为显式选择且有计算预算。",
   "params": [
     {
       "name": "frame",
@@ -21,13 +21,13 @@
       "name": "options",
       "type": "string",
       "required": true,
-      "summary": "严格JSON：mode、width、height、可选threshold（默认128）。非缩放尺寸为0；threshold为0-255。"
+      "summary": "严格JSON共最多16384字节，包含mode/width/height及可选threshold（默认128）。filter模式须filter对象：version=1、space=absolute/relative/custom、output=binary/keep、invert、rules（1–32条rgb/三通道容差/exclude/space），排除优先。mask模式须mask对象：version=1、width/height与源帧相同、strokes最多64条及1024点，每条kind=rect/brush/polygon、keep布尔、radius（矩形/多边形0，笔1–64）、points为[x,y]数组，矩形两点为半开边界，多边形3–128个不同顶点、面积非零、按像素中心奇偶填充，坐标可到图像宽高边界；不允许全透明结果，光栅工作预算6400万。despeckle/erode/dilate/open/close须cleanup对象：version=1、foreground=light/dark、threshold0–255、radius1–2、minArea1–4096、connectivity4/8；二值处理最多6400万邻域计算。非对应模式禁止附带filter/mask/cleanup。非缩放尺寸为0。"
     }
   ],
   "returns": {
     "type": "integer",
     "nullable": false,
-    "summary": "返回独立帧：旋转90/180/270、镜像、灰度、二值阈值或最近邻缩放。源不变。"
+    "summary": "独立图像帧句柄，需显式Screen.release；滤色不改变尺寸、原屏坐标或源帧。"
   },
   "legacyAliases": []
 }

@@ -20,7 +20,7 @@ class VariableRenameTest {
     private fun global(name: String) = ProjectVariable(name, ProjectVariableScope.GLOBAL, type = ProjectVariableType.INTEGER)
     private fun local(name: String, flow: String = "main") = global(name).copy(scope = ProjectVariableScope.FLOW, flowId = flow)
     private fun create(vars: List<ProjectVariable>): ProjectSnapshot {
-        val base = store.createProject("改名", ProjectSourceMode.VISUAL)
+        val base = store.createFixtureProject("改名", ProjectSourceMode.VISUAL)
         return store.updateVariables(base.manifest.projectId, vars, emptyList())
     }
     private fun source(snapshot: ProjectSnapshot, args: JsonObject, kind: String = "variable.calculate"): String =

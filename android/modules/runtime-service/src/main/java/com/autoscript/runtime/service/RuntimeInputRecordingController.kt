@@ -144,14 +144,24 @@ internal class RuntimeInputRecordingController(
     companion object {
         internal fun excludeControls(actions: ByteArray, left: Int, top: Int, right: Int, bottom: Int): ByteArray {
             require(actions.size <= RecordingReply.MAX_ACTION_BYTES && actions.size % RecordingReply.ACTION_BYTES == 0)
-            val kept = actions.asList().chunked(RecordingReply.ACTION_BYTES).filter { chunk ->
-                val data = ByteBuffer.wrap(chunk.toByteArray()).order(ByteOrder.LITTLE_ENDIAN)
-                val kind = data.int; data.int; data.int
-                val x1=data.int; val y1=data.int; val x2=data.int; val y2=data.int
-                fun inside(x: Int, y: Int) = x >= left && x < right && y >= top && y < bottom
-                kind == 4 || (!inside(x1,y1) && !inside(x2,y2))
+            val data = ByteBuffer.wrap(actions).order(ByteOrder.LITTLE_ENDIAN)
+            fun inside(x: Int, y: Int) = x >= left && x < right && y >= top && y < bottom
+            fun keep(offset: Int) = data.getInt(offset) == 4 ||
+                (!inside(data.getInt(offset + 12), data.getInt(offset + 16)) &&
+                    !inside(data.getInt(offset + 20), data.getInt(offset + 24)))
+            var size = 0
+            for (offset in actions.indices step RecordingReply.ACTION_BYTES) {
+                if (keep(offset)) size += RecordingReply.ACTION_BYTES
             }
-            return kept.flatten().toByteArray()
+            val kept = ByteArray(size)
+            var destination = 0
+            for (offset in actions.indices step RecordingReply.ACTION_BYTES) {
+                if (keep(offset)) {
+                    actions.copyInto(kept, destination, offset, offset + RecordingReply.ACTION_BYTES)
+                    destination += RecordingReply.ACTION_BYTES
+                }
+            }
+            return kept
         }
     }
 }

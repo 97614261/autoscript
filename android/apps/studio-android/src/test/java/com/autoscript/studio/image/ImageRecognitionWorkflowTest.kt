@@ -38,6 +38,20 @@ class ImageRecognitionWorkflowTest {
         assertEquals("950", single["similarityPermille"])
     }
 
+    @Test fun templateRegionReadsOnlyTheCurrentSourceAndRegisteredDirectoryImages() {
+        assertEquals(paths.take(1), recognitionSelectedTemplatePaths(baseline, resources))
+        assertEquals(paths.reversed(), recognitionSelectedTemplatePaths(recognitionSelectTemplates(baseline, paths.reversed()), resources))
+        val mixedResources = resources + JsonObject().apply {
+            addProperty("kind", "audio"); addProperty("path", "assets/images/group/not-an-image.ogg")
+        }
+        assertEquals(paths.takeLast(1), recognitionSelectedTemplatePaths(
+            recognitionSelectTemplateDirectory(baseline, "assets/images/group/", paths), mixedResources))
+        assertEquals(emptyList<String>(), recognitionSelectedTemplatePaths(
+            recognitionSelectTemplates(baseline, emptyList()), resources))
+        assertEquals(emptyList<String>(), recognitionSelectedTemplatePaths(
+            baseline + ("imagePaths" to "invalid"), resources))
+    }
+
     @Test fun capturedTemplateKeepsPriorityOrderAndThresholdsWithoutSilentOverflow() {
         val inputs = recognitionSelectTemplates(baseline, paths.take(1))
         val captured = recognitionCapturedTemplate(inputs, contract.kind, paths.last())
@@ -100,6 +114,18 @@ class ImageRecognitionWorkflowTest {
         assertEquals(listOf("screen.capture", "vision.findcolor", "screen.release"), color.map { it.first.kind })
         assertEquals("customFrame", color.first().second["resultVariable"].asString)
         assertEquals("customFrame", color.last().second["frameVariable"].asString)
+    }
+
+    @Test fun mixedRecognitionBorrowsTheExplicitFrameWithoutCaptureOrRelease() {
+        for(kind in listOf("vision.findimage","vision.findgray","vision.findcolor","vision.getcolor","ocr.glyph","ocr.alphanumeric","vision.findfeatures")) {
+            val operation=requireNotNull(BlockCatalog.find(kind))
+            val arguments=JsonObject().apply {addProperty("frameVariable","shared");addProperty("autoCapture",true)}
+            val blocks=recognitionImageEntryBlocks(operation,arguments,capture=false)
+            assertEquals(kind,listOf(kind),blocks.map {it.first.kind})
+            assertEquals("shared",blocks.single().second["frameVariable"].asString)
+            if(operation.properties.any {it.path=="autoCapture"}) assertFalse(blocks.single().second["autoCapture"].asBoolean)
+            assertTrue("The caller's parameters are immutable",arguments["autoCapture"].asBoolean)
+        }
     }
 
     @Test fun manualFixedRegionClearsOldVariableOverridesWithoutResettingTheDraft() {

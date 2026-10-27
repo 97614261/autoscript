@@ -22,6 +22,14 @@ internal data class ProjectRunSettingsDraft(
     val settings: ProjectDebugSettings,
     val numbers: Map<String, String>,
 ) {
+    fun popupStyleDraft(): PopupStyleDraft = PopupStyleDraft.from(settings.popupStyle).let {
+        it.copy(inputs = it.inputs + numbers.filterKeys { key -> key in POPUP_NUMBER_RANGES })
+    }
+
+    fun withPopupPosition(positioned: PopupStyleDraft): ProjectRunSettingsDraft = copy(
+        numbers = numbers + ("x" to positioned.inputs.getValue("x")) + ("y" to positioned.inputs.getValue("y")),
+    )
+
     fun parse(): ProjectDebugSettings? = runCatching {
         fun number(key: String) = requireNotNull(numbers[key]?.toIntOrNull())
         val style = settings.popupStyle.copy(widthPx = number("width"), heightPx = number("height"),
@@ -104,6 +112,9 @@ internal fun ProjectRunSettingsForm(
         listOf("font" to "字体 px", "corner" to "圆角 px"), listOf("duration" to "短时弹窗 ms")).forEach { fields ->
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             fields.forEach { (key, label) -> RunField(label, draft.numbers.getValue(key), enabled, Modifier.weight(1f)) { number(key, it) } }
+        }
+        if (fields.any { it.first == "x" }) {
+            PopupPositionShortcuts(draft.popupStyleDraft(), enabled) { onChange(draft.withPopupPosition(it)) }
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

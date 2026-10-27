@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "system.info",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/system.info/1/system.info.schema.json",
+  "title": "读取设备与权限状态",
+  "category": "variable",
+  "summary": "读取设备/显示/电池/网络/存储/授权的有界JSON快照，不返回设备唯一标识。permissions分别报告系统悬浮/通知授权、Root就绪和后端输入特性；特性支持不代表截图/输入实测成功。",
+  "searchTerms": [
+    "系统",
+    "网络",
+    "文件",
+    "System.info",
+    "读取设备与权限状态"
+  ],
+  "requiredCapabilities": [
+    "device.info"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "section",
+      "label": "查询项目",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "device"
+    },
+    {
+      "path": "sectionVariable",
+      "label": "查询项目来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

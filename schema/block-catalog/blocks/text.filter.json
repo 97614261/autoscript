@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "text.filter",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/text.filter/1/text.filter.schema.json",
+  "title": "字符过滤",
+  "category": "variable",
+  "summary": "按 Unicode 字符保留/去掉 ASCII 数字、ASCII 字母、ASCII 字母数字、汉字（Unicode Script Han）或 Unicode 空白。其他字符不改写，输入输出最多 64KiB。",
+  "searchTerms": [
+    "工具",
+    "计算",
+    "文本",
+    "JSON",
+    "字符过滤"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "text",
+      "label": "原文",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "智构 A12"
+    },
+    {
+      "path": "textVariable",
+      "label": "原文来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "mode",
+      "label": "过滤方式",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "keepDigits"
+    },
+    {
+      "path": "modeVariable",
+      "label": "过滤方式来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}

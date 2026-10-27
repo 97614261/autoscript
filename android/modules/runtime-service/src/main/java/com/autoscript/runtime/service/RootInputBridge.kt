@@ -16,7 +16,7 @@ internal object RootInputBridge {
         val input = DataInputStream(System.`in`)
         val output = DataOutputStream(System.out)
         val injector = runCatching { RootMotionInjector() }.getOrNull() ?: return
-        runRootPointerBridge(input, output, SystemClock::uptimeMillis, injector::inject)
+        runRootMultiPointerBridge(input, output, SystemClock::uptimeMillis, injector::injectMany)
     }
 }
 
@@ -71,5 +71,12 @@ private class RootMotionInjector {
         val event = MotionEvent.obtain(downTime, eventTime, action, x.toFloat(), y.toFloat(), 0)
         event.source = InputDevice.SOURCE_TOUCHSCREEN
         return try { inject.invoke(manager, event, 0) == true } finally { event.recycle() }
+    }
+    fun injectMany(action:Int,points:List<RootTouchPoint>,downTime:Long,eventTime:Long):Boolean {
+        require(points.size in 1..5)
+        val properties=points.map {point->MotionEvent.PointerProperties().apply {id=point.id;toolType=MotionEvent.TOOL_TYPE_FINGER}}.toTypedArray()
+        val coordinates=points.map {point->MotionEvent.PointerCoords().apply {x=point.x.toFloat();y=point.y.toFloat();pressure=if(action and 255 in setOf(1,3)) 0f else 1f;size=1f}}.toTypedArray()
+        val event=MotionEvent.obtain(downTime,eventTime,action,points.size,properties,coordinates,0,0,1f,1f,0,0,InputDevice.SOURCE_TOUCHSCREEN,0)
+        return try {inject.invoke(manager,event,0)==true} finally {event.recycle()}
     }
 }

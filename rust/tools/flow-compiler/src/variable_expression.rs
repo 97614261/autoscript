@@ -151,19 +151,19 @@ impl Parser<'_> {
             };
             return Ok(Expr::Literal(value, kind));
         }
-        if bytes
-            .get(start)
-            .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
+        if self.source[start..]
+            .chars()
+            .next()
+            .is_some_and(flow_ir::user_name_start)
         {
-            self.pos += 1;
-            while bytes
-                .get(self.pos)
-                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+            for ch in self.source[start..]
+                .chars()
+                .take_while(|ch| flow_ir::user_name_part(*ch))
             {
-                self.pos += 1;
+                self.pos += ch.len_utf8();
             }
             let name = self.source[start..self.pos].to_owned();
-            if name.len() > 64 {
+            if !flow_ir::valid_user_name(&name) {
                 return Err("变量名过长");
             }
             if self.take("(") {
@@ -552,6 +552,31 @@ mod tests {
         assert!(render("count + 2 * 3")
             .unwrap()
             .contains("__calc_binary('*',2, 3)"));
+    }
+    #[test]
+    fn print_shortcuts_use_existing_typed_string_grammar() {
+        for source in [
+            "\"count=\" .. text(count) .. \"  \" .. \"label=\" .. text(label)",
+            "\"count=\" .. text(count) .. \"\\n\" .. text(label)",
+            "\"before\" .. text(count) .. \"after\"",
+            "\"\" .. text(count) .. \"\"",
+            "\"count=\" .. text(count + 1)",
+        ] {
+            assert_eq!(
+                validate(source, Some(ProjectVariableType::String), lookup),
+                Ok(()),
+                "{source}"
+            );
+            assert!(render(source).is_ok());
+        }
+        assert_eq!(
+            validate(
+                "\"次数=\" .. text(次数)",
+                Some(ProjectVariableType::String),
+                |name| { (name == "次数").then_some(ProjectVariableType::Integer) }
+            ),
+            Ok(())
+        );
     }
     #[test]
     fn rejects_escape_wrong_types_and_limits() {

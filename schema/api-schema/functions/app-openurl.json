@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18002,
+  "name": "Apps.openUrl",
+  "since": "1.8",
+  "capability": "device.apps",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "ui_prompt",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "显式请求系统浏览器打开http/https网址；拒绝内嵌账号密码、控制字符和其他scheme。不保证已前台或页面加载成功，不自动下载、提交或注入网页；请求受理返回1。",
+  "params": [
+    {
+      "name": "url",
+      "type": "string",
+      "required": true,
+      "summary": "http/https网址"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "显式请求系统浏览器打开http/https网址；拒绝内嵌账号密码、控制字符和其他scheme。不保证已前台或页面加载成功，不自动下载、提交或注入网页；请求受理返回1。"
+  },
+  "legacyAliases": []
+}

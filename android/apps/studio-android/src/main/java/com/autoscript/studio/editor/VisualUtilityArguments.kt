@@ -17,6 +17,41 @@ import com.autoscript.studio.generated.BlockPropertyEditor
 import com.google.gson.JsonObject
 
 internal val utilityApiKinds = mapOf(
+    "Text.numberAt" to "text.numberat",
+    "Input.touchDown" to "input.touchdown",
+    "Input.touchMove" to "input.touchmove",
+    "Input.touchUp" to "input.touchup",
+    "Floating.image" to "floating.image",
+    "Floating.waitImageEvent" to "floating.waitevent",
+    "Floating.closeImage" to "floating.closeimage",
+    "Input.imeStatus" to "input.imestatus",
+    "Input.imeText" to "input.imetext",
+    "Files.modifiedTime" to "files.modifiedtime",
+    "System.info" to "system.info",
+    "System.keepScreenAwake" to "system.keepawake",
+    "Apps.openUrl" to "app.openurl",
+    "Network.request" to "network.request",
+    "Text.urlEncode" to "text.urlencode",
+    "Text.urlDecode" to "text.urldecode",
+    "Text.toHex" to "text.tohex",
+    "Text.fromHex" to "text.fromhex",
+    "Text.toBase64" to "text.tobase64",
+    "Text.fromBase64" to "text.frombase64",
+    "Text.findNth" to "text.findnth",
+    "Text.betweenNth" to "text.betweennth",
+    "Path.name" to "path.name",
+    "Path.parent" to "path.parent",
+    "Path.normalize" to "path.normalize",
+    "Path.join" to "path.join",
+    "Math.unary" to "math.unary",
+    "Math.binary" to "math.binary",
+    "Math.roundTo" to "math.roundto",
+    "Text.formatNumber" to "text.formatnumber",
+    "Text.regexReplace" to "text.regexreplace",
+    "Text.filter" to "text.filter",
+    "Text.reverse" to "text.reverse",
+    "Data.encode" to "data.encode",
+    "Data.sort" to "data.sort",
     "Files.zip" to "files.zip",
     "Files.unzip" to "files.unzip",
     "Files.getSize" to "files.getsize",
@@ -92,6 +127,35 @@ internal val utilityApiKinds = mapOf(
 )
 internal val visualUtilityKinds = utilityApiKinds.values.toSet()
 internal fun utilityResultType(kind: String): ProjectVariableType = when(kind) {
+    "text.numberat" -> ProjectVariableType.STRING
+    "input.touchdown", "input.touchmove", "input.touchup" -> ProjectVariableType.INTEGER
+    "floating.image", "floating.closeimage" -> ProjectVariableType.INTEGER
+    "floating.waitevent" -> ProjectVariableType.STRING
+    "input.imestatus" -> ProjectVariableType.STRING
+    "input.imetext" -> ProjectVariableType.INTEGER
+    "files.modifiedtime" -> ProjectVariableType.INTEGER
+    "system.info" -> ProjectVariableType.STRING
+    "system.keepawake" -> ProjectVariableType.INTEGER
+    "app.openurl" -> ProjectVariableType.INTEGER
+    "network.request" -> ProjectVariableType.STRING
+    "text.urlencode" -> ProjectVariableType.STRING
+    "text.urldecode" -> ProjectVariableType.STRING
+    "text.tohex" -> ProjectVariableType.STRING
+    "text.fromhex" -> ProjectVariableType.STRING
+    "text.tobase64" -> ProjectVariableType.STRING
+    "text.frombase64" -> ProjectVariableType.STRING
+    "text.findnth" -> ProjectVariableType.INTEGER
+    "text.betweennth" -> ProjectVariableType.STRING
+    "path.name" -> ProjectVariableType.STRING
+    "path.parent" -> ProjectVariableType.STRING
+    "path.normalize" -> ProjectVariableType.STRING
+    "path.join" -> ProjectVariableType.STRING
+    "text.formatnumber" -> ProjectVariableType.STRING
+    "text.regexreplace" -> ProjectVariableType.STRING
+    "text.filter" -> ProjectVariableType.STRING
+    "text.reverse" -> ProjectVariableType.STRING
+    "data.encode" -> ProjectVariableType.STRING
+    "data.sort" -> ProjectVariableType.STRING
     "files.zip", "files.unzip" -> ProjectVariableType.INTEGER
     "files.getsize", "files.frombase64" -> ProjectVariableType.INTEGER
     "files.getextension", "files.directorystats", "files.tobase64" -> ProjectVariableType.STRING
@@ -105,6 +169,72 @@ internal fun utilityResultType(kind: String): ProjectVariableType = when(kind) {
     else -> ProjectVariableType.NUMBER
 }
 private val utilityBounds = mapOf(
+    "text.numberat:text" to (0.0 to 4096.0),
+    "text.numberat:index" to (1.0 to 64.0),
+    "input.touchdown:pointerId" to (0.0 to 4.0),"input.touchmove:pointerId" to (0.0 to 4.0),"input.touchup:pointerId" to (0.0 to 4.0),
+    "input.touchdown:x" to (0.0 to 32767.0),"input.touchdown:y" to (0.0 to 32767.0),
+    "input.touchmove:x" to (0.0 to 32767.0),"input.touchmove:y" to (0.0 to 32767.0),
+    "floating.image:name" to (1.0 to 32.0),
+    "floating.image:imagePath" to (1.0 to 256.0),
+    "floating.image:x" to (-1.0 to 8192.0),
+    "floating.image:y" to (-1.0 to 8192.0),
+    "floating.image:width" to (1.0 to 2048.0),
+    "floating.image:height" to (1.0 to 2048.0),
+    "floating.image:draggable" to (0.0 to 1.0),
+    "floating.waitevent:name" to (1.0 to 32.0),
+    "floating.waitevent:timeoutMs" to (0.0 to 60000.0),
+    "floating.closeimage:name" to (1.0 to 32.0),
+    "input.imetext:text" to (0.0 to 4096.0),
+    "files.modifiedtime:path" to (1.0 to 256.0),
+    "system.info:section" to (1.0 to 16.0),
+    "system.keepawake:enabled" to (0.0 to 1.0),
+    "app.openurl:url" to (1.0 to 2048.0),
+    "network.request:method" to (1.0 to 8.0),
+    "network.request:url" to (1.0 to 2048.0),
+    "network.request:headersJson" to (2.0 to 4096.0),
+    "network.request:body" to (0.0 to 8192.0),
+    "network.request:timeoutMs" to (100.0 to 30000.0),
+    "network.request:maxResponseBytes" to (1.0 to 16384.0),
+    "text.urlencode:text" to (0.0 to 65536.0),
+    "text.urlencode:mode" to (1.0 to 16.0),
+    "text.urldecode:text" to (0.0 to 65536.0),
+    "text.urldecode:mode" to (1.0 to 16.0),
+    "text.tohex:text" to (0.0 to 65536.0),
+    "text.fromhex:text" to (0.0 to 65536.0),
+    "text.tobase64:text" to (0.0 to 65536.0),
+    "text.frombase64:text" to (0.0 to 65536.0),
+    "text.findnth:text" to (0.0 to 65536.0),
+    "text.findnth:needle" to (1.0 to 4096.0),
+    "text.findnth:occurrence" to (1.0 to 1024.0),
+    "text.betweennth:text" to (0.0 to 65536.0),
+    "text.betweennth:left" to (1.0 to 4096.0),
+    "text.betweennth:right" to (1.0 to 4096.0),
+    "text.betweennth:occurrence" to (1.0 to 1024.0),
+    "path.name:path" to (0.0 to 256.0),
+    "path.parent:path" to (0.0 to 256.0),
+    "path.normalize:path" to (0.0 to 256.0),
+    "path.join:left" to (0.0 to 256.0),
+    "path.join:right" to (0.0 to 256.0),
+    "math.unary:operation" to (0.0 to 16.0),
+    "math.unary:value" to (-1000000000000.0 to 1000000000000.0),
+    "math.binary:operation" to (0.0 to 16.0),
+    "math.binary:left" to (-1000000000000.0 to 1000000000000.0),
+    "math.binary:right" to (-1000000000000.0 to 1000000000000.0),
+    "math.roundto:value" to (-1000000000000.0 to 1000000000000.0),
+    "math.roundto:digits" to (0.0 to 9.0),
+    "text.formatnumber:value" to (-1000000000000.0 to 1000000000000.0),
+    "text.formatnumber:digits" to (0.0 to 9.0),
+    "text.formatnumber:minIntegerDigits" to (1.0 to 32.0),
+    "text.regexreplace:text" to (0.0 to 4096.0),
+    "text.regexreplace:pattern" to (1.0 to 128.0),
+    "text.regexreplace:replacement" to (0.0 to 4096.0),
+    "text.filter:text" to (0.0 to 65536.0),
+    "text.filter:mode" to (0.0 to 24.0),
+    "text.reverse:text" to (0.0 to 65536.0),
+    "data.encode:value" to (0.0 to 65536.0),
+    "data.encode:mode" to (0.0 to 8.0),
+    "data.sort:json" to (0.0 to 65536.0),
+    "data.sort:mode" to (0.0 to 16.0),
     "files.zip:path" to (1.0 to 256.0),
     "files.zip:destination" to (1.0 to 256.0),
     "files.unzip:path" to (1.0 to 256.0),
@@ -257,6 +387,9 @@ internal fun utilityArgumentError(contract: BlockContract, inputs: Map<String,St
             if(!valid) return "来源变量类型不匹配：${field.label}"
         }
         val text=inputs[field.path].orEmpty()
+        pureUtilityChoices[contract.kind+":"+field.path]?.let { options ->
+            if (options.none { it.first==text }) return "请选择有效的运算方式：${field.label}"
+        }
         val bounds=utilityBounds[contract.kind+":"+field.path] ?: return "未知工具参数"
         if(field.editor==BlockPropertyEditor.STRING) {
             val length=text.toByteArray(Charsets.UTF_8).size
@@ -289,7 +422,7 @@ private fun utilitySourceMatches(editor: BlockPropertyEditor, actual: ProjectVar
 }
 @Composable
 internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObject, project: ProjectSnapshot, flowId: String,
-    onManageVariables: (() -> Unit)?, onDismiss: () -> Unit, onConfirm: (JsonObject) -> Unit, confirmLabel: String) {
+    onManageVariables: (() -> Unit)?, onDismiss: () -> Unit, onConfirm: (JsonObject) -> Unit, confirmLabel: String, visible: Boolean = true) {
     val initial=remember(contract.kind,arguments) { blockPropertyTexts(contract,arguments) }
     var inputs by remember(contract.kind,arguments) { mutableStateOf(initial) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -298,7 +431,7 @@ internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObje
     fun update(key: String,text: String) { inputs=inputs+(key to text); error=null }
     fun close() { if(inputs!=initial) discard=true else onDismiss() }
     val outputs=if(contract.kind=="system.screensize") listOf("widthVariable","heightVariable") else listOf("resultVariable")
-    StudioPanelDialog(contract.title,::close,confirmLabel,onConfirm={
+    if (visible) StudioPanelDialog(contract.title,::close,confirmLabel,onConfirm={
         error=utilityArgumentError(contract,inputs,variables)
         if(error==null) {
             val parsed=parseBlockArguments(contract,inputs,null,emptyMap(),project.manifest.resources)
@@ -308,12 +441,27 @@ internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObje
     }) {
         Column(Modifier.fillMaxWidth().heightIn(max=360.dp).verticalScroll(rememberScrollState()).padding(10.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
             Text(contract.summary,fontSize=11.sp,color=AutoScriptPalette.TextSecondary)
+            if (contract.kind in textRuleKinds) {
+                Text(textRegexResultHint(contract.kind),
+                    fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
+                val selectedRule = if (inputs["patternVariable"].isNullOrEmpty())
+                    textExtractionRules.firstOrNull { it.pattern == inputs["pattern"] }?.label ?: "自定义正则" else "变量规则"
+                DesignerChoice("常用规则", selectedRule,
+                    textExtractionRules.map { it.id to it.label } + ("custom" to "自定义正则"), true) {
+                    inputs = applyTextExtractionRule(inputs, it); error = null
+                }
+                Text("正则按原样填写，例如 [0-9]+、\\d+、\\p{Han}+；支持分组和重复，不支持环视或反向引用。",
+                    fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+            }
             utilityInputFields(contract).forEach { field ->
                 val path=field.path+"Variable"
                 val source=inputs[path].orEmpty()
                 val choices=variables.filter { utilitySourceMatches(field.editor,it.type) }
                 if(source.isEmpty()) {
-                    if(field.path=="format") {
+                    val fixedChoices=pureUtilityChoices[contract.kind+":"+field.path]
+                    if(fixedChoices!=null) {
+                        DesignerChoice(field.label,fixedChoices.firstOrNull { it.first==inputs[field.path] }?.second ?: "请选择",fixedChoices,true) { update(field.path,it) }
+                    } else if(field.path=="format") {
                         DesignerChoice(field.label,inputs[field.path].orEmpty(),listOf("date" to "日期","time" to "时间","datetime" to "日期+时间"),true) { update(field.path,it) }
                     } else if(field.path=="mode") {
                         val options=if(contract.kind=="math.randstr") listOf("1" to "小写","2" to "大写","3" to "大小写","4" to "大小写+数字","5" to "小写+数字") else listOf("1" to "上下翻转","2" to "左右翻转")
@@ -333,7 +481,7 @@ internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObje
             error?.let { Text(it,color=AutoScriptPalette.Accent,fontSize=11.sp) }
         }
     }
-    if(discard) StudioConfirmDialog(onDismissRequest={discard=false},title={Text("放弃未保存参数？")},
+    if(visible && discard) StudioConfirmDialog(onDismissRequest={discard=false},title={Text("放弃未保存参数？")},
         text={Text("只关闭配置，不加入或保存积木。")},actions=listOf(
             StudioConfirmAction("继续编辑",{discard=false}),
             StudioConfirmAction("放弃",{discard=false;onDismiss()},destructive=true)))

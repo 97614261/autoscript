@@ -94,7 +94,10 @@ internal fun VisionProviderManagerDialog(client: RuntimeClient, onDismiss: () ->
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(8.dp)) {
                             Text(if (kind == null) "${if (entry.state == StoredVisionComponentState.INCOMPATIBLE) "不兼容" else "校验失败"} · ${entry.id.take(8)}"
-                                else "${kind.id} ${kind.sdkVersion} · ${entry.id.take(8)}", fontSize = 12.sp)
+                                else "${kind.id} ${kind.sdkVersion} · V${descriptor.componentVersion} · ${entry.id.take(8)}", fontSize = 12.sp)
+                            if (descriptor != null) Text(if (descriptor.componentVersion >= 2)
+                                (if (kind == VisionComponentKind.OPENCV) "灰度找图 / ORB特征" else "V4默认 / V5显式可选")
+                                else "原版组件 · 不支持ORB / V5扩展操作", fontSize = 10.sp)
                             if (descriptor != null) Text("${descriptor.abis.sorted().joinToString(" / ")} · ${(entry.verified?.bytes ?: 0) / (1024 * 1024)}MiB", fontSize = 10.sp)
                             Row {
                                 TextButton(enabled = idle && !busy && kind != null && entry.state == StoredVisionComponentState.READY &&

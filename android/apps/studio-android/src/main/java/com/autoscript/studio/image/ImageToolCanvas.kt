@@ -2,7 +2,6 @@ package com.autoscript.studio
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -16,6 +15,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -24,6 +24,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
@@ -57,6 +59,7 @@ internal fun ImageToolCanvas(
     onSelection: (ImageToolSelection) -> Unit,
     onCrosshair: (Offset) -> Unit,
     onSlide: (Pair<Int, Int>?, Pair<Int, Int>?) -> Unit,
+    displayBitmap: Bitmap? = null,
 ) {
     if (bitmap == null || viewport == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -69,7 +72,9 @@ internal fun ImageToolCanvas(
         return
     }
 
-    val image = remember(bitmap) { bitmap.asImageBitmap() }
+    // Display-only masks must never change the source used by color picking or gestures.
+    val displayed = displayBitmap?.takeIf { it.width == bitmap.width && it.height == bitmap.height } ?: bitmap
+    val image = remember(displayed) { displayed.asImageBitmap() }
     val latestViewport by rememberUpdatedState(viewport)
     val latestSelection by rememberUpdatedState(selection)
     val latestCrosshair by rememberUpdatedState(crosshair)
@@ -84,6 +89,7 @@ internal fun ImageToolCanvas(
     var activeEdge by remember(bitmap, mode) { mutableStateOf<BoxEdge?>(null) }
     var resizeStartBox by remember(bitmap, mode) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
     var resizeStartPointer by remember(bitmap, mode) { mutableStateOf<Offset?>(null) }
+    var resizeStartScale by remember(bitmap, mode) { mutableStateOf(1f) }
     var draggingSlide by remember(bitmap, mode) { mutableStateOf<Boolean?>(null) }
     // 一次拖动开始时冻结两端：被拖的一端持续更新，另一端绝不能被后续重组中的旧值覆盖。
     var slideStartAtDrag by remember(bitmap, mode) { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -149,11 +155,12 @@ internal fun ImageToolCanvas(
             zoomMode -> Unit
             mode.usesDragBox -> {
                 val box = latestSelection.box
-                val edge = box?.let { hitEdge(it, v, start) }
+                val edge = box?.let { selectionDragTarget(it, v, start.x, start.y) }
                 if (edge != null) {
                     activeEdge = edge
                     resizeStartBox = box
                     resizeStartPointer = start
+                    resizeStartScale = v.scale
                 } else if (box == null) {
                     // 参考 handleSelectionStart()：已有框时禁止另起新框，必须先点 × 关掉。
                     dragFrom = start
@@ -193,7 +200,7 @@ internal fun ImageToolCanvas(
                             edge = activeEdge!!,
                             deltaViewX = position.x - start.x,
                             deltaViewY = position.y - start.y,
-                            scale = v.scale,
+                            scale = resizeStartScale,
                             imageWidth = v.imageWidth,
                             imageHeight = v.imageHeight,
                         ),
@@ -224,6 +231,9 @@ internal fun ImageToolCanvas(
 
     Box(
         Modifier.fillMaxSize()
+            // Canvas drawing is not clipped by layout bounds. Keep enlarged images,
+            // selection handles and magnifiers inside the preview, away from its tools.
+            .clipToBounds().semantics {contentDescription="图像工具画布"}
             // 单一手势循环，按手指数分发——对应参考 handleStart/handleMove 里
             // `touches.length === 1` 走拖动、`=== 2` 走捏合的结构。
             // 不能把 detectTransformGestures 和 detectDragGestures 叠在同一个节点上：
@@ -231,13 +241,18 @@ internal fun ImageToolCanvas(
             .pointerInput(bitmap, mode, zoomMode) {
                 awaitEachGesture {
                     val first = awaitFirstDown(requireUnconsumed = false)
+                    val before = latestSelection
+                    var committed = false
                     var pinching = false
                     var lastCentroid = Offset.Zero
                     var lastDistance = 0f
                     var lastSingle = first.position
+                    try {
                     beginSingle(first.position)
                     while (true) {
                         val event = awaitPointerEvent()
+                        // Compose delivers Android ACTION_CANCEL as consumed releases, not a coroutine cancellation.
+                        if (event.changes.any { it.isConsumed }) return@awaitEachGesture
                         val pressed = event.changes.filter { it.pressed }
                         if (pressed.isEmpty()) break
                         if (pressed.size >= 2) {
@@ -248,6 +263,7 @@ internal fun ImageToolCanvas(
                             if (!pinching) {
                                 // 从单指切到双指：丢掉正在画的框，避免捏合时留下一个歪框。
                                 pinching = true
+                                onSelection(before)
                                 resetTransient()
                             } else {
                                 val v = latestViewport
@@ -273,6 +289,11 @@ internal fun ImageToolCanvas(
                         }
                     }
                     if (!pinching) commitBox() else resetTransient()
+                    committed = true
+                    } finally {
+                        if (!committed) onSelection(before)
+                        resetTransient()
+                    }
                 }
             },
     ) {
@@ -320,7 +341,7 @@ private fun DrawScope.drawSelectionBox(box: ImageToolCodeGen.Roi?, v: ImageToolV
     drawRect(Color.Black.copy(alpha = 0.3f), topLeft = Offset(left, top), size = size)
     drawRect(BoxStroke, topLeft = Offset(left, top), size = size, style = Stroke(width = 2f))
     // 四条边的手柄，对应参考的 crop-handle-left/top/right/bottom。
-    val handle = HANDLE_RADIUS
+    val handle = selectionHandleRadius(box, v)
     drawCircle(BoxStroke, handle, Offset(left, top + size.height / 2f))
     drawCircle(BoxStroke, handle, Offset(left + size.width / 2f, top))
     drawCircle(BoxStroke, handle, Offset(left + size.width, top + size.height / 2f))
@@ -365,20 +386,6 @@ private fun DrawScope.drawSlide(start: Pair<Int, Int>?, end: Pair<Int, Int>?, v:
     drawCircle(Color.White, MARKER_RADIUS - 4f, Offset(ex, ey))
 }
 
-/** 命中哪条边的手柄；都没命中返回 null。 */
-private fun hitEdge(box: ImageToolCodeGen.Roi, v: ImageToolViewport, point: Offset): BoxEdge? {
-    val (left, top) = v.toView(box.left, box.top)
-    val width = v.toViewLength(box.width)
-    val height = v.toViewLength(box.height)
-    val candidates = listOf(
-        BoxEdge.LEFT to Offset(left, top + height / 2f),
-        BoxEdge.TOP to Offset(left + width / 2f, top),
-        BoxEdge.RIGHT to Offset(left + width, top + height / 2f),
-        BoxEdge.BOTTOM to Offset(left + width / 2f, top + height),
-    )
-    return candidates.firstOrNull { (_, centre) -> hypot(point.x - centre.x, point.y - centre.y) <= HANDLE_TOUCH }?.first
-}
-
 /** 离哪个滑动标记近就拖哪个；true = 起点。 */
 private fun nearerSlideMarker(
     start: Pair<Int, Int>?,
@@ -395,7 +402,5 @@ private fun nearerSlideMarker(
     return toStart <= toEnd
 }
 
-private const val HANDLE_RADIUS = 9f
-private const val HANDLE_TOUCH = 48f
 private const val MARKER_RADIUS = 14f
 private const val MARKER_TOUCH = 64f

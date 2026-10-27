@@ -33,7 +33,7 @@ internal fun androidRuntimeVisionResolver(context: Context): RuntimeVisionResolv
                         catch (error: Throwable) { throw visionStoreFailure(error) }
                     loader.load(prepared, processAbi, checkpoint)
                 }
-                VisionResolvedBackend(verified.sha256, backend)
+                VisionResolvedBackend(verified.sha256, backend, backend.spiVersion)
             } catch (error: Throwable) { throw visionStoreFailure(error, loading = true) }
         }
     }, inspect = { id, checkpoint ->

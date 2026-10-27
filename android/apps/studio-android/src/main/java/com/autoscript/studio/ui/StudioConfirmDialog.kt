@@ -46,8 +46,9 @@ internal fun StudioConfirmDialog(
     shape: Shape = RoundedCornerShape(3.dp),
     actions: List<StudioConfirmAction>? = null,
     compact: Boolean = false,
+    prompt: Boolean = true,
 ) {
-    Dialog(onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false), prompt = prompt) {
         BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
             val configuration = LocalConfiguration.current
             val fontScale = LocalDensity.current.fontScale

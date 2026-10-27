@@ -29,12 +29,30 @@ fun checkedVisionRect(width: Int, height: Int, options: IntArray): VisionRect {
 
 fun decodeAlphanumeric(steps: Array<FloatArray>, dictionary: List<String>, threshold: Int): Pair<String,Int> {
     require(threshold in 0..1000 && steps.size<=1024 && dictionary.size in 63..256)
+    return decodeFixedAlphanumeric(steps,dictionary,threshold)
+}
+
+/** Only the separately hashed English V5 candidate has 438 output classes. */
+fun decodeEnglishV5(steps:Array<FloatArray>,dictionary:List<String>,threshold:Int):Pair<String,Int> {
+    require(threshold in 0..1000 && steps.size<=1024 && dictionary.size==438)
+    return decodeFixedAlphanumeric(steps,dictionary,threshold)
+}
+
+/** V4's fixed dictionary also contains punctuation; keep it only for the explicit text operation. */
+fun decodeLatinText(steps: Array<FloatArray>, dictionary: List<String>, threshold: Int): Pair<String, Int> {
+    require(threshold in 0..1000 && steps.size <= 1024 && dictionary.size == 97)
+    return decodeFixedAlphanumeric(steps, dictionary, threshold, includeSymbols = true)
+}
+
+private fun decodeFixedAlphanumeric(steps:Array<FloatArray>,dictionary:List<String>,threshold:Int,includeSymbols:Boolean=false):Pair<String,Int> {
     val text=StringBuilder(); var previous=-1; var score=0.0; var count=0
     for(step in steps) {
         require(step.size==dictionary.size && step.all { it.isFinite() && it in 0f..1f })
         val index=step.indices.maxByOrNull { step[it] } ?: 0
         val symbol=dictionary[index]
-        if(index!=0 && index!=previous && step[index]*1000>=threshold && symbol.length==1 && symbol[0].let { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }) {
+        if(index!=0 && index!=previous && step[index]*1000>=threshold && symbol.length==1 && symbol[0].let {
+            if (includeSymbols) it in ' '..'~' else it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9'
+        }) {
             text.append(symbol); score+=step[index]; count++
         }
         previous=index

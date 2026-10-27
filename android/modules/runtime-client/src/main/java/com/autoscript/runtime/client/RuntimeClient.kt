@@ -89,7 +89,7 @@ class RuntimeClient(context: Context) {
     private val executionPositions = MutableStateFlow<com.autoscript.runtime.api.RuntimeExecutionPosition?>(null)
     val executionPosition = executionPositions.asStateFlow()
     private var endedPositionRevision = 0L
-    private fun clearExecutionPositionDelivery() {
+    private fun clearExecutionPositionDelivery() = synchronized(positionInbox) {
         executionPositions.value = null
         endedPositionRevision = 0
         positionInbox.set(null)
@@ -131,7 +131,16 @@ class RuntimeClient(context: Context) {
 
     var onStateChanged: ((RuntimeConnectionState) -> Unit)? = null
 
-    private val stateListener = object : IRuntimeStateListener.Stub() {
+    @Volatile private var stateListener: IRuntimeStateListener? = null
+
+    private fun invalidateStateListener(): IRuntimeStateListener? = synchronized(positionInbox) {
+        val previous = stateListener
+        stateListener = null
+        clearExecutionPositionDelivery()
+        previous
+    }
+
+    private fun newStateListener(): IRuntimeStateListener = object : IRuntimeStateListener.Stub() {
         override fun onExecutionPosition(sessionGeneration: Long, runRevision: Long, projectId: String, flowId: String, nodeId: String,
             sampleSequence: Long, recentFlows: Array<out String>?, recentNodes: Array<out String>?) {
             val position = runCatching {
@@ -139,11 +148,14 @@ class RuntimeClient(context: Context) {
                 com.autoscript.runtime.api.RuntimeExecutionPosition(sessionGeneration, runRevision, projectId, flowId, nodeId,
                     sampleSequence, recentFlows.indices.map { com.autoscript.runtime.api.RuntimeNodePosition(recentFlows[it], recentNodes[it]) })
             }.getOrNull() ?: return
-            positionInbox.updateAndGet { previous ->
-                if (previous?.sessionGeneration == position.sessionGeneration && previous.runRevision > position.runRevision) previous
-                else com.autoscript.runtime.api.mergeExecutionPositions(previous, position)
+            synchronized(positionInbox) {
+                if (stateListener !== this) return
+                positionInbox.updateAndGet { previous ->
+                    if (previous?.sessionGeneration == position.sessionGeneration && previous.runRevision > position.runRevision) previous
+                    else com.autoscript.runtime.api.mergeExecutionPositions(previous, position)
+                }
+                schedulePositionDelivery()
             }
-            schedulePositionDelivery()
         }
         override fun onRuntimeStateChanged(
             sessionGeneration: Long,
@@ -152,7 +164,8 @@ class RuntimeClient(context: Context) {
             diagnostic: String?,
         ) {
             mainHandler.post {
-                if (remote == null) return@post
+                // A callback already in flight can outlive unregister/rebind on the same service.
+                if (remote == null || stateListener !== this) return@post
                 if (lastSessionGeneration != sessionGeneration) endedPositionRevision = 0
                 if (stateCode != RuntimeProtocol.STATE_RUNNING) {
                     if (stateCode != RuntimeProtocol.STATE_PAUSED) endedPositionRevision = maxOf(endedPositionRevision, executionPositions.value?.runRevision ?: 0)
@@ -176,6 +189,7 @@ class RuntimeClient(context: Context) {
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            invalidateStateListener()
             val service = IRuntimeService.Stub.asInterface(binder)
             remote = service
             try {
@@ -201,15 +215,18 @@ class RuntimeClient(context: Context) {
                     engineState = lastEngineState,
                     rootState = lastRootState,
                 )
-                service.registerStateListener(stateListener)
+                val listener = newStateListener()
+                stateListener = listener
+                service.registerStateListener(listener)
             } catch (error: RemoteException) {
+                invalidateStateListener()
                 lastSessionGeneration = null
                 publish(RuntimeConnectionPhase.ERROR, message = error.message ?: "连接Runner失败")
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            clearExecutionPositionDelivery()
+            invalidateStateListener()
             startGate.cancel()
             failInputPointPick("Runner连接已断开")
             remote = null
@@ -220,7 +237,7 @@ class RuntimeClient(context: Context) {
         }
 
         override fun onBindingDied(name: ComponentName) {
-            clearExecutionPositionDelivery()
+            invalidateStateListener()
             startGate.cancel()
             failInputPointPick("Runner进程已退出")
             remote = null
@@ -232,7 +249,7 @@ class RuntimeClient(context: Context) {
         }
 
         override fun onNullBinding(name: ComponentName) {
-            clearExecutionPositionDelivery()
+            invalidateStateListener()
             startGate.cancel()
             failInputPointPick("Runner未提供控制接口")
             remote = null
@@ -254,12 +271,12 @@ class RuntimeClient(context: Context) {
     }
 
     fun unbind() {
-        clearExecutionPositionDelivery()
+        val previousListener = invalidateStateListener()
         startGate.cancel()
         completedRecording.value = null
         recordingLease.getAndSet(null)?.let { lease -> runCatching { lease.service.cancelInputRecording(System.nanoTime().and(Long.MAX_VALUE).coerceAtLeast(1),lease.generation,lease.id) } }
         cancelInputPointPick()
-        runCatching { remote?.unregisterStateListener(stateListener) }
+        runCatching { previousListener?.let { remote?.unregisterStateListener(it) } }
         if (bound) appContext.unbindService(connection)
         bound = false
         remote = null
@@ -595,7 +612,7 @@ class RuntimeClient(context: Context) {
         }
         ensureSession()
         if (!prepareProject(requestIds[0], service, generation)) return false
-        if(service?.configureFloatingResources(generation,"ui.floating" in capabilities)!=RuntimeProtocol.CONTROL_ACCEPTED) {
+        if(service?.configureFloatingResources(generation,"ui.floating" in capabilities || "ui.floating.interactive" in capabilities)!=RuntimeProtocol.CONTROL_ACCEPTED) {
             publishOperationError("Runner浮窗资源准备失败")
             return false
         }
@@ -888,7 +905,7 @@ class RuntimeClient(context: Context) {
     fun inputFeatures(): Int {
         val service = remote ?: return 0
         val generation = lastSessionGeneration ?: return 0
-        val features = runCatching { service.getInputFeatures(generation) and 7 }.getOrDefault(0)
+        val features = runCatching { service.getInputFeatures(generation) and 15 }.getOrDefault(0)
         return if (remote === service && lastSessionGeneration == generation) features else 0
     }
 
@@ -1061,8 +1078,8 @@ class RuntimeClient(context: Context) {
         fun failure(status: Int) = RecognitionPreviewReply(requestId, generation, status, operation)
         if (service == null || generation == 0L) return failure(RecognitionPreviewReply.SESSION_MISMATCH)
         if (requestId <= 0 || !RecognitionPreviewReply.validOptions(operation, options) || frame.length() !in 1..MAX_PREVIEW_FILE_BYTES ||
-            (operation != RecognitionPreviewReply.ALPHANUMERIC && (asset == null || asset.length() !in 1..if (operation in setOf(RecognitionPreviewReply.GLYPH,RecognitionPreviewReply.GLYPH_DETAILS)) 8L * 1024 * 1024 else MAX_PREVIEW_FILE_BYTES)) ||
-            (operation == RecognitionPreviewReply.ALPHANUMERIC && asset != null)) return failure(RecognitionPreviewReply.INVALID_INPUT)
+            (RecognitionPreviewReply.requiresTarget(operation) && (asset == null || asset.length() !in 1..if (operation in setOf(RecognitionPreviewReply.GLYPH,RecognitionPreviewReply.GLYPH_DETAILS)) 8L * 1024 * 1024 else MAX_PREVIEW_FILE_BYTES)) ||
+            (!RecognitionPreviewReply.requiresTarget(operation) && asset != null)) return failure(RecognitionPreviewReply.INVALID_INPUT)
         return runCatching {
             ParcelFileDescriptor.open(frame, ParcelFileDescriptor.MODE_READ_ONLY).use { source ->
                 asset?.let { ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY) }.use { target ->
@@ -1108,17 +1125,66 @@ class RuntimeClient(context: Context) {
         if (service == null || generation == null) {
             return ScreenshotPreviewResult.Unavailable("Runner会话尚未建立")
         }
+        return capturePreview(service, generation, requestId)
+    }
+
+    /** Keep the picker visible while Root starts; hide only for the actual captured frame. */
+    suspend fun capturePreviewWhenReady(beforeCapture: suspend () -> Unit): ScreenshotPreviewResult {
+        android.util.Log.i("ZhigouDiagnostics", "UI_CAPTURE_REQUESTED")
+        val service = remote ?: return ScreenshotPreviewResult.Unavailable("Runner 未连接，请到我的 / 运行环境重新连接")
+        val generation = lastSessionGeneration ?: return ScreenshotPreviewResult.Unavailable("Runner 会话尚未建立")
+        when (awaitRuntimeReady(connectionStates, generation)) {
+            RuntimeStartReadiness.TIMEOUT -> {
+                android.util.Log.w("ZhigouDiagnostics", "UI_CAPTURE_ROOT_WAIT_TIMEOUT")
+                return ScreenshotPreviewResult.Unavailable("等待 Root 就绪超时；请确认已授权智构 Root，并查看运行环境诊断")
+            }
+            RuntimeStartReadiness.REJECTED -> {
+                android.util.Log.w("ZhigouDiagnostics", "UI_CAPTURE_ROOT_WAIT_REJECTED")
+                return ScreenshotPreviewResult.Unavailable(captureUnavailableMessage(connectionStates.value))
+            }
+            RuntimeStartReadiness.READY -> Unit
+            RuntimeStartReadiness.WAITING -> error("Unexpected readiness")
+        }
+        beforeCapture()
+        currentCoroutineContext().ensureActive()
+        if (remote !== service || lastSessionGeneration != generation) {
+            return ScreenshotPreviewResult.Unavailable("Runner 会话已变化，请重新截图")
+        }
+        var result: ScreenshotPreviewResult? = null
+        try {
+            withContext(Dispatchers.IO) {
+                val work = currentCoroutineContext()
+                result = capturePreview(service, generation, System.nanoTime()) { work.ensureActive() }
+            }
+            if (remote !== service || lastSessionGeneration != generation) {
+                (result as? ScreenshotPreviewResult.Success)?.file?.delete()
+                return ScreenshotPreviewResult.Unavailable("Runner 会话已变化，已丢弃旧截图，请重新截图")
+            }
+            return requireNotNull(result)
+        } catch (cancelled: CancellationException) {
+            (result as? ScreenshotPreviewResult.Success)?.file?.delete()
+            throw cancelled
+        }
+    }
+
+    private fun capturePreview(service: IRuntimeService, generation: Long, requestId: Long,
+        checkpoint: () -> Unit = {}): ScreenshotPreviewResult {
         var target: File? = null
         return try {
+            checkpoint()
+            if (remote !== service || lastSessionGeneration != generation)
+                return ScreenshotPreviewResult.Unavailable("Runner 会话已变化，请重新截图")
             val descriptor = service.capturePreview(requestId, generation)
-                ?: return ScreenshotPreviewResult.Unavailable("截图失败；请确认Root后端就绪且没有脚本运行")
-            val targetFile = File.createTempFile("studio-preview-", ".png", appContext.cacheDir)
-            target = targetFile
+                ?: return ScreenshotPreviewResult.Unavailable(captureUnavailableMessage(connectionStates.value))
             ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                checkpoint()
+                val targetFile = File.createTempFile("studio-preview-", ".png", appContext.cacheDir)
+                target = targetFile
                 FileOutputStream(targetFile).use { output ->
                     val buffer = ByteArray(PREVIEW_COPY_BUFFER_BYTES)
                     var total = 0L
                     while (true) {
+                        checkpoint()
                         val read = input.read(buffer)
                         if (read < 0) break
                         if (read == 0) continue
@@ -1131,10 +1197,17 @@ class RuntimeClient(context: Context) {
                     output.fd.sync()
                 }
             }
-            ScreenshotPreviewResult.Success(targetFile)
+            checkpoint()
+            if (remote !== service || lastSessionGeneration != generation) {
+                target?.delete()
+                ScreenshotPreviewResult.Unavailable("Runner 会话已变化，已丢弃旧截图，请重新截图")
+            } else ScreenshotPreviewResult.Success(requireNotNull(target))
+        } catch (cancelled: CancellationException) {
+            target?.delete()
+            throw cancelled
         } catch (error: Exception) {
             target?.delete()
-            ScreenshotPreviewResult.Unavailable(error.message ?: "读取截图预览失败")
+            ScreenshotPreviewResult.Unavailable("截图预览读取失败 [CAPTURE_READ_FAILED]；请查看运行环境诊断")
         }
     }
 

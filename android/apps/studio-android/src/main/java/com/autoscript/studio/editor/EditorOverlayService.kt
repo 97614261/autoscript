@@ -35,6 +35,7 @@ import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.runtime.client.RuntimeClient
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
 import java.io.File
 
 /** Studio-owned editor only. The independent Runner never links or launches this service. */
@@ -54,6 +55,7 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
     private var root: EditorViewport? = null
     private var compose: ComposeView? = null
     private var params: WindowManager.LayoutParams? = null
+    private var statusBar: EditorStatusBarObserver? = null
     private var ball: StudioOverlayBall? = null
     private var projectId: String? = null
     private var snapshot by mutableStateOf<ProjectSnapshot?>(null)
@@ -66,6 +68,7 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
     private var destroyed = false
     private var windowUnavailable = false
     private var permissionListener: AppOpsManager.OnOpChangedListener? = null
+    private val runtimeControl = EditorRuntimeControlSession()
 
     override fun onCreate() {
         super.onCreate()
@@ -84,6 +87,7 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
                     runtime = state
                     ball?.setBrandState(studioBrandState(state))
                     console.record(state)
+                    runtimeControl.observe(state, ::setRuntimeControlEnabled)
                 }
             }
             it.bind()
@@ -147,6 +151,7 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
     }
 
     private fun open(id: String) {
+        runtimeControl.open(runtime, ::setRuntimeControlEnabled)
         projectId = id
         EditorOverlaySessions.publish(EditorOverlayStatus(id))
         loadJob = work.launch {
@@ -165,6 +170,8 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
             catch (_: Exception) { message("无法打开悬浮编辑，请检查项目和悬浮授权"); stopSelf() }
         }
     }
+
+    private fun setRuntimeControlEnabled(enabled: Boolean): Boolean = client.setFloatingControlEnabled(enabled)
 
     private fun readCapture() {
         val handoff = pendingCapture ?: return
@@ -212,12 +219,23 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START
             if (Build.VERSION.SDK_INT >= 30) { setFitInsetsTypes(0); setFitInsetsSides(0) }
+            if (Build.VERSION.SDK_INT >= 30) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else if (Build.VERSION.SDK_INT >= 28) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
         // Seed a real first layout before the 1x1 bootstrap view can report Compose bounds.
         // Without this, the native window and its child can remain 1x1 forever on some devices.
         val displaySize = Point()
         @Suppress("DEPRECATION") manager.defaultDisplay.getRealSize(displaySize)
-        session.bounds(defaultEditorDockBounds(displaySize.x, displaySize.y, resources.displayMetrics.density))
+        // Seed the same physical screen area Compose uses. A position-only correction immediately
+        // after attach can leave legacy ViewRoot screen coordinates at the old origin.
+        statusBar = EditorStatusBarObserver(container, manager, ::updateWindow)
+        val workArea = editorWorkArea(displaySize.x, displaySize.y, statusBar?.top ?: 0)
+        session.workArea(workArea)
+        session.bounds(defaultEditorDockBounds(displaySize.x, displaySize.y, resources.displayMetrics.density, workArea,
+            androidx.compose.ui.geometry.Size(displaySize.x.toFloat(), displaySize.y.toFloat())))
         ownerLifecycle.handleLifecycleEvent(Lifecycle.Event.ON_START)
         ownerLifecycle.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         // Seed the full virtual canvas before its first measure, even though the native window starts at 1×1.
@@ -229,11 +247,13 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
         }).also { it.setBrandState(studioBrandState(runtime)) }
         updateWindow()
         work.launch {
-            while (isActive) {
-                if (runtime.phase == com.autoscript.core.model.RuntimeConnectionPhase.CONNECTED)
-                    console.recordRemote(withContext(Dispatchers.IO) { client.recentRuntimeLogs() })
-                delay(500)
-            }
+            snapshotFlow { session.shouldSampleRealtimeLog && runtime.phase == com.autoscript.core.model.RuntimeConnectionPhase.CONNECTED }
+                .collectLatest { visible ->
+                    if (visible) while (isActive) {
+                        console.recordRemote(withContext(Dispatchers.IO) { client.recentRuntimeLogs(MAX_CONSOLE_LINES) })
+                        delay(500)
+                    }
+                }
         }
     }
 
@@ -243,7 +263,7 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
         if (destroyed || windowUnavailable) return
         val point = Point()
         @Suppress("DEPRECATION") manager.defaultDisplay.getRealSize(point)
-        session.workArea(systemEditorWorkArea(point))
+        session.workArea(editorWorkArea(point.x, point.y, statusBar?.top ?: 0))
         val bounds = session.dockBounds
         val viewport = editorWindowBounds(bounds.left, bounds.top, bounds.right, bounds.bottom,
             point.x, point.y, session.dockModal || session.canvasVisible)
@@ -270,24 +290,16 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
         ball?.show(visibility.ball)
     }
 
-    override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); updateWindow() }
-
-    private fun systemEditorWorkArea(size: Point): androidx.compose.ui.geometry.Rect {
-        if (Build.VERSION.SDK_INT >= 30) {
-            val insets = manager.maximumWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            return editorWorkArea(size.x, size.y, insets.left, insets.top, insets.right, insets.bottom)
-        }
-        val usable = Point()
-        @Suppress("DEPRECATION") manager.defaultDisplay.getSize(usable)
-        @Suppress("DiscouragedApi")
-        val statusId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        val status = if (statusId != 0) resources.getDimensionPixelSize(statusId) else (24 * resources.displayMetrics.density).toInt()
-        return editorWorkArea(size.x, size.y, 0, status, (size.x - usable.x).coerceAtLeast(0), (size.y - usable.y).coerceAtLeast(0))
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        statusBar?.configurationChanged()
+        updateWindow()
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
         destroyed = true
+        statusBar?.close(); statusBar = null
         session.suppress("disposed")
         session.closeDialogs()
         EditorSystemRequests.cancel(session)
@@ -299,7 +311,9 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
         root = null; compose = null
         permissionListener?.let { getSystemService(AppOpsManager::class.java).stopWatchingMode(it) }
         client.cancelRecordingOnClose()
-        client.onStateChanged = null; client.unbind()
+        client.onStateChanged = null
+        runtimeControl.close(client.runtimeStates.value, ::setRuntimeControlEnabled)
+        client.unbind()
         work.cancel()
         if (ownerLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) ownerLifecycle.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         if (ownerLifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) ownerLifecycle.handleLifecycleEvent(Lifecycle.Event.ON_STOP)

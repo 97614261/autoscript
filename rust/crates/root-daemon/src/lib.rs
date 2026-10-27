@@ -3,10 +3,77 @@
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
+pub mod capture_watchdog;
+pub mod tap;
+
 #[cfg(test)]
 mod deadline_tests;
 
 pub const MAX_WIRE_PACKET_BYTES: usize = 70 * 1024;
+
+/// Validates the private bridge's fixed BGRA geometry before starting any pixel transfer.
+#[must_use]
+pub fn decode_capture_bridge_header(bytes: &[u8]) -> Option<[u32; 4]> {
+    if bytes.len() != 20 {
+        return None;
+    }
+    let mut words = [0; 5];
+    for (word, bytes) in words.iter_mut().zip(bytes.chunks_exact(4)) {
+        *word = u32::from_be_bytes(bytes.try_into().ok()?);
+    }
+    let [width, height, stride, format, length] = words;
+    (width > 0
+        && height > 0
+        && width <= 16_384
+        && height <= 16_384
+        && format == 2
+        && stride == width * 4
+        && u64::from(stride) * u64::from(height) == u64::from(length)
+        && length <= 64 * 1024 * 1024)
+        .then_some([width, height, stride, length])
+}
+
+#[cfg(test)]
+mod capture_header_tests {
+    use super::*;
+    #[test]
+    fn exact_original_pixel_geometry_is_required_before_pipeline_allocation() {
+        let words = [720_u32, 1280, 2880, 2, 3_686_400];
+        let bytes = words
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decode_capture_bridge_header(&bytes),
+            Some([720, 1280, 2880, 3_686_400])
+        );
+        for length in 0..20 {
+            assert!(decode_capture_bridge_header(&bytes[..length]).is_none());
+        }
+        for (index, invalid) in [
+            (0, 0),
+            (0, 16_385),
+            (1, 0),
+            (1, 16_385),
+            (2, 2881),
+            (3, 1),
+            (4, 3_686_399),
+        ] {
+            let mut changed = words;
+            changed[index] = invalid;
+            let bytes = changed
+                .into_iter()
+                .flat_map(u32::to_be_bytes)
+                .collect::<Vec<_>>();
+            assert!(decode_capture_bridge_header(&bytes).is_none());
+        }
+        let bytes = [16_384_u32, 16_384, 65_536, 2, 1_073_741_824]
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect::<Vec<_>>();
+        assert!(decode_capture_bridge_header(&bytes).is_none());
+    }
+}
 
 /// Decodes the fixed big-endian bridge timing trailer plus overlapping pipe receive time.
 #[must_use]

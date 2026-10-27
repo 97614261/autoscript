@@ -5,16 +5,28 @@ internal const val EDITOR_HEADER_HEIGHT_DP = 36
 internal const val EDITOR_HEADER_BUTTON_WIDTH_DP = 28
 internal const val EDITOR_HEADER_INSET_DP = 4
 internal const val EDITOR_HEADER_RIGHT_ACTION_COUNT = 3
+internal const val EDITOR_DEFAULT_WIDTH_DP = 284
+internal const val EDITOR_DEFAULT_HEIGHT_DP = 366
 
 internal data class EditorPanelPlacement(val x: Float, val y: Float, val width: Float, val height: Float)
 
-internal fun editorWorkArea(width: Int, height: Int, left: Int, top: Int, right: Int, bottom: Int): androidx.compose.ui.geometry.Rect {
-    val w = width.coerceAtLeast(1); val h = height.coerceAtLeast(1)
-    val x = left.coerceIn(0, w - 1); val y = top.coerceIn(0, h - 1)
-    return androidx.compose.ui.geometry.Rect(x.toFloat(), y.toFloat(),
-        (w - right.coerceAtLeast(0)).coerceIn(x + 1, w).toFloat(),
-        (h - bottom.coerceAtLeast(0)).coerceIn(y + 1, h).toFloat())
+internal fun editorWorkArea(width: Int, height: Int, visibleStatusBarTop: Int = 0): androidx.compose.ui.geometry.Rect {
+    val h = height.coerceAtLeast(1)
+    return androidx.compose.ui.geometry.Rect(0f, visibleStatusBarTop.coerceIn(0, h - 1).toFloat(),
+        width.coerceAtLeast(1).toFloat(), h.toFloat())
 }
+
+internal fun editorLegacyStatusBarTop(visible: Boolean?, measuredTop: Int, systemHeight: Int, previousTop: Int): Int {
+    if (visible == false) return 0
+    val height = systemHeight.coerceAtLeast(0)
+    // A cropped overlay can report its own origin or a zero local inset, neither is a display edge.
+    val measured = measuredTop.takeIf { it > 0 && it <= height } ?: 0
+    return if (visible == true) maxOf(height, measured) else maxOf(previousTop.coerceIn(0, height), measured)
+}
+
+internal fun editorPanelDragArea(area: androidx.compose.ui.geometry.Rect, width: Float, height: Float): androidx.compose.ui.geometry.Rect =
+    androidx.compose.ui.geometry.Rect(area.left, area.top,
+        (area.right - width).coerceAtLeast(area.left), (area.bottom - height).coerceAtLeast(area.top))
 
 internal fun editorTogglePanelMode(current: EditorPanelMode, target: EditorPanelMode): EditorPanelMode =
     if (current == target) EditorPanelMode.NORMAL else target

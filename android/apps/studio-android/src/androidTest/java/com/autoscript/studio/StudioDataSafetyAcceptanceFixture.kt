@@ -123,11 +123,13 @@ internal object StudioDataSafetyAcceptanceFixture {
                 val editor = VisualEditorState.create(original.values.single(), rootBlock)
                 repeat(24) { editor.insertNoop() }
                 val baseline = editor.currentSource
+                val baselineRows = editor.rows.size
                 check(editor.selectNodes(editor.rows.take(20).map { it.nodeId }))
                 val copied = editor.copySelection()
                 check(copied.size == 20 && editor.pasteSelection(copied, beforeSelection = true)) { "QA_MULTI_PASTE_FAILED" }
                 val pasted = editor.currentSource
-                check(editor.rows.size == 45 && editor.undo() && editor.currentSource == baseline && editor.redo() && editor.currentSource == pasted) { "QA_MULTI_UNDO_PARTIAL" }
+                check(editor.rows.size == baselineRows + copied.sumOf { it.nodes.size } && editor.undo() &&
+                    editor.currentSource == baseline && editor.redo() && editor.currentSource == pasted) { "QA_MULTI_UNDO_PARTIAL" }
                 val exported = pluginSourceToolchain.export(pasted, rootBlock)
                 val parsed = pluginSourceToolchain.parse(exported.text, pasted, rootBlock, emptySet())
                 fun nodes(source: String) = source.lineSequence().filter(String::isNotBlank).map(JsonParser::parseString).toSet()

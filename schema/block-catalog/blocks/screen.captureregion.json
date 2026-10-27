@@ -1,0 +1,14 @@
+{
+  "schemaVersion":1,"kind":"screen.captureregion","nodeVersion":1,
+  "nodeSchemaId":"https://autoscript.local/schema/node/screen.captureregion/1/screen.captureregion.schema.json",
+  "title":"区域截图并缓存","category":"screen",
+  "summary":"新截取原屏指定区域并保存为图像变量，减少区域读回及传输。识别返回局部坐标，用映射原屏坐标积木转换；不自动点击。",
+  "searchTerms":["区域截图","局部截图","region","capture"],"requiredCapabilities":["screen.capture"],"childBlocks":[],
+  "properties":[
+    {"path":"left","label":"左边界(px)","editor":"integer","required":true,"defaultValue":"0"},
+    {"path":"top","label":"上边界(px)","editor":"integer","required":true,"defaultValue":"0"},
+    {"path":"right","label":"右边界(px)","editor":"integer","required":true,"defaultValue":"320"},
+    {"path":"bottom","label":"下边界(px)","editor":"integer","required":true,"defaultValue":"240"},
+    {"path":"resultVariable","label":"图像变量","editor":"string","required":true,"defaultValue":"frame"}
+  ],"migrations":[]
+}

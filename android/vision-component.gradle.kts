@@ -20,13 +20,16 @@ val generateVisionComponent = tasks.register("generateVisionComponent") {
         val spiVersion = Regex("const val VERSION = ([0-9]+)").find(source)!!.groupValues[1].toInt()
         val licenses = if (kind == "opencv") listOf("assets/vision/OpenCV-LICENSE.txt") else
             listOf("assets/vision/ONNXRuntime-LICENSE.txt", "assets/vision/PaddleOCR-LICENSE.txt", "assets/vision/NOTICE.txt")
-        val descriptor = linkedMapOf<String, Any>("formatVersion" to 1, "kind" to kind, "componentVersion" to 1,
+        val descriptor = linkedMapOf<String, Any>("formatVersion" to 1, "kind" to kind, "componentVersion" to spiVersion,
             "spiVersion" to spiVersion, "sdkVersion" to sdkVersion, "applicationId" to componentApplicationId,
-            "versionCode" to 1, "versionName" to sdkVersion, "minSdk" to 24, "abis" to abis,
+            "versionCode" to spiVersion, "versionName" to sdkVersion, "minSdk" to 24, "abis" to abis,
             "providerClass" to providerClass, "licenses" to licenses)
         if (kind == "onnx") descriptor["model"] = mapOf("path" to "assets/vision/en_PP-OCRv4_rec_mobile.onnx",
             "size" to Regex("const val MODEL_BYTES = ([0-9_]+)").find(source)!!.groupValues[1].replace("_", "").toInt(),
             "sha256" to Regex("const val MODEL_SHA256 = \"([0-9a-f]{64})\"").find(source)!!.groupValues[1])
+        if (kind == "onnx") descriptor["candidateModel"] = mapOf("path" to "assets/vision/en_PP-OCRv5_rec_mobile.onnx",
+            "size" to Regex("const val V5_BYTES = ([0-9_]+)").find(source)!!.groupValues[1].replace("_", "").toInt(),
+            "sha256" to Regex("const val V5_SHA256 = \"([0-9a-f]{64})\"").find(source)!!.groupValues[1])
         val file = generatedAssets.get().file("packaging/vision-component.json").asFile
         file.parentFile.mkdirs(); file.writeText(JsonOutput.toJson(descriptor))
     }

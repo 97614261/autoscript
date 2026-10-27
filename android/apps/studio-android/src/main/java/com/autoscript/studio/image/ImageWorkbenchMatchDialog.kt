@@ -23,29 +23,41 @@ import java.io.FileOutputStream
 @Composable
 internal fun ImageWorkbenchMatchDialog(bitmap: Bitmap, selection: ImageToolCodeGen.Roi?, snapshot: ProjectSnapshot,
     runtimeClient: RuntimeClient, onResult: (Reply?) -> Unit, onDismiss: () -> Unit,
-    onConfirm: ((RecognitionPreviewConfiguration, ImageToolCodeGen.Roi, () -> Boolean) -> Unit)? = null) {
+    onConfirm: ((RecognitionPreviewConfiguration, ImageToolCodeGen.Roi, () -> Boolean) -> Unit)? = null,
+    initialConfig:RecognitionPreviewConfiguration?=null,
+    onSaveRecipe:((RecognitionPreviewConfiguration,ImageToolCodeGen.Roi)->Unit)?=null) {
     val paths = snapshot.manifest.resources.filter { it.get("kind")?.asString == "image" }.mapNotNull { it.get("path")?.asString }
-    var template by remember { mutableStateOf(paths.firstOrNull().orEmpty()) }
-    var similarity by remember { mutableStateOf("900") }
-    var tolerance by remember { mutableStateOf("0") }
-    var gray by remember { mutableStateOf(false) }
-    var direction by remember { mutableIntStateOf(0) }
+    var template by remember { mutableStateOf(initialConfig?.template ?: paths.firstOrNull().orEmpty()) }
+    var similarity by remember { mutableStateOf(initialConfig?.similarityPermille?.toString() ?: "900") }
+    var tolerance by remember { mutableStateOf(initialConfig?.tolerance?.toString() ?: "0") }
+    var gray by remember { mutableStateOf(initialConfig?.operation==Reply.GRAY_TEMPLATE) }
+    var scaled by remember {mutableStateOf(initialConfig?.operation==Reply.SCALED_TEMPLATE)}
+    var feature by remember {mutableStateOf(initialConfig?.operation==Reply.FEATURE_TEMPLATE)}
+    var scaleMin by remember {mutableStateOf(initialConfig?.minScalePermille?.toString() ?: "750")}
+    var scaleMax by remember {mutableStateOf(initialConfig?.maxScalePermille?.toString() ?: "1250")}
+    var scaleStep by remember {mutableStateOf(initialConfig?.stepPermille?.toString() ?: "125")}
+    var direction by remember { mutableIntStateOf(initialConfig?.direction ?: 0) }
     var message by remember { mutableStateOf("坐标属于当前处理图，不是设备屏幕；测试后可明确选择加入，不自动点击。") }
     var requestId by remember { mutableLongStateOf(0) }
     var job by remember { mutableStateOf<Job?>(null) }
     var proof by remember { mutableStateOf<TestedImageRecognition<Bitmap>?>(null) }
     var pickTemplate by remember { mutableStateOf(false) }
+    var diagnostics by remember {mutableStateOf(false)}
+    var lastReply by remember {mutableStateOf<Reply?>(null)}
     val busy = requestId != 0L
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val resourceIdentity = snapshot.manifest.resources.toString() + ":" + snapshot.resourceRevision
+    val latestResources by rememberUpdatedState(resourceIdentity)
     val region = selection ?: ImageToolCodeGen.Roi(0, 0, bitmap.width, bitmap.height)
     val config = runCatching {
         templateCropDimensions(bitmap.width, bitmap.height, region)
-        RecognitionPreviewConfiguration(if (gray) Reply.GRAY_TEMPLATE else Reply.TEMPLATE, template,
-            if (gray) 0 else tolerance.toInt(), similarity.toInt(), bitmap.width, bitmap.height, region, if (gray) 0 else direction)
+        RecognitionPreviewConfiguration(if(feature) Reply.FEATURE_TEMPLATE else if (gray) Reply.GRAY_TEMPLATE else if(scaled) Reply.SCALED_TEMPLATE else Reply.TEMPLATE, template,
+            if (gray || feature) 0 else tolerance.toInt(), similarity.toInt(), bitmap.width, bitmap.height, region, if (gray || feature) 0 else direction,
+            if(scaled) scaleMin.toInt() else 1000,if(scaled) scaleMax.toInt() else 1000,if(scaled) scaleStep.toInt() else 100)
     }.getOrNull()
     fun options(configuration: RecognitionPreviewConfiguration) = configuration.options()
-    fun invalidate() { proof = null; onResult(null) }
+    fun invalidate() { proof = null;lastReply=null; onResult(null) }
     fun cancel() {
         val id = requestId
         requestId = 0
@@ -54,33 +66,45 @@ internal fun ImageWorkbenchMatchDialog(bitmap: Bitmap, selection: ImageToolCodeG
         proof = null
     }
     DisposableEffect(runtimeClient) { onDispose { cancel() } }
-    LaunchedEffect(bitmap, region, snapshot.manifest.resources.toString()) { cancel(); onResult(null) }
-    StudioConfirmDialog(onDismissRequest = { cancel(); onDismiss() }, title = { Text("处理图 · 找图测试") }, text = {
+    LaunchedEffect(bitmap, region, resourceIdentity) { cancel(); onResult(null) }
+    StudioConfirmDialog(onDismissRequest = { cancel(); onDismiss() }, prompt = false, title = { Text("处理图 · 找图测试") }, text = {
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            RecognitionAvailabilityNotice(if (gray) "vision.findgray" else "vision.findimage", runtimeClient)
+            RecognitionAvailabilityNotice(if(feature) "vision.findfeatures" else if (gray) "vision.findgray" else "vision.findimage", runtimeClient)
             Text("范围 X${region.left} Y${region.top} ${region.width}×${region.height}px", fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton(enabled = !busy, onClick = { gray = false; invalidate(); message = "像素找图，不自动改变算法" }) { Text(if (!gray) "● 像素" else "像素") }
-                TextButton(enabled = !busy, onClick = { gray = true; invalidate(); message = "灰度找图，不使用颜色容差" }) { Text(if (gray) "● 灰度" else "灰度") }
+                TextButton(enabled = !busy, onClick = { feature=false;gray = false;scaled=false; invalidate(); message = "像素找图，不自动改变算法" }) { Text(if (!gray && !scaled && !feature) "● 像素" else "像素") }
+                TextButton(enabled = !busy, onClick = { feature=false;gray = true;scaled=false; invalidate(); message = "灰度找图，不使用颜色容差" }) { Text(if (gray) "● 灰度" else "灰度") }
+                TextButton(enabled=!busy,onClick={feature=false;gray=false;scaled=true;invalidate();message="有界多尺度像素匹配，不是灰度最高分；近1000‰优先"}) {Text(if(scaled) "● 多尺度" else "多尺度")}
+                TextButton(enabled=!busy,onClick={feature=true;gray=false;scaled=false;invalidate();message="ORB/RANSAC，适合有纹理且不透明的图片；ROI≤1M像素，得分是内点比例"}) {Text(if(feature) "● 特征" else "特征")}
             }
-            if (!gray) DesignerChoice("方向", recognitionSearchDirections[direction],
+            if (!gray && !feature) DesignerChoice("方向", recognitionSearchDirections[direction],
                 recognitionSearchDirections.mapIndexed { index, label -> index.toString() to label }, !busy) {
                 direction = it.toInt(); invalidate(); message = "方向已修改，请重新测试"
             }
             if (paths.isEmpty()) Text("请先保存或导入项目图片作为模板", fontSize = 11.sp)
+            if(scaled) {
+                Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                    ImageToolCompactInput("最小 ‰",scaleMin,!busy,Modifier.weight(1f),numeric=true) {scaleMin=it.take(4);invalidate()}
+                    ImageToolCompactInput("最大 ‰",scaleMax,!busy,Modifier.weight(1f),numeric=true) {scaleMax=it.take(4);invalidate()}
+                    ImageToolCompactInput("步长 ‰",scaleStep,!busy,Modifier.weight(1f),numeric=true) {scaleStep=it.take(4);invalidate()}
+                }
+                Text("250–4000‰，最多16档；单档模板≤256K像素、合计1亿比较。最近邻缩放，只返回首个达标位置和实际比例。",fontSize=10.sp)
+            }
             TextButton(enabled = !busy && paths.isNotEmpty(), onClick = { pickTemplate = true }) {
                 Text("模板：${template.removePrefix("assets/images/").ifEmpty { "请选择" }}", fontSize = 11.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(similarity, { if(it.length<=16) similarity = it; invalidate(); message = "参数已修改，请重新测试" }, enabled = !busy, singleLine = true, label = { Text("相似度 ‰") }, modifier = Modifier.weight(1f))
-                if (!gray) OutlinedTextField(tolerance, { if(it.length<=16) tolerance = it; invalidate(); message = "参数已修改，请重新测试" }, enabled = !busy, singleLine = true, label = { Text("容差") }, modifier = Modifier.weight(1f))
+                if (!gray && !feature) OutlinedTextField(tolerance, { if(it.length<=16) tolerance = it; invalidate(); message = "参数已修改，请重新测试" }, enabled = !busy, singleLine = true, label = { Text("容差") }, modifier = Modifier.weight(1f))
             }
             Text(message, fontSize = 11.sp)
+            if(!feature) ImageToolCompactAction("分析候选位置差异",!busy && config!=null) {diagnostics=true}
+            if(onSaveRecipe!=null) ImageToolCompactAction("保存为方案",!busy && config!=null) {config?.let {onSaveRecipe(it,region)}}
             if (onConfirm != null) TextButton(enabled = !busy && config != null && proof != null, onClick = {
                 val selected = config ?: return@TextButton
                 val tested = proof
                 val testedOptions = options(selected)
-                val validity = { !bitmap.isRecycled && tested?.matches(bitmap, selected.operation, testedOptions,
+                val validity = { latestResources == resourceIdentity && !bitmap.isRecycled && tested?.matches(bitmap, selected.operation, testedOptions,
                     selected.template, runtimeClient::isRecognitionPreviewCurrent) == true }
                 if (validity()) onConfirm(selected, region, validity)
                 else { invalidate(); message = "测试设置或运行会话已变化，请重新测试" }
@@ -107,7 +131,7 @@ internal fun ImageWorkbenchMatchDialog(bitmap: Bitmap, selection: ImageToolCodeG
                 }
                 if (requestId == id) {
                     if (runtimeClient.isRecognitionPreviewCurrent(reply)) {
-                        message = recognitionPreviewMessage(reply); onResult(reply)
+                        message = recognitionPreviewMessage(reply);lastReply=reply; onResult(reply)
                         proof = TestedImageRecognition(bitmap, selected.operation, options(selected), selected.template, reply)
                             .takeIf { it.matches(bitmap, selected.operation, options(selected), selected.template, runtimeClient::isRecognitionPreviewCurrent) }
                     }
@@ -133,5 +157,10 @@ internal fun ImageWorkbenchMatchDialog(bitmap: Bitmap, selection: ImageToolCodeG
                 }
             }
         }
+    }
+    if(diagnostics) config?.let {selected ->
+        val hit=lastReply?.takeIf {it.status==Reply.SUCCESS}
+        val actualScale=if(selected.operation==Reply.SCALED_TEMPLATE) runCatching {com.google.gson.JsonParser.parseString(hit?.text.orEmpty()).asJsonArray[0].asJsonObject["scalePermille"].asInt}.getOrDefault(1000) else 1000
+        ImageDifferenceDialog(bitmap,snapshot,selected,hit?.x ?: region.left,hit?.y ?: region.top,actualScale) {diagnostics=false}
     }
 }

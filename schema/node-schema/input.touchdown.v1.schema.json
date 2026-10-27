@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoscript.local/schema/node/input.touchdown/1/input.touchdown.schema.json",
+  "title": "input.touchdown node semantics",
+  "type": "object",
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
+  "properties": {
+    "kind": {
+      "const": "input.touchdown"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
+    "args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pointerId",
+        "x",
+        "y",
+        "resultVariable"
+      ],
+      "properties": {
+        "pointerId": {
+          "type": "integer"
+        },
+        "pointerIdVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "xVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "yVariable": {
+          "$ref": "#/$defs/variable"
+        },
+        "resultVariable": {
+          "$ref": "#/$defs/variable"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variable": {
+      "type": "string",
+      "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
+    }
+  }
+}

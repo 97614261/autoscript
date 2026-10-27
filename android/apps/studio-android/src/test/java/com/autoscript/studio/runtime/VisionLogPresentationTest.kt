@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisionLogPresentationTest {
+    @Test fun pipelineIsLabeledAndKeptSeparateFromBufferedCapture() {
+        val old = event()
+        val pipelined = old.replace("authenticated-stream", "authenticated-pipeline")
+        val sections = VisionLogPresentation.sections(VisionRunStatistics.parse(listOf(old, pipelined).joinToString("\n")))
+        assertEquals(2, sections.size)
+        val pipeline = sections.single { it.parameters["captureTransport"] == "authenticated-pipeline" }
+        assertTrue(VisionLogPresentation.summary(pipeline.parameters).contains("认证流水线"))
+    }
     @Test fun transferSheetDoesNotDisplaceExistingScreenshotMetrics() {
         val base = event()
         val detailed = base.dropLast(1) + """, "captureTransferUs":{"sendEncode":100,"sendWrite":200,"receiveRead":8000,"verify":900,"append":50,"packets":60}}"""

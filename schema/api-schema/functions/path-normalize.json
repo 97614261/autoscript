@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 14402,
+  "name": "Path.normalize",
+  "since": "1.8",
+  "capability": "core.task",
+  "execution": "rust_sync",
+  "cancelMode": "none",
+  "sideEffect": "none",
+  "timeoutMs": null,
+  "resourceOwnership": "none",
+  "summary": "折叠重复/及独立.段，拒绝..、绝对路径、反斜线、隐藏段及非法字符；最多16段/256字节。结果仍是项目私有data相对路径，不读取或授权文件。",
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": true,
+      "summary": "相对路径"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "nullable": false,
+    "summary": "折叠重复/及独立.段，拒绝..、绝对路径、反斜线、隐藏段及非法字符；最多16段/256字节。结果仍是项目私有data相对路径，不读取或授权文件。"
+  },
+  "legacyAliases": []
+}

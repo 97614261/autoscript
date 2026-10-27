@@ -554,6 +554,53 @@ impl LuaTaskRegistry {
                     function Math.red(...) return host(1019,...) end
                     function Math.green(...) return host(1020,...) end
                     function Math.blue(...) return host(1021,...) end
+                    Path = {}
+                    function Screen.findFeatures(frame, template, score, left, top, right, bottom)
+                        local x,y,width,height,confidence=host(5109,frame,template,score,left,top,right,bottom)
+                        if x==nil then return '[]' end
+                        return string.format('[{"x":%d,"y":%d,"width":%d,"height":%d,"scorePermille":%d}]',x,y,width,height,confidence)
+                    end
+                    function Ocr.alphanumericV5(frame,left,top,right,bottom,confidence)
+                        local text,score=host(6104,frame,left,top,right,bottom,confidence)
+                        return string.format('{"text":"%s","averageScorePermille":%d}',text,score)
+                    end
+                    function Input.imeStatus(...) return host(18004,...) end
+                    function Input.imeText(...) return host(18005,...) end
+                    function Input.touchDown(...) host(4013,...);return 1 end
+                    function Input.touchMove(...) host(4014,...);return 1 end
+                    function Input.touchUp(...) host(4015,...);return 1 end
+                    function Floating.image(...) return host(18006,...) end
+                    function Floating.waitImageEvent(...) return host(18007,...) end
+                    function Floating.closeImage(...) return host(18008,...) end
+                    function Screen.frameInfo(...) return host(5013,...) end
+                    Network = {}
+                    function Files.modifiedTime(...) return host(14147,...) end
+                    function System.info(...) return host(18000,...) end
+                    function System.keepScreenAwake(...) return host(18001,...) end
+                    function Apps.openUrl(...) return host(18002,...) end
+                    function Network.request(...) return host(18003,...) end
+                    function Text.urlEncode(...) return host(14229,...) end
+                    function Text.urlDecode(...) return host(14230,...) end
+                    function Text.toHex(...) return host(14231,...) end
+                    function Text.fromHex(...) return host(14232,...) end
+                    function Text.toBase64(...) return host(14233,...) end
+                    function Text.fromBase64(...) return host(14234,...) end
+                    function Text.findNth(...) return host(14235,...) end
+                    function Text.betweenNth(...) return host(14236,...) end
+                    function Path.name(...) return host(14400,...) end
+                    function Path.parent(...) return host(14401,...) end
+                    function Path.normalize(...) return host(14402,...) end
+                    function Path.join(...) return host(14403,...) end
+                    function Math.unary(...) return host(1022,...) end
+                    function Math.binary(...) return host(1023,...) end
+                    function Math.roundTo(...) return host(1024,...) end
+                    function Text.formatNumber(...) return host(14225,...) end
+                    function Text.regexReplace(...) return host(14226,...) end
+                    function Text.filter(...) return host(14227,...) end
+                    function Text.reverse(...) return host(14228,...) end
+                    function Text.numberAt(...) return host(14237,...) end
+                    function Data.encode(...) return host(14011,...) end
+                    function Data.sort(...) return host(14012,...) end
                     function System.getTimeMillis(...) return host(2002,...) end
 
                     function Input.tap(x, y)
@@ -667,6 +714,15 @@ impl LuaTaskRegistry {
 
                     function Screen.capture()
                         return host(5000)
+                    end
+
+                    function Screen.captureRegion(left,top,right,bottom)
+                        integer(left,'Screen.captureRegion left',0,16383)
+                        integer(top,'Screen.captureRegion top',0,16383)
+                        integer(right,'Screen.captureRegion right',1,16384)
+                        integer(bottom,'Screen.captureRegion bottom',1,16384)
+                        if left>=right or top>=bottom then error('Screen.captureRegion ROI is empty',2) end
+                        return host(5014,left,top,right,bottom)
                     end
 
                     function Screen.cache(captureId)
@@ -977,7 +1033,8 @@ impl LuaTaskRegistry {
                         host(6001, dictionary)
                     end
 
-                    function Ocr.glyph(frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns)
+                    Ocr.glyphPaletteVersion = 1
+                    function Ocr.glyph(frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns, additionalColors)
                         integer(frame, "Ocr.glyph frame", 1, 9223372036854775807)
                         integer(dictionary, "Ocr.glyph dictionary", 1, 9223372036854775807)
                         integer(foregroundRgb, "Ocr.glyph foregroundRgb", 0, 16777215)
@@ -985,7 +1042,13 @@ impl LuaTaskRegistry {
                         integer(similarityPermille, "Ocr.glyph similarityPermille", 0, 1000)
                         searchRegion(left, top, right, bottom, "Ocr.glyph")
                         integer(spaceGapColumns, "Ocr.glyph spaceGapColumns", 0, 65535)
-                        local text, coverage, average = host(6100, frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns)
+                        local text, coverage, average
+                        if additionalColors == nil or additionalColors == "" then
+                            text, coverage, average = host(6100, frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns)
+                        else
+                            if type(additionalColors) ~= "string" or #additionalColors > 164 then error("invalid glyph colors") end
+                            text, coverage, average = host(6100, frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns, additionalColors)
+                        end
                         return {
                             text = text,
                             coveragePermille = coverage,
@@ -993,12 +1056,19 @@ impl LuaTaskRegistry {
                         }
                     end
 
-                    function Ocr.glyphDetails(frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns)
-                        return host(6102, frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns)
+                    function Ocr.glyphDetails(frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns, additionalColors)
+                        if additionalColors == nil or additionalColors == "" then
+                            return host(6102, frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns)
+                        end
+                        if type(additionalColors) ~= "string" or #additionalColors > 164 then error("invalid glyph colors") end
+                        return host(6102, frame, dictionary, foregroundRgb, tolerance, similarityPermille, left, top, right, bottom, spaceGapColumns, additionalColors)
                     end
                     function Ocr.findText(details, text) return host(6103, details, text) end
                     function Screen.recognitionValue(result, shape, index, field) return host(5122, result, shape, index, field) end
                     function Screen.transform(frame, options) return host(5010, frame, options) end
+                    function Screen.compareFrames(current, previous, options) return host(5011, current, previous, options) end
+                    function Screen.mapPoint(frame, x, y) return host(5012, frame, x, y) end
+                    function Screen.findScaled(frame, template, options) return host(5123, frame, template, options) end
                     function Screen.findAllMultiColor(frame, options) return host(5120, frame, options) end
                     function Screen.components(frame, options) return host(5121, frame, options) end
                     function Screen.savePng(frame, path) return host(14130, frame, path) end
@@ -1019,6 +1089,15 @@ impl LuaTaskRegistry {
                         integer(confidence, "Ocr.alphanumeric confidence", 0, 1000)
                         searchRegion(left, top, right, bottom, "Ocr.alphanumeric")
                         local text,score=host(6101,frame,left,top,right,bottom,confidence)
+                        return {text=text,averageScorePermille=score}
+                    end
+
+                    function Ocr.latinText(frame, left, top, right, bottom, confidence)
+                        confidence=confidence or 500
+                        integer(frame, "Ocr.latinText frame", 1, 9223372036854775807)
+                        integer(confidence, "Ocr.latinText confidence", 0, 1000)
+                        searchRegion(left, top, right, bottom, "Ocr.latinText")
+                        local text,score=host(6105,frame,left,top,right,bottom,confidence)
                         return {text=text,averageScorePermille=score}
                     end
 
@@ -1323,7 +1402,7 @@ impl LuaTaskRegistry {
                     continue;
                 };
                 let bytes = name.as_bytes();
-                if bytes.is_empty() || bytes.len() > 128 {
+                if bytes.is_empty() || bytes.len() > 192 {
                     truncated = true;
                     continue;
                 }
@@ -1697,5 +1776,19 @@ mod tests {
         assert!(!events
             .iter()
             .any(|event| matches!(event, SchedulerEvent::FinalizerFailed { .. })));
+    }
+
+    #[test]
+    fn debug_snapshot_keeps_full_chinese_variable_keys() {
+        let mut runtime = LuaTaskRegistry::new(10_000).unwrap();
+        let name = "字".repeat(64);
+        let source=format!("__autoscript_debug_snapshot={{flowId='main',nodeId='node-1',localTypes={{}},locals={{}},globalTypes={{['{name}']='integer'}},globals={{['{name}']=7}}}}; return nil");
+        runtime
+            .register_chunk(task(88), source.as_bytes(), "debug-chinese")
+            .unwrap();
+        runtime.resume(task(88), LuaInput::None).unwrap();
+        let snapshot = runtime.debug_snapshot().unwrap();
+        assert_eq!(snapshot.variables.len(), 1);
+        assert_eq!(snapshot.variables[0].name, name);
     }
 }

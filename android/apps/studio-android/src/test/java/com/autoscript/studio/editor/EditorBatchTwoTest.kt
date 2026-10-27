@@ -1,8 +1,6 @@
 package com.autoscript.studio
 
 import com.autoscript.project.store.*
-import com.autoscript.runtime.api.RuntimeDebugValue
-import com.google.gson.JsonObject
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -10,7 +8,8 @@ import java.io.File
 class EditorBatchTwoTest {
     @Test
     fun recognitionCreatesCaptureMatchReleaseWithSameFrameAndExactParameters() {
-        val args = recognitionBlockArguments("assets/images/button.png", 8, 950, 1080, 2400)
+        val args = RecognitionPreviewConfiguration(com.autoscript.runtime.api.RecognitionPreviewReply.TEMPLATE,
+            "assets/images/button.png", 8, 950, 1080, 2400).arguments()
         val blocks = recognitionBlockSequence(args)
         assertEquals(listOf("screen.capture", "vision.findimage", "screen.release"), blocks.map { it.first.kind })
         assertEquals("frame", blocks.first().second.get("resultVariable").asString)
@@ -19,21 +18,6 @@ class EditorBatchTwoTest {
         assertEquals(950, blocks[1].second.get("similarityPermille").asInt)
         args.addProperty("tolerance", 0)
         assertEquals(8, blocks[1].second.get("tolerance").asInt)
-    }
-
-    @Test
-    fun backfillChecksTypeAndRemovesExistingVariableBindingWithoutChangingOriginal() {
-        val log = requireNotNull(BlockCatalog.find("task.log"))
-        val field = backfillFields(log).single { it.path == "message" }
-        val args = JsonObject().apply { addProperty("message", "old"); addProperty("valueVariable", "oldVar") }
-        val filled = backfillArguments(args, field, RuntimeDebugValue("local", "text", "string", "new"))
-        assertEquals("new", filled.get("message").asString)
-        assertFalse(filled.has("valueVariable"))
-        assertTrue(args.has("valueVariable"))
-        val x = backfillFields(BlockCatalog.find("input.tap")).single { it.path == "x" }
-        assertTrue(runCatching { backfillArguments(args, x, RuntimeDebugValue("local", "x", "string", "1")) }.isFailure)
-        assertTrue(runCatching { backfillArguments(args, field, RuntimeDebugValue("local", "text", "string", "partial", true)) }.isFailure)
-        assertEquals(12L, backfillArguments(JsonObject(), x, RuntimeDebugValue("local", "x", "integer", "12")).get("x").asLong)
     }
 
     @Test
@@ -52,11 +36,4 @@ class EditorBatchTwoTest {
         assertTrue(warnings.any { it.contains("flag：未维护到变量表") })
     }
 
-    @Test
-    fun singleStepOverridesNormalDebugModeRatherThanBeingOverriddenByItsPrefix() {
-        val plan = RuntimeProjectPlan("__autoscript_debug_capture = true\n__autoscript_debug_step = false\nreturn function() end".toByteArray(), emptyList(), emptyList(), 720, 1280, 0)
-        val source = plan.forSingleStep().luaSource.toString(Charsets.UTF_8)
-        assertTrue(source.contains("__autoscript_debug_step = true"))
-        assertFalse(source.contains("__autoscript_debug_step = false"))
-    }
 }

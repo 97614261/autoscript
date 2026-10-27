@@ -146,7 +146,8 @@ data class ScriptUiDefinition(val description: String? = null, val fields: List<
 }
 private val ID = Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")
 private val COLOR = Regex("#[0-9a-fA-F]{8}")
-private val BINDING = Regex("(global:[A-Za-z_][A-Za-z0-9_]{0,63}|param:[A-Za-z_][A-Za-z0-9_]{0,63}|flow:[A-Za-z0-9_-]{1,128}:[A-Za-z_][A-Za-z0-9_]{0,63})")
+private const val USER_KEY = "[A-Za-z_\u3400-\u4DBF\u4E00-\u9FFF][A-Za-z0-9_\u3400-\u4DBF\u4E00-\u9FFF]{0,63}"
+private val BINDING = Regex("(global:$USER_KEY|param:$USER_KEY|flow:[A-Za-z0-9_-]{1,128}:$USER_KEY)")
 fun actionValid(action: String, pages: List<UiPage>): Boolean = action in setOf("run", "close", "minimize") || action.startsWith("page:") && pages.any { it.id == action.removePrefix("page:") } || Regex("flow:[A-Za-z0-9_-]{1,128}").matches(action)
 
 /** Values remain typed data. This method is shared by Studio and the independently packaged Runner. */

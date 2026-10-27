@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "opcode": 18005,
+  "name": "Input.imeText",
+  "since": "1.8",
+  "capability": "input.ime",
+  "execution": "async_task",
+  "cancelMode": "cooperative",
+  "sideEffect": "device_input",
+  "timeoutMs": 3000,
+  "resourceOwnership": "none",
+  "summary": "通过用户主动启用并选中的智构输入法向当前已聚焦输入框提交UTF-8文字，最多4096字节；不读取、保存或联网发送输入，不使用剪贴板。焦点/连接变化、未选择输入法和停止均拒绝迟到提交；返回1仅表示目标InputConnection接受，不保证目标应用实际保存。",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "summary": "待提交文字"
+    }
+  ],
+  "returns": {
+    "type": "integer",
+    "nullable": false,
+    "summary": "通过用户主动启用并选中的智构输入法向当前已聚焦输入框提交UTF-8文字，最多4096字节；不读取、保存或联网发送输入，不使用剪贴板。焦点/连接变化、未选择输入法和停止均拒绝迟到提交；返回1仅表示目标InputConnection接受，不保证目标应用实际保存。"
+  },
+  "legacyAliases": []
+}

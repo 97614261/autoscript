@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "path.parent",
+  "nodeVersion": 1,
+  "nodeSchemaId": "https://autoscript.local/schema/node/path.parent/1/path.parent.schema.json",
+  "title": "取上级目录",
+  "category": "variable",
+  "summary": "纯路径处理，不读磁盘；返回项目内相对父目录，根或单段返回空文本，不允许向项目外跳转。",
+  "searchTerms": [
+    "文本",
+    "编码",
+    "路径",
+    "Path.parent",
+    "取上级目录"
+  ],
+  "requiredCapabilities": [
+    "core.task"
+  ],
+  "childBlocks": [],
+  "properties": [
+    {
+      "path": "path",
+      "label": "相对路径",
+      "editor": "string",
+      "required": true,
+      "defaultValue": "images/sample.png"
+    },
+    {
+      "path": "pathVariable",
+      "label": "相对路径来源变量（可选）",
+      "editor": "string",
+      "required": false
+    },
+    {
+      "path": "resultVariable",
+      "label": "结果变量（文本）",
+      "editor": "string",
+      "required": true,
+      "defaultValue": ""
+    }
+  ],
+  "migrations": []
+}
