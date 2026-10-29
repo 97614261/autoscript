@@ -7,6 +7,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -17,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -133,47 +137,56 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
             runtimeFailureObserved = true
         } else runtimeFailureObserved = false
     }
-    Box(Modifier.fillMaxSize()) {
-    Scaffold(modifier = Modifier.fillMaxSize().onGloballyPositioned { firstContentLaidOut = true }, containerColor = StudioPaper, bottomBar = {
-        if (!runtimeEnvironmentVisible && !workspaceFullScreen && !aboutVisible) {
-            StudioBottomNavigation(navigation.destination) { destination ->
-                navigation = navigation.navigateTo(destination)
-                aboutVisible = false
-                workspaceRequest = null
-            }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val configuration = LocalConfiguration.current
+        val navigationVisible = !runtimeEnvironmentVisible && !workspaceFullScreen && !aboutVisible
+        val navigationRail = configuration.screenWidthDp > configuration.screenHeightDp &&
+            studioWideShortLayout(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
+        val selectDestination: (StudioDestination) -> Unit = { destination ->
+            navigation = navigation.navigateTo(destination)
+            aboutVisible = false
+            workspaceRequest = null
         }
-    }) { padding ->
-        Surface(Modifier.fillMaxSize().padding(padding), color = StudioPaper) {
-            if (runtimeEnvironmentVisible) RuntimeEnvironmentScreen(
-                state = runtimeState, onBack = { visionComponentsVisible = false; runtimeEnvironmentVisible = false }, onRefresh = {
-                    environmentScope.launch {
-                        withContext(Dispatchers.IO) { runtimeClient.refresh() }
-                        environmentRefreshRevision++
+        Scaffold(modifier = Modifier.fillMaxSize().onGloballyPositioned { firstContentLaidOut = true }, containerColor = StudioPaper, bottomBar = {
+            if (navigationVisible && !navigationRail) {
+                StudioBottomNavigation(navigation.destination, selectDestination)
+            }
+        }) { padding ->
+            Row(Modifier.fillMaxSize().padding(padding)) {
+                if (navigationVisible && navigationRail) StudioSideNavigation(navigation.destination, selectDestination)
+                Surface(Modifier.weight(1f).fillMaxHeight(), color = StudioPaper) {
+                    if (runtimeEnvironmentVisible) RuntimeEnvironmentScreen(
+                        state = runtimeState, onBack = { visionComponentsVisible = false; runtimeEnvironmentVisible = false }, onRefresh = {
+                            environmentScope.launch {
+                                withContext(Dispatchers.IO) { runtimeClient.refresh() }
+                                environmentRefreshRevision++
+                            }
+                        },
+                        onConnectRoot = { environmentScope.launch { runtimeClient.connectRoot() } },
+                        onShowDebug = { heading -> environmentScope.launch {
+                            val diagnostics = withContext(Dispatchers.IO) { runtimeClient.recentRuntimeLogs() }
+                                .filter { "App诊断" in it }
+                            runtimeDebugMessage = heading + "\n\n" + diagnostics.joinToString("\n").ifBlank { "暂无 App 诊断，请刷新连接后重试截图" }
+                        } }, onOpenPermissions = openSoftwarePermissions,
+                        onOpenVisionComponents = { visionComponentsVisible = true },
+                        inputFeatures = environmentInputFeatures, modifier = Modifier.fillMaxSize(),
+                    ) else when (navigation.destination) {
+                        StudioDestination.HOME -> StudioHomePage(modifier = Modifier.fillMaxSize(), spaceState = homeSpaceState)
+                        StudioDestination.WORKSPACE -> ProjectPage(
+                            store = projectStore, runtimeClient = runtimeClient, runtimeState = runtimeState,
+                            onFullScreenChanged = { workspaceFullScreen = it },
+                            captureHandoff = captureHandoff, onCaptureHandoffConsumed = onCaptureHandoffConsumed,
+                            entryRequest = workspaceRequest, onEntryRequestConsumed = { workspaceRequest = null },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        StudioDestination.PROFILE -> if (aboutVisible) {
+                            StudioAboutScreen(onBack = { aboutVisible = false }, modifier = Modifier.fillMaxSize())
+                        } else StudioProfilePage(runtimeState, ::openEntry, Modifier.fillMaxSize())
                     }
-                },
-                onShowDebug = { heading -> environmentScope.launch {
-                    val diagnostics = withContext(Dispatchers.IO) { runtimeClient.recentRuntimeLogs() }
-                        .filter { "App诊断" in it }
-                    runtimeDebugMessage = heading + "\n\n" + diagnostics.joinToString("\n").ifBlank { "暂无 App 诊断，请刷新连接后重试截图" }
-                } }, onOpenPermissions = openSoftwarePermissions,
-                onOpenVisionComponents = { visionComponentsVisible = true },
-                inputFeatures = environmentInputFeatures, modifier = Modifier.fillMaxSize(),
-            ) else when (navigation.destination) {
-                StudioDestination.HOME -> StudioHomePage(modifier = Modifier.fillMaxSize(), spaceState = homeSpaceState)
-                StudioDestination.WORKSPACE -> ProjectPage(
-                    store = projectStore, runtimeClient = runtimeClient, runtimeState = runtimeState,
-                    onFullScreenChanged = { workspaceFullScreen = it },
-                    captureHandoff = captureHandoff, onCaptureHandoffConsumed = onCaptureHandoffConsumed,
-                    entryRequest = workspaceRequest, onEntryRequestConsumed = { workspaceRequest = null },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                StudioDestination.PROFILE -> if (aboutVisible) {
-                    StudioAboutScreen(onBack = { aboutVisible = false }, modifier = Modifier.fillMaxSize())
-                } else StudioProfilePage(runtimeState, ::openEntry, Modifier.fillMaxSize())
+                }
             }
         }
-    }
-    if (captureHandoff == null) StudioStartupOverlay(firstContentLaidOut)
+        if (captureHandoff == null) StudioStartupOverlay(firstContentLaidOut)
     }
     if (runtimeEnvironmentVisible && visionComponentsVisible) VisionProviderManagerDialog(runtimeClient) { visionComponentsVisible = false }
     if (functionDocsVisible) FunctionLibraryDialog(
@@ -181,6 +194,32 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
         onInsert = {}, documentationOnly = true,
     )
     runtimeDebugMessage?.let { RuntimeDebugDialog(it, onDismiss = { runtimeDebugMessage = null }) }
+}
+
+@Composable
+private fun StudioSideNavigation(selected: StudioDestination, onSelected: (StudioDestination) -> Unit) {
+    Surface(Modifier.width(64.dp).fillMaxHeight(), color = Color.White.copy(alpha = .98f), shadowElevation = 2.dp) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StudioDestination.entries.forEach { destination ->
+                val active = destination == selected
+                val color = if (active) StudioViolet else StudioMuted
+                val icon = when (destination) {
+                    StudioDestination.HOME -> R.drawable.nav_home_24
+                    StudioDestination.WORKSPACE -> R.drawable.nav_workspace_24
+                    StudioDestination.PROFILE -> R.drawable.nav_profile_24
+                }
+                Column(Modifier.fillMaxWidth().clickable { onSelected(destination) }.padding(vertical = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Box(Modifier.size(44.dp, 27.dp).background(if (active) StudioLilac else Color.Transparent, RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center) {
+                        Icon(painterResource(icon), destination.label, tint = color, modifier = Modifier.size(19.dp))
+                    }
+                    Text(destination.label, color = color, fontSize = 11.sp)
+                }
+            }
+        }
+    }
 }
 
 /** A bounded one-shot cache reference, never a filesystem path supplied by an intent. */

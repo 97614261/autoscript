@@ -28,6 +28,8 @@ x86 模拟器正常不代表 ARM 真机已通过：架构、Android 版本、Roo
 
 ## 查诊断
 
+Root 服务首次初始化会尝试授权一次；空闲五分钟释放、断线或授权失败后不再后台重复申请。再次运行/单步、截图、触控取点或录制时按需连接，也可在权限与运行环境点击「连接 Root / 重试授权」。首次授权可等待最多 60 秒；拒绝或超时后需要主动重试，单纯刷新状态不会重新弹授权。
+
 「我的 → 运行环境 → Root / 截图诊断 → 查看 / 复制」可查看固定阶段码，不必先运行脚本。设备连接后也可读取 logcat 的 `ZhigouDiagnostics` 标签。
 
 App 诊断独立保存在私有 `files/app-diagnostics/app.log`，上一段为 `app.previous.log`，每段最多 64 KiB；后台队列最多 64 条，实时窗口最多 100 条，写盘失败或丢弃会标注。它们不是项目资源，也不写入脚本的 `script.log`。不记录原始 su 输出、私有路径、会话密钥、截图或脚本。
@@ -41,6 +43,7 @@ App 诊断独立保存在私有 `files/app-diagnostics/app.log`，上一段为 `
 | `ROOT_PROCESS_LINK_FAILED` | 可执行程序链接阶段失败 |
 | `ROOT_START_TIMEOUT` / `ROOT_ATTACH_FAILED` | 未收到就绪或认证连接失败 |
 | `ROOT_READY` | 后端完成认证，仍不代表已截图成功 |
+| `ROOT_IDLE_RELEASED` | 整个认证会话空闲后释放，等待主动操作重新连接 |
 | `CAPTURE_BACKEND_FAILED` | 已发起截图，但采集后端未返回画面 |
 | `CAPTURE_READY` | 本次预览生成成功，不保证其他方向/窗口均通过 |
 

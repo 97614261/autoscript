@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -39,7 +40,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -121,7 +121,6 @@ internal fun PluginFileManagerDialog(
     val windowHeight = rememberSaveable {
         ((tree.entries.size + tree.groups.size).coerceIn(4, 8) * 38 * fontScale + 146 * fontScale).coerceIn(280f, 460f)
     }.dp
-    val footerLimit = (LocalConfiguration.current.screenHeightDp * .4f).coerceIn(96f, 200f).dp
     val timestamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
     val selection = pluginFileSelection(tree, selectedKeys)
     val selectionMode = selectedKeys.isNotEmpty()
@@ -215,103 +214,110 @@ internal fun PluginFileManagerDialog(
 
     StudioPanelDialog(title = title, onDismiss = onDismiss, compactHeader = true, showFooter = false,
         fullScreen = fullScreen, onToggleFullScreen = { fullScreen = !fullScreen }) {
-        Column(if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().height(windowHeight)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(projectName.ifBlank { "当前项目" } + (group?.let { " / " + it } ?: ""), fontSize = 11.sp,
-                    color = AutoScriptPalette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text("共 " + tree.entries.size + " 个插件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-            }
-            if (!selectionMode) {
-                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 3.dp)) {
-                    PluginFileAction("新建插件", { beginName(PluginNameAction.NEW_FILE, nextPluginFileName(tree, "新建插件")) }, !busy, icon = R.drawable.studio_add_24)
-                    PluginFileAction("新建分组", { beginName(PluginNameAction.NEW_GROUP, nextPluginFileName(tree, "新建分组")) }, !busy, icon = R.drawable.editor_folder_add_24)
-                    PluginFileAction("插件管理", onManagePlugins, !busy)
-                    PluginFileAction("刷新", { dispatch(SourceManagerAction.Refresh) }, !busy)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val bodyHeight = studioPanelViewportHeight(maxHeight.value, windowHeight.value.toInt(), fullScreen).dp
+            val footerLimit = studioToolbarBudget(bodyHeight.value, 2).dp
+            val toolbarLimit = studioToolbarBudget(bodyHeight.value, if (selectionMode) 2 else 1).dp
+            Column(Modifier.fillMaxWidth().height(bodyHeight)) {
+                Column(Modifier.fillMaxWidth().heightIn(max = toolbarLimit).verticalScroll(rememberScrollState())) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(projectName.ifBlank { "当前项目" } + (group?.let { " / " + it } ?: ""), fontSize = 11.sp,
+                        color = AutoScriptPalette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("共 " + tree.entries.size + " 个插件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                 }
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                PluginFileInput(query, { query = it.take(60) }, "搜索插件",
-                    if (group == null) "搜索全部插件 / 分组" else "搜索当前分组", !busy, modifier = Modifier.weight(1f))
-                if (query.isNotEmpty()) PluginFileAction("清空", { query = "" }, !busy)
-                Box {
-                    PluginFileAction(sort.label + if (descending) "↓" else "↑", { sortMenu = true }, !busy)
-                    DropdownMenu(sortMenu, { sortMenu = false }, containerColor = Color.White) {
-                        PluginSort.entries.forEach { mode -> DropdownMenuItem(text = { Text(mode.label, fontSize = 12.sp) },
-                            onClick = { sort = mode; sortMenu = false }) }
-                        DropdownMenuItem(text = { Text(if (descending) "改为升序" else "改为降序", fontSize = 12.sp) },
-                            onClick = { descending = !descending; sortMenu = false })
+                if (!selectionMode) {
+                    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 3.dp)) {
+                        PluginFileAction("新建插件", { beginName(PluginNameAction.NEW_FILE, nextPluginFileName(tree, "新建插件")) }, !busy, icon = R.drawable.studio_add_24)
+                        PluginFileAction("新建分组", { beginName(PluginNameAction.NEW_GROUP, nextPluginFileName(tree, "新建分组")) }, !busy, icon = R.drawable.editor_folder_add_24)
+                        PluginFileAction("插件管理", onManagePlugins, !busy)
+                        PluginFileAction("刷新", { dispatch(SourceManagerAction.Refresh) }, !busy)
                     }
                 }
-            }
-            if (selectionMode) {
-                Row(Modifier.fillMaxWidth().background(AutoScriptPalette.AccentSoft).padding(start = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text("已选 " + selectedKeys.size + " 项", fontSize = 11.sp, color = AutoScriptPalette.Accent, modifier = Modifier.weight(1f))
-                    PluginFileAction(if (allVisibleSelected) "取消全选" else "全选可见", {
-                        selectedKeys = pluginFileSelectedKeys(visibleKeys, selectedKeys, !allVisibleSelected)
-                    }, !busy && visibleKeys.isNotEmpty())
-                    PluginFileAction("取消选择", { selectedKeys = emptyList() }, !busy)
-                }
-            }
-            HorizontalDivider(color = AutoScriptPalette.Border)
-            LazyColumn(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Top) {
-                items(rows, key = PluginRow::key) { row ->
-                    when (row) {
-                        PluginRow.Up -> PluginFileAction("返回全部插件", { group = null; query = "" }, !busy,
-                            icon = R.drawable.editor_folder_24, modifier = Modifier.fillMaxWidth())
-                        is PluginRow.Group -> PluginBrowserRow(row.name, row.count.toString() + " 个插件 · 分组", R.drawable.editor_folder_24,
-                            row.key in selectedKeys, active = false, enabled = !busy, checkLabel = "选择分组 " + row.name,
-                            onClick = { if (selectionMode) toggle(row.key) else { group = row.name; query = "" } },
-                            onLongClick = { toggle(row.key) }, onCheck = { toggle(row.key) })
-                        is PluginRow.File -> PluginBrowserRow(row.entry.name + if (row.entry.isEntry) "（主插件）" else "",
-                            listOf(timestamp.format(Date(row.entry.lastModified)), formatPluginSize(row.entry.sizeBytes),
-                                row.entry.group?.takeIf { group == null && query.isNotBlank() }).filterNotNull().joinToString(" · "),
-                            R.drawable.editor_code_file_24, row.key in selectedKeys,
-                            active = row.entry.flowId == focusedFlowId && !selectionMode, enabled = !busy, checkLabel = "选择插件 " + row.entry.name,
-                            onClick = { if (selectionMode) toggle(row.key) else dispatch(SourceManagerAction.Open(row.entry.flowId)) },
-                            onLongClick = { toggle(row.key) }, onCheck = { toggle(row.key) })
-                    }
-                }
-                if (rows.none { it !is PluginRow.Up }) item {
-                    Text(if (query.isBlank()) "暂无插件，点击上方新建" else "没有匹配项", fontSize = 11.sp,
-                        color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(14.dp))
-                }
-            }
-            (notice ?: message)?.let {
-                Text(it, fontSize = 11.sp, color = AutoScriptPalette.Danger, maxLines = 3,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp))
-            }
-            HorizontalDivider(color = AutoScriptPalette.Border)
-            if (selectionMode) {
-                Column(Modifier.fillMaxWidth().heightIn(max = footerLimit).verticalScroll(rememberScrollState()).padding(horizontal = 3.dp)) {
-                    selection.singleFile?.let { file ->
-                        Row(Modifier.fillMaxWidth().padding(start = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(file.name + " · 局部变量 " + file.localVariableCount, fontSize = 10.sp,
-                                color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            if (file.isEntry) Text("当前主插件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(7.dp))
-                            else PluginFileAction("设为主插件", { entryTarget = file.flowId }, !busy)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    PluginFileInput(query, { query = it.take(60) }, "搜索插件",
+                        if (group == null) "搜索全部插件 / 分组" else "搜索当前分组", !busy, modifier = Modifier.weight(1f))
+                    if (query.isNotEmpty()) PluginFileAction("清空", { query = "" }, !busy)
+                    Box {
+                        PluginFileAction(sort.label + if (descending) "↓" else "↑", { sortMenu = true }, !busy)
+                        DropdownMenu(sortMenu, { sortMenu = false }, containerColor = Color.White) {
+                            PluginSort.entries.forEach { mode -> DropdownMenuItem(text = { Text(mode.label, fontSize = 12.sp) },
+                                onClick = { sort = mode; sortMenu = false }) }
+                            DropdownMenuItem(text = { Text(if (descending) "改为升序" else "改为降序", fontSize = 12.sp) },
+                                onClick = { descending = !descending; sortMenu = false })
                         }
                     }
-                    if (selection.files.any { it.isEntry }) Text("主插件不可删除；其他操作仍可用", fontSize = 10.sp,
-                        color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(start = 7.dp, top = 2.dp))
-                    FlowRow(Modifier.fillMaxWidth()) {
-                        val file = selection.singleFile
-                        PluginFileAction("打开", { file?.let { dispatch(SourceManagerAction.Open(it.flowId)) } }, file != null && !busy)
-                        PluginFileAction("插入调用", { file?.let { dispatch(SourceManagerAction.InsertCall(it.flowId)) } }, file != null && file.flowId != currentFlowId && !busy)
-                        PluginFileAction("另存为", { file?.let { beginName(PluginNameAction.SAVE_AS, nextPluginFileName(tree, it.name + "_副本")) } }, file != null && !busy)
-                        PluginFileAction("重命名", { beginName(PluginNameAction.RENAME, file?.name ?: selection.singleGroup.orEmpty()) },
-                            (file != null || selection.singleGroup != null) && !busy)
-                        PluginFileAction("加入分组", { beginName(PluginNameAction.JOIN_GROUP, group.orEmpty()) }, selection.canGroup && !busy)
-                        PluginFileAction("移出分组", { dispatch(SourceManagerAction.RemoveFromGroup(selection.groupedFlowIds)) }, selection.groupedFlowIds.isNotEmpty() && !busy)
-                        PluginFileAction("删除", { deleteKeys = selectedKeys.toList() }, selection.canDelete && !busy, danger = true)
+                }
+                if (selectionMode) {
+                    Row(Modifier.fillMaxWidth().background(AutoScriptPalette.AccentSoft).padding(start = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("已选 " + selectedKeys.size + " 项", fontSize = 11.sp, color = AutoScriptPalette.Accent, modifier = Modifier.weight(1f))
+                        PluginFileAction(if (allVisibleSelected) "取消全选" else "全选可见", {
+                            selectedKeys = pluginFileSelectedKeys(visibleKeys, selectedKeys, !allVisibleSelected)
+                        }, !busy && visibleKeys.isNotEmpty())
+                        PluginFileAction("取消选择", { selectedKeys = emptyList() }, !busy)
                     }
                 }
-            } else {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Text("点击打开 · 勾选或长按管理", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
-                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 7.dp))
-                    PluginFileAction("关闭", onDismiss, true)
+                }
+                HorizontalDivider(color = AutoScriptPalette.Border)
+                LazyColumn(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Top) {
+                    items(rows, key = PluginRow::key) { row ->
+                        when (row) {
+                            PluginRow.Up -> PluginFileAction("返回全部插件", { group = null; query = "" }, !busy,
+                                icon = R.drawable.editor_folder_24, modifier = Modifier.fillMaxWidth())
+                            is PluginRow.Group -> PluginBrowserRow(row.name, row.count.toString() + " 个插件 · 分组", R.drawable.editor_folder_24,
+                                row.key in selectedKeys, active = false, enabled = !busy, checkLabel = "选择分组 " + row.name,
+                                onClick = { if (selectionMode) toggle(row.key) else { group = row.name; query = "" } },
+                                onLongClick = { toggle(row.key) }, onCheck = { toggle(row.key) })
+                            is PluginRow.File -> PluginBrowserRow(row.entry.name + if (row.entry.isEntry) "（主插件）" else "",
+                                listOf(timestamp.format(Date(row.entry.lastModified)), formatPluginSize(row.entry.sizeBytes),
+                                    row.entry.group?.takeIf { group == null && query.isNotBlank() }).filterNotNull().joinToString(" · "),
+                                R.drawable.editor_code_file_24, row.key in selectedKeys,
+                                active = row.entry.flowId == focusedFlowId && !selectionMode, enabled = !busy, checkLabel = "选择插件 " + row.entry.name,
+                                onClick = { if (selectionMode) toggle(row.key) else dispatch(SourceManagerAction.Open(row.entry.flowId)) },
+                                onLongClick = { toggle(row.key) }, onCheck = { toggle(row.key) })
+                        }
+                    }
+                    if (rows.none { it !is PluginRow.Up }) item {
+                        Text(if (query.isBlank()) "暂无插件，点击上方新建" else "没有匹配项", fontSize = 11.sp,
+                            color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(14.dp))
+                    }
+                }
+                (notice ?: message)?.let {
+                    Text(it, fontSize = 11.sp, color = AutoScriptPalette.Danger, maxLines = 3,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp))
+                }
+                HorizontalDivider(color = AutoScriptPalette.Border)
+                if (selectionMode) {
+                    Column(Modifier.fillMaxWidth().heightIn(max = footerLimit).verticalScroll(rememberScrollState()).padding(horizontal = 3.dp)) {
+                        selection.singleFile?.let { file ->
+                            Row(Modifier.fillMaxWidth().padding(start = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(file.name + " · 局部变量 " + file.localVariableCount, fontSize = 10.sp,
+                                    color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                if (file.isEntry) Text("当前主插件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(7.dp))
+                                else PluginFileAction("设为主插件", { entryTarget = file.flowId }, !busy)
+                            }
+                        }
+                        if (selection.files.any { it.isEntry }) Text("主插件不可删除；其他操作仍可用", fontSize = 10.sp,
+                            color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(start = 7.dp, top = 2.dp))
+                        FlowRow(Modifier.fillMaxWidth()) {
+                            val file = selection.singleFile
+                            PluginFileAction("打开", { file?.let { dispatch(SourceManagerAction.Open(it.flowId)) } }, file != null && !busy)
+                            PluginFileAction("插入调用", { file?.let { dispatch(SourceManagerAction.InsertCall(it.flowId)) } }, file != null && file.flowId != currentFlowId && !busy)
+                            PluginFileAction("另存为", { file?.let { beginName(PluginNameAction.SAVE_AS, nextPluginFileName(tree, it.name + "_副本")) } }, file != null && !busy)
+                            PluginFileAction("重命名", { beginName(PluginNameAction.RENAME, file?.name ?: selection.singleGroup.orEmpty()) },
+                                (file != null || selection.singleGroup != null) && !busy)
+                            PluginFileAction("加入分组", { beginName(PluginNameAction.JOIN_GROUP, group.orEmpty()) }, selection.canGroup && !busy)
+                            PluginFileAction("移出分组", { dispatch(SourceManagerAction.RemoveFromGroup(selection.groupedFlowIds)) }, selection.groupedFlowIds.isNotEmpty() && !busy)
+                            PluginFileAction("删除", { deleteKeys = selectedKeys.toList() }, selection.canDelete && !busy, danger = true)
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Text("点击打开 · 勾选或长按管理", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
+                            modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 7.dp))
+                        PluginFileAction("关闭", onDismiss, true)
+                    }
                 }
             }
         }

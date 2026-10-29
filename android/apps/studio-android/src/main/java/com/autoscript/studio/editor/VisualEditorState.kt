@@ -134,7 +134,7 @@ internal class VisualEditorState private constructor(
     fun deleteSelection(): Boolean {
         val roots = selectedRoots()
         if (roots.isEmpty()) return false
-        return batchMutation { roots.all { id -> selectedNodeId = id; deleteSelected() } }
+        return batchMutation { deleteRoots(roots.toSet()) }
     }
 
     fun isNodeDisabled(nodeId: String, inherited: Boolean = true): Boolean {
@@ -518,21 +518,28 @@ internal class VisualEditorState private constructor(
 
     fun deleteSelected(): Boolean {
         val selected = selectedNodeId ?: return false
+        return deleteRoots(setOf(selected))
+    }
+
+    private fun deleteRoots(selected: Set<String>): Boolean {
         val previousRows = rows
-        val previousIndex = previousRows.indexOfFirst { it.nodeId == selected }
+        val previousIndex = previousRows.indexOfFirst { it.nodeId in selected }
         val document = editableDocument() ?: return false
-        val root = document.nodes.firstOrNull { it.nodeId == selected } ?: return false
+        val roots = document.nodes.filter { it.nodeId in selected }
+        if (roots.size != selected.size) return false
+        val byBlock = document.nodes.groupBy { it.blockId }
         val ownedBlocks = mutableSetOf<String>()
-        val removedNodes = mutableSetOf(root.nodeId)
+        val removedNodes = selected.toMutableSet()
         fun collect(node: EditableNode) {
             node.childBlocks.values.forEach { blockId ->
                 if (!ownedBlocks.add(blockId)) return@forEach
-                document.nodes.filter { it.blockId == blockId }.forEach { child ->
-                    if (removedNodes.add(child.nodeId)) collect(child)
+                byBlock[blockId].orEmpty().forEach { child ->
+                    removedNodes.add(child.nodeId)
+                    collect(child)
                 }
             }
         }
-        collect(root)
+        roots.forEach(::collect)
         document.nodes.removeAll { it.nodeId in removedNodes }
         if (!commit(document)) return false
         val remainingRows = rows
@@ -719,7 +726,8 @@ internal class VisualEditorState private constructor(
     }
 
     /** Adds one native `elseif` branch to a selected conditional node. */
-    fun addElseIfBranch(nodeId: String? = selectedNodeId): Boolean {
+    fun addElseIfBranch(arguments: JsonObject, nodeId: String? = selectedNodeId): Boolean {
+        if (!validConfiguredConditionArguments(arguments)) return false
         val document = editableDocument() ?: return false
         val ownerId = nodeId ?: return false
         val node = document.nodes.firstOrNull { it.nodeId == ownerId && it.kind == "control.if" }
@@ -727,11 +735,7 @@ internal class VisualEditorState private constructor(
         val args = node.json.getAsJsonObject("args")?.deepCopy() ?: return false
         val branches = args.getAsJsonArray("elseIf")?.deepCopy() ?: JsonArray()
         if (branches.size() >= MAX_ELSE_IF_BRANCHES) return false
-        branches.add(JsonObject().apply {
-            addProperty("variable", "value")
-            addProperty("operator", "equals")
-            addProperty("value", true)
-        })
+        branches.add(arguments.deepCopy())
         args.add("elseIf", branches)
         val existingBlockIds = document.nodes.flatMapTo(mutableSetOf()) { candidate ->
             listOf(candidate.blockId) + candidate.childBlocks.values

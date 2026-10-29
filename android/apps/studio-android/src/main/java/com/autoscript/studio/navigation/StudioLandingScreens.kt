@@ -47,6 +47,7 @@ internal fun StudioProfilePage(runtime: RuntimeConnectionState, onEntry: (Studio
     StudioPageBackdrop(modifier.fillMaxSize()) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val compact = maxHeight < 560.dp
+    val columns = if (studioWideShortLayout(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 520)) 2 else 1
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 13.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp)) {
         item {
@@ -78,9 +79,18 @@ internal fun StudioProfilePage(runtime: RuntimeConnectionState, onEntry: (Studio
               }
             }
         }
-        studioProfileSections.forEach { section ->
-            item { LandingSectionTitle(section.title) }
-            item { LandingEntryGroup(section.entries, labels, onEntry, compact) }
+        studioProfileSections.chunked(columns).forEach { sections ->
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    sections.forEach { section ->
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            LandingSectionTitle(section.title)
+                            LandingEntryGroup(section.entries, labels, onEntry, compact)
+                        }
+                    }
+                    if (sections.size < columns) Spacer(Modifier.weight(1f))
+                }
+            }
         }
         item {
             Text("数据仅保存在本机 · 卸载前请导出备份", color = StudioMuted, fontSize = 10.sp,

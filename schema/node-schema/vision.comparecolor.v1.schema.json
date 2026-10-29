@@ -12,10 +12,12 @@
       "additionalProperties": false,
       "required": ["frameVariable", "point", "rgb", "tolerance", "resultVariable"],
       "properties": {
+        "autoCapture": { "type": "boolean", "default": false },
         "frameVariable": { "$ref": "#/$defs/variable" },
         "point": { "$ref": "#/$defs/point" },
         "rgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
         "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "additionalColors": { "type": "string", "maxLength": 164, "pattern": "^(?:|[0-9A-Fa-f]{6}:[0-9]{1,3}(?:;[0-9A-Fa-f]{6}:[0-9]{1,3}){0,14})$" },
         "resultVariable": { "$ref": "#/$defs/variable" }
       }
     }

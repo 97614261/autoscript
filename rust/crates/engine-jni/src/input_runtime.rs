@@ -88,6 +88,25 @@ impl InputRuntime {
         } = dispatch;
         self.flush_pending_releases(backend)?;
         self.expire_leases(Instant::now(), backend)?;
+        if let [InputCommand::PointerUp { pointer_id }] = commands.as_slice() {
+            if self
+                .arbiter
+                .pointer_up_is_redundant(task, *pointer_id)
+                .map_err(InputRuntimeError::Arbitration)?
+            {
+                if expires_at <= now {
+                    return Err(InputRuntimeError::Expired);
+                }
+                return match control() {
+                    InputControl::Continue => Ok(()),
+                    InputControl::Cancel => Err(InputRuntimeError::Cancelled),
+                    InputControl::Stop => {
+                        self.stop(backend)?;
+                        Err(InputRuntimeError::Interrupted)
+                    }
+                };
+            }
+        }
         let transaction = InputTransaction {
             id: TransactionId(request.get()),
             task,
@@ -391,6 +410,69 @@ mod tests {
             id: TaskId(1),
             generation: TaskGeneration(1),
         }
+    }
+
+    fn request(id: u64, commands: Vec<InputCommand>) -> InputDispatch {
+        InputDispatch {
+            request: RequestId(id),
+            task: task(),
+            now: MonoTime::ZERO,
+            expires_at: MonoTime::from_nanos(10),
+            commands,
+        }
+    }
+
+    #[test]
+    fn redundant_pointer_up_is_a_noop_and_owned_release_is_dispatched_once() {
+        let mut runtime = InputRuntime::new(InputArbiterConfig::default());
+        let mut backend = RecordingBackend::default();
+        let up = || vec![InputCommand::PointerUp { pointer_id: 0 }];
+        runtime.dispatch(request(1, up()), &mut backend, || InputControl::Continue).unwrap();
+        assert!(backend.commands.is_empty());
+        runtime.dispatch(request(2, vec![InputCommand::PointerDown { pointer_id: 0, x: 1, y: 2 }]),
+            &mut backend, || InputControl::Continue).unwrap();
+        runtime.dispatch(request(3, up()), &mut backend, || InputControl::Continue).unwrap();
+        runtime.dispatch(request(4, up()), &mut backend, || InputControl::Continue).unwrap();
+        assert_eq!(backend.commands.len(), 2);
+        assert!(backend.released.is_empty());
+    }
+
+    #[test]
+    fn redundant_pointer_up_preserves_foreign_ownership_and_stop_fences() {
+        let mut runtime = InputRuntime::new(InputArbiterConfig::default());
+        let mut backend = RecordingBackend::default();
+        runtime.dispatch(request(1, vec![InputCommand::PointerDown { pointer_id: 0, x: 1, y: 2 }]),
+            &mut backend, || InputControl::Continue).unwrap();
+        let mut foreign = request(2, vec![InputCommand::PointerUp { pointer_id: 1 }]);
+        foreign.task.id = TaskId(2);
+        assert_eq!(runtime.dispatch(foreign, &mut backend, || InputControl::Continue),
+            Err(InputRuntimeError::Arbitration(automation_core::InputError::PointerOwnedByAnotherTask)));
+        backend.fail_release = true;
+        assert!(runtime.stop(&mut backend).is_err());
+        runtime.reset();
+        assert!(matches!(runtime.dispatch(request(3, vec![InputCommand::PointerUp { pointer_id: 0 }]),
+            &mut backend, || InputControl::Continue), Err(InputRuntimeError::Backend(_))));
+        backend.fail_release = false;
+        runtime.dispatch(request(4, vec![InputCommand::PointerUp { pointer_id: 0 }]),
+            &mut backend, || InputControl::Continue).unwrap();
+        assert_eq!(backend.released, [0]);
+        runtime.stop(&mut backend).unwrap();
+        assert_eq!(runtime.dispatch(request(5, vec![InputCommand::PointerUp { pointer_id: 0 }]),
+            &mut backend, || InputControl::Continue),
+            Err(InputRuntimeError::Arbitration(automation_core::InputError::Stopped)));
+    }
+
+    #[test]
+    fn redundant_pointer_up_still_observes_expiry_cancel_and_stop() {
+        let mut runtime = InputRuntime::new(InputArbiterConfig::default());
+        let mut backend = RecordingBackend::default();
+        let up = || vec![InputCommand::PointerUp { pointer_id: 0 }];
+        let mut expired = request(1, up());
+        expired.expires_at = MonoTime::ZERO;
+        assert_eq!(runtime.dispatch(expired, &mut backend, || InputControl::Continue), Err(InputRuntimeError::Expired));
+        assert_eq!(runtime.dispatch(request(2, up()), &mut backend, || InputControl::Cancel), Err(InputRuntimeError::Cancelled));
+        assert_eq!(runtime.dispatch(request(3, up()), &mut backend, || InputControl::Stop), Err(InputRuntimeError::Interrupted));
+        assert!(backend.commands.is_empty());
     }
 
     #[test]

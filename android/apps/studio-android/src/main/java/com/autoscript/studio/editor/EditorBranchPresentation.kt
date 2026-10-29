@@ -6,9 +6,9 @@ internal sealed interface EditorTreeDisplayRow {
     val nodeId: String?
     val depth: Int
 
-    data class Node(val node: EditorTreeNode, override val key: String = "node:${node.id}") : EditorTreeDisplayRow {
+    data class Node(val node: EditorTreeNode, override val key: String = "node:${node.id}",
+        override val depth: Int = node.depth) : EditorTreeDisplayRow {
         override val nodeId: String get() = node.id
-        override val depth: Int get() = node.depth
     }
 
     data class Branch(
@@ -17,20 +17,24 @@ internal sealed interface EditorTreeDisplayRow {
         override val depth: Int,
         val empty: Boolean,
         val disabled: Boolean,
+        val expanded: Boolean = true,
+        val descendantCount: Int = 0,
     ) : EditorTreeDisplayRow {
-        override val key: String get() = "branch:$ownerId:$slot"
+        override val key: String get() = editorBranchKey(ownerId, slot)
         override val nodeId: String? get() = null
     }
 }
 
 /** One linear hierarchy pass, then success/failure presentation order without mutating source. */
-internal fun editorTreeDisplayRows(nodes: List<EditorTreeNode>): List<EditorTreeDisplayRow> {
+internal fun editorTreeDisplayRows(nodes: List<EditorTreeNode>, collapsedBranches: Collection<String> = emptySet()): List<EditorTreeDisplayRow> {
     val visible = editorVisibleTreeNodes(nodes)
     // Invalid read-only files can repeat identities; never turn those into cyclic view ownership.
     if (nodes.map { it.id }.distinct().size != nodes.size) {
         return visible.mapIndexed { index, node -> EditorTreeDisplayRow.Node(node, "invalid:$index:${node.id}") }
     }
     val children = mutableMapOf<String, MutableList<EditorTreeNode>>()
+    val foldedBranches = collapsedBranches.toHashSet()
+    val descendantCounts = editorDescendantCounts(nodes)
     val roots = mutableListOf<EditorTreeNode>()
     val ancestors = ArrayDeque<EditorTreeNode>()
     visible.forEach { node ->
@@ -40,25 +44,52 @@ internal fun editorTreeDisplayRows(nodes: List<EditorTreeNode>): List<EditorTree
         ancestors.addLast(node)
     }
     return buildList {
-        fun append(node: EditorTreeNode) {
-            add(EditorTreeDisplayRow.Node(node))
+        fun append(node: EditorTreeNode, displayDepth: Int = node.depth) {
+            add(EditorTreeDisplayRow.Node(node, depth = displayDepth))
             if (!node.expanded) return
             val members = children[node.id].orEmpty()
             val slots = editorBranchSlots(node.code, node.childSlots)
             if (slots.isEmpty()) {
-                members.forEach(::append)
+                members.forEach { append(it, displayDepth + it.depth - node.depth) }
                 return
             }
             slots.forEach { slot ->
                 val branch = members.filter { it.childSlot == slot }
                 val parts = node.displayRow ?: compactProgramRowText(node.label)
-                add(EditorTreeDisplayRow.Branch(node.id, slot, node.depth + 1, branch.isEmpty(), parts.disabled))
-                branch.forEach(::append)
+                val expanded = editorBranchKey(node.id, slot) !in foldedBranches
+                add(EditorTreeDisplayRow.Branch(node.id, slot, displayDepth + 1, branch.isEmpty(), parts.disabled,
+                    expanded, branch.sumOf { 1 + (descendantCounts[it.id] ?: 0) }))
+                // Headings occupy a visible level; executable depth and identity stay untouched.
+                if (expanded) branch.forEach { append(it, displayDepth + it.depth - node.depth + 1) }
             }
             // Unknown/legacy metadata must not silently hide actual nodes.
-            members.filter { it.childSlot !in slots }.forEach(::append)
+            members.filter { it.childSlot !in slots }.forEach { append(it, displayDepth + it.depth - node.depth) }
         }
-        roots.forEach(::append)
+        roots.forEach { append(it) }
+    }
+}
+
+internal fun editorBranchKey(ownerId: String, slot: String): String = "branch:$ownerId:$slot"
+
+internal fun editorTreeBranchKeys(nodes: List<EditorTreeNode>): Set<String> = buildSet {
+    nodes.forEach { node -> editorBranchSlots(node.code, node.childSlots).forEach { add(editorBranchKey(node.id, it)) } }
+}
+
+/** Locate only branches on the real ancestor chain, including children hidden by node folds. */
+internal fun editorBranchAncestorKeys(nodes: List<EditorTreeNode>, targetId: String?): Set<String> {
+    val index = nodes.indexOfFirst { it.id == targetId }
+    if (index < 0) return emptySet()
+    var child = nodes[index]
+    return buildSet {
+        for (previous in index - 1 downTo 0) {
+            val parent = nodes[previous]
+            if (parent.depth < child.depth) {
+                if (child.childSlot in editorBranchSlots(parent.code, parent.childSlots))
+                    add(editorBranchKey(parent.id, requireNotNull(child.childSlot)))
+                child = parent
+            }
+            if (child.depth <= 0) break
+        }
     }
 }
 

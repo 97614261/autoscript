@@ -5,13 +5,39 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/input.pointerdown/1/input.pointerdown.schema.json",
   "title": "按下",
   "category": "task",
-  "summary": "在设计坐标按下并保持 Root 触点，直到执行弹起。",
-  "searchTerms": ["pointerDown", "touch down", "按住", "手指按下"],
-  "requiredCapabilities": ["input.basic"],
+  "summary": "在坐标（可选屏幕像素或项目设计坐标）按下并保持 Root 触点，直到执行弹起。",
+  "searchTerms": [
+    "pointerDown",
+    "touch down",
+    "按住",
+    "手指按下"
+  ],
+  "requiredCapabilities": [
+    "input.basic"
+  ],
   "childBlocks": [],
   "properties": [
-    { "path": "x", "label": "X 坐标", "editor": "integer", "required": true, "defaultValue": "0" },
-    { "path": "y", "label": "Y 坐标", "editor": "integer", "required": true, "defaultValue": "0" }
+    {
+      "path": "x",
+      "label": "X 坐标",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "y",
+      "label": "Y 坐标",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "screenPixels",
+      "label": "屏幕像素坐标",
+      "editor": "boolean",
+      "required": false,
+      "defaultValue": "false"
+    }
   ],
   "migrations": []
 }

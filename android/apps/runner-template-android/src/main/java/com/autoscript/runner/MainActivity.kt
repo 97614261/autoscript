@@ -150,7 +150,6 @@ private fun RunnerApp(permissionEpoch: Int) {
     var minimizedInterface by remember { mutableStateOf(false) }
     fun startRelease(release: EmbeddedRelease) {
         if (starting || state.phase != RuntimeConnectionPhase.CONNECTED) return
-        if (state.rootState != RuntimeRootState.READY) return
         if (state.engineState in setOf(
                 RuntimeEngineState.RUNNING,
                 RuntimeEngineState.PAUSED,
@@ -188,7 +187,6 @@ private fun RunnerApp(permissionEpoch: Int) {
         val readyRelease = (releaseState as? ReleaseLoadState.Ready)?.release
         val canStart = readyRelease != null && !starting &&
             state.phase == RuntimeConnectionPhase.CONNECTED &&
-            state.rootState == RuntimeRootState.READY &&
             state.engineState !in setOf(
                 RuntimeEngineState.RUNNING,
                 RuntimeEngineState.PAUSED,

@@ -1,6 +1,7 @@
 //! Deterministic, bounded scalar baseline for pixel color and template search.
 
 pub mod color_filter;
+pub mod color_palette;
 pub mod image_processing;
 mod legacy;
 mod legacy_compat;
@@ -552,6 +553,7 @@ pub enum VisionError {
 }
 
 pub const MAX_COLOR_RESULTS: usize = 4_096;
+pub const MAX_COLOR_COUNT: usize = 64_000_000;
 
 /// Reads one pixel from a validated image.
 ///
@@ -602,7 +604,8 @@ pub fn find_color(
     Ok(None)
 }
 
-/// Counts matching pixels in deterministic row-major order, stopping at `limit`.
+/// Counts matching pixels in deterministic row-major order. Zero counts the entire ROI;
+/// a positive limit stops early without retaining a coordinate list.
 ///
 /// # Errors
 ///
@@ -614,7 +617,9 @@ pub fn count_color(
     options: SearchOptions,
     limit: usize,
 ) -> Result<usize, VisionError> {
-    validate_result_limit(limit)?;
+    if limit > MAX_COLOR_COUNT {
+        return Err(VisionError::InvalidResultLimit);
+    }
     validate_search(image, options)?;
     let mut budget = ComparisonBudget::new(options.max_pixel_comparisons);
     let mut count = 0_usize;
@@ -841,14 +846,17 @@ pub fn compare_fixed_pattern(
 ///
 /// # Errors
 ///
-/// Rejects malformed inputs, invalid limits, or an exhausted comparison budget.
+/// Zero counts the entire ROI; positive limits stop early. Rejects malformed inputs,
+/// invalid limits, or an exhausted comparison budget.
 pub fn count_any_color(
     image: ImageView<'_>,
     colors: &[ColorSpec],
     options: SearchOptions,
     limit: usize,
 ) -> Result<usize, VisionError> {
-    validate_result_limit(limit)?;
+    if limit > MAX_COLOR_COUNT {
+        return Err(VisionError::InvalidResultLimit);
+    }
     validate_search(image, options)?;
     if colors.is_empty() {
         return Err(VisionError::EmptyPattern);
@@ -1969,6 +1977,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn full_color_count_is_not_limited_by_the_coordinate_list_budget() {
+        let pixels = [255, 0, 0, 255].repeat(10_000);
+        let view = image(&pixels, 100, 100);
+        let target = Color {
+            red: 255,
+            green: 0,
+            blue: 0,
+            alpha: 255,
+        };
+        let mut search = options(100, 100);
+        search.max_pixel_comparisons = 10_000;
+        assert_eq!(
+            count_color(view, target, ColorTolerance::EXACT, search, 0),
+            Ok(10_000)
+        );
+        assert_eq!(
+            count_color(view, target, ColorTolerance::EXACT, search, 5000),
+            Ok(5000)
+        );
+        assert_eq!(
+            find_all_colors(view, target, ColorTolerance::EXACT, search, 2048)
+                .unwrap()
+                .len(),
+            2048
+        );
+        search.max_pixel_comparisons = 9_999;
+        assert_eq!(
+            count_color(view, target, ColorTolerance::EXACT, search, 0),
+            Err(VisionError::ComparisonBudgetExceeded)
+        );
+        assert_eq!(
+            count_color(
+                view,
+                target,
+                ColorTolerance::EXACT,
+                search,
+                super::MAX_COLOR_COUNT + 1
+            ),
+            Err(VisionError::InvalidResultLimit)
+        );
+    }
+
     fn fixture(source: &str) -> Vec<u8> {
         source
             .split_ascii_whitespace()
@@ -2113,7 +2164,7 @@ mod tests {
         );
         assert_eq!(
             count_color(view, target, ColorTolerance::EXACT, options(2, 2), 0),
-            Err(VisionError::InvalidResultLimit)
+            Ok(3)
         );
     }
 

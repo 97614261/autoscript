@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.compose.runtime.Composable
@@ -39,12 +40,14 @@ internal fun inputPointAction(mode: ImageToolMode): InputPointAction = when (mod
     else -> error("不是输入动作")
 }
 
-internal fun inputPointSnippet(reply: InputPointPickReply, designWidth: Int, designHeight: Int, scaleMode: String): ImageToolCodeGen.Snippet {
+internal fun inputPointSnippet(reply: InputPointPickReply, designWidth: Int, designHeight: Int, scaleMode: String,
+    screenPixels: Boolean = true): ImageToolCodeGen.Snippet {
     require(reply.validFor(reply.requestId, 3)) { "选点结果无效" }
-    val map = ImageToolCodeGen.DesignMapping(reply.width, reply.height, designWidth, designHeight, scaleMode)
+    val map = if (screenPixels) ImageToolCodeGen.DesignMapping(reply.width, reply.height, reply.width, reply.height)
+        else ImageToolCodeGen.DesignMapping(reply.width, reply.height, designWidth, designHeight, scaleMode)
     val start = ImageToolCodeGen.PickedPoint(reply.x1, reply.y1, 0)
     val end = ImageToolCodeGen.PickedPoint(reply.x2, reply.y2, 0)
-    return when (requireNotNull(InputPointAction.fromWire(reply.action))) {
+    val snippet = when (requireNotNull(InputPointAction.fromWire(reply.action))) {
         InputPointAction.TAP -> ImageToolCodeGen.tap(start, map)
         InputPointAction.SWIPE -> ImageToolCodeGen.swipe(start, end, reply.durationMs, map)
         InputPointAction.LONG_PRESS -> ImageToolCodeGen.longPress(start, reply.durationMs, map)
@@ -53,6 +56,7 @@ internal fun inputPointSnippet(reply: InputPointPickReply, designWidth: Int, des
         InputPointAction.MOVE -> ImageToolCodeGen.pointerMove(start, map)
         InputPointAction.UP -> ImageToolCodeGen.pointerUp()
     }
+    return if (screenPixels) ImageToolCodeGen.screenInput(snippet) else snippet
 }
 
 internal fun prepareInputBlocks(snippet: ImageToolCodeGen.Snippet, capabilities: Set<String>): List<Pair<BlockContract, JsonObject>> {
@@ -64,9 +68,11 @@ internal fun prepareInputBlocks(snippet: ImageToolCodeGen.Snippet, capabilities:
         val contract = requireNotNull(BlockCatalog.find(block.kind)) { "缺少正式积木：${block.kind}" }
         require(contract.requiredCapabilities.all { it in capabilities }) { "${contract.title}缺少项目能力声明" }
         require(block.arguments.keys.all { name -> contract.properties.any { it.path == name } }) { "输入参数与积木契约不匹配" }
+        require(!block.screenPixels || contract.properties.any { it.path == "screenPixels" }) { "此积木不支持屏幕像素坐标" }
         contract to JsonObject().apply {
             block.arguments.forEach { (name, value) -> addProperty(name, value) }
             if (block.exactTiming) addProperty("exactTiming", true)
+            if (block.screenPixels) addProperty("screenPixels", true)
         }
     }
 }
@@ -106,3 +112,12 @@ internal fun Context.inputPickerActivity(): Activity? {
     }
     return null
 }
+
+internal fun Activity.restoreInputPickerTask(): Boolean = runCatching {
+    if (isFinishing || isDestroyed) return false
+    @Suppress("DEPRECATION")
+    val task = getSystemService(ActivityManager::class.java).appTasks.firstOrNull { it.taskInfo.id == taskId }
+        ?: return false
+    task.moveToFront()
+    true
+}.getOrDefault(false)

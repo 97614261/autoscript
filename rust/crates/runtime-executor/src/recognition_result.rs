@@ -291,7 +291,7 @@ fn validate_root(root: &Value, shape: &str) -> Result<(), String> {
     .ok_or("RECOGNITION_RESULT_INVALID_SHAPE")?;
     let limit = if shape == "SCALED_IMAGE" {
         1
-    } else if matches!(shape, "COLORS" | "COMPONENTS") {
+    } else if shape == "COMPONENTS" {
         256
     } else {
         2048
@@ -425,6 +425,15 @@ mod tests {
         assert!(read_value(&json!([[[[[0]]]]]), "COLORS", 1, "x").is_err());
         assert!(read_value(&json!([]), "COLORS", 1, "x").is_err());
         assert!(read_value(&json!([]), "COLORS", 0, "count").is_ok());
+    }
+
+    #[test]
+    fn color_coordinates_above_256_remain_bounded_and_readable() {
+        let value = json!((0..2048).map(|i| json!({"x":i,"y":0})).collect::<Vec<_>>());
+        assert!(read_value(&value, "COLORS", 2048, "x").is_ok());
+        assert!(read_value(&value, "COLORS", 0, "count").is_ok());
+        let too_many = json!((0..2049).map(|i| json!({"x":i,"y":0})).collect::<Vec<_>>());
+        assert!(read_value(&too_many, "COLORS", 0, "count").is_err());
     }
 
     #[test]

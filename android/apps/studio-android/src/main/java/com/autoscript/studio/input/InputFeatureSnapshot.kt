@@ -17,10 +17,21 @@ internal data class InputFeatureSnapshot(val generation: Long?, val refresh: Int
 /** Temporary hiding belongs to a request, not to the user's minimize preference. */
 internal class InputPickerLaunchState {
     private var revision = 0L
+    private var returnToEditor: (() -> Boolean)? = null
     var preparing by mutableStateOf(false)
         private set
-    fun begin(): Long { preparing = true; return ++revision }
+    fun begin(): Long { returnToEditor = null; preparing = true; return ++revision }
     fun current(ticket: Long): Boolean = ticket == revision
     fun finish(ticket: Long) { if (current(ticket)) preparing = false }
-    fun invalidate() { ++revision; preparing = false }
+    fun background(ticket: Long, moveBehind: () -> Boolean, restore: () -> Boolean) {
+        if (current(ticket) && moveBehind()) returnToEditor = restore
+    }
+    fun returned(ticket: Long): Boolean {
+        if (!current(ticket)) return false
+        preparing = false
+        val restore = returnToEditor
+        returnToEditor = null
+        return runCatching { restore?.invoke() ?: true }.getOrDefault(false)
+    }
+    fun invalidate() { ++revision; preparing = false; returnToEditor = null }
 }

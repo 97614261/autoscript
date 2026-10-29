@@ -27,6 +27,7 @@ internal class GlyphMakerPendingEditing(batch: GlyphMakerPendingBatch) {
     val shortcutSet = mutableStateOf(GlyphMakerCharacterSet.DIGITS)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GlyphMakerPendingEditor(batch: GlyphMakerPendingBatch, target: String, existing: List<MakerGlyph>,
     editing: GlyphMakerPendingEditing, enabled: Boolean, onBatch: (GlyphMakerPendingBatch) -> Unit, onAppend: (Boolean) -> Unit,
@@ -91,7 +92,7 @@ internal fun GlyphMakerPendingEditor(batch: GlyphMakerPendingBatch, target: Stri
                 ImageToolCompactInput("第${selected + 1}个", character, enabled && !bulkDirty, Modifier.fillMaxWidth()) {
                     character = it.take(32)
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     GlyphMakerPrimaryAction("应用并下一个", enabled && !bulkDirty) { applyCharacter(character, true) }
                     ImageToolCompactAction("替换单字", enabled && !bulkDirty) { applyCharacter(character, false) }
                     ImageToolCompactAction("取消单字", enabled) { selected = -1; character = "" }
@@ -104,7 +105,7 @@ internal fun GlyphMakerPendingEditor(batch: GlyphMakerPendingBatch, target: Stri
                         onBatch(next); onMessage("已移除误切字形，其他标注保留；可撤销移除")
                     }
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     listOf(GlyphMakerCharacterSet.DIGITS, GlyphMakerCharacterSet.SYMBOLS).forEach { group ->
                         ImageToolCompactAction(if (shortcutSet == group) "✓ ${group.title}" else group.title, enabled) { shortcutSet = group }
                     }
@@ -119,7 +120,7 @@ internal fun GlyphMakerPendingEditor(batch: GlyphMakerPendingBatch, target: Stri
                 selected = batch.nextUnlabelled(-1); character = batch.samples.getOrNull(selected)?.label.orEmpty()
             }
             val shortcuts = glyphMakerLabelShortcuts(batch.samples.size, target, existing)
-            if (shortcuts.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            if (shortcuts.isNotEmpty()) FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 shortcuts.forEach { (title, text) -> ImageToolCompactAction(title, canSwitch) {
                     val next = batch.labelAll(text)
                     removed = null; bulk = next.text; selected = -1; character = ""; onBatch(next)
@@ -127,7 +128,7 @@ internal fun GlyphMakerPendingEditor(batch: GlyphMakerPendingBatch, target: Stri
                 } }
             }
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             GlyphMakerPrimaryAction("追加样本", canSwitch && batch.ready) { onAppend(false) }
             ImageToolCompactAction("追加并测试", canSwitch && batch.ready) { onAppend(true) }
             if (removed != null) ImageToolCompactAction("撤销移除", canSwitch) {

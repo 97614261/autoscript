@@ -12,7 +12,7 @@ import org.junit.Test
 
 class ServerBackupClientTest {
     private val key = "ab".repeat(32)
-    private class FakeServer(private val key: String, private val corrupt: String = "") : Closeable {
+    private class FakeServer(private val key: String, private val corrupt: String = "", private val replacement: Boolean = true) : Closeable {
         val socket = ServerSocket(0)
         val origin = "http://127.0.0.1:${socket.localPort}"
         val error = AtomicReference<Throwable?>()
@@ -46,13 +46,17 @@ class ServerBackupClientTest {
                     var mime = "application/json"
                     val response = when {
                         path.endsWith("/challenge") -> """{"protocol":1,"nonce":"$nonce","challenge":"${"11".repeat(32)}","validForSeconds":120}""".toByteArray()
-                        method == "POST" && path.endsWith("/backups") -> {
+                        method == "POST" && (path.endsWith("/backups") || path.endsWith("/replace")) -> {
+                            if (path.endsWith("/replace")) {
+                                assertEquals("\"${stored!!["sha256"].asString}\"", headers["if-match"])
+                                assertEquals("/api/project-backup/v1/backups/${stored!!["id"].asString}/replace", path)
+                            } else assertTrue(headers["if-match"].isNullOrEmpty())
                             stored = JsonParser.parseString(ServerBackupCrypto.unbase64(meta).toString(Charsets.UTF_8)).asJsonObject.apply { addProperty("createdAt", 1234L) }
                             payload = body
                             """{"ok":true,"record":$stored}""".toByteArray()
                         }
                         path.endsWith("/delete") -> { val id = stored!!["id"].asString; stored = null; """{"ok":true,"id":"$id"}""".toByteArray() }
-                        path.endsWith("/backups") -> """{"protocol":1,"records":[${stored ?: ""}],"bytes":${stored?.get("bytes") ?: 0}}""".toByteArray()
+                        path.endsWith("/backups") -> """{"protocol":1,"records":[${stored ?: ""}],"bytes":${stored?.get("bytes") ?: 0}${if (replacement) ",\"capabilities\":[\"replace\"]" else ""}}""".toByteArray()
                         else -> { mime = "application/octet-stream"; payload }
                     }
                     val responseSignature = ServerBackupCrypto.mac(key, "zhigou-publish-response-v1", method, path, nonce, signature, "200", ServerBackupCrypto.sha(response))
@@ -90,6 +94,53 @@ class ServerBackupClientTest {
         for (corrupt in listOf("signature", "body", "redirect")) FakeServer(key, corrupt).use { server ->
             ServerBackupClient(server.origin, key).use { client ->
                 try { client.list(); fail("must reject $corrupt") } catch (expected: Exception) { }
+            }
+        }
+    }
+    @Test fun signedReplaceKeepsIdAndBindsThePreviousDigest() {
+        FakeServer(key).use { server ->
+            ServerBackupClient(server.origin, key).use { client ->
+                assertTrue(client.list().isEmpty())
+                assertTrue(client.supportsReplacement)
+                val source = File.createTempFile("backup-replace-", ".zgb")
+                val destination = File.createTempFile("backup-replaced-", ".zgb")
+                try {
+                    val id = ServerBackupCrypto.id()
+                    val label = ServerBackupCrypto.encryptName("公共合成项目", key, id)
+                    source.outputStream().use { ServerBackupCrypto.encrypt(byteArrayOf(1).inputStream(), it, key, id) }
+                    val old = client.upload(source, id, label)
+                    source.outputStream().use { ServerBackupCrypto.encrypt(byteArrayOf(2, 3).inputStream(), it, key, id) }
+                    val current = client.upload(source, id, label, replacing = old)
+                    assertEquals(old.id, current.id)
+                    assertNotEquals(old.sha256, current.sha256)
+                    assertEquals(listOf(current), client.list())
+                    client.download(current, destination)
+                    destination.inputStream().use { input ->
+                        val output = java.io.ByteArrayOutputStream()
+                        ServerBackupCrypto.decrypt(input, output, key, id)
+                        assertArrayEquals(byteArrayOf(2, 3), output.toByteArray())
+                    }
+                } finally { source.delete(); destination.delete() }
+            }
+        }
+    }
+    @Test fun legacyServerStillListsAndAddsButDoesNotFallbackFromReplace() {
+        FakeServer(key, replacement = false).use { server ->
+            ServerBackupClient(server.origin, key).use { client ->
+                assertTrue(client.list().isEmpty())
+                assertFalse(client.supportsReplacement)
+                val source = File.createTempFile("backup-legacy-", ".zgb")
+                try {
+                    val id = ServerBackupCrypto.id()
+                    val label = ServerBackupCrypto.encryptName("旧服务合成项目", key, id)
+                    source.outputStream().use { ServerBackupCrypto.encrypt(byteArrayOf(1).inputStream(), it, key, id) }
+                    val old = client.upload(source, id, label)
+                    try { client.upload(source, id, label, replacing = old); fail("must reject unsupported replacement") }
+                    catch (expected: IllegalStateException) { assertEquals("BACKUP_REPLACE_UNSUPPORTED", expected.message) }
+                    assertEquals(listOf(old), client.list())
+                    try { client.upload(source, ServerBackupCrypto.id(), label, replacing = old); fail("must bind target ID") }
+                    catch (expected: IllegalArgumentException) { assertEquals("BACKUP_REPLACE_TARGET_INVALID", expected.message) }
+                } finally { source.delete() }
             }
         }
     }

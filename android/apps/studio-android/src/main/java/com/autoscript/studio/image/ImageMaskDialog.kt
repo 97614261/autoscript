@@ -66,7 +66,8 @@ internal fun ImageMaskDialog(bitmap:Bitmap?,initial:ProjectImageMask?=null,defau
     StudioPanelDialog("模板蒙版 · 忽略动态区域",::close,fullScreen=full,onToggleFullScreen={full=!full},compactHeader=true,showFooter=false) {
         BoxWithConstraints(Modifier.fillMaxWidth().heightIn(max=if(full)1000.dp else 620.dp)) {
         val previewHeight=(maxHeight*.32f).coerceIn(48.dp,if(full)260.dp else 180.dp)
-        Column(Modifier.fillMaxSize()) {
+        val short = studioShortViewport(maxHeight.value)
+        val previewContent: @Composable () -> Unit = {
             if(bitmap!=null) {
                 val shown=if(original) bitmap else preview?.bitmap ?: bitmap
                 val image=remember(shown) {shown.asImageBitmap()}
@@ -137,12 +138,15 @@ internal fun ImageMaskDialog(bitmap:Bitmap?,initial:ProjectImageMask?=null,defau
                 }
                 Text(preview?.message.orEmpty(),fontSize=10.sp,modifier=Modifier.padding(6.dp))
             }
+        }
+        Column(Modifier.fillMaxSize()) {
+            if (!short) previewContent()
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(8.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                if (short) previewContent()
                 if(bitmap==null) {
                     Text("仅编辑规则，不把设计尺寸当设备全屏；运行时来源帧必须与规则尺寸一致。",fontSize=10.sp)
-                    Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                        ImageToolCompactInput("像素宽",width,strokes.isEmpty(),Modifier.weight(1f),numeric=true) {width=it}
-                        ImageToolCompactInput("像素高",height,strokes.isEmpty(),Modifier.weight(1f),numeric=true) {height=it}
+                    ImageToolNumberFields(listOf(Triple("width", "像素宽", width), Triple("height", "像素高", height)), strokes.isEmpty()) { key, value ->
+                        if (key == "width") width = value else height = value
                     }
                 }
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(2.dp)) {
@@ -151,11 +155,8 @@ internal fun ImageMaskDialog(bitmap:Bitmap?,initial:ProjectImageMask?=null,defau
                     }
                 }
                 ImageToolCompactInput("笔半径 px",radius,true,Modifier.fillMaxWidth(),numeric=true) {radius=it.take(2)}
-                Row(horizontalArrangement=Arrangement.spacedBy(3.dp)) {
-                    ImageToolCompactInput("左",left,true,Modifier.weight(1f),true) {left=it.take(4)}
-                    ImageToolCompactInput("上",top,true,Modifier.weight(1f),true) {top=it.take(4)}
-                    ImageToolCompactInput("右",right,true,Modifier.weight(1f),true) {right=it.take(4)}
-                    ImageToolCompactInput("下",bottom,true,Modifier.weight(1f),true) {bottom=it.take(4)}
+                ImageToolNumberFields(listOf(Triple("left", "左", left), Triple("top", "上", top), Triple("right", "右", right), Triple("bottom", "下", bottom)), true) { key, value ->
+                    when (key) { "left" -> left = value.take(4); "top" -> top = value.take(4); "right" -> right = value.take(4); else -> bottom = value.take(4) }
                 }
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(3.dp)) {
                     for(keep in listOf(false,true)) ImageToolCompactAction(if(keep) "恢复此矩形" else "忽略此矩形",true) {

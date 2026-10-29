@@ -283,6 +283,10 @@ impl LuaTaskRegistry {
             .globals()
             .set("__autoscript_run_observation", true)
             .map_err(|error| LuaRuntimeError::Lua(error.to_string()))?;
+        self.lua
+            .globals()
+            .set("__autoscript_run_context_details", true)
+            .map_err(|error| LuaRuntimeError::Lua(error.to_string()))?;
         let callbacks = Rc::clone(&self.callbacks);
         let active = Rc::clone(&self.active_task);
         let next = Rc::clone(&self.next_callback);
@@ -750,12 +754,23 @@ impl LuaTaskRegistry {
                         if left >= right or top >= bottom then error(name .. " ROI is empty", 3) end
                     end
 
-                    function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom)
+                    Screen.colorGroupVersion = 1
+                    Screen.colorLimitsVersion = 1
+                    local function colorHost(opcode, additionalColors, ...)
+                        if additionalColors == nil or additionalColors == "" then return host(opcode, ...) end
+                        if type(additionalColors) ~= "string" or #additionalColors > 164 then error("invalid color group", 3) end
+                        local args = table.pack(...)
+                        args.n = args.n + 1
+                        args[args.n] = additionalColors
+                        return host(opcode, table.unpack(args, 1, args.n))
+                    end
+
+                    function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, additionalColors)
                         integer(frame, "Screen.findColor frame", 1, 9223372036854775807)
                         integer(rgb, "Screen.findColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.findColor tolerance", 0, 255)
                         searchRegion(left, top, right, bottom, "Screen.findColor")
-                        local x, y = host(5100, frame, rgb, tolerance, left, top, right, bottom)
+                        local x, y = colorHost(5100, additionalColors, frame, rgb, tolerance, left, top, right, bottom)
                         if x == nil then return nil end
                         return { x = x, y = y }
                     end
@@ -819,13 +834,13 @@ impl LuaTaskRegistry {
                         return host(5005, frame, left, top, right, bottom)
                     end
 
-                    function Screen.compareColor(frame, x, y, rgb, tolerance)
+                    function Screen.compareColor(frame, x, y, rgb, tolerance, additionalColors)
                         integer(frame, "Screen.compareColor frame", 1, 9223372036854775807)
                         integer(x, "Screen.compareColor x", 0, 2147483647)
                         integer(y, "Screen.compareColor y", 0, 2147483647)
                         integer(rgb, "Screen.compareColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.compareColor tolerance", 0, 255)
-                        return host(5103, frame, x, y, rgb, tolerance)
+                        return colorHost(5103, additionalColors, frame, x, y, rgb, tolerance)
                     end
 
                     local function validateMultiColorSamples(samples)
@@ -872,22 +887,22 @@ impl LuaTaskRegistry {
                         return { x = x, y = y }
                     end
 
-                    function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit)
+                    function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors)
                         integer(frame, "Screen.countColor frame", 1, 9223372036854775807)
                         integer(rgb, "Screen.countColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.countColor tolerance", 0, 255)
                         searchRegion(left, top, right, bottom, "Screen.countColor")
-                        integer(limit, "Screen.countColor limit", 1, 256)
-                        return host(5105, frame, rgb, tolerance, left, top, right, bottom, limit)
+                        integer(limit, "Screen.countColor limit", 0, 64000000)
+                        return colorHost(5105, additionalColors, frame, rgb, tolerance, left, top, right, bottom, limit)
                     end
 
-                    function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit)
+                    function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors)
                         integer(frame, "Screen.findAllColor frame", 1, 9223372036854775807)
                         integer(rgb, "Screen.findAllColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.findAllColor tolerance", 0, 255)
                         searchRegion(left, top, right, bottom, "Screen.findAllColor")
-                        integer(limit, "Screen.findAllColor limit", 1, 256)
-                        local raw = table.pack(host(5106, frame, rgb, tolerance, left, top, right, bottom, limit))
+                        integer(limit, "Screen.findAllColor limit", 1, 2048)
+                        local raw = table.pack(colorHost(5106, additionalColors, frame, rgb, tolerance, left, top, right, bottom, limit))
                         local count = raw[1]
                         local points = {}
                         for index = 1, count do

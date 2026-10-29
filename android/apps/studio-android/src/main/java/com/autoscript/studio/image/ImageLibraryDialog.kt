@@ -156,36 +156,40 @@ internal fun ImageLibraryDialog(snapshot: ProjectSnapshot, store: ProjectStore, 
                 }
             }
             HorizontalDivider(color = AutoScriptPalette.Divider)
-            FlowRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PluginFileAction("截图取材", { if (enabled) { onDismiss(); onCapture() } }, enabled)
-                PluginFileAction("导入图片", { folderPicker = "import" }, enabled)
-                PluginFileAction("选择文件夹", { folderPicker = "browse" }, enabled)
-                PluginFileAction("刷新", {
-                    busy = true
-                    scope.launch {
-                        try { latestChanged(withContext(Dispatchers.IO) { store.openProject(projectId) }); message = null }
-                        catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { message = "图片列表读取失败，当前列表保留" }
-                        finally { busy = false }
-                    }
-                }, enabled)
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PluginFileInput(search, { search = it }, "图片库搜索", "搜索图片名或文件夹", enabled, Modifier.weight(1f))
-                if (search.isNotEmpty()) PluginFileAction("清空", { search = "" }, enabled)
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(folder?.let { "目录：${it.ifEmpty { "图片根目录" }}" } ?: "全部图片 · 包含子文件夹",
-                    fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f))
-                if (folder != null) PluginFileAction("全部图片", { folder = null }, enabled)
-            }
-            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = AutoScriptPalette.Accent)
-            message?.let { Text(it, fontSize = 10.sp, color = AutoScriptPalette.Accent, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-            HorizontalDivider(color = AutoScriptPalette.Divider)
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                item(key = "library-controls") {
+                    Column {
+                        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PluginFileAction("截图取材", { if (enabled) { onDismiss(); onCapture() } }, enabled)
+                            PluginFileAction("导入图片", { folderPicker = "import" }, enabled)
+                            PluginFileAction("选择文件夹", { folderPicker = "browse" }, enabled)
+                            PluginFileAction("刷新", {
+                                busy = true
+                                scope.launch {
+                                    try { latestChanged(withContext(Dispatchers.IO) { store.openProject(projectId) }); message = null }
+                                    catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (_: Exception) { message = "图片列表读取失败，当前列表保留" }
+                                    finally { busy = false }
+                                }
+                            }, enabled)
+                        }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PluginFileInput(search, { search = it }, "图片库搜索", "搜索图片名或文件夹", enabled, Modifier.weight(1f))
+                            if (search.isNotEmpty()) PluginFileAction("清空", { search = "" }, enabled)
+                        }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(folder?.let { "目录：${it.ifEmpty { "图片根目录" }}" } ?: "全部图片 · 包含子文件夹",
+                                fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f))
+                            if (folder != null) PluginFileAction("全部图片", { folder = null }, enabled)
+                        }
+                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = AutoScriptPalette.Accent)
+                        message?.let { Text(it, fontSize = 10.sp, color = AutoScriptPalette.Accent, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+                        HorizontalDivider(color = AutoScriptPalette.Divider)
+                    }
+                }
                 if (visible.isEmpty()) item {
                     Text(when { images.isEmpty() -> "暂无项目图片，点「导入图片」或「截图取材」。"
                         search.isNotBlank() -> "没有匹配的图片，可清空搜索或切换到全部图片。"
@@ -216,8 +220,7 @@ internal fun ImageLibraryDialog(snapshot: ProjectSnapshot, store: ProjectStore, 
                     HorizontalDivider(color = AutoScriptPalette.Divider)
                 }
             }
-            Text("点图片：预览 / 处理 / 识别测试 / 制作字库", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
-                modifier = Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground).padding(horizontal = 12.dp, vertical = 6.dp))
+
         }
     }
     pendingDelete?.let { (path, expected) ->

@@ -38,7 +38,7 @@ internal fun editorInsertionPreview(nodes: List<EditorTreeNode>, anchorId: Strin
         if (anchor < 0) return EditorInsertionPreviewData("原选择行已不存在，请重新选择", emptyList())
         val node = (rows[anchor] as EditorTreeDisplayRow.Node).node
         val anchorEnd = subtreeEnd(anchor)
-        depth = node.depth
+        depth = rows[anchor].depth
         when (position) {
             EditorInsertPosition.ABOVE -> { boundary = anchor; hint = "加入本行之前" }
             EditorInsertPosition.BELOW -> { boundary = anchorEnd; hint = "加入本行及其子树之后" }
@@ -55,8 +55,9 @@ internal fun editorInsertionPreview(nodes: List<EditorTreeNode>, anchorId: Strin
                 hint = "加入${childBlockLabel(slot)}末尾"
                 val header = rows.indexOfFirst { it is EditorTreeDisplayRow.Branch && it.ownerId == anchorId && it.slot == slot }
                 boundary = if (header >= 0) {
+                    depth = rows[header].depth + 1
                     var end = header + 1
-                    while (end < rows.size && rows[end].depth > node.depth &&
+                    while (end < rows.size && rows[end].depth > rows[anchor].depth &&
                         !(rows[end] is EditorTreeDisplayRow.Branch && (rows[end] as EditorTreeDisplayRow.Branch).ownerId == anchorId)) end++
                     end
                 } else {

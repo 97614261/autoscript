@@ -47,6 +47,8 @@ internal object FunctionCatalog {
             return loopInsertionFromHint(snippet)?.kind
         }
         return when {
+            line.startsWith(CONDITION_CONFIG_HINT) -> configuredConditionInsertion(snippet)
+                ?.takeUnless { it.elseIf }?.let { "control.if" }
             line.startsWith(VARIABLE_CALCULATION_HINT) -> "variable.calculate"
             line.startsWith(BLOCK_HINT_PREFIX) -> line.removePrefix(BLOCK_HINT_PREFIX)
                 .trim().takeIf(String::isNotEmpty)
@@ -57,7 +59,7 @@ internal object FunctionCatalog {
         }
     }
 
-    fun visualGroups(): List<FunctionLibraryGroup> = BlockCatalog.all
+    fun visualGroups(): List<FunctionLibraryGroup> = BlockCatalog.insertable
         .groupBy { functionGroup(it.kind, it.category) }
         .toSortedMap(compareBy<String> { FUNCTION_GROUP_ORDER.indexOf(it) }.thenBy { it })
         .map { (label, blocks) ->

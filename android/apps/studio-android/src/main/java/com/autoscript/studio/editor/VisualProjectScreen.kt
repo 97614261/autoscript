@@ -33,7 +33,6 @@ import com.autoscript.runtime.client.RuntimeClient
 import com.autoscript.runtime.client.ScreenshotPreviewResult
 import com.autoscript.runtime.client.VisualCompileDiagnostic
 import com.autoscript.runtime.client.VisualCompileResult
-import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.studio.generated.BlockCategory
 import com.autoscript.studio.generated.BlockContract
 import com.google.gson.JsonObject
@@ -166,9 +165,6 @@ internal fun VisualProjectScreen(
     var inputPointRequestId by remember(projectId) { mutableIntStateOf(0) }
     var inputPointCaptureJob by remember(projectId) { mutableStateOf<Job?>(null) }
     var inputPickTarget by remember(projectId) { mutableStateOf<InputPickTarget?>(null) }
-    var inputFloatingRequest by remember(projectId) { mutableStateOf<Long?>(null) }
-    var inputFloatingJob by remember(projectId) { mutableStateOf<Job?>(null) }
-    val inputFloatingLaunch = remember(projectId) { InputPickerLaunchState() }
     var pendingInputInsertion by remember(projectId) { mutableStateOf<InputInsertionDraft?>(null) }
     var recordingTarget by remember(projectId) { mutableStateOf<Pair<InputPickTarget, ProjectDesign>?>(null) }
     var recordingActive by remember(projectId) { mutableStateOf(false) }
@@ -200,9 +196,6 @@ internal fun VisualProjectScreen(
 
     DisposableEffect(projectId) {
         onDispose {
-            inputFloatingLaunch.invalidate()
-            inputFloatingJob?.cancel()
-            inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
             inputPointRequestId++
             inputPointCaptureJob?.cancel()
             inputPointBitmap?.recycle()
@@ -211,11 +204,6 @@ internal fun VisualProjectScreen(
 
     LaunchedEffect(selectedFlowId) {
         editingCallNodeId = null
-        inputFloatingLaunch.invalidate()
-        inputFloatingJob?.cancel()
-        inputFloatingJob = null
-        inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
-        inputFloatingRequest = null
         if (inputPickTarget?.flowId != selectedFlowId) {
             inputPickTarget = null
             pendingInputInsertion = null
@@ -408,8 +396,6 @@ internal fun VisualProjectScreen(
         overlayHost?.canvas(showingInputPointPicker && !inputPointCapturing)
         overlayHost?.suppress(when {
             inputPointCapturing -> "capture:$inputPointRequestId"
-            inputFloatingLaunch.preparing -> "pick-preparing:$projectId"
-            inputFloatingRequest != null -> "pick:$inputFloatingRequest"
             recordingActive -> "record:$selectedFlowId"
             else -> null
         })
@@ -461,7 +447,6 @@ internal fun VisualProjectScreen(
     fun runProject(entry: StudioRunEntry) {
         val singleStep = entry == StudioRunEntry.SINGLE_STEP
         if (action != null || !canStartAction) return
-        if (inputFloatingJob?.isActive == true || inputFloatingRequest != null) { notice = "请先完成或取消选点，再运行"; return }
         if (runtimeState.phase != RuntimeConnectionPhase.CONNECTED) {
             error = "Runner尚未连接"
             return
@@ -641,23 +626,28 @@ internal fun VisualProjectScreen(
         if (!editorCanMutate(runtimeBusy || sourceBusy, editor.isReadOnly, currentRuntimeState.engineState)) { error = "请停止运行后再修改插件"; return }
         val insertionContext = editorInsertionContext(projectId, selectedFlowId, editor)
         val command = hint.lineSequence().firstOrNull()?.trim().orEmpty()
+        val configuredCondition = configuredConditionInsertion(hint)
+        if (hint.startsWith(CONDITION_CONFIG_HINT) && configuredCondition == null) {
+            error = "条件配置无效，未加入积木"
+            return
+        }
+        if (configuredCondition?.elseIf == true) {
+            val problem = applyConfiguredElseIfInsertion(insertionContext, projectId, selectedFlowId, editor,
+                configuredCondition.arguments, snapshot.manifest.capabilities.toSet(),
+                editorCanMutate(runtimeBusy || sourceBusy, editor.isReadOnly, currentRuntimeState.engineState))
+            if (problem != null) error = problem
+            else {
+                editorRevision++
+                error = null
+                notice = "已加入否则如果分支"
+                onCommitted()
+                saveCurrent()
+            }
+            return
+        }
         when (command) {
             "--@autoscript-control:elseIf" -> {
-                val selected = editor.selectedNodeId
-                if (selected == null || !editor.addElseIfBranch(selected)) {
-                    error = "请先选中一个“如果”节点，再添加否则如果"
-                    return
-                }
-                editorRevision++
-                propertyInputs = conditionPropertyTexts(
-                    requireNotNull(BlockCatalog.find("control.if")),
-                    requireNotNull(editor.nodeArguments(selected)),
-                )
-                editingCallNodeId = selected
-                reflectionPosition = null
-                reflectionChildSlot = null
-                notice = "已新增否则如果分支，请填写它的条件"
-                onCommitted()
+                error = "请先填写否则如果条件，再加入分支"
                 return
             }
             "--@autoscript-control:else" -> {
@@ -718,7 +708,7 @@ internal fun VisualProjectScreen(
                 pendingBlockConfiguration = VisualPendingBlockInsert(contract, migratedArgs, insertionContext, childSlot, position, onCommitted)
                 return
             }
-            if (contract.kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.if") && position != EditorInsertPosition.REPLACE && variableCalculationArguments(hint) == null) {
+            if (contract.kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.if") && position != EditorInsertPosition.REPLACE && variableCalculationArguments(hint) == null && configuredCondition == null) {
                 pendingBlockConfiguration = VisualPendingBlockInsert(contract, migratedArgs, insertionContext, childSlot, position, onCommitted)
                 return
             }
@@ -729,6 +719,7 @@ internal fun VisualProjectScreen(
                     editorRevision++
                     error = null
                     notice = "已修改：${contract.title}"
+                    onCommitted()
                     saveCurrent()
                 }
                 return
@@ -873,11 +864,6 @@ internal fun VisualProjectScreen(
             error = "录制需要停止脚本、声明 input.basic，并确认Root录制能力"
             return
         }
-        inputFloatingLaunch.invalidate()
-        inputFloatingJob?.cancel()
-        inputFloatingJob = null
-        inputFloatingRequest?.let(runtimeClient::cancelInputPointPick)
-        inputFloatingRequest = null
         inputPickTarget = null
         pendingInputInsertion = null
         closeInputCanvas()
@@ -896,45 +882,6 @@ internal fun VisualProjectScreen(
             showingInputPointPicker = true
             inputPointMessage = "截图已接入图像工具，可裁剪并保存模板"
             onInitialImageToolConsumed()
-        }
-    }
-
-    fun openInputFloatingPicker(mode: ImageToolMode) {
-        val inputAction = VisualInputAction.entries.firstOrNull { it.mode == mode }
-        if (!editorCanMutate(action != null || sourceBusy, editor.isReadOnly, currentRuntimeState.engineState)) {
-            error = "请先停止运行并完成当前编辑操作"; return
-        }
-        val reason = inputAction?.let { inputActionUnavailableReason(it, true,
-            inputFeatureSnapshot?.available(currentRuntimeState, inputCapabilityRevision)) }
-        if (reason != null || "input.basic" !in currentInputSnapshot.manifest.capabilities) {
-            error = reason ?: "项目未声明 input.basic"; return
-        }
-        if (inputFloatingJob?.isActive == true || inputFloatingRequest != null) { notice = "选点正在准备或进行中"; return }
-        val target = InputPickTarget(projectId, selectedFlowId, editor.currentSource, editor.selectedNodeId, selectedBranch?.slot)
-        inputPickTarget = target
-        val design = snapshot.manifest.design
-        notice = "正在准备悬浮选点…"
-        val ticket = inputFloatingLaunch.begin()
-        inputFloatingJob = scope.launch {
-            editorOperation({ if (inputFloatingLaunch.current(ticket)) error = "悬浮选点启动失败，请检查权限和运行环境" },
-                { inputFloatingLaunch.finish(ticket) }) {
-                var completed = false
-                val request = runtimeClient.beginInputPointPick(projectId, target.flowId, inputPointAction(mode)) { result ->
-                    if (!inputFloatingLaunch.current(ticket)) return@beginInputPointPick
-                    completed = true
-                    inputFloatingRequest = null
-                    if (result.status != InputPointPickReply.SUCCESS) error = result.message.ifBlank { "选点已取消" }
-                    else if (inputPickTarget != target || currentInputSnapshot.manifest.design != design) error = "插件或设计分辨率已变化，请重新选点"
-                    else runCatching { inputPointSnippet(result, design.width, design.height, design.scaleMode) }
-                        .onSuccess(::queueInputInsertion).onFailure { error = it.message ?: "选点转换失败" }
-                }
-                if (!inputFloatingLaunch.current(ticket)) request?.let(runtimeClient::cancelInputPointPick)
-                else {
-                    inputFloatingRequest = request.takeUnless { completed }
-                    if (!completed && request != null) context.inputPickerActivity()?.moveTaskToBack(true)
-                    else if (!completed) error = "悬浮选点未启动，请在按键面板打开权限 / 环境检查"
-                }
-            }
         }
     }
 
@@ -1928,11 +1875,15 @@ internal fun VisualProjectScreen(
             onPluginAction = ::handlePluginAction,
             capabilities = snapshot.manifest.capabilities.toSet(),
             onOpenInputPointPicker = { mode -> openInputPointPicker(mode) },
-            onOpenInputFloatingPicker = ::openInputFloatingPicker,
             inputPickOpenRequest = inputPickOpenRequest,
             inputBackendFeatures = inputBackendFeatures,
             onOpenPermissions = openSoftwarePermissions,
-            onRefreshInputCapabilities = { inputCapabilityRevision++ },
+            onRefreshInputCapabilities = {
+                scope.launch {
+                    if (!runtimeClient.connectRoot()) notice = "Root 输入未就绪，请确认授权后重试"
+                    inputCapabilityRevision++
+                }
+            },
             onOpenRecorder = if ((inputBackendFeatures ?: 0) and 4 != 0) {
                 ::openRootRecorder
             } else null,

@@ -49,7 +49,9 @@ internal fun editorToolbarColumns(widthDp: Float): Int =
 private val failureStatusPattern = Regex("\\\"status\\\"\\s*:\\s*\\\"(failed|error|timeout|budget_exceeded)\\\"")
 private val failureMetricPattern = Regex(" · (截图|找图|单图|多图|灰度找图|文字识别) (失败|超时|预算超限) · ")
 internal fun editorConsoleLineIsFailure(line: String): Boolean =
-    runtimeConsoleScriptIsError(line) || line.contains("诊断：") || line.endsWith("失败") || line.contains("Runner错误码 · ") ||
+    if (runtimeConsoleChannel(line) == RuntimeConsoleChannel.SCRIPT) runtimeConsoleScriptIsError(line)
+    else if (runtimeConsoleChannel(line) == RuntimeConsoleChannel.EXECUTION) runtimeConsoleExecutionIsError(line)
+    else runtimeConsoleDiagnosticIsFailure(line) || line.endsWith("失败") || line.contains("Runner错误码 · ") ||
         failureStatusPattern.containsMatchIn(line) || failureMetricPattern.containsMatchIn(line)
 
 internal fun editorSelectionToggleIds(ids: List<String>, selected: Set<String>, selectAll: Boolean): List<String> {

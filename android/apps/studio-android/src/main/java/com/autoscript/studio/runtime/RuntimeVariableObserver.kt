@@ -41,6 +41,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun RuntimeVariableObserver(snapshot: ProjectSnapshot, flowId: String, client: RuntimeClient, onDismiss: () -> Unit, restoreRequest: Int = 0) {
     val projectId = snapshot.manifest.projectId
     val runtime by client.runtimeStates.collectAsState()
@@ -104,75 +105,82 @@ internal fun RuntimeVariableObserver(snapshot: ProjectSnapshot, flowId: String, 
     RuntimeVariableFloatingWindow(collapsed, maximized, onRestore = { maximized = false }, onDismiss = onDismiss,
         onVisibility = { visible = it }) { move ->
         Surface(Modifier.fillMaxSize(), color = Color.White, shadowElevation = 4.dp) {
-            Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(32, fontScale).dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (collapsed) "运行变量 · 已收起" else "运行变量 · ${flowName(lockedFlow ?: activeFlow)}", fontSize = 11.sp,
-                        color = AutoScriptPalette.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) {
-                            detectDragGestures { change, amount -> change.consume(); move(amount.x, amount.y) }
-                        }.wrapContentHeight(Alignment.CenterVertically).padding(horizontal = 6.dp))
-                    WatchButton(if (collapsed) "展开" else "收起") { collapsed = !collapsed }
-                    if (!collapsed) StudioPanelFullScreenButton(maximized, { maximized = !maximized }, compact = true)
-                    Box(Modifier.size(28.dp).clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭运行变量", modifier = Modifier.size(16.dp), tint = AutoScriptPalette.TextSecondary)
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val shortViewport = studioShortViewport(maxHeight.value)
+                val toolbarBudget = studioToolbarBudget((maxHeight.value - studioCompactControlHeight(32, fontScale) - 48f).coerceAtLeast(0f)).dp
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(32, fontScale).dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (collapsed) "运行变量 · 已收起" else "运行变量 · ${flowName(lockedFlow ?: activeFlow)}", fontSize = 11.sp,
+                            color = AutoScriptPalette.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) {
+                                detectDragGestures { change, amount -> change.consume(); move(amount.x, amount.y) }
+                            }.wrapContentHeight(Alignment.CenterVertically).padding(horizontal = 6.dp))
+                        WatchButton(if (collapsed) "展开" else "收起") { collapsed = !collapsed }
+                        if (!collapsed) StudioPanelFullScreenButton(maximized, { maximized = !maximized }, compact = true)
+                        Box(Modifier.size(28.dp).clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Close, contentDescription = "关闭运行变量", modifier = Modifier.size(16.dp), tint = AutoScriptPalette.TextSecondary)
+                        }
                     }
-                }
-                if (!collapsed) {
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
-                    Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground)) {
-                        listOf("global" to "全局", "local" to "局部", "changed" to "变动").forEach { (key, label) ->
-                            Box(Modifier.weight(1f).heightIn(min = 26.dp).background(if (filter == key) Color(0xFFE7EEFF) else Color.Transparent)
-                                .clickable { filter = key }.padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-                                Text(label, fontSize = 11.sp, color = if (filter == key) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
+                    if (!collapsed) {
+                        HorizontalDivider(color = AutoScriptPalette.Divider)
+                        Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
+                        Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground)) {
+                            listOf("global" to "全局", "local" to "局部", "changed" to "变动").forEach { (key, label) ->
+                                Box(Modifier.weight(1f).heightIn(min = 26.dp).background(if (filter == key) Color(0xFFE7EEFF) else Color.Transparent)
+                                    .clickable { filter = key }.padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                                    Text(label, fontSize = 11.sp, color = if (filter == key) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
+                                }
                             }
                         }
-                    }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        WatchButton(if (query.isEmpty()) "查找" else "筛选中") { searchDraft = query; searching = true }
-                        WatchButton(if (lockedFlow == null) "锁插件" else "解锁") { lockedFlow = if (lockedFlow == null) activeFlow else null }
-                        WatchButton("刷新", !inspection.loading && runtime.phase == RuntimeConnectionPhase.CONNECTED) { refreshRequest++ }
-                        WatchButton("说明") { help = true }
-                    }
-                    Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground).padding(horizontal = 6.dp, vertical = 3.dp)) {
-                        Text("类型", fontSize = 10.sp, modifier = Modifier.width(30.dp))
-                        Text("变量", fontSize = 10.sp, modifier = Modifier.weight(1f))
-                        Text("当前值", fontSize = 10.sp, modifier = Modifier.weight(1f))
-                    }
-                    LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                        if (values.isEmpty()) item {
-                            Text(when {
-                                lockedFlow != null && reply.flowId != lockedFlow && filter != "global" -> "锁定插件未在当前快照中，暂无可读局部值"
-                                reply.status != RuntimeDebugReply.SUCCESS -> "运行或单步本项目后可观察变量"
-                                filter == "changed" -> "相邻采样暂未发现变化"
-                                else -> "没有符合筛选的变量"
-                            }, fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(8.dp))
+                        FlowRow(Modifier.fillMaxWidth()) {
+                            WatchButton(if (query.isEmpty()) "查找" else "筛选中") { searchDraft = query; searching = true }
+                            WatchButton(if (lockedFlow == null) "锁插件" else "解锁") { lockedFlow = if (lockedFlow == null) activeFlow else null }
+                            WatchButton("刷新", !inspection.loading && runtime.phase == RuntimeConnectionPhase.CONNECTED) { refreshRequest++ }
+                            WatchButton("说明") { help = true }
                         }
-                        items(values, key = { it.watchListKey(reply.flowId) }) { value ->
-                            val changed = value.watchKey(reply.flowId) in watch.latestChanges
-                            Row(Modifier.fillMaxWidth().heightIn(min = 28.dp)
-                                .background(if (changed) Color(0xFFEFF5FF) else Color.Transparent).clickable { details = value }
-                                .padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(watchTypeLabel(value.type), fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.width(30.dp))
-                                Text(value.name, fontSize = 11.sp, color = AutoScriptPalette.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f).padding(end = 4.dp))
-                                Text(runtimeDebugValueText(value), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f), color = if (changed) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary)
+                        }
+                        Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground).padding(horizontal = 6.dp, vertical = 3.dp)) {
+                            Text("类型", fontSize = 10.sp, modifier = Modifier.width(30.dp))
+                            Text("变量", fontSize = 10.sp, modifier = Modifier.weight(1f))
+                            Text("当前值", fontSize = 10.sp, modifier = Modifier.weight(1f))
+                        }
+                        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                            if (values.isEmpty()) item {
+                                Text(when {
+                                    lockedFlow != null && reply.flowId != lockedFlow && filter != "global" -> "锁定插件未在当前快照中，暂无可读局部值"
+                                    reply.status != RuntimeDebugReply.SUCCESS -> "运行或单步本项目后可观察变量"
+                                    filter == "changed" -> "相邻采样暂未发现变化"
+                                    else -> "没有符合筛选的变量"
+                                }, fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(8.dp))
                             }
-                            HorizontalDivider(color = AutoScriptPalette.Divider, thickness = .5.dp)
+                            items(values, key = { it.watchListKey(reply.flowId) }) { value ->
+                                val changed = value.watchKey(reply.flowId) in watch.latestChanges
+                                Row(Modifier.fillMaxWidth().heightIn(min = 28.dp)
+                                    .background(if (changed) Color(0xFFEFF5FF) else Color.Transparent).clickable { details = value }
+                                    .padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(watchTypeLabel(value.type), fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.width(30.dp))
+                                    Text(value.name, fontSize = 11.sp, color = AutoScriptPalette.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).padding(end = 4.dp))
+                                    Text(runtimeDebugValueText(value), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f), color = if (changed) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary)
+                                }
+                                HorizontalDivider(color = AutoScriptPalette.Divider, thickness = .5.dp)
+                            }
                         }
+                        HorizontalDivider(color = AutoScriptPalette.Divider)
+                        Text(when {
+                            readFailed -> "读取失败，可手动重试"
+                            runtime.phase != RuntimeConnectionPhase.CONNECTED -> "未连接 · 旧值已清除"
+                            watch.status == RuntimeDebugReply.SESSION_MISMATCH -> "无匹配运行会话"
+                            inspection.loading -> if (reply.status == RuntimeDebugReply.SUCCESS) "读取中 · 显示上一份采样" else "正在读取运行变量"
+                            watch.status == RuntimeDebugReply.BUSY -> if (reply.status == RuntimeDebugReply.SUCCESS) "读取忙 · 显示上一份采样" else "读取忙 · 等待样本"
+                            reply.status != RuntimeDebugReply.SUCCESS -> "等待本项目运行检查点"
+                            else -> "${values.size}/${reply.variables.size} · ${when (runtime.engineState) {
+                                RuntimeEngineState.RUNNING -> "500ms采样"; RuntimeEngineState.PAUSED -> "暂停·执行前"; else -> "结束·最后快照"
+                            }}${if (reply.variablesTruncated) " · 已达上限" else ""}"
+                        }, fontSize = 10.sp, maxLines = if (shortViewport) 1 else 2,
+                            overflow = TextOverflow.Ellipsis, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(5.dp))
                     }
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
-                    Text(when {
-                        readFailed -> "读取失败，可手动重试"
-                        runtime.phase != RuntimeConnectionPhase.CONNECTED -> "未连接 · 旧值已清除"
-                        watch.status == RuntimeDebugReply.SESSION_MISMATCH -> "无匹配运行会话"
-                        inspection.loading -> if (reply.status == RuntimeDebugReply.SUCCESS) "读取中 · 显示上一份采样" else "正在读取运行变量"
-                        watch.status == RuntimeDebugReply.BUSY -> if (reply.status == RuntimeDebugReply.SUCCESS) "读取忙 · 显示上一份采样" else "读取忙 · 等待样本"
-                        reply.status != RuntimeDebugReply.SUCCESS -> "等待本项目运行检查点"
-                        else -> "${values.size}/${reply.variables.size} · ${when (runtime.engineState) {
-                            RuntimeEngineState.RUNNING -> "500ms采样"; RuntimeEngineState.PAUSED -> "暂停·执行前"; else -> "结束·最后快照"
-                        }}${if (reply.variablesTruncated) " · 已达上限" else ""}"
-                    }, fontSize = 10.sp, maxLines = 2, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(5.dp))
                 }
             }
         }

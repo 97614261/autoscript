@@ -5,6 +5,7 @@
   "searchTerms": ["getcolor", "像素", "颜色", "坐标"],
   "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
   "properties": [
+    { "path": "autoCapture", "label": "每次截图", "editor": "boolean", "required": false, "defaultValue": "false" },
     { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
     { "path": "point", "label": "坐标(x,y)", "editor": "point", "required": true, "defaultValue": "0,0" },
     { "path": "resultVariable", "label": "颜色变量", "editor": "string", "required": true, "defaultValue": "color" }

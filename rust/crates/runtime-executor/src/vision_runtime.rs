@@ -46,8 +46,8 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             if options.len() > 1024 {
                 return Err("comparison options exceed budget".into());
             }
-            let current = self.legacy_frame_view(task, *handle)?;
-            let previous = self.legacy_frame_view(task, *previous)?;
+            let current = self.frame_view(task, *handle)?;
+            let previous = self.frame_view(task, *previous)?;
             let mut control = TemplateSearchControl::new(self.scheduler.handle(), task);
             if opcode == 5123 {
                 let spec =
@@ -73,7 +73,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         if options.len() > 16384 {
             return Err("options exceed budget".into());
         }
-        let frame = self.legacy_frame_view(task, *handle)?;
+        let frame = self.frame_view(task, *handle)?;
         let mut control = TemplateSearchControl::new(self.scheduler.handle(), task);
         if opcode == 5010 {
             let spec: vision_extensions::Transform =
@@ -127,7 +127,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let [LuaScalar::Integer(handle)] = args else {
             return Err("frameInfo requires a task-owned image handle".into());
         };
-        let frame = self.legacy_frame_view(task, *handle)?;
+        let frame = self.frame_view(task, *handle)?;
         let rotation = match frame.metadata.rotation {
             Rotation::Degrees0 => 0,
             Rotation::Degrees90 => 90,
@@ -157,7 +157,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             }
             crate::data_runtime::validate_file_request(14100, &[LuaScalar::Bytes(path.clone())])
                 .map_err(str::to_owned)?;
-            let frame = self.legacy_frame_view(task, *frame)?;
+            let frame = self.frame_view(task, *frame)?;
             let mut control = TemplateSearchControl::new(self.scheduler.handle(), task);
             let png = crate::frame_png::encode(&frame, &mut || control.checkpoint())?;
             Ok(vec![LuaScalar::Bytes(path.clone()), LuaScalar::Bytes(png)])
@@ -180,7 +180,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         else {
             return Err("requires frame/x/y".into());
         };
-        let frame = self.legacy_frame_view(task, *handle)?;
+        let frame = self.frame_view(task, *handle)?;
         let origin = frame.origin.as_ref().ok_or("MAPPING_NO_SCREEN_ORIGIN")?;
         let point = origin
             .map_point(automation_core::PixelPoint {

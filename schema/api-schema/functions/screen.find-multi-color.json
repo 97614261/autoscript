@@ -20,6 +20,6 @@
     { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
     { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" }
   ],
-  "returns": { "type": "Point", "nullable": true, "summary": "首个匹配锚点；未找到时为nil。" },
+  "returns": { "type": "Point", "nullable": true, "summary": "首个匹配锚点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。" },
   "legacyAliases": ["FindMultiColor"]
 }

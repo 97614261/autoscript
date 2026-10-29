@@ -6,6 +6,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EditorOverlaySessionTest {
+    @Test fun inputPickerReturnsToTheSameOverlayAndKeepsItsInsertionDialogAndBounds() {
+        val host = EditorOverlaySession({})
+        val bounds = Rect(80f, 100f, 400f, 500f)
+        host.bounds(bounds)
+        val insertion = Observer()
+        host.suppress("pick:7")
+        assertTrue(host.hidden)
+        assertTrue(host.registerChild(insertion))
+        assertFalse(insertion.visible)
+        host.restore()
+        host.suppress(null)
+        assertFalse(host.hidden)
+        assertTrue(host.panelExpanded)
+        assertTrue(insertion.visible)
+        assertEquals(bounds, host.dockBounds)
+        assertEquals(0, insertion.closes)
+    }
     @Test fun realtimeLogSamplingStopsWhileHiddenMinimizedOrClosed() {
         val host = EditorOverlaySession({})
         assertFalse(host.shouldSampleRealtimeLog)

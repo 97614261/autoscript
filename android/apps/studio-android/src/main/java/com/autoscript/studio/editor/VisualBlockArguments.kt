@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -24,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -198,6 +201,7 @@ internal fun VisualVariableConditionDialog(
     onDismiss: () -> Unit,
     onConfirm: (Map<String, String>) -> String?,
     confirmLabel: String = "确定",
+    titleOverride: String? = null,
 ) {
     if (contract.kind == "variable.calculate") {
         VisualVariableCalculationDialog(JsonObject().apply {
@@ -216,7 +220,7 @@ internal fun VisualVariableConditionDialog(
     var validationError by remember(contract.kind, inputs) { mutableStateOf<String?>(null) }
     var fullScreen by remember { mutableStateOf(false) }
     val title = when (contract.kind) {
-        "control.if" -> "如果"
+        "control.if" -> "条件"
         "variable.set" -> "设置变量"
         "task.log" -> "输出日志"
         "task.prompt" -> "弹出提示"
@@ -224,41 +228,28 @@ internal fun VisualVariableConditionDialog(
         "task.comment" -> "添加说明"
         else -> "读取变量"
     }
-    StudioPanelDialog(title, onDismiss, showFooter = false, fullScreen = fullScreen,
+    StudioPanelDialog(titleOverride ?: title, onDismiss, showFooter = false, fullScreen = fullScreen,
+        landscapeWidthDp = if (contract.kind == "control.if") 320 else 600,
         onToggleFullScreen = { fullScreen = !fullScreen }) {
+        CompositionLocalProvider(LocalVariablePickerMetadata provides calculationVariables(projectVariables, currentFlowId, flows)) {
             Column(if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
-                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     when (contract.kind) {
                         "control.if" -> {
                             CompoundConditionEditor(values["condition"].orEmpty(), conditionSeed(values["variable"].orEmpty(), values["operator"].orEmpty(), values["value"].orEmpty(), values["valueVariable"].orEmpty()), knownVariables, { valid -> invalidConditions = if (valid) invalidConditions - "main" else invalidConditions + "main" }) {
                                 values = values + ("condition" to it)
                             }
                             if (values["condition"].isNullOrBlank()) {
-                            VisualVariableField("左值（变量）", values["variable"].orEmpty(), knownVariables) { values = values + ("variable" to it) }
-                            Text("比较运算符", color = AutoScriptPalette.Accent, fontSize = 11.sp)
-                            Row(Modifier.fillMaxWidth()) {
-                                listOf(
-                                    "equals" to "等于", "notEquals" to "不等于", "lessThan" to "小于",
-                                    "lessOrEqual" to "≤", "greaterThan" to "大于", "greaterOrEqual" to "≥",
-                                ).forEach { (value, label) ->
-                                    val selected = values["operator"] == value
-                                    Text(label, color = if (selected) androidx.compose.ui.graphics.Color.White else AutoScriptPalette.TextPrimary, fontSize = 10.sp,
-                                        textAlign = TextAlign.Center, modifier = Modifier.weight(1f).padding(horizontal = 2.dp)
-                                            .background(if (selected) AutoScriptPalette.Accent else androidx.compose.ui.graphics.Color(0xFFF1F4F8), RoundedCornerShape(3.dp))
-                                            .clickable { values = values + ("operator" to value) }.padding(vertical = 7.dp))
-                                }
-                            }
-                            OutlinedTextField(
-                                value = values["value"].orEmpty(), onValueChange = { values = values + ("value" to it) },
-                                label = { Text("右值（字符串请用双引号）") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                            )
-                            VisualVariableField("右值变量（优先于右值）", values["valueVariable"].orEmpty(), knownVariables) { values = values + ("valueVariable" to it) }
+                                CompactComparisonEditor(values["variable"].orEmpty(), values["operator"].orEmpty(),
+                                    values["value"].orEmpty(), values["valueVariable"].orEmpty(), knownVariables,
+                                    { values = values + ("variable" to it) }, { values = values + ("operator" to it) },
+                                    { values = values + ("value" to it) }, { values = values + ("valueVariable" to it) })
                             }
                             if (elseIfBranches.isNotEmpty()) {
                                 Text("否则如果分支", color = AutoScriptPalette.Accent, fontSize = 11.sp)
                                 elseIfBranches.forEachIndexed { index, branch ->
                                     Column(
-                                        Modifier.fillMaxWidth().border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).padding(7.dp),
+                                        Modifier.fillMaxWidth().border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(5.dp)).padding(5.dp),
                                         verticalArrangement = Arrangement.spacedBy(4.dp),
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -268,28 +259,17 @@ internal fun VisualVariableConditionDialog(
                                             elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(condition = next)) }
                                         }
                                         if (branch.condition.isBlank()) {
-                                        VisualVariableField("左值", branch.variable, knownVariables) { next ->
-                                            elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(variable = next)) }
-                                        }
-                                        Row(Modifier.fillMaxWidth()) {
-                                            listOf("equals" to "=", "notEquals" to "≠", "lessThan" to "<", "lessOrEqual" to "≤", "greaterThan" to ">", "greaterOrEqual" to "≥").forEach { (operator, label) ->
-                                                val selected = branch.operator == operator
-                                                Text(label, textAlign = TextAlign.Center, fontSize = 10.sp,
-                                                    color = if (selected) androidx.compose.ui.graphics.Color.White else AutoScriptPalette.TextPrimary,
-                                                    modifier = Modifier.weight(1f).padding(horizontal = 1.dp).background(if (selected) AutoScriptPalette.Accent else androidx.compose.ui.graphics.Color(0xFFF1F4F8), RoundedCornerShape(3.dp)).clickable {
-                                                        elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(operator = operator)) }
-                                                    }.padding(vertical = 5.dp))
-                                            }
-                                        }
-                                        OutlinedTextField(branch.value, { next -> elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(value = next)) } }, label = { Text("右值（JSON 标量）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                        VisualVariableField("右值变量（优先）", branch.valueVariable, knownVariables) { next ->
-                                            elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(valueVariable = next)) }
-                                        }
+                                            CompactComparisonEditor(branch.variable, branch.operator, branch.value,
+                                                branch.valueVariable, knownVariables,
+                                                { next -> elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(variable = next)) } },
+                                                { next -> elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(operator = next)) } },
+                                                { next -> elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(value = next)) } },
+                                                { next -> elseIfBranches = elseIfBranches.toMutableList().apply { set(index, branch.copy(valueVariable = next)) } })
                                         }
                                     }
                                 }
                             }
-                            Text("新增或删除分支请用顶栏“＋/－否则如果”；每个分支都有独立的“否则如果 N 内新增”入口。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
+                            ImageToolHelp("比较值按 JSON 标量填写：数字直接输入，字符串加双引号；选择右变量时优先读取变量。复合条件支持与/或/非，与/或短路，最多64项、8层、8192字节。新增或删除分支用顶栏“＋/－否则如果”。")
                         }
                         "variable.set" -> {
                             VisualVariableField("变量名", values["name"].orEmpty(), knownVariables) { values = values + ("name" to it) }
@@ -349,17 +329,23 @@ internal fun VisualVariableConditionDialog(
                             VisualVariableField("目标变量", values["name"].orEmpty(), knownVariables) { values = values + ("name" to it) }
                         }
                     }
-                    validationError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                    if (contract.kind != "control.if") validationError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                }
+                if (contract.kind == "control.if") validationError?.let {
+                    Text(it, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = AutoScriptPalette.Danger, fontSize = 11.sp)
                 }
                 HorizontalDivider(color = AutoScriptPalette.Divider)
-                Row(Modifier.fillMaxWidth().height(40.dp)) {
+                Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(if (contract.kind == "control.if") 36 else 32,
+                    LocalDensity.current.fontScale).dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("取消", textAlign = TextAlign.Center, color = AutoScriptPalette.TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable(onClick = onDismiss).wrapContentSize(Alignment.Center))
+                    if (contract.kind == "control.if") Box(Modifier.width(1.dp).height(24.dp).background(AutoScriptPalette.Divider))
                     Text(confirmLabel, textAlign = TextAlign.Center, color = AutoScriptPalette.Accent, fontSize = 13.sp, modifier = Modifier.weight(1f).fillMaxSize().clickable {
                         val complete = if (contract.kind == "control.if") values + ("elseIf" to serializeElseIfDrafts(elseIfBranches)) else values
                         validationError = if (invalidConditions.isNotEmpty()) "请修正复合条件输入后再保存" else onConfirm(complete)
                     }.wrapContentSize(Alignment.Center))
                 }
             }
+        }
     }
 }
 
@@ -396,18 +382,19 @@ private fun serializeElseIfDrafts(branches: List<VisualElseIfDraft>): String = J
 }.toString()
 
 @Composable
-private fun VisualVariableField(label: String, value: String, choices: List<String>, onValueChange: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        OutlinedTextField(value = value, onValueChange = onValueChange, label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        if (choices.isNotEmpty()) {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                Text("已有变量：", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, modifier = Modifier.padding(top = 5.dp, end = 4.dp))
-                choices.forEach { choice ->
-                    Text(choice, color = AutoScriptPalette.Accent, fontSize = 10.sp, modifier = Modifier.padding(end = 5.dp)
-                        .border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).clickable { onValueChange(choice) }.padding(horizontal = 7.dp, vertical = 4.dp))
-                }
+internal fun VisualVariableField(label: String, value: String, choices: List<String>,
+    variables: List<CalculationVariable> = LocalVariablePickerMetadata.current, onValueChange: (String) -> Unit) {
+    if (choices.isEmpty()) {
+        ImageToolCompactInput(label, value, true, Modifier.fillMaxWidth(), onChange = onValueChange)
+        return
+    }
+    VariableChoiceAnchor("选择变量", value, listOf(VariablePickerOption("", "清空")) + variablePickerOptions(choices, variables), onValueChange) { open ->
+        ImageToolCompactInput(label, value, true, Modifier.fillMaxWidth(), trailing = {
+            Box(Modifier.size(24.dp).clickable(onClick = open), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(R.drawable.ic_list_24),
+                    "选择变量", Modifier.size(16.dp), tint = AutoScriptPalette.Accent)
             }
-        }
+        }, onChange = onValueChange)
     }
 }
 
@@ -607,7 +594,8 @@ internal fun VisualNodeArgumentsDialog(
                                 }
                             }
                             BlockPropertyEditor.STRING -> if (property.path.endsWith("Variable")) {
-                                VisualVariableField(property.label, inputs[property.path].orEmpty(), knownVariables) {
+                                VisualVariableField(property.label, inputs[property.path].orEmpty(), knownVariables,
+                                    calculationVariables(imageProject?.manifest?.variables.orEmpty(), currentFlowId, flows)) {
                                     inputs = inputs + (property.path to it)
                                 }
                             } else OutlinedTextField(
@@ -837,6 +825,12 @@ internal fun parseBlockArguments(
         return null to "注释内容不能为空"
     }
     if (contract.kind.startsWith("vision.") || contract.kind.startsWith("ocr.")) {
+        if (contract.kind in recognitionColorGroupKinds) {
+            runCatching {
+                com.autoscript.project.store.ProjectGlyphColor.decodeAdditional(
+                    arguments["additionalColors"]?.asString.orEmpty(), arguments["rgb"].asInt)
+            }.getOrElse { return null to "色组需为不同的RRGGBB:容差（0–255），含主色最多16色" }
+        }
         if(contract.kind in setOf("ocr.glyph","ocr.glyphdetails")) {
             val extra = runCatching {com.autoscript.project.store.ProjectGlyphColor.decodeAdditional(arguments["additionalColors"]?.asString.orEmpty(),arguments["foregroundRgb"].asInt)}
                 .getOrElse {return null to "前景色组需为不同的RRGGBB:容差（0–255），总共最多16色"}
@@ -852,12 +846,12 @@ internal fun parseBlockArguments(
             "tolerance" to (0..255),
             "anchorTolerance" to (0..255),
             "similarityPermille" to (0..1000),
-            "limit" to (1..256),
+            "limit" to recognitionLimitRange(contract.kind),
             "spaceGapColumns" to (0..65535),
         )
         bounds.forEach { (name, allowed) ->
             arguments.get(name)?.let { value ->
-                if (value.asInt !in allowed) return null to "$name 必须在 ${allowed.first}..${allowed.last} 之间"
+                if (value.asInt !in allowed) return null to "${if (name == "limit") "数量上限" else name} 必须在 ${allowed.first}..${allowed.last} 之间"
             }
         }
         arguments.getAsJsonObject("region")?.let { region ->

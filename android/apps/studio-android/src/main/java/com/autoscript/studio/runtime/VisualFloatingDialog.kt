@@ -46,7 +46,7 @@ internal fun VisualFloatingDialog(contract:BlockContract,args:JsonObject,project
                     TextButton(onClick={set("x","-1");set("y","-1")}) {Text("居中",fontSize=10.sp)}
                 }
                 DesignerInput("文字",inputs["text"].orEmpty(),true,Modifier.fillMaxWidth()) {set("text",it)}
-                DesignerChoice("文字来源",inputs["textVariable"].orEmpty().ifEmpty {"固定文字"},listOf("" to "固定文字")+variables.map {it.name to it.name},true) {set("textVariable",it)}
+                CompactVariableChoice("文字来源",inputs["textVariable"].orEmpty(),listOf("" to "固定文字")+variables.map {it.name to it.name},true,variables) {set("textVariable",it)}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                     DesignerInput("字号px",inputs["fontPx"].orEmpty(),true,Modifier.weight(0.7f),numeric=true) {set("fontPx",it)}
                     DesignerInput("文字颜色",inputs["textColor"].orEmpty(),true,Modifier.weight(1f)) {set("textColor",it)}
@@ -67,7 +67,7 @@ internal fun VisualFloatingDialog(contract:BlockContract,args:JsonObject,project
                 DesignerInput("绘图JSON · 相对窗内像素",inputs["shapesJson"].orEmpty(),true,Modifier.fillMaxWidth()) {set("shapesJson",it)}
                 Text("触摸穿透 · 最多8窗 · 图片contain显示；浮窗会进入截图，识图前可隐藏。",fontSize=10.sp)
             }
-            if(contract.kind=="floating.bounds") DesignerChoice("结果字符变量",inputs["resultVariable"].orEmpty(),variables.map {it.name to it.name},true) {set("resultVariable",it)}
+            if(contract.kind=="floating.bounds") CompactVariableChoice("结果字符变量",inputs["resultVariable"].orEmpty(),variables.map {it.name to it.name},true,variables) {set("resultVariable",it)}
             onManageVariables?.let {TextButton(onClick=it) {Text("维护变量",fontSize=10.sp)}}
             error?.let {Text(it,fontSize=11.sp)}
         }

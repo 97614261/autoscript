@@ -2,7 +2,6 @@ package com.autoscript.studio
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -11,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
@@ -82,6 +82,7 @@ internal fun pluginSourceProblemMessage(document: VisualSourceDocument, message:
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun PluginSourceEditorDialog(
     source: String,
     rootBlockId: String,
@@ -165,16 +166,17 @@ internal fun PluginSourceEditorDialog(
         else if (originalLua != null && draft.text != originalLua) discard = true else onDismiss()
     }
     var fullScreen by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
     StudioPanelDialog("插件 · 积木 / 源码", ::close, if (busy) "校验中…" else "校验并应用", { startValidation(true) },
         confirmEnabled = !busy && originalLua != null, fullScreen = fullScreen, onToggleFullScreen = { fullScreen = !fullScreen }) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val sourceHeight = studioPanelViewportHeight(maxHeight.value * .65f, 260, fullScreen).dp
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(enabled = !busy, onClick = { tab = "源码" }) { Text("源码") }
-                    TextButton(enabled = !busy && originalLua != null, onClick = { startValidation(false) }) { Text("积木预览") }
-                    TextButton(enabled = !busy, onClick = { tab = "函数参考" }) { Text("函数参考") }
-                    if (initialNodeId != null) TextButton(enabled = !busy && originalLua != null, onClick = {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SourceEditorAction("源码", !busy) { tab = "源码" }
+                    SourceEditorAction("积木预览", !busy && originalLua != null) { startValidation(false) }
+                    SourceEditorAction("函数参考", !busy) { tab = "函数参考" }
+                    if (initialNodeId != null) SourceEditorAction("定位所选行", !busy && originalLua != null, onClick = {
                         val document = parsed ?: exportedDocument?.takeIf { draft.text == it.text }
                         val at = document?.nodes?.get(initialNodeId)
                         if (at == null) error = "源码已修改，请先校验积木预览，再定位所选行"
@@ -184,9 +186,10 @@ internal fun PluginSourceEditorDialog(
                                 else sourceRowOffset(draft.text, at)
                             draft = draft.copy(selection = TextRange(offset))
                         }
-                    }) { Text("定位所选行") }
+                    })
+                    SourceEditorAction(if (showHelp) "收起说明" else "说明", true) { showHelp = !showHelp }
                 }
-                Text("受限 Lua 视图；不支持任意 Lua、模块或自定义函数。校验后同步积木并自动保存，可撤销。变量仍在变量页面维护。", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
+                if (showHelp) Text("受限 Lua 视图；不支持任意 Lua、模块或自定义函数。校验后同步积木并自动保存，可撤销。变量仍在变量页面维护。", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
                 Text("${draft.text.lineSequence().count()} 行 · ${draft.text.toByteArray(Charsets.UTF_8).size} 字节 / 1 MiB", fontSize = 10.sp)
                 error?.let { Text(it, color = AutoScriptPalette.Danger, fontSize = 11.sp) }
                 if (busy) TextButton(onClick = { validationJob?.cancel() }) { Text("取消校验") }
@@ -223,10 +226,10 @@ internal fun PluginSourceEditorDialog(
                         }
                     }
                     else -> {
-                        OutlinedTextField(query, { query = it }, label = { Text("查找函数 / 积木") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        InspectorSearchField(query, { query = it }, "查找函数 / 积木")
                         Text("例：count = 3；count = count + 1；if count > 0 then … end。复杂参数使用函数具名表；数组 Json.Array({…})，空值 Json.Null。", fontSize = 10.sp)
                         LazyColumn(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) sourceHeight else 190.dp)) {
-                            items(BlockCatalog.all.filter { query.isBlank() || it.title.contains(query) || it.kind.contains(query, true) }) { contract ->
+                            items(BlockCatalog.insertable.filter { query.isBlank() || it.title.contains(query) || it.kind.contains(query, true) }) { contract ->
                                 Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                     Text("${contract.title} · ${VisualLuaSource.name(contract.kind)}", fontSize = 12.sp, color = AutoScriptPalette.Accent)
                                     Text(contract.properties.joinToString(" · ") { it.path }, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
@@ -242,4 +245,12 @@ internal fun PluginSourceEditorDialog(
         text = { Text("尚未应用的源码修改将被丢弃，原来的积木不受影响。") },
         dismissButton = { TextButton(onClick = { discard = false }) { Text("继续编辑") } },
         confirmButton = { TextButton(onClick = onDismiss) { Text("放弃修改") } })
+}
+
+@Composable
+internal fun SourceEditorAction(label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(modifier.heightIn(min = 28.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 5.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center) {
+        Text(label, fontSize = 11.sp, color = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
+    }
 }

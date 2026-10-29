@@ -99,6 +99,291 @@ fn runtime() -> mlua::Lua {
 }
 
 #[test]
+fn compiler_checkpoint_keeps_old_payload_on_runtime_without_details() {
+    let bundle = sources(
+        &manifest(json!([]), json!([])),
+        &[node("task.noop", json!({}))],
+        &[],
+    );
+    let lua = runtime();
+    lua.globals()
+        .set("__autoscript_run_observation", true)
+        .unwrap();
+    let entry = lua.load(&bundle.main_lua).eval::<mlua::Function>().unwrap();
+    let thread = lua.create_thread(entry).unwrap();
+    let payload = thread.resume::<mlua::MultiValue>(()).unwrap();
+    assert_eq!(payload.len(), 5);
+    assert_eq!(
+        payload[0].as_string().unwrap().to_str().unwrap(),
+        "__AUTOSCRIPT_RUN_CONTEXT_V1"
+    );
+    assert_eq!(payload[1].as_string().unwrap().to_str().unwrap(), "main");
+    assert_eq!(payload[2].as_string().unwrap().to_str().unwrap(), "main-0");
+    thread.resume::<()>(()).unwrap();
+    assert!(!thread.is_resumable());
+}
+
+#[test]
+fn runtime_error_reports_visual_row_in_nested_plugin_with_comments() {
+    use runtime_executor::{ExecutorConfig, RuntimeExecutor, VirtualHost};
+    use runtime_scheduler::{ManualClock, MonoTime, SchedulerConfig, TaskState};
+    let mut project = manifest(
+        json!([{"name":"count","scope":"global","type":"number"}]),
+        json!([]),
+    );
+    project.flows[1].path = "visual/flows/技能'测试.jsonl".into();
+    let mut comment = node(
+        "task.comment",
+        json!({"message":"disabled row still has a number"}),
+    );
+    comment["disabled"] = json!(true);
+    let mut repeat = node("control.repeat", json!({"times":1}));
+    repeat["childBlocks"] = json!({"body":"child-body"});
+    let mut failure = node(
+        "variable.calculate",
+        json!({"name":"count","expression":"1/0"}),
+    );
+    failure["blockId"] = json!("child-body");
+    failure["parentId"] = json!("child-1");
+    failure["depth"] = json!(1);
+    let bundle = sources(
+        &project,
+        &[
+            comment.clone(),
+            node("flow.call", json!({"targetFlowId":"child","arguments":{}})),
+        ],
+        &[comment, repeat, failure],
+    );
+    let mut runtime = RuntimeExecutor::new(
+        ManualClock::new(MonoTime::ZERO),
+        SchedulerConfig::default(),
+        lua_runtime::LuaRuntimeConfig::default(),
+        ExecutorConfig::default(),
+        VirtualHost::new(720, 1280),
+    )
+    .unwrap();
+    let task = runtime
+        .start_entry_chunk(&bundle.main_lua, "visual-row-diagnostic")
+        .unwrap();
+    for _ in 0..16 {
+        runtime.drive().unwrap();
+        if runtime.task_state(task) == Some(TaskState::Failed) {
+            break;
+        }
+    }
+    assert_eq!(runtime.task_state(task), Some(TaskState::Failed));
+    let failure = runtime.task_failure(task).unwrap();
+    assert!(
+        failure
+            .message
+            .contains("插件 技能'测试 (child) · 第3行 · 变量计算 · 积木 child-2"),
+        "{failure:?}"
+    );
+    assert!(!failure.message.contains("插件 main"));
+    assert!(failure.message.contains("stack traceback"));
+}
+
+#[test]
+fn legacy_color_capture_keeps_rgb_tolerances_and_releases_private_frames() {
+    let mut project = manifest(json!([]), json!([]));
+    project.runtime_api = "1.8".into();
+    project
+        .capabilities
+        .extend(["vision.pixel.legacy", "screen.capture"].map(str::to_owned));
+    let operation = node(
+        "legacy.getrectcolornum",
+        json!({"frameVariable":"unused", "autoCapture":true,
+        "region":{"left":3,"top":4,"width":5,"height":6},
+        "colors":[{"rgb":66051,"toleranceRed":4,"toleranceGreen":5,"toleranceBlue":6}],
+        "resultVariable":"count"}),
+    );
+    let bundle = sources(&project, &[operation, log("count")], &[]);
+    for failing in [false, true] {
+        let lua = runtime();
+        lua.globals().set("failing", failing).unwrap();
+        lua.load(
+            r#"
+            captured=0;released=0
+            Screen={capture=function() captured=captured+1;return 7 end,
+                cache=function(f) assert(f==7);return f end,
+                release=function(f) assert(f==7);released=released+1 end}
+            Legacy={getRectColorNum=function(f,l,t,w,h,colors)
+                assert(f==7 and l==3 and t==4 and w==5 and h==6)
+                assert(colors=='(1,2,3)-(4,5,6)')
+                if failing then error('expected-count-failure') end
+                return 19
+            end}
+        "#,
+        )
+        .exec()
+        .unwrap();
+        let result = lua
+            .load(&bundle.main_lua)
+            .eval::<mlua::Function>()
+            .unwrap()
+            .call::<()>(());
+        assert_eq!(result.is_err(), failing);
+        assert_eq!(lua.globals().get::<i64>("captured").unwrap(), 1);
+        assert_eq!(lua.globals().get::<i64>("released").unwrap(), 1);
+        if !failing {
+            assert!(lua
+                .globals()
+                .get::<mlua::Table>("logs")
+                .unwrap()
+                .get::<String>(1)
+                .unwrap()
+                .ends_with("19"));
+        }
+    }
+}
+
+#[test]
+fn color_capture_uses_a_private_frame_and_releases_on_success_and_failure() {
+    let mut project = manifest(json!([]), json!([]));
+    project.runtime_api = "1.8".into();
+    project
+        .capabilities
+        .extend(["vision.pixel", "screen.capture"].map(str::to_owned));
+    let main = [
+        node(
+            "vision.countcolor",
+            json!({"frameVariable":"frame","autoCapture":true,
+        "rgb":16711680,"tolerance":0,"region":{"left":0,"top":0,"right":100,"bottom":100},
+        "limit":0,"resultVariable":"count"}),
+        ),
+        log("count"),
+    ];
+    let bundle = sources(&project, &main, &[]);
+    let lua = runtime();
+    lua.load("captured=0; released=0; Screen={colorLimitsVersion=1, capture=function() captured=captured+1; return 7 end, cache=function(f) return f end, release=function(f) assert(f==7); released=released+1 end, countColor=function(f,rgb,t,l,t0,r,b,limit) assert(f==7 and limit==0); return 10000 end}").exec().unwrap();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    assert_eq!(lua.globals().get::<i64>("captured").unwrap(), 1);
+    assert_eq!(lua.globals().get::<i64>("released").unwrap(), 1);
+    assert!(lua
+        .load("return tostring(logs[1])")
+        .eval::<String>()
+        .unwrap()
+        .contains("10000"));
+    lua.load("Screen.countColor=function() error('count failed') end")
+        .exec()
+        .unwrap();
+    assert!(lua
+        .load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .is_err());
+    assert_eq!(lua.globals().get::<i64>("released").unwrap(), 2);
+    let mut borrowed = main[0].clone();
+    borrowed["args"]["autoCapture"] = json!(false);
+    let saved = sources(&project, &[borrowed], &[]);
+    assert!(!String::from_utf8(saved.main_lua)
+        .unwrap()
+        .contains("local __color_frame="));
+}
+
+#[test]
+fn color_capture_outputs_execute_with_typed_json_at_the_full_list_boundary() {
+    let mut project = manifest(
+        json!([
+            {"name":"color","scope":"global","type":"integer"},
+            {"name":"found","scope":"global","type":"integer"},
+            {"name":"x","scope":"global","type":"integer"},
+            {"name":"y","scope":"global","type":"integer"},
+            {"name":"same","scope":"global","type":"integer"},
+            {"name":"count","scope":"global","type":"integer"},
+            {"name":"points","scope":"global","type":"string"}
+        ]),
+        json!([]),
+    );
+    project.runtime_api = "1.8".into();
+    project
+        .capabilities
+        .extend(["vision.pixel", "screen.capture"].map(str::to_owned));
+    let region = json!({"left":0,"top":0,"right":100,"bottom":100});
+    let main = [
+        node(
+            "vision.getcolor",
+            json!({"frameVariable":"unused","autoCapture":true,
+            "point":{"x":2,"y":3},"resultVariable":"color"}),
+        ),
+        node(
+            "vision.findcolor",
+            json!({"frameVariable":"unused","autoCapture":true,
+            "rgb":255,"tolerance":0,"region":region,
+            "foundVariable":"found","xVariable":"x","yVariable":"y"}),
+        ),
+        node(
+            "vision.comparecolor",
+            json!({"frameVariable":"unused","autoCapture":true,
+            "point":{"x":2,"y":3},"rgb":255,"tolerance":0,"resultVariable":"same"}),
+        ),
+        node(
+            "vision.findmulticolor",
+            json!({"frameVariable":"unused","autoCapture":true,
+            "anchorRgb":255,"anchorTolerance":0,"samples":[{"x":1,"y":0,"rgb":255,"tolerance":0}],
+            "region":region,"foundVariable":"found","xVariable":"x","yVariable":"y"}),
+        ),
+        node(
+            "vision.countcolor",
+            json!({"frameVariable":"unused","autoCapture":true,
+            "rgb":255,"tolerance":0,"region":region,"limit":0,"resultVariable":"count"}),
+        ),
+        node(
+            "vision.findallcolor",
+            json!({"frameVariable":"unused","autoCapture":true,
+            "rgb":255,"tolerance":0,"region":region,"limit":2048,"resultVariable":"points"}),
+        ),
+        log("points"),
+        log("count"),
+        log("same"),
+        log("color"),
+        log("found"),
+    ];
+    let bundle = sources(&project, &main, &[]);
+    let lua = runtime();
+    lua.load(r#"
+        captured=0; released=0
+        local function frame(f) assert(f==7) end
+        Screen={colorLimitsVersion=1,
+            capture=function() captured=captured+1; return 7 end,
+            cache=function(f) frame(f); return f end,
+            release=function(f) frame(f); released=released+1 end,
+            getColor=function(f,x,y) frame(f); assert(x==2 and y==3); return 255 end,
+            findColor=function(f) frame(f); return {x=2,y=3} end,
+            compareColor=function(f) frame(f); return true end,
+            findMultiColor=function(f) frame(f); return {x=2,y=3} end,
+            countColor=function(f,rgb,t,l,t0,r,b,limit) frame(f); assert(limit==0); return 10000 end,
+            findAllColor=function(f,rgb,t,l,t0,r,b,limit)
+                frame(f); assert(limit==2048); local points={}
+                for i=1,limit do points[i]={x=i,y=32768} end
+                return points
+            end}
+    "#).exec().unwrap();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    let logs = lua.globals().get::<mlua::Table>("logs").unwrap();
+    let first = logs.get::<String>(1).unwrap();
+    let encoded = &first[first.find('[').unwrap()..];
+    assert!(encoded.len() <= 65536);
+    let points: Vec<Value> = serde_json::from_str(encoded).unwrap();
+    assert_eq!(points.len(), 2048);
+    assert_eq!(points[2047], json!({"x":2048,"y":32768}));
+    for (index, value) in [(2, "10000"), (3, "1"), (4, "255"), (5, "1")] {
+        assert!(logs.get::<String>(index).unwrap().ends_with(value));
+    }
+    assert_eq!(lua.globals().get::<i64>("captured").unwrap(), 6);
+    assert_eq!(lua.globals().get::<i64>("released").unwrap(), 6);
+}
+
+#[test]
 fn chinese_keys_calculations_parameters_jumps_and_empty_plugins_execute() {
     let mut project = manifest(
         json!([
@@ -340,6 +625,45 @@ fn randomization_compiles_gesture_bounds_and_disabled_override() {
         .call::<()>(())
         .unwrap();
     assert!(lua.globals().get::<bool>("exact").unwrap());
+}
+
+#[test]
+fn screen_pixel_input_compiles_exact_points_and_keeps_legacy_design_calls() {
+    let mut project = manifest(json!([]), json!([]));
+    project.runtime_api = "1.8".into();
+    project.capabilities.push("input.basic".into());
+    let bundle = sources(
+        &project,
+        &[
+            node("input.tap", json!({"x":1200,"y":300,"screenPixels":true})),
+            node(
+                "input.pointerdown",
+                json!({"x":1100,"y":250,"screenPixels":true}),
+            ),
+            node("task.sleep", json!({"milliseconds":800,"exactTiming":true})),
+            node(
+                "input.pointermove",
+                json!({"x":1150,"y":260,"screenPixels":true}),
+            ),
+            node("input.pointerup", json!({})),
+            node(
+                "input.swipe",
+                json!({"x1":1000,"y1":200,"x2":1200,"y2":300,"durationMs":200,"screenPixels":true}),
+            ),
+            node("input.tap", json!({"x":10,"y":20})),
+        ],
+        &[],
+    );
+    let lua = runtime();
+    lua.load("calls={}; Task={sleep=function(ms) assert(ms==800) end}; Input={tapScreen=function(x,y) assert(x==1200 and y==300);table.insert(calls,'tap') end,pointerDownScreen=function(x,y) assert(x==1100 and y==250);table.insert(calls,'down') end,pointerMoveScreen=function(x,y) assert(x==1150 and y==260);table.insert(calls,'move') end,pointerUp=function() table.insert(calls,'up') end,swipeScreen=function(a,b,c,d,ms) assert(a==1000 and b==200 and c==1200 and d==300 and ms==200);table.insert(calls,'swipe') end,tap=function(x,y) assert(x==10 and y==20);table.insert(calls,'design') end}").exec().unwrap();
+    lua.load(&bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    lua.load("assert(table.concat(calls,',')=='tap,down,move,up,swipe,design')")
+        .exec()
+        .unwrap();
 }
 
 #[test]

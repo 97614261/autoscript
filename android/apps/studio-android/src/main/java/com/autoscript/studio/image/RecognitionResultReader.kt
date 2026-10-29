@@ -48,7 +48,7 @@ internal fun recognitionResultBlocks(shape: RecognitionResultShape, field: Strin
         if (value is Number) addProperty(key, value) else addProperty(key, value.toString())
     } }
     val aggregate = field in setOf("count", "truncated") || shape.isSummary()
-    val limit = when (shape) { RecognitionResultShape.SCALED_IMAGE -> 1;RecognitionResultShape.IMAGES -> 64; RecognitionResultShape.COLORS, RecognitionResultShape.COMPONENTS -> 256; else -> 2048 }
+    val limit = when (shape) { RecognitionResultShape.SCALED_IMAGE -> 1;RecognitionResultShape.IMAGES -> 64; RecognitionResultShape.COMPONENTS -> 256; else -> 2048 }
     require(if (aggregate) index == 0 else index in 1..limit) { "总览序号0，逐项序号1–$limit" }
     return listOf(requireNotNull(BlockCatalog.find("vision.readresult")) to args("sourceVariable" to source, "shape" to shape.name,
         "index" to index, "field" to field, "resultVariable" to target))

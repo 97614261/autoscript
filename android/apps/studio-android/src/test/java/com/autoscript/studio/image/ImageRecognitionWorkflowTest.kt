@@ -111,9 +111,16 @@ class ImageRecognitionWorkflowTest {
         assertEquals(listOf("vision.findimage"), find.map { it.first.kind })
         assertTrue(find.single().second["autoCapture"].asBoolean)
         val color = recognitionImageEntryBlocks(requireNotNull(BlockCatalog.find("vision.findcolor")), JsonObject().apply { addProperty("frameVariable", "customFrame") })
-        assertEquals(listOf("screen.capture", "vision.findcolor", "screen.release"), color.map { it.first.kind })
-        assertEquals("customFrame", color.first().second["resultVariable"].asString)
-        assertEquals("customFrame", color.last().second["frameVariable"].asString)
+        assertEquals(listOf("vision.findcolor"), color.map { it.first.kind })
+        assertEquals("customFrame", color.single().second["frameVariable"].asString)
+        assertTrue(color.single().second["autoCapture"].asBoolean)
+        val legacy = requireNotNull(BlockCatalog.find("legacy.getrectcolornum"))
+        val original = JsonObject().apply { addProperty("frameVariable", "unused") }
+        val fresh = recognitionImageEntryBlocks(legacy, original)
+        assertEquals(listOf("legacy.getrectcolornum"), fresh.map { it.first.kind })
+        assertTrue(fresh.single().second["autoCapture"].asBoolean)
+        assertFalse(original.has("autoCapture"))
+        assertFalse(recognitionImageEntryBlocks(legacy, original, capture = false).single().second["autoCapture"].asBoolean)
     }
 
     @Test fun mixedRecognitionBorrowsTheExplicitFrameWithoutCaptureOrRelease() {
@@ -145,8 +152,8 @@ class ImageRecognitionWorkflowTest {
             "foundVariable" to "found", "xVariable" to "x", "yVariable" to "y")
         assertTrue(inputs.getValue("samples").length > 128)
         assertEquals(64, requireNotNull(parseRecognitionArguments(multi, inputs, emptyList()).first)["samples"].asJsonArray.size())
-        assertEquals("读取已有帧：frame", recognitionFrameSummary(inputs, false))
-        assertEquals("运行时自动截图 · 用完释放", recognitionFrameSummary(inputs, true))
+        assertEquals("共用图像：frame", recognitionFrameSummary(inputs, false))
+        assertEquals("每次截图 · 用完自动释放", recognitionFrameSummary(inputs, true))
         assertEquals("读取已保存的识别结果", recognitionFrameSummary(emptyMap(), false))
         imageEntryGroups.flatMap { it.second }.forEach { assertNotEquals("配置识别积木", imageActionHint(it.kind)) }
     }

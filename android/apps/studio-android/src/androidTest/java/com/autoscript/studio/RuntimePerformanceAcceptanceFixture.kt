@@ -136,7 +136,8 @@ internal object RuntimePerformanceAcceptanceFixture {
                     }
                     val closed = requireNotNull(run)
                     check(closed.metadata["status"] == "stopped" && closed.metadata["droppedRecords"] == "0" && closed.metadata["truncatedRecords"] == "0") { "QA_RUNTIME_LOG_INCOMPLETE" }
-                    val times = RuntimeLogFiles.read(activity.filesDir, closed.id, "script.log").lineSequence().filter(String::isNotBlank)
+                    val times = RuntimeLogFiles.read(activity.filesDir, closed.id, "script.log").lineSequence()
+                        .filter { runtimeConsoleChannel(it) == RuntimeConsoleChannel.SCRIPT }
                         .map { requireNotNull(it.substringAfterLast(' ').toLongOrNull()) }.toList()
                     check(times.size == 111 && times.all { it >= 0 }) { "QA_RUNTIME_SAMPLES" }
                     val warm = times.drop(11).sorted()
@@ -185,7 +186,8 @@ internal object RuntimePerformanceAcceptanceFixture {
                 }
                 val closed = requireNotNull(run)
                 check(closed.metadata["droppedRecords"] == "0" && closed.metadata["truncatedRecords"] == "0") { "QA_INPUT_LOG_INCOMPLETE" }
-                val logged = RuntimeLogFiles.read(activity.filesDir, closed.id, "script.log").lineSequence().filter(String::isNotBlank)
+                val logged = RuntimeLogFiles.read(activity.filesDir, closed.id, "script.log").lineSequence()
+                    .filter { runtimeConsoleChannel(it) == RuntimeConsoleChannel.SCRIPT }
                     .map { requireNotNull(it.substringAfterLast(' ').toLongOrNull()) }.toList()
                 check(logged.size == 222) { "QA_INPUT_SAMPLE_COUNT" }
                 val submissions = logged.chunked(2).map { it.first() }.drop(11).sorted()

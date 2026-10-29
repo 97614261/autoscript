@@ -60,12 +60,15 @@ internal fun recognitionPropertyVisible(path: String, inputs: Map<String, String
 
 internal fun recognitionFrameSummary(inputs: Map<String, String>, automaticCapture: Boolean): String = when {
     "frameVariable" !in inputs -> "读取已保存的识别结果"
-    automaticCapture || inputs["autoCapture"] == "true" -> "运行时自动截图 · 用完释放"
-    else -> "读取已有帧：${inputs["frameVariable"].orEmpty().ifBlank { "未设置" }}"
+    automaticCapture || inputs["autoCapture"] == "true" -> "每次截图 · 用完自动释放"
+    else -> "共用图像：${inputs["frameVariable"].orEmpty().ifBlank { "未设置" }}"
 }
 
 internal fun recognitionUsesOwnCapture(kind: String): Boolean = kind in setOf(
     "vision.findimage", "vision.findallimages", "vision.findgray", "ocr.alphanumeric",
+    "vision.getcolor", "vision.findcolor", "vision.comparecolor", "vision.findmulticolor",
+    "vision.countcolor", "vision.findallcolor",
+    "legacy.getrectcolornum",
 )
 
 /** Reading results is not recognition: it must never insert a capture or require capture permission. */
@@ -87,6 +90,8 @@ internal fun recognitionFixedRegionInputs(inputs: Map<String, String>, region: S
     }
 
 internal fun recognitionAlgorithmHelp(kind: String): String = when (kind) {
+    "vision.findcolor", "vision.comparecolor", "vision.countcolor", "vision.findallcolor" -> "色组最多16色，每色独立容差，任意一色命中；同一像素不重复计数。计数上限0统计全部，1–6400万达到即停止；计数是像素数量，不是物体数量。全部找色保留1–2048个坐标，按行返回。总比较预算1亿次，多色大范围请缩小区域。"
+
     "vision.findimage" -> "像素匹配按模板顺序返回首个命中，不是最高分。频次N表示首次及之后每N次访问识别，跳过轮次不截图或执行动作。裁剪图像覆盖时释放，插件结束清理；动作偏移使用原始屏幕像素。"
     "vision.findgray" -> "灰度最高分匹配，不缩放、不旋转；模板≤256K像素，范围≤400万像素，超出计算预算明确报错。是否找到为1/0。"
     "vision.findallimages" -> "按模板顺序及方向保留结果（包括重叠），最多64项；truncated表示存在未保留项。结果集合需声明为字变量。动作默认作用首项，开启全结果才逐项执行；按住仅限首项。等待可取消，动作前释放临时帧，成功/失败分支互斥。"

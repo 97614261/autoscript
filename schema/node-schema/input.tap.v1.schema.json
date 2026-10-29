@@ -3,17 +3,40 @@
   "$id": "https://autoscript.local/schema/node/input.tap/1/input.tap.schema.json",
   "title": "input.tap node semantics",
   "type": "object",
-  "required": ["kind", "nodeVersion", "args"],
+  "required": [
+    "kind",
+    "nodeVersion",
+    "args"
+  ],
   "properties": {
-    "kind": { "const": "input.tap" },
-    "nodeVersion": { "const": 1 },
+    "kind": {
+      "const": "input.tap"
+    },
+    "nodeVersion": {
+      "const": 1
+    },
     "args": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["x", "y"],
+      "required": [
+        "x",
+        "y"
+      ],
       "properties": {
-        "x": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-        "y": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
+        "x": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "y": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "screenPixels": {
+          "type": "boolean",
+          "description": "true 使用屏幕像素；缺省或 false 使用项目设计坐标。"
+        }
       }
     }
   }

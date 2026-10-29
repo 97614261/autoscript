@@ -385,9 +385,49 @@ fn draft_uses_api18(source: &FlowSource<'_>) -> bool {
     source.report.document.as_ref().is_some_and(|document| {
         document.nodes.iter().any(|node| {
             node.envelope.randomization.is_some()
-                || matches!(node.envelope.kind.as_str(), "screen.frameinfo" | "screen.captureregion" | "text.numberat")
+                || node.envelope.kind == "legacy.getrectcolornum"
+                    && node.envelope.args.get("autoCapture").and_then(serde_json::Value::as_bool) == Some(true)
+                || matches!(
+                    node.envelope.kind.as_str(),
+                    "screen.frameinfo" | "screen.captureregion" | "text.numberat"
+                )
+                || matches!(
+                    node.envelope.kind.as_str(),
+                    "vision.findcolor"
+                        | "vision.comparecolor"
+                        | "vision.countcolor"
+                        | "vision.findallcolor"
+                ) && node
+                    .envelope
+                    .args
+                    .get("additionalColors")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|v| !v.is_empty())
+                || matches!(
+                    node.envelope.kind.as_str(),
+                    "vision.countcolor" | "vision.findallcolor"
+                ) && node
+                    .envelope
+                    .args
+                    .get("limit")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|v| v == 0 || v > 256)
                 || node.envelope.kind == "ocr.alphanumeric"
-                    && node.envelope.args.get("includeSymbols").and_then(serde_json::Value::as_bool) == Some(true)
+                    && node
+                        .envelope
+                        .args
+                        .get("includeSymbols")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                || matches!(
+                    node.envelope.kind.as_str(),
+                    "input.tap" | "input.swipe" | "input.pointerdown" | "input.pointermove"
+                ) && node
+                    .envelope
+                    .args
+                    .get("screenPixels")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
                 || [
                     "text.urlencode",
                     "text.urldecode",
@@ -1016,9 +1056,17 @@ mod tests {
     fn text_and_symbol_drafts_upgrade_old_api_without_writing_project() {
         let root = create_project("task.noop");
         let manifest_path = root.join("project.json");
-        let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
         manifest["runtimeApi"] = serde_json::json!("1.7");
-        manifest["capabilities"] = serde_json::json!(["core.task", "screen.capture", "ocr.onnx"]);
+        manifest["capabilities"] = serde_json::json!([
+            "core.task",
+            "screen.capture",
+            "ocr.onnx",
+            "input.basic",
+            "vision.pixel",
+            "vision.pixel.legacy"
+        ]);
         manifest["variables"] = serde_json::json!([
             {"name":"text","type":"string","scope":"global"},
             {"name":"score","type":"integer","scope":"global"},
@@ -1029,11 +1077,46 @@ mod tests {
         let source_path = root.join("visual/flows/main.jsonl");
         let original = fs::read(&source_path).unwrap();
         for (kind, args) in [
-            ("text.numberat", serde_json::json!({"text":"item -12.5 / +7", "index":2, "resultVariable":"text"})),
-            ("ocr.alphanumeric", serde_json::json!({"frameVariable":"frame", "autoCapture":true,
+            (
+                "text.numberat",
+                serde_json::json!({"text":"item -12.5 / +7", "index":2, "resultVariable":"text"}),
+            ),
+            (
+                "ocr.alphanumeric",
+                serde_json::json!({"frameVariable":"frame", "autoCapture":true,
                 "textVariable":"text", "scoreVariable":"score", "minimumConfidencePermille":500,
-                "region":{"left":0,"top":0,"right":100,"bottom":20}, "includeSymbols":true})),
-            ("screen.captureregion", serde_json::json!({"resultVariable":"frame", "left":0,"top":0,"right":100,"bottom":20})),
+                "region":{"left":0,"top":0,"right":100,"bottom":20}, "includeSymbols":true}),
+            ),
+            (
+                "screen.captureregion",
+                serde_json::json!({"resultVariable":"frame", "left":0,"top":0,"right":100,"bottom":20}),
+            ),
+            (
+                "input.tap",
+                serde_json::json!({"x":1200,"y":300,"screenPixels":true}),
+            ),
+            (
+                "vision.countcolor",
+                serde_json::json!({"frameVariable":"frame","rgb":16711680,"tolerance":0,"additionalColors":"0000FF:8",
+                "region":{"left":0,"top":0,"right":100,"bottom":20},"limit":256,"resultVariable":"score"}),
+            ),
+            (
+                "vision.countcolor",
+                serde_json::json!({"frameVariable":"frame","autoCapture":true,"rgb":16711680,"tolerance":0,
+                "region":{"left":0,"top":0,"right":100,"bottom":20},"limit":0,"resultVariable":"score"}),
+            ),
+            (
+                "vision.findallcolor",
+                serde_json::json!({"frameVariable":"frame","autoCapture":true,"rgb":16711680,"tolerance":0,
+                "region":{"left":0,"top":0,"right":100,"bottom":20},"limit":2048,"resultVariable":"text"}),
+            ),
+            (
+                "legacy.getrectcolornum",
+                serde_json::json!({"frameVariable":"frame","autoCapture":true,
+                    "region":{"left":0,"top":0,"width":8,"height":3},
+                    "colors":[{"rgb":255,"toleranceRed":1,"toleranceGreen":2,"toleranceBlue":3}],
+                    "resultVariable":"score"}),
+            ),
         ] {
             let mut node: Value = serde_json::from_slice(&original).unwrap();
             node["kind"] = serde_json::json!(kind);

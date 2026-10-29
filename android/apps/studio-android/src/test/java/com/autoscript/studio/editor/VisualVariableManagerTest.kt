@@ -13,13 +13,15 @@ class VisualVariableManagerTest {
         ProjectVariable(name, ProjectVariableScope.FLOW, flow, type)
 
     @Test fun panelGrowsWithContentAndStopsAtSixRows() {
-        assertEquals(215f, variableManagerPanelHeightDp(1, 800f), 0f)
-        assertEquals(248f, variableManagerPanelHeightDp(2, 800f), 0f)
-        assertEquals(380f, variableManagerPanelHeightDp(6, 800f), 0f)
-        assertEquals(380f, variableManagerPanelHeightDp(1000, 800f), 0f)
-        assertEquals(262f, variableManagerPanelHeightDp(0, 800f), 0f)
+        assertEquals(163f, variableManagerPanelHeightDp(1, 800f), 0f)
+        assertEquals(194f, variableManagerPanelHeightDp(2, 800f), 0f)
+        assertEquals(318f, variableManagerPanelHeightDp(6, 800f), 0f)
+        assertEquals(318f, variableManagerPanelHeightDp(1000, 800f), 0f)
+        assertEquals(182f, variableManagerPanelHeightDp(0, 800f), 0f)
         assertEquals(300f, variableManagerPanelHeightDp(10, 300f), 0f)
-        assertEquals(255f, variableManagerPanelHeightDp(1, 800f, hasNotice = true), 0f)
+        assertEquals(195f, variableManagerPanelHeightDp(1, 800f, hasNotice = true), 0f)
+        assertEquals(295.5f, variableManagerPanelHeightDp(1, 800f, fontScale = 1.5f, stackedFilters = true), 0f)
+        assertEquals(150f, variableManagerPanelHeightDp(1, 150f, fontScale = 1.5f, stackedFilters = true), 0f)
     }
 
     @Test fun scopeAndNameSearchDoNotLeakAnotherPlugin() {

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -80,7 +79,6 @@ internal fun PluginManagerDialog(
         },
     ) {
         BoxWithConstraints(Modifier.fillMaxWidth().background(Color(0xFFF5F7FB))) {
-            val showDescriptions = maxWidth >= 300.dp && LocalDensity.current.fontScale <= 1.3f
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
             ) {
@@ -100,12 +98,14 @@ internal fun PluginManagerDialog(
                     Text("当前不可管理插件，请结束运行或等待操作完成。", fontSize = 11.sp,
                         color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
                 }
-                PluginManagerAction.entries.forEach { action ->
-                    HorizontalDivider(color = AutoScriptPalette.Border)
-                    PluginManagerRow(action, pluginManagerActionEnabled(action, enabled && !submitted), showDescriptions) {
-                        if (!submitted && pluginManagerActionEnabled(action, enabled)) {
-                            submitted = true
-                            onAction(action)
+                StudioCompactGrid(PluginManagerAction.entries, cellDp = 170, maximum = 2, modifier = Modifier.padding(6.dp)) { action, cell ->
+                    BoxWithConstraints(cell) {
+                        val showDescriptions = maxWidth >= 300.dp && LocalDensity.current.fontScale <= 1.3f
+                        PluginManagerRow(action, pluginManagerActionEnabled(action, enabled && !submitted), showDescriptions) {
+                            if (!submitted && pluginManagerActionEnabled(action, enabled)) {
+                                submitted = true
+                                onAction(action)
+                            }
                         }
                     }
                 }

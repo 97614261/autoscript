@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,6 +67,7 @@ private data class PickerRequest(
     val title: String,
     val options: List<String>,
     val selected: String? = null,
+    val isVariable: Boolean = false,
     val onSelected: (String) -> Unit,
 )
 
@@ -114,10 +114,12 @@ internal fun ConfiguredEntryArgumentsDialog(
         return true
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth(.94f).widthIn(max = 560.dp).heightIn(max = 540.dp).fillMaxHeight(.68f),
+        BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
+        Surface(Modifier.width(studioDialogWidth(maxWidth.value).dp).height(minOf(390.dp, maxHeight)),
             color = Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 9.dp) {
             CommonPage(onDismiss, accept, knownVariables, knownLabels, currentFlowId, flows,
                 variables, onManageVariables, kind, arguments, confirmLabel)
+        }
         }
     }
     return true
@@ -146,6 +148,8 @@ internal fun EditorEntryDialog(
 ) {
     when (entry) {
         EditorToolPanel.LOOP -> VisualLoopDialog(projectVariables, currentFlowId, projectFlows, onDismiss, onInsert, onManageVariables)
+        EditorToolPanel.JUDGMENT -> VisualConditionEntryDialog(onDismiss, onInsert, availableVariables,
+            projectVariables, currentFlowId, projectFlows, onManageVariables)
         EditorToolPanel.VARIABLE_CHECK, EditorToolPanel.RUNTIME_VARIABLES -> {
             StudioPanelDialog(title = "需要项目上下文", onDismiss = onDismiss, showFooter = false) {
                 Text("请从项目的可视化编辑器打开此功能。", fontSize = 12.sp, modifier = Modifier.padding(12.dp))
@@ -169,15 +173,15 @@ internal fun EditorEntryDialog(
                 fontSize = 12.sp, color = EntryMuted, modifier = Modifier.padding(12.dp))
         }
         else -> Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(if (entry == EditorToolPanel.JUDGMENT) Modifier.width(132.dp).height(132.dp)
-                else Modifier.fillMaxWidth(.96f).widthIn(max = 560.dp).height(390.dp),
+            BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
+            Surface(Modifier.width(studioDialogWidth(maxWidth.value).dp).height(minOf(390.dp, maxHeight)),
                 color = Color.White, shape = RoundedCornerShape(2.dp), shadowElevation = 8.dp) {
                 when (entry) {
-                    EditorToolPanel.JUDGMENT -> JudgmentPage(onDismiss, onInsert)
                     EditorToolPanel.COMMON -> CommonPage(onDismiss, onInsert, availableVariables,
                         availableLabels, currentFlowId, projectFlows, projectVariables, onManageVariables)
                     else -> Unit
                 }
+            }
             }
         }
     }
@@ -224,35 +228,11 @@ private fun DenseSpinner(
     }
 }
 
-@Composable
-private fun JudgmentPage(onDismiss: () -> Unit, onInsert: (String) -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        listOf(
-            // The host resolves the latter two actions against the selected `control.if`.
-            // This prevents detached Lua fragments from entering a visual Flow.
-            "如果" to "${FunctionCatalog.BLOCK_HINT_PREFIX}control.if\n",
-            "否则如果" to "--@autoscript-control:elseIf\n",
-            "否则" to "--@autoscript-control:else\n",
-        ).forEach { (label, snippet) ->
-            Text(
-                label,
-                color = Color(0xFF171B25),
-                fontSize = 14.sp,
-                modifier = Modifier.fillMaxWidth().weight(1f).clickable {
-                    onInsert(snippet)
-                    onDismiss()
-                }.padding(horizontal = 14.dp, vertical = 11.dp),
-            )
-        }
-    }
-}
-
-
 private fun variablePicker(
     variables: List<String>,
     selected: String?,
     onSelected: (String) -> Unit,
-): PickerRequest = PickerRequest("选择变量", variables, selected, onSelected)
+): PickerRequest = PickerRequest("选择变量", variables, selected, isVariable = true, onSelected = onSelected)
 
 @Composable
 private fun CommonPage(
@@ -460,7 +440,7 @@ private fun CommonPage(
         }
         jumpError?.let { Text(it, color = Color(0xFFD84949), fontSize = 11.sp) }
     }
-    picker?.let { request -> PickerDialog(request) { picker = null } }
+    picker?.let { request -> PickerDialog(request, resolvedVariables.values.toList()) { picker = null } }
 }
 
 @Composable
@@ -553,8 +533,9 @@ private fun DebugPage(
     expressionVariables: List<CalculationVariable>,
 ) {
     val currentExpressionVariables by rememberUpdatedState(expressionVariables)
+    val currentAvailableVariables by rememberUpdatedState(availableVariables)
     val pages = if (initialKind != null) listOf(0) else listOf(0, 1, 2)
-    val tabs = pages.map { when (it) { 1 -> "对话框"; 2 -> "弹窗样式"; else -> "运行提示" } }
+    val tabs = pages.map { when (it) { 1 -> "对话框"; 2 -> "弹窗样式"; else -> "输出内容" } }
     var selected by remember { mutableStateOf(0) }
     val selectedPage = pages[selected]
     var fullScreen by remember { mutableStateOf(false) }
@@ -582,28 +563,30 @@ private fun DebugPage(
         if (updated == null) outputError = "无法插入：请勿截断变量名或转义字符；转文字和运算符需放在引号外，表达式最多1024字节。原内容已保留。"
         else { outputField = updated; outputError = null }
     }
-    fun pickVariable(labeled: Boolean) {
-        val choices = if (expressionMode) expressionVariables.map { it.name } else availableVariables
+    fun pickVariable(labeled: Boolean, direct: Boolean = false) {
+        val choices = if (expressionMode && !direct) expressionVariables.map { it.name } else availableVariables
         if (choices.isEmpty()) {
-            outputError = if (expressionMode) "没有可用的数值或文字变量，请先在“变量”中创建。图像变量不能直接打印。"
+            outputError = if (expressionMode && !direct) "没有可用的数值或文字变量，请先在“变量”中创建。图像变量不能直接打印。"
                 else "当前没有可用变量，请先创建变量"
             return
         }
         val field = outputField
         val expression = expressionMode
         variablePicker = PickerRequest(
-            title = if (expression && labeled) "插入名称=值" else "选择变量",
+            title = if (expression && !direct && labeled) "插入名称=值" else "选择变量",
             options = choices,
             selected = outputVariable,
+            isVariable = true,
         ) { name ->
             if (formScope.isActive && expressionMode == expression && outputField.text == field.text && outputField.selection == field.selection) {
-                if (expression) {
+                if (expression && !direct) {
                     val chosen = expressionVariables.singleOrNull { it.name == name }
                     if (chosen == null || currentExpressionVariables.singleOrNull { it.name == name } != chosen)
                         outputError = "变量范围或类型已变化，请重新选择。原内容已保留。"
                     else editExpression { DebugOutputExpression.variable(it, chosen, labeled) }
                 }
-                else { outputVariable = name; outputError = null }
+                else if (name !in currentAvailableVariables) outputError = "变量范围已变化，请重新选择。原内容已保留。"
+                else { outputVariable = name; if (direct) expressionMode = false; outputError = null }
             }
         }
     }
@@ -622,15 +605,15 @@ private fun DebugPage(
     }
     val page: @Composable () -> Unit = {
     Column(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else Modifier.heightIn(max = 460.dp))) {
-        DebugNavigation(tabs, selected) { selected = it; outputError = null }
+        if (tabs.size > 1) DebugNavigation(tabs, selected) { selected = it; outputError = null }
         if (selectedPage == 1) Text(when (selectedPage) {
             0 -> "加入输出积木，不修改项目配置"
             1 -> "选择对话框功能 · 配置后加入，不在这里执行"
             else -> "项目配置 · 保存后用于后续运行"
         },
             color = EntryMuted, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
-        Row(Modifier.weight(1f)) {
-            Box(Modifier.weight(1f).fillMaxHeight().padding(8.dp)) {
+        Box(Modifier.weight(1f, fill = fullScreen || selectedPage != 0).fillMaxWidth()
+            .then(if (fullScreen || selectedPage != 0) Modifier.fillMaxHeight() else Modifier).padding(8.dp)) {
                 when (selectedPage) {
                     0 -> DebugOutputPanel(
                         outputMode = outputMode,
@@ -654,7 +637,8 @@ private fun DebugPage(
                         onLogLevelChange = { logLevel = it; outputError = null },
                         error = outputError,
                         onClearVariable = { outputVariable = null; outputError = null },
-                        onPickVariable = ::pickVariable,
+                        onPickVariable = { pickVariable(it) },
+                        onPickDirectVariable = { pickVariable(false, direct = true) },
                     )
                     1 -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -682,7 +666,6 @@ private fun DebugPage(
                     }
                     else -> Unit
                 }
-            }
         }
         if (selectedPage == 2) {
             popupSave.error?.let {
@@ -723,7 +706,7 @@ private fun DebugPage(
     }
     }
     StudioPanelDialog("输出",
-        ::requestClose, showFooter = false, fullScreen = fullScreen,
+        ::requestClose, showFooter = false, fullScreen = fullScreen, landscapeWidthDp = 600,
         onToggleFullScreen = { fullScreen = !fullScreen }, content = page)
     if (confirmDiscard) StudioConfirmDialog(
         onDismissRequest = { confirmDiscard = false; pendingDialogKind = null }, title = { Text(when {
@@ -736,7 +719,7 @@ private fun DebugPage(
             settingsDirty && outputDirty -> "尚未加入的输出及未保存的弹窗样式将被丢弃，现有积木和项目配置不会改变。"
             settingsDirty -> "本次弹窗样式修改尚未保存，关闭将丢弃修改。"
             initialKind != null -> "输出修改尚未确认，关闭会丢弃本次修改，原积木不变。"
-            else -> "运行提示页还有尚未加入积木的输出内容；关闭会丢弃该内容，已保存的弹窗样式不受影响。"
+            else -> "输出内容尚未加入积木；关闭会丢弃该内容，已保存的弹窗样式不受影响。"
         }) },
         confirmButton = { androidx.compose.material3.TextButton(onClick = {
             val hint = pendingDialogKind?.let(::scriptDialogInsertionHint)
@@ -748,7 +731,7 @@ private fun DebugPage(
             confirmDiscard = false; pendingDialogKind = null
         }) { Text(if (!settingsDirty && outputDirty) "查看输出内容" else "继续编辑") } },
     )
-    variablePicker?.let { request -> PickerDialog(request) { variablePicker = null } }
+    variablePicker?.let { request -> PickerDialog(request, expressionVariables) { variablePicker = null } }
 }
 
 @Composable
@@ -775,144 +758,6 @@ private fun DebugNavigation(tabs: List<String>, selected: Int, onSelected: (Int)
         }
     }
 }
-
-@Composable
-@OptIn(ExperimentalLayoutApi::class)
-private fun DebugOutputPanel(
-    outputMode: Int,
-    onOutputModeChange: (Int) -> Unit,
-    outputField: TextFieldValue,
-    expressionMode: Boolean,
-    expressionAvailable: Boolean,
-    onExpressionModeChange: (Boolean) -> Unit,
-    onOutputTextChange: (TextFieldValue) -> Unit,
-    onExpressionEdit: ((TextFieldValue) -> TextFieldValue?) -> Unit,
-    selectedVariable: String?,
-    logLevel: String,
-    onLogLevelChange: (String) -> Unit,
-    error: String?,
-    onClearVariable: () -> Unit,
-    onPickVariable: (Boolean) -> Unit,
-) {
-    val outputText = outputField.text
-    val scroll = rememberScrollState()
-    var showOperators by remember { mutableStateOf(false) }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-    val short = studioShortViewport(maxHeight.value)
-    val availableWidth = maxWidth
-    val columns = debugOutputChoiceColumns(maxWidth.value, LocalDensity.current.fontScale)
-    Column(Modifier.fillMaxSize().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val channels = listOf("运行提示", "弹出提示", "开发日志", "添加说明")
-        Column(Modifier.fillMaxWidth().background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            channels.withIndex().toList().chunked(columns).forEach { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    row.forEach { (value, label) ->
-                        DebugOutputChoice(label, outputMode == value, { onOutputModeChange(value) }, Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-        Text(when (outputMode) {
-            0 -> "运行中更新同一窗口，脚本结束即关闭。识别后的最终结果请用“弹出提示”。"
-            1 -> "短时弹出，正常结束后保留至到期；适合打印识别结果。主动停止会关闭。"
-            2 -> "只写脚本日志，不显示提示窗。"
-            else -> "只加说明，不会禁用积木；禁用请用“注释执行”。"
-        }, color = EntryMuted, fontSize = 10.sp)
-        if (outputMode == DebugOutputCode.LOG && !expressionMode) {
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf("info" to "信息", "warn" to "警告", "error" to "错误").forEach { (value, label) ->
-                    DebugOutputChoice(label, logLevel == value, { onLogLevelChange(value) })
-                }
-            }
-        }
-        if (outputMode != DebugOutputCode.COMMENT) {
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                DebugOutputChoice(selectedVariable?.let { "变量：$it" } ?: if (expressionMode) "变量值" else "选择变量", selectedVariable != null,
-                    { onPickVariable(false) }, Modifier.widthIn(max = availableWidth))
-                if (expressionMode) DebugOutputChoice("名称=值", false, { onPickVariable(true) })
-                if (expressionAvailable) {
-                    DebugOutputChoice("表达式", expressionMode, { onExpressionModeChange(!expressionMode) })
-                }
-                if (selectedVariable != null) {
-                    DebugOutputChoice("改用文字", false, onClearVariable)
-                }
-            }
-        }
-        if (expressionMode) Text("按光标插入，选中文字可替换；字符串直接拼接，数字自动转文字，读取运行时的值。", color = EntryMuted, fontSize = 10.sp)
-        if (selectedVariable != null && outputMode != DebugOutputCode.COMMENT) {
-            Text("将输出变量当前值；下方文字仅用作编辑器中的说明。", color = EntryMuted, fontSize = 10.sp)
-        }
-        if (error != null) Text(error, color = Color(0xFFD13232), fontSize = 11.sp)
-        Text(if (expressionMode) "表达式内容" else if (selectedVariable != null && outputMode != DebugOutputCode.COMMENT) "编辑器说明（可选）" else "文字内容",
-            color = EntryMuted, fontSize = 10.sp)
-        Box(
-            Modifier.fillMaxWidth().border(1.dp, EntryBorder, RoundedCornerShape(4.dp)).padding(8.dp),
-        ) {
-            BasicTextField(
-                value = outputField,
-                onValueChange = onOutputTextChange,
-                textStyle = TextStyle(fontSize = 13.sp, color = Color(0xFF202839)),
-                minLines = if (expressionMode) { if (short) 2 else 3 } else if (short) 3 else 5,
-                maxLines = 10,
-                modifier = Modifier.fillMaxWidth(),
-                decorationBox = { field ->
-                    Box(Modifier.fillMaxWidth()) {
-                        if (outputText.isEmpty()) Text(
-                            if (expressionMode) "例如：\"进度：\" .. text(次数)" else when (outputMode) {
-                                0 -> "输入持续显示的运行提示"
-                                1 -> "输入到时自动消失的弹窗内容"
-                                2 -> "输入供开发调试查看的脚本日志"
-                                else -> "输入说明内容"
-                            },
-                            color = Color(0xFFB3BAC7),
-                            fontSize = 13.sp,
-                        )
-                        field()
-                    }
-                },
-            )
-        }
-        if (expressionMode) {
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                DebugOutputChoice("插入文字", false, { onExpressionEdit { DebugOutputExpression.literal(it, "", editInside = true) } })
-                DebugOutputChoice("换行", false, { onExpressionEdit { DebugOutputExpression.literal(it, "\n") } })
-                DebugOutputChoice("空格", false, { onExpressionEdit { DebugOutputExpression.literal(it, " ") } })
-                DebugOutputChoice("转文字 text()", false, { onExpressionEdit(DebugOutputExpression::asText) })
-                DebugOutputChoice("运算符", showOperators, { showOperators = !showOperators })
-            }
-            if (showOperators) {
-                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("+" to " + ", "−" to " - ", "×" to " * ", "÷" to " / ", "(" to "(", ")" to ")", "拼接 .." to " .. ").forEach { (label, token) ->
-                        DebugOutputChoice(label, false, { onExpressionEdit { DebugOutputExpression.token(it, token) } })
-                    }
-                }
-                Text("数值计算后选中结果表达式，点“转文字 text()”再拼接；不修改变量本身。", color = EntryMuted, fontSize = 10.sp)
-            }
-        }
-    }
-    }
-}
-
-@Composable
-private fun DebugOutputChoice(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier.heightIn(min = 30.dp)
-        .background(if (selected) Color.White else EntryPanel, RoundedCornerShape(4.dp))
-        .border(1.dp, if (selected) EntryAccent else EntryBorder, RoundedCornerShape(4.dp))
-        .selectable(selected = selected, onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center) {
-        Text(label, color = if (selected) EntryAccent else EntryMuted, fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
-            style = CenteredDialogButtonTextStyle)
-    }
-}
-
-
-
 
 @Composable
 private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onSelected: (Int) -> Unit, onDismiss: () -> Unit, onAdd: () -> Unit, headerHint: String? = null, showAdd: Boolean = true, confirmLabel: String = "加入", content: @Composable () -> Unit) {
@@ -949,35 +794,10 @@ private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onS
 
 
 @Composable
-private fun PickerDialog(request: PickerRequest, onDismiss: () -> Unit) {
-    var selected by remember(request.title, request.selected) { mutableStateOf(request.selected) }
-    StudioPanelDialog(request.title, onDismiss, showFooter = false, compactHeader = true) {
-            Column(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
-                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                    if (request.options.isEmpty()) {
-                        Text("暂无可选变量，请先在“变量”中添加。", color = EntryMuted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center))
-                    } else {
-                        request.options.forEach { option ->
-                            Row(
-                                Modifier.fillMaxWidth().heightIn(min = 36.dp)
-                                    .background(if (selected == option) Color(0xFFEAF0FF) else Color.White)
-                                    .clickable { selected = option }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(option, color = Color(0xFF202839), fontSize = 12.sp, modifier = Modifier.weight(1f))
-                                if (selected == option) Text("✓", color = EntryAccent, fontSize = 15.sp)
-                            }
-                            DividerLine()
-                        }
-                    }
-                }
-                FooterButtons(listOf("取消" to onDismiss, "确定" to {
-                    selected?.let(request.onSelected)
-                    onDismiss()
-                }))
-            }
-    }
+private fun PickerDialog(request: PickerRequest, variables: List<CalculationVariable>, onDismiss: () -> Unit) {
+    CompactVariablePickerDialog(request.title,
+        if (request.isVariable) variablePickerOptions(request.options, variables) else request.options.map { VariablePickerOption(it) }, request.selected,
+        onDismiss, { value -> request.onSelected(value); onDismiss() })
 }
 
 

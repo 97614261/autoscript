@@ -107,11 +107,9 @@ internal fun SelectedNodeSourceEditorDialog(
             val sourceHeight = studioPanelViewportHeight(maxHeight.value * .65f, 220, fullScreen).dp
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth()) {
-                    TextButton(enabled = !busy && index > 0, onClick = { requestRow(rows[index - 1].id) }) { Text("上一行") }
-                    TextButton(enabled = !busy && scopeDraft != null, onClick = { picking = true }, modifier = Modifier.weight(1f)) {
-                        Text("选择行 · ${index + 1} / ${rows.size}")
-                    }
-                    TextButton(enabled = !busy && index in 0 until rows.lastIndex, onClick = { requestRow(rows[index + 1].id) }) { Text("下一行") }
+                    SourceEditorAction("上一行", !busy && index > 0) { requestRow(rows[index - 1].id) }
+                    SourceEditorAction("选择行 · ${index + 1} / ${rows.size}", !busy && scopeDraft != null, Modifier.weight(1f)) { picking = true }
+                    SourceEditorAction("下一行", !busy && index in 0 until rows.lastIndex) { requestRow(rows[index + 1].id) }
                 }
                 Text("只修改本行参数，其他积木与子树不变；空子区是结构骨架，请勿加入新积木。", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
                 error?.let { Text(it, color = AutoScriptPalette.Danger, fontSize = 11.sp) }
@@ -140,9 +138,9 @@ internal fun SelectedNodeSourceEditorDialog(
             val selectedIndex = visibleRows.indexOfFirst { it.id == selectedId }
             if (selectedIndex >= 0) rowListState.scrollToItem(selectedIndex)
         }
-        Column(Modifier.fillMaxWidth().padding(10.dp)) {
-            OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索行号 / 积木名称") }, modifier = Modifier.fillMaxWidth())
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 240.dp), state = rowListState) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 320.dp).padding(8.dp)) {
+            InspectorSearchField(query, { query = it }, "搜索行号 / 积木名称")
+            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = rowListState) {
                 items(visibleRows, key = { it.id }) { row ->
                     Text("${if (row.id == selectedId) "● " else ""}${row.index + 1}. ${row.label}", fontSize = 12.sp,
                         maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,

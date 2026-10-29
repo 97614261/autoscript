@@ -12,6 +12,7 @@
       "additionalProperties": false,
       "required": ["frameVariable", "anchorRgb", "anchorTolerance", "samples", "region", "foundVariable", "xVariable", "yVariable"],
       "properties": {
+        "autoCapture": { "type": "boolean", "default": false },
         "frameVariable": { "$ref": "#/$defs/variable" },
         "anchorRgb": { "type": "integer", "minimum": 0, "maximum": 16777215 },
         "anchorTolerance": { "type": "integer", "minimum": 0, "maximum": 255 },

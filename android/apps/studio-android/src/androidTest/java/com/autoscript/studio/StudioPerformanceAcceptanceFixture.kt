@@ -254,7 +254,7 @@ internal object StudioPerformanceAcceptanceFixture {
                 // valueVariable logs the value instead of the configured message. This owned
                 // script has exactly four ordered records per mixed iteration, never user logs.
                 val loggedValues=RuntimeLogFiles.read(owner.filesDir,closed.id,"script.log").lineSequence()
-                    .filter(String::isNotBlank).map {it.substringAfterLast(' ')}.toList()
+                    .filter { runtimeConsoleChannel(it) == RuntimeConsoleChannel.SCRIPT }.map {it.substringAfterLast(' ')}.toList()
                 if(mixed) check(loggedValues.size==111*4 && loggedValues.chunked(4).all {it.drop(1)==listOf("I","1","1000")}) {"QA_MIXED_LOOP_RESULTS"}
                 val pipeline=(if(mixed) loggedValues.chunked(4).map {it.first()} else loggedValues).mapNotNull(String::toLongOrNull)
                 check(pipeline.size==111) { "QA_PIPELINE_SAMPLE_COUNT" }

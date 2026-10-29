@@ -91,6 +91,10 @@ class EditorBranchPresentationTest {
         assertTrue(successHeader < rows.indexOfFirst { it.nodeId == nested })
         assertTrue(failureHeader > rows.indexOfFirst { it.nodeId == nestedLeaf })
         assertTrue(rows.filterIsInstance<EditorTreeDisplayRow.Branch>().none { it.empty })
+        assertEquals(1, rows[successHeader].depth)
+        assertEquals(2, rows.first { it.nodeId == nested }.depth)
+        assertEquals(3, rows.first { it.nodeId == nestedLeaf }.depth)
+        assertEquals(1, rows.filterIsInstance<EditorTreeDisplayRow.Node>().first { it.nodeId == nested }.node.depth)
         assertEquals("failure", editor.programDisplayNodes().first { it.nodeId == failed }.childSlot)
         assertEquals(source, editor.currentSource)
     }
@@ -116,6 +120,27 @@ class EditorBranchPresentationTest {
         val node = EditorTreeNode("disabled", "[已禁用] 调用插件", "flow.call.branch", container = true,
             childSlots = listOf("failure", "success"))
         assertTrue(editorTreeDisplayRows(listOf(node)).filterIsInstance<EditorTreeDisplayRow.Branch>().all { it.disabled })
+    }
+
+    @Test fun nestedBranchBodiesRemainIndentedAfterTheirOwnHeadings() {
+        val nodes = listOf(
+            EditorTreeNode("outer", "outer", "control.if", container = true, childSlots = listOf("then", "else")),
+            EditorTreeNode("inner", "inner", "control.if", depth = 1, container = true,
+                childSlots = listOf("then", "else"), childSlot = "then"),
+            EditorTreeNode("leaf", "leaf", "task.noop", depth = 2, childSlot = "then"),
+            EditorTreeNode("next", "next", "task.noop"),
+        )
+        val rows = editorTreeDisplayRows(nodes)
+        assertEquals(listOf(0, 1, 2, 3, 4, 3, 1, 0), rows.map { it.depth })
+        assertEquals(listOf(0, 1, 2, 0), rows.filterIsInstance<EditorTreeDisplayRow.Node>().map { it.node.depth })
+        rows.filterIsInstance<EditorTreeDisplayRow.Node>().forEach { assertSame(nodes.first { node -> node.id == it.nodeId }, it.node) }
+        assertEquals(listOf("outer", "inner", "leaf", "next"), rows.mapNotNull { it.nodeId })
+        val below = editorInsertionPreview(nodes, "inner", EditorInsertPosition.BELOW)
+        val boundary = below.lines.indexOfFirst { it.marker }
+        assertEquals(2, below.lines[boundary].depth)
+        assertEquals("否则", below.lines[boundary + 1].label)
+        val inside = editorInsertionPreview(nodes, "inner", EditorInsertPosition.INSIDE, "else")
+        assertEquals(4, inside.lines.single { it.marker }.depth)
     }
 
     @Test fun malformedReadOnlyDuplicateIdentitiesCannotCreateCyclicViewOwnership() {

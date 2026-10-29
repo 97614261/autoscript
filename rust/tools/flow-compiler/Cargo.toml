@@ -15,6 +15,9 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 fs4 = { workspace = true }
 
+[build-dependencies]
+api-codegen = { path = "../api-codegen" }
+
 [dev-dependencies]
 automation-core = { path = "../../crates/automation-core" }
 script-api = { path = "../../crates/script-api" }

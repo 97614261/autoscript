@@ -50,6 +50,7 @@ internal fun RuntimeEnvironmentScreen(
     state: RuntimeConnectionState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
+    onConnectRoot: () -> Unit,
     onShowDebug: (String) -> Unit,
     onOpenPermissions: () -> Unit,
     onOpenVisionComponents: () -> Unit,
@@ -129,6 +130,14 @@ internal fun RuntimeEnvironmentScreen(
                     }
                     Text("当前仅支持 Root 自动化", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary,
                         modifier = Modifier.padding(top = 6.dp))
+                    if (!rootReady) Text(
+                        if (state.rootState == RuntimeRootState.STARTING) "等待 Root 授权…" else "连接 Root / 重试授权",
+                        fontSize = 12.sp, color = AutoScriptPalette.Accent,
+                        modifier = Modifier.fillMaxWidth().clickable(
+                            enabled = connected && state.rootState != RuntimeRootState.STARTING,
+                            onClick = onConnectRoot,
+                        ).padding(vertical = 8.dp),
+                    )
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("连接" to labels.runner, "Root" to labels.root, "引擎" to labels.execution).forEach { (title, value) ->
                             Column(Modifier.weight(1f).background(AutoScriptPalette.AccentSoft, RoundedCornerShape(8.dp)).padding(8.dp)) {

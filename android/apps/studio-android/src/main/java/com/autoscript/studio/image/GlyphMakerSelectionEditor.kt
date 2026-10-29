@@ -25,6 +25,7 @@ internal fun glyphMakerMoveRegion(roi: ImageToolCodeGen.Roi, dx: Int, dy: Int, w
     return ImageToolCodeGen.Roi(x, y, x + roi.width, y + roi.height)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GlyphMakerSelectionEditor(roi: ImageToolCodeGen.Roi, width: Int, height: Int, enabled: Boolean,
     onRegion: (ImageToolCodeGen.Roi) -> Unit) {
@@ -37,12 +38,12 @@ internal fun GlyphMakerSelectionEditor(roi: ImageToolCodeGen.Roi, width: Int, he
     val draft = glyphMakerRegion(x, y, w, h, width, height)
     ImageToolCompactAction(if (expanded) "收起像素微调" else "像素微调", enabled) { expanded = !expanded }
     if (!expanded) return
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         listOf("整框", "左边", "上边", "右边", "下边").forEachIndexed { i, title ->
             ImageToolCompactAction(if (edge == i - 1) "✓ $title" else title, enabled) { edge = i - 1 }
         }
     }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         val actions = if (edge < 0) listOf("左1px", "右1px", "上1px", "下1px") else listOf("边缘−1px", "边缘＋1px")
         actions.forEachIndexed { index, title ->
             ImageToolCompactAction(title, enabled) {
@@ -57,13 +58,8 @@ internal fun GlyphMakerSelectionEditor(roi: ImageToolCodeGen.Roi, width: Int, he
             }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        ImageToolCompactInput("选区X", x, enabled, Modifier.weight(1f), numeric = true) { x = it.take(10) }
-        ImageToolCompactInput("选区Y", y, enabled, Modifier.weight(1f), numeric = true) { y = it.take(10) }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        ImageToolCompactInput("选区宽", w, enabled, Modifier.weight(1f), numeric = true) { w = it.take(10) }
-        ImageToolCompactInput("选区高", h, enabled, Modifier.weight(1f), numeric = true) { h = it.take(10) }
+    ImageToolNumberFields(listOf(Triple("x", "X", x), Triple("y", "Y", y), Triple("w", "宽", w), Triple("h", "高", h)), enabled) { key, value ->
+        when (key) { "x" -> x = value.take(10); "y" -> y = value.take(10); "w" -> w = value.take(10); else -> h = value.take(10) }
     }
     if (draft == null) Text("范围需在原图内，宽高至少1px；原选区保留。", fontSize = 10.sp)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

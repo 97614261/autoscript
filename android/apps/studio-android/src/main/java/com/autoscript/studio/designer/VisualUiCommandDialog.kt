@@ -93,8 +93,8 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
     val operation = if (command) inputs["operation"].orEmpty() else "value"
     val window = command && operation in uiWindowOperations
     val reading = command && operation.startsWith("get:")
-    val resultVariables = calculationVariables(project.manifest.variables, currentFlowId, project.manifest.flows)
-        .filter { it.type == com.autoscript.project.store.ProjectVariableType.STRING }.map { it.name }
+    val variableMetadata = calculationVariables(project.manifest.variables, currentFlowId, project.manifest.flows)
+    val resultVariables = variableMetadata.filter { it.type == com.autoscript.project.store.ProjectVariableType.STRING }.map { it.name }
     val choices = if (window) listOf("window" to "整个窗口") else model?.let(::uiParameterChoices).orEmpty()
     val id = inputs["controlId"].orEmpty()
     fun update(key: String, value: String) { inputs = inputs + (key to value); error = null }
@@ -128,7 +128,7 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
             }
             if (model == null) Text("请先设计并保存脚本界面")
             if (reading) {
-                DesignerChoice("结果变量", inputs["resultVariable"].orEmpty(), resultVariables.map { it to it }, true) { update("resultVariable", it) }
+                CompactVariableChoice("结果变量", inputs["resultVariable"].orEmpty(), resultVariables.map { it to it }, true, variableMetadata) { update("resultVariable", it) }
                 Text("返回字符值；数值和布尔可用计算积木转换。")
                 if(operation=="get:config") Text("导出输入参数JSON（最多8192字节），密码不包含；接文件写入可持久保存。")
                 if(operation=="get:pages") Text("只读页面ID、标题及设计尺寸，不保存布局、不读取填写值。")
@@ -139,7 +139,7 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
             } else if (!window || operation in setOf("page","restoreConfig","windowPosition","bubblePosition")) {
                 if(operation=="restoreConfig") Text("从文件读取到字符变量后恢复；全部校验成功才应用，不恢复密码、不触发事件。")
                 val sourceVariables=if(operation in setOf("range","restoreConfig","windowPosition","bubblePosition","backgroundImage")) resultVariables else variables
-                DesignerChoice("值来源", inputs["valueVariable"].orEmpty().ifEmpty { "固定值" }, listOf("" to "固定值") + sourceVariables.map { it to "变量 · $it" }, true) { update("valueVariable", it) }
+                CompactVariableChoice("值来源", inputs["valueVariable"].orEmpty(), listOf("" to "固定值") + sourceVariables.map { it to it }, true, variableMetadata) { update("valueVariable", it) }
                 if (!inputs["valueVariable"].isNullOrBlank()) Text("执行时读取所选变量，固定值不参与本次设置。")
                 else when (operation) {
                     "backgroundImage" -> {

@@ -61,7 +61,7 @@ internal fun RuntimeLogSettingsDialog(settings: ProjectDebugSettings, status: St
                 saveMessage?.let { LogSettingsText(it, muted = true) }
                 if (!enabled) LogSettingsText("运行或操作进行中，暂不可修改。草稿保留。", muted = true)
                 Column(Modifier.fillMaxWidth().border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(5.dp))) {
-                    LogSettingsToggle("积木执行追踪", "记录进入的插件与积木身份，不自动记录源码或变量值。",
+                    LogSettingsToggle("逐积木执行记录", "在运行日志显示进入的插件和积木；循环会产生较多记录，不记录源码或变量值。",
                         draft.traceExecution, enabled) { draft = draft.copy(traceExecution = it); saveMessage = null }
                     HorizontalDivider(color = AutoScriptPalette.Divider)
                     LogSettingsToggle("识图耗时统计", "记录截图往返、匹配耗时及取消、超时等结果，用于排查性能。",
@@ -70,7 +70,7 @@ internal fun RuntimeLogSettingsDialog(settings: ProjectDebugSettings, status: St
                 Column(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground, RoundedCornerShape(5.dp))
                     .padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        LogSettingsText("脚本输出 / 运行诊断", Modifier.weight(1f))
+                        LogSettingsText("开始、结束 / 脚本输出 / 错误", Modifier.weight(1f))
                         LogSettingsText("自动记录", muted = true)
                     }
                     LogSettingsText("保存在本机私有目录；历史可查看、导出和清理。导出可能包含脚本主动输出的私密内容。",

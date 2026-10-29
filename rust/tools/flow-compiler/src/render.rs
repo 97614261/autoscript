@@ -1,6 +1,6 @@
 use crate::analyze::{
     BuiltinNodeArgs, ComparisonOperator, FlowCallArgs, FlowChannelGetArgs, FlowChannelSetArgs,
-    LoopMetric, LoopTimeUnit, PreparedProject,
+    LoopMetric, LoopTimeUnit, PreparedFlow, PreparedProject,
 };
 use crate::model::{CompileError, SourceMap, SourceMapEntry};
 use flow_ir::{ProjectVariableScope, ProjectVariableType, ValueType};
@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use std::fmt::Write;
+include!(concat!(env!("OUT_DIR"), "/block_titles.rs"));
 pub(crate) fn render_lua(
     project: &PreparedProject<'_>,
     entry_flow_id: &str,
@@ -98,8 +99,11 @@ fn render_runtime_prelude(
     writer.line("local __recognition_ticks = {}");
     writer.line("local function __recognition_visit(key, every) local tick = __recognition_ticks[key] or 0; __recognition_ticks[key] = (tick + 1) % every; return tick == 0 end");
     writer
-        .line("local function __checkpoint(flow, node, locals, globals, localTypes, globalTypes, localOverrides)");
-    writer.line("  if __autoscript_run_observation then coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1', flow, node, __run_trace, __vision_metrics) end");
+        .line("local function __checkpoint(flow, node, locals, globals, localTypes, globalTypes, localOverrides, row, flowName, blockTitle)");
+    writer.line("  if __autoscript_run_observation then");
+    writer.line("    if __autoscript_run_context_details then coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1', flow, node, __run_trace, __vision_metrics, row, flowName, blockTitle)");
+    writer.line("    else coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1', flow, node, __run_trace, __vision_metrics) end");
+    writer.line("  end");
     writer.line("  if not __autoscript_debug_capture then return end");
     writer.line("  __autoscript_debug_snapshot = {flowId=flow,nodeId=node,locals=locals,globals=globals,localTypes=localTypes,globalTypes=globalTypes,localOverrides=localOverrides}");
     writer.line("  if __autoscript_debug_target_node then");
@@ -235,14 +239,7 @@ fn render_plugin_definitions(
                 .or_default()
                 .push(node);
         }
-        render_flow_body(
-            project,
-            &flow.declaration.flow_id,
-            &flow.document.root_block_id,
-            &blocks,
-            writer,
-            entries,
-        )?;
+        render_flow_body(project, flow, &blocks, writer, entries)?;
         writer.indented(
             1,
             &format!(
@@ -414,12 +411,28 @@ enum RenderEvent<'a> {
 
 fn render_flow_body<'a>(
     project: &PreparedProject<'a>,
-    flow_id: &str,
-    root_block_id: &'a str,
+    flow: &PreparedFlow<'a>,
     blocks: &HashMap<&'a str, Vec<&'a flow_ir::FlowNode>>,
     writer: &mut LuaWriter,
     entries: &mut Vec<SourceMapEntry>,
 ) -> Result<(), CompileError> {
+    let flow_id = flow.declaration.flow_id.as_str();
+    let flow_name = flow
+        .declaration
+        .path
+        .rsplit('/')
+        .next()
+        .unwrap_or(flow_id)
+        .strip_suffix(".jsonl")
+        .unwrap_or(flow_id);
+    let rows = flow
+        .document
+        .canonical_nodes()
+        .ok_or_else(|| CompileError::Serialization("missing canonical node order".into()))?
+        .enumerate()
+        .map(|(index, node)| (node.envelope.node_id.as_str(), index + 1))
+        .collect::<HashMap<_, _>>();
+    let root_block_id = flow.document.root_block_id.as_str();
     let mut events = vec![RenderEvent::Block(root_block_id, 1)];
     while let Some(event) = events.pop() {
         match event {
@@ -434,10 +447,14 @@ fn render_flow_body<'a>(
                 writer.indented(
                     indent,
                     &format!(
-                        "__checkpoint({}, {}, __locals, __globals, __local_types, __global_types{})",
+                        "__checkpoint({}, {}, __locals, __globals, __local_types, __global_types, {}, {}, {}, {})",
                         lua_string(flow_id)?,
                         lua_string(&node.envelope.node_id)?,
-                        if project.manifest.runner_ui.as_ref().is_some_and(|ui| ui.version == Some(2)) { ", __ui_bound" } else { "" },
+                        if project.manifest.runner_ui.as_ref().is_some_and(|ui| ui.version == Some(2)) { "__ui_bound" } else { "nil" },
+                        rows[node.envelope.node_id.as_str()],
+                        lua_string(flow_name)?,
+                        lua_string(BLOCK_TITLES.binary_search_by_key(&node.envelope.kind.as_str(), |&(kind, _)| kind)
+                            .map_or(node.envelope.kind.as_str(), |index| BLOCK_TITLES[index].1))?,
                     ),
                 );
                 render_node(project, flow_id, node, indent, writer, entries, &mut events)?;
@@ -905,6 +922,29 @@ fn render_builtin_node<'a>(
         }
         BuiltinNodeArgs::CompareColor(value) => {
             render_compare_color(value, numeric_output(&value.result_variable))?
+        }
+        BuiltinNodeArgs::FindAllColor(value) => {
+            let parameter = project
+                .flows
+                .iter()
+                .find(|flow| flow.declaration.flow_id == flow_id)
+                .and_then(|flow| {
+                    flow.declaration
+                        .params
+                        .iter()
+                        .find(|param| param.name == value.result_variable)
+                });
+            let as_json = parameter.map_or_else(
+                || {
+                    crate::analyze::declared_variable_type(
+                        project.manifest,
+                        flow_id,
+                        &value.result_variable,
+                    ) == Some(ProjectVariableType::String)
+                },
+                |param| param.value_type == ValueType::String,
+            );
+            render_find_all_color(value, as_json)?
         }
         _ => render_builtin(arguments, &key)?,
     };
@@ -1509,8 +1549,22 @@ fn render_random_policy(
             writer.indented(
                 indent,
                 &format!(
-                    "__random_bounds({},{},{},{})",
-                    bounds[0], bounds[1], bounds[2], bounds[3]
+                    "__random_bounds({},{},{},{}{})",
+                    bounds[0],
+                    bounds[1],
+                    bounds[2],
+                    bounds[3],
+                    if node
+                        .envelope
+                        .args
+                        .get("screenPixels")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                    {
+                        ",true"
+                    } else {
+                        ""
+                    }
                 ),
             );
         }
@@ -1542,17 +1596,49 @@ fn rewrite_random_sleep(rendered: String, arguments: &BuiltinNodeArgs, randomize
 
 fn render_input(arguments: &BuiltinNodeArgs) -> Result<String, CompileError> {
     match arguments {
-        BuiltinNodeArgs::Tap(value) => Ok(format!("Input.tap({},{})", value.x, value.y)),
-        BuiltinNodeArgs::PointerDown(value) => {
-            Ok(format!("Input.pointerDown({},{})", value.x, value.y))
-        }
-        BuiltinNodeArgs::PointerMove(value) => {
-            Ok(format!("Input.pointerMove({},{})", value.x, value.y))
-        }
+        BuiltinNodeArgs::Tap(value) => Ok(format!(
+            "Input.{}({},{})",
+            if value.screen_pixels {
+                "tapScreen"
+            } else {
+                "tap"
+            },
+            value.x,
+            value.y
+        )),
+        BuiltinNodeArgs::PointerDown(value) => Ok(format!(
+            "Input.{}({},{})",
+            if value.screen_pixels {
+                "pointerDownScreen"
+            } else {
+                "pointerDown"
+            },
+            value.x,
+            value.y
+        )),
+        BuiltinNodeArgs::PointerMove(value) => Ok(format!(
+            "Input.{}({},{})",
+            if value.screen_pixels {
+                "pointerMoveScreen"
+            } else {
+                "pointerMove"
+            },
+            value.x,
+            value.y
+        )),
         BuiltinNodeArgs::PointerUp => Ok("Input.pointerUp()".into()),
         BuiltinNodeArgs::Swipe(value) => Ok(format!(
-            "Input.swipe({},{},{},{},{})",
-            value.x1, value.y1, value.x2, value.y2, value.duration_ms
+            "Input.{}({},{},{},{},{})",
+            if value.screen_pixels {
+                "swipeScreen"
+            } else {
+                "swipe"
+            },
+            value.x1,
+            value.y1,
+            value.x2,
+            value.y2,
+            value.duration_ms
         )),
         BuiltinNodeArgs::KeyEvent(value) => Ok(format!("Input.keyEvent({})", value.key_code)),
         _ => Err(invalid_builtin_variant()),
@@ -1570,46 +1656,41 @@ fn render_pixel_operations(arguments: &BuiltinNodeArgs) -> Result<String, Compil
             lua_string(&value.frame_variable)?,
             lua_string(&value.frame_variable)?
         )),
-        BuiltinNodeArgs::GetColor(value) => Ok(format!(
-            "__vars[{}] = Screen.getColor(__vars[{}],{},{})",
-            lua_string(&value.result_variable)?,
-            lua_string(&value.frame_variable)?,
-            value.point.x,
-            value.point.y
+        BuiltinNodeArgs::GetColor(value) => Ok(render_color_capture(
+            format!(
+                "__vars[{}] = Screen.getColor({},{},{})",
+                lua_string(&value.result_variable)?,
+                color_frame(value.auto_capture, &value.frame_variable)?,
+                value.point.x,
+                value.point.y
+            ),
+            value.auto_capture,
         )),
         BuiltinNodeArgs::FindColor(value) => render_find_color(value, false),
         BuiltinNodeArgs::CompareColor(value) => render_compare_color(value, false),
         BuiltinNodeArgs::FindMultiColor(value) => render_find_multi_color(value, false),
         BuiltinNodeArgs::CountColor(value) => {
             let region = &value.region;
-            Ok(format!(
-                "__vars[{}] = Screen.countColor(__vars[{}],{},{},{},{},{},{},{})",
-                lua_string(&value.result_variable)?,
-                lua_string(&value.frame_variable)?,
-                value.rgb,
-                value.tolerance,
-                region.left,
-                region.top,
-                region.right,
-                region.bottom,
-                value.limit,
+            Ok(render_color_capture(
+                format!(
+                    "{}{}__vars[{}] = Screen.countColor({},{},{},{},{},{},{},{}{})",
+                    color_limit_guard(value.limit == 0 || value.limit > 256),
+                    color_group_guard(&value.additional_colors),
+                    lua_string(&value.result_variable)?,
+                    color_frame(value.auto_capture, &value.frame_variable)?,
+                    value.rgb,
+                    value.tolerance,
+                    region.left,
+                    region.top,
+                    region.right,
+                    region.bottom,
+                    value.limit,
+                    color_group_suffix(&value.additional_colors)?,
+                ),
+                value.auto_capture,
             ))
         }
-        BuiltinNodeArgs::FindAllColor(value) => {
-            let region = &value.region;
-            Ok(format!(
-                "__vars[{}] = Screen.findAllColor(__vars[{}],{},{},{},{},{},{},{})",
-                lua_string(&value.result_variable)?,
-                lua_string(&value.frame_variable)?,
-                value.rgb,
-                value.tolerance,
-                region.left,
-                region.top,
-                region.right,
-                region.bottom,
-                value.limit,
-            ))
-        }
+        BuiltinNodeArgs::FindAllColor(value) => render_find_all_color(value, false),
         BuiltinNodeArgs::LegacyDuoDianZhaoSe(value) => render_legacy_duo_dian_zhao_se(value),
         BuiltinNodeArgs::LegacyDuoDianBiSe(value) => render_legacy_duo_dian_bi_se(value),
         BuiltinNodeArgs::LegacyGetRectColorNum(value) => render_legacy_get_rect_color_num(value),
@@ -1840,15 +1921,18 @@ fn render_legacy_get_rect_color_num(
     let parameters = pixel_vision::format_color_list(&colors)
         .map_err(|error| legacy_format_error("legacy.getrectcolornum", &error))?;
     let region = &value.region;
-    Ok(format!(
-        "__vars[{}] = Legacy.getRectColorNum(__vars[{}],{},{},{},{},{})",
-        lua_string(&value.result_variable)?,
-        lua_string(&value.frame_variable)?,
-        region.left,
-        region.top,
-        region.width,
-        region.height,
-        lua_string(&parameters)?,
+    let frame = color_frame(value.auto_capture, &value.frame_variable)?;
+    Ok(render_color_capture(
+        format!(
+            "__vars[{}] = Legacy.getRectColorNum({frame},{},{},{},{},{})",
+            lua_string(&value.result_variable)?,
+            region.left,
+            region.top,
+            region.width,
+            region.height,
+            lua_string(&parameters)?,
+        ),
+        value.auto_capture,
     ))
 }
 
@@ -1873,9 +1957,9 @@ fn render_find_multi_color(
         .collect::<Vec<_>>()
         .join(",");
     let region = &value.region;
-    Ok(format!(
-        "do local __point = Screen.findMultiColor(__vars[{}],{},{},{{{}}},{},{},{},{}); __vars[{}] = {found_expression}; __vars[{}] = __point and __point.x or nil; __vars[{}] = __point and __point.y or nil end",
-        lua_string(&value.frame_variable)?,
+    Ok(render_color_capture(format!(
+        "do local __point = Screen.findMultiColor({},{},{},{{{}}},{},{},{},{}); __vars[{}] = {found_expression}; __vars[{}] = __point and __point.x or nil; __vars[{}] = __point and __point.y or nil end",
+        color_frame(value.auto_capture, &value.frame_variable)?,
         value.anchor_rgb,
         value.anchor_tolerance,
         samples,
@@ -1886,22 +1970,102 @@ fn render_find_multi_color(
         lua_string(&value.found_variable)?,
         lua_string(&value.x_variable)?,
         lua_string(&value.y_variable)?,
+    ), value.auto_capture))
+}
+
+fn color_frame(capture: bool, variable: &str) -> Result<String, CompileError> {
+    if capture {
+        Ok("__color_frame".into())
+    } else {
+        Ok(format!("__vars[{}]", lua_string(variable)?))
+    }
+}
+
+fn render_color_capture(body: String, capture: bool) -> String {
+    if !capture {
+        return body;
+    }
+    // Lua 5.4 pcall can yield. Release the private frame on ordinary failures too;
+    // task cancellation still uses the executor's owned-resource cleanup.
+    format!("do local __color_frame=Screen.cache(Screen.capture()); local __color_ok,__color_error=pcall(function() {body} end); Screen.release(__color_frame); if not __color_ok then error(__color_error,0) end end")
+}
+
+fn color_limit_guard(extended: bool) -> &'static str {
+    if extended {
+        "if Screen.colorLimitsVersion ~= 1 then error(\"COLOR_LIMITS_UNSUPPORTED\") end; "
+    } else {
+        ""
+    }
+}
+
+fn render_find_all_color(
+    value: &crate::analyze::FindAllColorArgs,
+    as_json: bool,
+) -> Result<String, CompileError> {
+    let region = &value.region;
+    let call = format!(
+        "Screen.findAllColor({},{},{},{},{},{},{},{}{})",
+        color_frame(value.auto_capture, &value.frame_variable)?,
+        value.rgb,
+        value.tolerance,
+        region.left,
+        region.top,
+        region.right,
+        region.bottom,
+        value.limit,
+        color_group_suffix(&value.additional_colors)?
+    );
+    let output = lua_string(&value.result_variable)?;
+    // Typed text variables use the existing COLORS reader shape; untyped legacy outputs stay tables.
+    let body = if as_json {
+        format!("do local __points={call}; local __items={{}}; for __i,__p in ipairs(__points) do __items[__i]=string.format('{{\"x\":%d,\"y\":%d}}',__p.x,__p.y) end; __vars[{output}]='['..table.concat(__items,',')..']' end")
+    } else {
+        format!("__vars[{output}] = {call}")
+    };
+    Ok(render_color_capture(
+        format!(
+            "{}{}{body}",
+            color_limit_guard(value.limit > 256),
+            color_group_guard(&value.additional_colors)
+        ),
+        value.auto_capture,
     ))
+}
+
+fn color_group_guard(additional: &str) -> &'static str {
+    if additional.is_empty() {
+        ""
+    } else {
+        "if Screen.colorGroupVersion ~= 1 then error(\"COLOR_GROUP_UNSUPPORTED\") end; "
+    }
+}
+
+fn color_group_suffix(additional: &str) -> Result<String, CompileError> {
+    if additional.is_empty() {
+        Ok(String::new())
+    } else {
+        Ok(format!(",{}", lua_string(additional)?))
+    }
 }
 
 fn render_compare_color(
     value: &crate::analyze::CompareColorArgs,
     numeric: bool,
 ) -> Result<String, CompileError> {
-    Ok(format!(
-        "__vars[{}] = Screen.compareColor(__vars[{}],{},{},{},{}){}",
-        lua_string(&value.result_variable)?,
-        lua_string(&value.frame_variable)?,
-        value.point.x,
-        value.point.y,
-        value.rgb,
-        value.tolerance,
-        if numeric { " and 1 or 0" } else { "" },
+    Ok(render_color_capture(
+        format!(
+            "{}__vars[{}] = Screen.compareColor({},{},{},{},{}{}){}",
+            color_group_guard(&value.additional_colors),
+            lua_string(&value.result_variable)?,
+            color_frame(value.auto_capture, &value.frame_variable)?,
+            value.point.x,
+            value.point.y,
+            value.rgb,
+            value.tolerance,
+            color_group_suffix(&value.additional_colors)?,
+            if numeric { " and 1 or 0" } else { "" },
+        ),
+        value.auto_capture,
     ))
 }
 
@@ -1915,19 +2079,21 @@ fn render_find_color(
         "__point ~= nil"
     };
     let region = &value.region;
-    Ok(format!(
-        "do local __point = Screen.findColor(__vars[{}],{},{},{},{},{},{}); __vars[{}] = {found_expression}; __vars[{}] = __point and __point.x or nil; __vars[{}] = __point and __point.y or nil end",
-        lua_string(&value.frame_variable)?,
+    Ok(render_color_capture(format!(
+        "{}do local __point = Screen.findColor({},{},{},{},{},{},{}{}); __vars[{}] = {found_expression}; __vars[{}] = __point and __point.x or nil; __vars[{}] = __point and __point.y or nil end",
+        color_group_guard(&value.additional_colors),
+        color_frame(value.auto_capture, &value.frame_variable)?,
         value.rgb,
         value.tolerance,
         region.left,
         region.top,
         region.right,
         region.bottom,
+        color_group_suffix(&value.additional_colors)?,
         lua_string(&value.found_variable)?,
         lua_string(&value.x_variable)?,
         lua_string(&value.y_variable)?,
-    ))
+    ), value.auto_capture))
 }
 
 fn render_find_image(

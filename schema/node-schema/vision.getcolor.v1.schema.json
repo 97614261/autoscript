@@ -12,6 +12,7 @@
       "additionalProperties": false,
       "required": ["frameVariable", "point", "resultVariable"],
       "properties": {
+        "autoCapture": { "type": "boolean", "default": false },
         "frameVariable": { "$ref": "#/$defs/variable" },
         "point": { "$ref": "#/$defs/point" },
         "resultVariable": { "$ref": "#/$defs/variable" }

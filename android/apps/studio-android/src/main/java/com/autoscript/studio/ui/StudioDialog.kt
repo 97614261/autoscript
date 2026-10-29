@@ -9,9 +9,11 @@ import androidx.activity.ComponentDialog
 import androidx.activity.addCallback
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
@@ -20,10 +22,13 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.SecureFlagPolicy
@@ -85,7 +90,7 @@ private fun StudioDialogBackdrop(properties: DialogProperties, onDismiss: () -> 
         .clickable(remember { MutableInteractionSource() }, null) {
             if (properties.dismissOnClickOutside) onDismiss()
         }, contentAlignment = Alignment.Center) {
-        Box(Modifier.wrapContentSize().then(if (properties.usePlatformDefaultWidth) Modifier.fillMaxWidth(.9f) else Modifier)
+        Box(Modifier.wrapContentSize().then(if (properties.usePlatformDefaultWidth) Modifier.widthIn(max = 400.dp).fillMaxWidth(.94f) else Modifier)
             .clickable(remember { MutableInteractionSource() }, null) {}) { content() }
     }
 }
@@ -105,6 +110,15 @@ private fun Window.resizeForKeyboard() {
         addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR)
     }
     setSoftInputMode(studioDialogResizeSoftInputMode(attributes.softInputMode))
+}
+
+/** A newly opened panel starts on its container; fields receive focus only after user interaction. */
+@Composable
+private fun StudioDialogInitialFocus(content: @Composable () -> Unit) {
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    Box(Modifier.focusRequester(focus).focusable()) { content() }
+    LaunchedEffect(focus) { focus.requestFocus(); keyboard?.hide() }
 }
 
 /** Existing content and Activity behavior stay unchanged; only the native window host differs. */
@@ -127,8 +141,11 @@ internal fun StudioDialog(onDismissRequest: () -> Unit, properties: DialogProper
             // A native dialog creates a new Compose root. Keep the caller's text scale
             // rather than resetting an explicitly provided density at that boundary.
             CompositionLocalProvider(LocalDensity provides parentDensity, LocalStudioPrompt provides promptLayer) {
-                if (Build.VERSION.SDK_INT < 30 || !properties.usePlatformDefaultWidth)
-                    StudioDialogBackdrop(properties, onDismissRequest, content) else content()
+                StudioDialogInitialFocus {
+                    if (Build.VERSION.SDK_INT < 30 || !properties.usePlatformDefaultWidth)
+                        StudioDialogBackdrop(properties, onDismissRequest, content)
+                    else Box(Modifier.widthIn(max = 400.dp).fillMaxWidth(.94f)) { content() }
+                }
             }
         }
         return
@@ -156,7 +173,9 @@ internal fun StudioDialog(onDismissRequest: () -> Unit, properties: DialogProper
                 setContent {
                     CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides dialogOwner,
                         LocalDensity provides currentDensity, LocalStudioPrompt provides promptLayer) {
-                        StudioDialogBackdrop(currentProperties, { dismiss() }) { children() }
+                        StudioDialogInitialFocus {
+                            StudioDialogBackdrop(currentProperties, { dismiss() }) { children() }
+                        }
                     }
                 }
             }

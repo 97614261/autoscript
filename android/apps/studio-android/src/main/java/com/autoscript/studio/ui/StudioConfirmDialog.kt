@@ -52,25 +52,26 @@ internal fun StudioConfirmDialog(
         BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
             val configuration = LocalConfiguration.current
             val fontScale = LocalDensity.current.fontScale
+            val dense = compact || studioShortViewport(maxHeight.value)
             val panelHeight = studioPanelMaxHeight(maxHeight.value, configuration.screenHeightDp).dp
-            val footerHeight = studioCompactControlHeight(if (compact) 36 else 44, fontScale).dp
+            val footerHeight = studioCompactControlHeight(if (dense) 32 else 40, fontScale).dp
             MaterialTheme(typography = MaterialTheme.typography.copy(labelLarge = TextStyle(
                 fontSize = 13.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)))) {
-                Surface(Modifier.widthIn(max = 440.dp).fillMaxWidth(.92f).heightIn(max = panelHeight), color = containerColor,
+                Surface(Modifier.width(studioDialogWidth(maxWidth.value, if (prompt) 360 else 400).dp).heightIn(max = panelHeight), color = containerColor,
                     shape = shape, shadowElevation = 10.dp) {
                     Column {
                         if (title != null) {
-                            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compact) 10.dp else 12.dp), contentAlignment = Alignment.Center) {
-                                ProvideTextStyle(TextStyle(color = AutoScriptPalette.Accent, fontSize = if (compact) 14.sp else 16.sp,
+                            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (dense) 7.dp else 10.dp), contentAlignment = Alignment.Center) {
+                                ProvideTextStyle(TextStyle(color = AutoScriptPalette.Accent, fontSize = if (dense) 13.sp else 14.sp,
                                     fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                     platformStyle = PlatformTextStyle(includeFontPadding = false))) { title() }
                             }
                             HorizontalDivider(color = AutoScriptPalette.Divider)
                         }
                         if (text != null) Box(Modifier.weight(1f, fill = false).fillMaxWidth()
-                            .verticalScroll(rememberScrollState()).padding(if (compact) 12.dp else 14.dp)) {
-                            ProvideTextStyle(TextStyle(color = AutoScriptPalette.TextPrimary, fontSize = if (compact) 12.sp else 13.sp,
-                                lineHeight = if (compact) 17.sp else 19.sp)) { text() }
+                            .verticalScroll(rememberScrollState()).padding(if (dense) 10.dp else 12.dp)) {
+                            ProvideTextStyle(TextStyle(color = AutoScriptPalette.TextPrimary, fontSize = if (dense) 12.sp else 13.sp,
+                                lineHeight = if (dense) 17.sp else 19.sp)) { text() }
                         }
                         HorizontalDivider(color = AutoScriptPalette.Divider)
                         if (actions != null) {

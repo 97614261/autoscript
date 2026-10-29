@@ -65,7 +65,7 @@ internal fun VisualUiParameterDialog(
     }
     Dialog(onDismissRequest = ::requestClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().imePadding().padding(12.dp), contentAlignment = Alignment.Center) {
-            Surface(Modifier.widthIn(max = 480.dp).fillMaxWidth().heightIn(max = maxHeight), color = Color.White, shape = RoundedCornerShape(4.dp)) {
+            Surface(Modifier.width(studioDialogWidth(maxWidth.value).dp).heightIn(max = maxHeight), color = Color.White, shape = RoundedCornerShape(4.dp)) {
                 Column {
                     Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("读取页面参数", Modifier.weight(1f), color = AutoScriptPalette.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -84,7 +84,11 @@ internal fun VisualUiParameterDialog(
                                 }, Modifier.fillMaxWidth(), singleLine = true,
                                     textStyle = TextStyle(fontSize = 12.sp, color = AutoScriptPalette.TextPrimary, platformStyle = PlatformTextStyle(includeFontPadding = false)))
                             }
-                            ParameterChoice("选择变量", targets.filter { it.type == ProjectVariableType.STRING }.map { it.name to "${it.scope} · ${it.name}" }, Modifier.width(88.dp)) { target = it; error = null }
+                            VariableChoiceAnchor("选择变量", target,
+                                variablePickerOptions(targets.filter { it.type == ProjectVariableType.STRING }.map { it.name }, targets),
+                                { target = it; error = null }) { open ->
+                                StudioToolButton("变量", Modifier.width(36.dp), onClick = open)
+                            }
                         }
                         if (onManageVariables != null) DesignerAction("＋维护变量", onClick = onManageVariables)
                         Text("读取当前值，不是画布尺寸。复选框返回 true/false；数字返回数字文本，可用计算积木转换。启动时的配置仍可通过绑定变量读取。", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)

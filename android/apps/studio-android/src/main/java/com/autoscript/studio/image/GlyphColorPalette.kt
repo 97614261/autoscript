@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -58,10 +59,10 @@ internal data class GlyphPaletteDraft(val colors: List<GlyphColorDraft>, val sel
 
 /** Shared compact palette; selecting a chip explicitly makes the next pick replace only that color. */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun GlyphColorPaletteEditor(draft: GlyphPaletteDraft, enabled: Boolean, onChange: (GlyphPaletteDraft) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             draft.colors.forEachIndexed { index, color ->
                 val active = index == draft.selected
                 Row(Modifier.heightIn(min = 26.dp).border(1.dp, if (active) AutoScriptPalette.Accent else AutoScriptPalette.Border,
@@ -76,9 +77,9 @@ internal fun GlyphColorPaletteEditor(draft: GlyphPaletteDraft, enabled: Boolean,
             ImageToolCompactAction("+颜色", enabled && draft.colors.size < ProjectGlyphColor.MAX_COLORS) { onChange(draft.add()) }
             ImageToolCompactAction("删除颜色", enabled && draft.colors.size > 1) { onChange(draft.remove()) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ImageToolCompactInput("颜色 RGB", draft.current.rgb, enabled, Modifier.weight(1.3f)) { onChange(draft.edit(rgb = it.take(7))) }
-            ImageToolCompactInput("容差", draft.current.tolerance, enabled, Modifier.weight(1f), numeric = true) { onChange(draft.edit(tolerance = it.take(3))) }
+        StudioCompactGrid(listOf("颜色 RGB", "容差"), cellDp = 148, maximum = 2) { label, cell ->
+            if (label == "容差") ImageToolCompactInput(label, draft.current.tolerance, enabled, cell, numeric = true) { onChange(draft.edit(tolerance = it.take(3))) }
+            else ImageToolCompactInput(label, draft.current.rgb, enabled, cell) { onChange(draft.edit(rgb = it.take(7))) }
         }
         if (draft.parsed() == null) Text("每色需6位RGB、容差0–255，颜色不能重复；请补全或删除未完成项。", fontSize = 10.sp, color = AutoScriptPalette.Danger)
     }
@@ -94,15 +95,26 @@ internal fun glyphPaletteFromInputs(primary: String, tolerance: String, addition
 }
 
 @Composable
-internal fun GlyphColorPaletteDialog(initial: GlyphPaletteDraft, onDismiss: () -> Unit, onApply: (List<ProjectGlyphColor>) -> Unit) {
-    var draft by remember { mutableStateOf(initial) }
+internal fun GlyphColorPaletteDialog(
+    initial: GlyphPaletteDraft,
+    onDismiss: () -> Unit,
+    title: String = "字库前景色组",
+    description: String = "最多16色，各自容差，命中任意颜色即为文字笔画。保存后才回填，不修改字库文件。",
+    currentDraft: GlyphPaletteDraft? = null,
+    onDraftChange: ((GlyphPaletteDraft) -> Unit)? = null,
+    onPickFromScreen: (() -> Unit)? = null,
+    onApply: (List<ProjectGlyphColor>) -> Unit,
+) {
+    var localDraft by remember { mutableStateOf(initial) }
+    val draft = currentDraft ?: localDraft
     var discard by remember { mutableStateOf(false) }
     fun close() { if (draft.colors != initial.colors) discard = true else onDismiss() }
-    StudioPanelDialog("字库前景色组", ::close, confirmLabel = "保存色组", confirmEnabled = draft.parsed() != null,
+    StudioPanelDialog(title, ::close, confirmLabel = "保存色组", confirmEnabled = draft.parsed() != null,
         onConfirm = { draft.parsed()?.let(onApply) }, compactHeader = true) {
-        Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            GlyphColorPaletteEditor(draft, true) { draft = it }
-            Text("最多16色，各自容差，命中任意颜色即为文字笔画。保存后才回填，不修改字库文件。", fontSize = 10.sp,
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            GlyphColorPaletteEditor(draft, true) { localDraft = it; onDraftChange?.invoke(it) }
+            onPickFromScreen?.let { pick -> ImageToolCompactAction("屏幕取色 · 替换第${draft.selected + 1}色", true, onClick = pick) }
+            Text(description, fontSize = 10.sp,
                 color = AutoScriptPalette.TextSecondary)
         }
     }

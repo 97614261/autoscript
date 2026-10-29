@@ -1,4 +1,6 @@
 mod analyze;
+#[cfg(test)]
+mod color_group_tests;
 mod compound_condition;
 #[cfg(test)]
 mod data_completion_tests;
@@ -54,7 +56,7 @@ pub use model::{
 };
 pub use store::{commit_generation, mark_generation_stale};
 
-pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v14");
+pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v15");
 pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
     SupportedNodeVersion {
         kind: "text.numberat",
@@ -1869,6 +1871,49 @@ mod tests {
             r#"__vars["legacyColorNum"] = Legacy.getRectColorNum(__vars["frame"],1,2,100,200,"(17,34,51)-(1,2,3)#(68,85,102)-(4,5,6)")"#
         ));
         assert!(lua.contains(r#"__vars["legacyRgb"] = Legacy.getRgbColor(17,34,51)"#));
+    }
+
+    #[test]
+    fn legacy_fresh_capture_requires_new_api_and_capture_capability() {
+        let mut manifest = parse_project_manifest(
+            br#"{"formatVersion":2,"flowSchemaVersion":1,"runtimeApi":"1.5","projectId":"legacy-capture-gate","name":"Legacy capture","sourceMode":"visual","entryFlowId":"main","flows":[{"flowId":"main","path":"visual/flows/main.jsonl","rootBlockId":"root","params":[],"returns":null}],"resources":[],"capabilities":["vision.pixel.legacy"],"design":{"width":720,"height":1280,"scaleMode":"letterbox","orientationPolicy":"follow"}}"#,
+        ).unwrap();
+        let source = json!({
+            "flowSchemaVersion":1,"nodeId":"fresh-count","blockId":"root",
+            "parentId":null,"orderKey":"a0","kind":"legacy.getrectcolornum",
+            "nodeVersion":1,"depth":0,
+            "args":{"frameVariable":"unused","autoCapture":true,
+                "region":{"left":0,"top":0,"width":10,"height":10},
+                "colors":[{"rgb":255,"toleranceRed":0,"toleranceGreen":0,"toleranceBlue":0}],
+                "resultVariable":"count"}
+        })
+        .to_string()
+            + "\n";
+        let report = load_jsonl(
+            source.as_bytes(),
+            LoadOptions {
+                flow_id: "main",
+                root_block_id: "root",
+                flow_schema_version: 1,
+                supported_nodes: SUPPORTED_NODE_VERSIONS,
+            },
+        );
+        let inputs = [FlowSource {
+            flow_id: "main",
+            exact_bytes: source.as_bytes(),
+            report: &report,
+        }];
+        let errors = compile_project(&manifest, &inputs).unwrap_err();
+        assert!(errors.iter().any(|error| matches!(error,
+            CompileError::InvalidNodeArguments { node_id, reason }
+                if node_id == "fresh-count" && reason.contains("1.8"))));
+        manifest.runtime_api = "1.8".into();
+        let errors = compile_project(&manifest, &inputs).unwrap_err();
+        assert!(errors.iter().any(|error| matches!(error,
+            CompileError::MissingCapability { node_id, capability }
+                if node_id == "fresh-count" && capability == "screen.capture")));
+        manifest.capabilities.push("screen.capture".into());
+        assert!(compile_project(&manifest, &inputs).is_ok());
     }
 
     #[test]

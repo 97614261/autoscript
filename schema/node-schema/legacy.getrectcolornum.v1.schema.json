@@ -12,6 +12,7 @@
       "additionalProperties": false,
       "required": ["frameVariable", "region", "colors", "resultVariable"],
       "properties": {
+        "autoCapture": { "type": "boolean", "default": false, "description": "每次使用新截图，成功或普通错误后释放；不复用到下一次调用。启用需runtimeApi 1.8及screen.capture。" },
         "frameVariable": { "$ref": "#/$defs/variable" },
         "region": { "$ref": "#/$defs/legacyRegion" },
         "colors": {

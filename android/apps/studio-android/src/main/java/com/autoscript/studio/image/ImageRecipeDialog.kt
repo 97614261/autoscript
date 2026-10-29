@@ -1,6 +1,8 @@
 package com.autoscript.studio
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
@@ -13,6 +15,7 @@ import com.autoscript.project.store.*
 import kotlinx.coroutines.*
 
 /** Project-owned authoring metadata only. Loading never starts a test or script. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ImageRecipeDialog(snapshot:ProjectSnapshot,store:ProjectStore,current:ProjectImageRecipe?,
     onDismiss:()->Unit,onLoad:(ProjectImageRecipe)->Unit) {
@@ -62,23 +65,27 @@ internal fun ImageRecipeDialog(snapshot:ProjectSnapshot,store:ProjectStore,curre
         }
     }
     ProvideTextStyle(LocalTextStyle.current.copy(lineHeight=14.sp)) {
-    StudioPanelDialog("图像识别方案",::close,fullScreen=full,onToggleFullScreen={full=!full},compactHeader=true,showFooter=false) {
+    StudioPanelDialog("图像识别方案",::close,fullScreen=full,onToggleFullScreen={full=!full},compactHeader=true,confirmEnabled=!busy) {
         Column(Modifier.fillMaxWidth().heightIn(max=if(full)1000.dp else 540.dp).padding(8.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-            if(current!=null) Text("当前：${current.sourceWidth}×${current.sourceHeight}px · ${current.steps.size}步 · ${current.tail?.kind ?: "仅处理/范围"}",fontSize=10.sp)
-            ImageToolCompactInput("方案名",name,!busy,Modifier.fillMaxWidth()) {name=it.take(64)}
-            Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                ImageToolCompactAction("保存当前",loaded && !busy && current!=null) {saveCopy(requireNotNull(current))}
-                ImageToolCompactAction("复制所选",loaded && !busy && chosen!=null) {saveCopy(requireNotNull(chosen))}
-                ImageToolCompactAction("重命名",loaded && !busy && chosen!=null) {
-                    try {
-                        val renamed=requireNotNull(chosen).copy(name=name.trim());require(recipes.none {it.name==renamed.name && it.name!=chosen.name})
-                        commit(recipes.map {if(it.name==chosen.name) renamed else it},"已重命名为 ${renamed.name}");selected=renamed.name
-                    } catch(_:Exception) {message="名称无效或已存在，原方案未改变"}
-                }
-                ImageToolCompactAction("刷新",!busy) {reload++}
-            }
-            ImageToolCompactInput("搜索",query,!busy,Modifier.fillMaxWidth()) {query=it.take(64)}
             LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                item(key = "recipe-controls") {
+                    Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                        if(current!=null) Text("当前：${current.sourceWidth}×${current.sourceHeight}px · ${current.steps.size}步 · ${current.tail?.kind ?: "仅处理/范围"}",fontSize=10.sp)
+                        ImageToolCompactInput("方案名",name,!busy,Modifier.fillMaxWidth()) {name=it.take(64)}
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                            ImageToolCompactAction("保存当前",loaded && !busy && current!=null) {saveCopy(requireNotNull(current))}
+                            ImageToolCompactAction("复制所选",loaded && !busy && chosen!=null) {saveCopy(requireNotNull(chosen))}
+                            ImageToolCompactAction("重命名",loaded && !busy && chosen!=null) {
+                                try {
+                                    val renamed=requireNotNull(chosen).copy(name=name.trim());require(recipes.none {it.name==renamed.name && it.name!=chosen.name})
+                                    commit(recipes.map {if(it.name==chosen.name) renamed else it},"已重命名为 ${renamed.name}");selected=renamed.name
+                                } catch(_:Exception) {message="名称无效或已存在，原方案未改变"}
+                            }
+                            ImageToolCompactAction("刷新",!busy) {reload++}
+                        }
+                        ImageToolCompactInput("搜索",query,!busy,Modifier.fillMaxWidth()) {query=it.take(64)}
+                    }
+                }
                 items(recipes.filter {it.name.contains(query,true)},key={it.name}) {recipe ->
                     Row(Modifier.fillMaxWidth()) {
                         Column(Modifier.weight(1f)) {
@@ -97,9 +104,7 @@ internal fun ImageRecipeDialog(snapshot:ProjectSnapshot,store:ProjectStore,curre
                 }
                 if(loaded && recipes.isEmpty()) item {Text("尚无图像方案。先处理图片，再保存当前配置。",fontSize=11.sp)}
             }
-            Text(message,fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
-            HorizontalDivider()
-            ImageToolCompactAction("关闭方案",!busy,Modifier.fillMaxWidth(),::close)
+            Text(message,Modifier.heightIn(max=48.dp).verticalScroll(rememberScrollState()),fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
         }
     }
     }

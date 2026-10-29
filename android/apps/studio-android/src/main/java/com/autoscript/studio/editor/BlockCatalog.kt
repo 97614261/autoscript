@@ -16,6 +16,8 @@ internal data class BlockSearchResult(
 
 internal object BlockCatalog {
     val all: List<BlockContract> = GeneratedBlockCatalog.all
+    // Keep old contracts readable, but offer only current blocks for new insertions.
+    val insertable: List<BlockContract> = all.filterNot { it.kind.startsWith("legacy.") }
     private val byKind = all.associateBy(BlockContract::kind)
 
     fun find(kind: String): BlockContract? = byKind[kind]
@@ -32,7 +34,7 @@ internal object BlockCatalog {
     ): List<BlockSearchResult> {
         val terms = query.trim().lowercase(Locale.ROOT).split(Regex("\\s+"))
             .filter(String::isNotEmpty)
-        return all.asSequence()
+        return insertable.asSequence()
             .filter { category == null || it.category == category }
             .filter { contract ->
                 val haystack = buildString {

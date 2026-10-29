@@ -21,8 +21,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.imePadding
@@ -56,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
@@ -94,6 +99,7 @@ internal fun ProjectSettingsDialog(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStore,
     runtimeClient: com.autoscript.runtime.client.RuntimeClient,
     onSnapshotChanged: (ProjectSnapshot) -> Unit, onDismiss: () -> Unit) {
@@ -123,7 +129,7 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
         if (!busy) executionDraft = executionDraft.observe(snapshot.manifest)
     }
     val supportedCapabilities = remember {
-        BlockCatalog.all.flatMap { it.requiredCapabilities }.distinct().sorted()
+        BlockCatalog.insertable.flatMap { it.requiredCapabilities }.distinct().sorted()
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val kind = importKind
@@ -239,9 +245,12 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
 
     ProjectSettingsWindow(
         title = "项目设置",
-        subtitle = snapshot.manifest.name,
+        subtitle = snapshot.manifest.name + if (settingsConflict) " · 正式设置已变化，草稿保留" else "",
         busy = busy,
         onDismiss = ::requestClose,
+        headerActions = {
+            SettingsOutlineAction("重新读取", !busy, Modifier.width(70.dp)) { if (settingsDirty) reloadVisible = true else reloadSettings() }
+        },
         footer = {
             SettingsFooterAction("关闭", enabled = !busy, modifier = Modifier.weight(1f), onClick = ::requestClose)
             Box(Modifier.width(1.dp).fillMaxHeight().background(AutoScriptPalette.Divider))
@@ -251,137 +260,148 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
             )
         },
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (settingsConflict) "正式设置已变化 · 未覆盖草稿" else "能力与运行设置统一保存", fontSize = 10.sp,
-                color = if (settingsConflict) AutoScriptPalette.Danger else AutoScriptPalette.TextSecondary, modifier = Modifier.weight(1f))
-            SettingsOutlineAction("重新读取", !busy, Modifier.width(76.dp)) { if (settingsDirty) reloadVisible = true else reloadSettings() }
-        }
-        Row(Modifier.fillMaxWidth().height(36.dp).background(AutoScriptPalette.PageBackground)) {
-            ProjectSettingsPage.entries.forEach { page ->
-                Column(Modifier.weight(1f).fillMaxHeight().selectable(
-                    selected = activePage == page, onClick = { activePage = page }, role = Role.Tab,
-                ), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(page.title, fontSize = 13.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
-                            fontWeight = if (activePage == page) FontWeight.Bold else FontWeight.Normal,
-                            color = if (activePage == page) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
-                    }
-                    Box(Modifier.fillMaxWidth().height(2.dp).background(
-                        if (activePage == page) AutoScriptPalette.Accent else Color.Transparent,
-                    ))
-                }
-            }
-        }
-        error?.let { SettingsStatus(it, AutoScriptPalette.Danger) }
-        notice?.let { SettingsStatus(it, AutoScriptPalette.Accent) }
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = AutoScriptPalette.Accent)
-        when (activePage) {
-            ProjectSettingsPage.RUN -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                ProjectRunSettingsForm(runDraft, { if (!busy) { executionDraft = executionDraft.copy(run = it); error = null } }, randomDraft,
-                    { if (!busy) { executionDraft = executionDraft.copy(random = it); error = null } }, snapshot.manifest.variables, !busy,
-                    snapshot.manifest.flows)
-            }
-            ProjectSettingsPage.RESOURCES -> {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SettingsOutlineAction("＋ 图片", !busy, Modifier.weight(1f)) {
-                        choosingImportFolder = true
-                    }
-                    SettingsOutlineAction("＋ 字库", !busy, Modifier.weight(1f)) {
-                        importKind = ProjectResourceKind.GLYPH_DICTIONARY
-                        picker.launch(arrayOf("*/*"))
-                    }
-                    SettingsOutlineAction("＋ 音频", !busy, Modifier.weight(1f)) {
-                        importKind = ProjectResourceKind.AUDIO
-                        picker.launch(arrayOf("audio/*"))
-                    }
-                }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(null to "全部", "image" to "图片", "glyphDictionary" to "字库", "audio" to "音频").forEach { (kind, title) ->
-                        val count = snapshot.manifest.resources.count { kind == null || it.get("kind").asString == kind }
-                        SettingsFilterChip("$title $count", resourceFilter == kind) { resourceFilter = kind }
-                    }
-                }
-                Text("图片 ≤32MiB · 字库 ≤8MiB · 音频 ≤20MiB/总64MiB · 自动保存",
-                    fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
-                val resources = filterSettingsResources(snapshot.manifest.resources, resourceFilter)
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("固定数字/字母可直接采样制字", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
-                        modifier = Modifier.weight(1f))
-                    SettingsOutlineAction("制作字库", !busy, Modifier.width(84.dp)) { glyphMakerVisible = true }
-                }
-                key(resourceFilter) {
-                    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
-                        if (resources.isEmpty()) item {
-                            SettingsEmptyState(if (resourceFilter == null) "暂无项目资源" else "此分类暂无资源", "点击上方按钮导入")
-                        }
-                        items(resources, key = { it.get("path").asString }) { resource ->
-                            ProjectResourceRow(snapshot.directory, resource, snapshot.resourceRevision, !busy,
-                                onOpen = { resourceDetailsVisible = resource },
-                                onDelete = { deletePath = resource.get("path").asString })
-                            HorizontalDivider(color = AutoScriptPalette.Border)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val statusBudget = studioToolbarBudget(maxHeight.value, 2).dp
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(30, LocalDensity.current.fontScale).dp).background(AutoScriptPalette.PageBackground)) {
+                    ProjectSettingsPage.entries.forEach { page ->
+                        Column(Modifier.weight(1f).fillMaxHeight().selectable(
+                            selected = activePage == page, onClick = { activePage = page }, role = Role.Tab,
+                        ), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Text(page.title, fontSize = 13.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                                    fontWeight = if (activePage == page) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (activePage == page) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
+                            }
+                            Box(Modifier.fillMaxWidth().height(2.dp).background(
+                                if (activePage == page) AutoScriptPalette.Accent else Color.Transparent,
+                            ))
                         }
                     }
                 }
-            }
-            ProjectSettingsPage.CAPABILITIES -> {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("已选择 ${selectedCapabilities.size} 项", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.weight(1f))
-                    SettingsOutlineAction("全选", !busy, Modifier.width(54.dp)) { if (!busy) executionDraft = executionDraft.copy(capabilities = settingsCapabilityOptions(supportedCapabilities, snapshot.manifest.capabilities).toSet()) }
-                    Spacer(Modifier.width(6.dp))
-                    SettingsOutlineAction("清空", !busy, Modifier.width(54.dp)) { if (!busy) executionDraft = executionDraft.copy(capabilities = emptySet()) }
+                Column(Modifier.fillMaxWidth().heightIn(max = statusBudget).verticalScroll(rememberScrollState())) {
+                    error?.let { SettingsStatus(it, AutoScriptPalette.Danger) }
+                    notice?.let { SettingsStatus(it, AutoScriptPalette.Accent) }
                 }
-                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    items(settingsCapabilityOptions(supportedCapabilities, snapshot.manifest.capabilities).chunked(2)) { pair ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            pair.forEach { capability ->
-                                Row(Modifier.weight(1f).height(46.dp).selectable(
-                                    selected = capability in selectedCapabilities, enabled = !busy, role = Role.Checkbox,
-                                    onClick = { if (!busy) executionDraft = executionDraft.copy(capabilities = executionDraft.capabilities.toggle(capability)) },
-                                ), verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(checked = capability in selectedCapabilities, onCheckedChange = null,
-                                        enabled = !busy, modifier = Modifier.size(22.dp),
-                                        colors = CheckboxDefaults.colors(checkedColor = AutoScriptPalette.Accent))
-                                    Column(Modifier.weight(1f).padding(start = 7.dp)) {
-                                        Text(settingsCapabilityTitle(capability), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(capability, fontSize = 9.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = AutoScriptPalette.Accent)
+                when (activePage) {
+                    ProjectSettingsPage.RUN -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        ProjectRunSettingsForm(runDraft, { if (!busy) { executionDraft = executionDraft.copy(run = it); error = null } }, randomDraft,
+                            { if (!busy) { executionDraft = executionDraft.copy(random = it); error = null } }, snapshot.manifest.variables, !busy,
+                            snapshot.manifest.flows)
+                    }
+                    ProjectSettingsPage.RESOURCES -> {
+                        val resources = filterSettingsResources(snapshot.manifest.resources, resourceFilter)
+                        key(resourceFilter) {
+                            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
+                                item(key = "resource-tools") {
+                                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        SettingsOutlineAction("＋ 图片", !busy, Modifier.weight(1f)) {
+                                            choosingImportFolder = true
+                                        }
+                                        SettingsOutlineAction("＋ 字库", !busy, Modifier.weight(1f)) {
+                                            importKind = ProjectResourceKind.GLYPH_DICTIONARY
+                                            picker.launch(arrayOf("*/*"))
+                                        }
+                                        SettingsOutlineAction("＋ 音频", !busy, Modifier.weight(1f)) {
+                                            importKind = ProjectResourceKind.AUDIO
+                                            picker.launch(arrayOf("audio/*"))
+                                        }
+                                    }
+                                    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        listOf(null to "全部", "image" to "图片", "glyphDictionary" to "字库", "audio" to "音频").forEach { (kind, title) ->
+                                            val count = snapshot.manifest.resources.count { kind == null || it.get("kind").asString == kind }
+                                            SettingsFilterChip("$title $count", resourceFilter == kind) { resourceFilter = kind }
+                                        }
+                                    }
+                                    Text("图片 ≤32MiB · 字库 ≤8MiB · 音频 ≤20MiB/总64MiB · 自动保存",
+                                        fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
+                                        modifier = Modifier.padding(vertical = 5.dp))
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("固定数字/字母可直接采样制字", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary,
+                                            modifier = Modifier.weight(1f))
+                                        SettingsOutlineAction("制作字库", !busy, Modifier.width(84.dp)) { glyphMakerVisible = true }
+                                    }
+                                }
+                                if (resources.isEmpty()) item {
+                                    SettingsEmptyState(if (resourceFilter == null) "暂无项目资源" else "此分类暂无资源", "点击上方按钮导入")
+                                }
+                                items(resources, key = { it.get("path").asString }) { resource ->
+                                    ProjectResourceRow(snapshot.directory, resource, snapshot.resourceRevision, !busy,
+                                        onOpen = { resourceDetailsVisible = resource },
+                                        onDelete = { deletePath = resource.get("path").asString })
+                                    HorizontalDivider(color = AutoScriptPalette.Border)
+                                }
+                            }
+                        }
+                    }
+                    ProjectSettingsPage.CAPABILITIES -> {
+                        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                            val columns = studioCompactGridColumns(maxWidth.value - 24f, LocalDensity.current.fontScale, 170, 2)
+                            LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                                item(key = "capability-tools") {
+                                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("已选择 ${selectedCapabilities.size} 项", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.weight(1f))
+                                        SettingsOutlineAction("全选", !busy, Modifier.width(54.dp)) { if (!busy) executionDraft = executionDraft.copy(capabilities = settingsCapabilityOptions(supportedCapabilities, snapshot.manifest.capabilities).toSet()) }
+                                        Spacer(Modifier.width(6.dp))
+                                        SettingsOutlineAction("清空", !busy, Modifier.width(54.dp)) { if (!busy) executionDraft = executionDraft.copy(capabilities = emptySet()) }
+                                    }
+                                }
+                                items(settingsCapabilityOptions(supportedCapabilities, snapshot.manifest.capabilities).chunked(columns)) { pair ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        pair.forEach { capability ->
+                                            Row(Modifier.weight(1f).heightIn(min = 38.dp).padding(vertical = 4.dp).selectable(
+                                                selected = capability in selectedCapabilities, enabled = !busy, role = Role.Checkbox,
+                                                onClick = { if (!busy) executionDraft = executionDraft.copy(capabilities = executionDraft.capabilities.toggle(capability)) },
+                                            ), verticalAlignment = Alignment.CenterVertically) {
+                                                Checkbox(checked = capability in selectedCapabilities, onCheckedChange = null,
+                                                    enabled = !busy, modifier = Modifier.size(22.dp),
+                                                    colors = CheckboxDefaults.colors(checkedColor = AutoScriptPalette.Accent))
+                                                Column(Modifier.weight(1f).padding(start = 7.dp)) {
+                                                    Text(settingsCapabilityTitle(capability), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text(capability, fontSize = 9.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                            }
+                                        }
+                                        if (pair.size < columns) Spacer(Modifier.weight(1f))
+                                    }
+                                    HorizontalDivider(color = AutoScriptPalette.Border)
+                                }
+                                item { Text("仅声明脚本允许使用的能力，不代表已获得 Root 权限。已声明的未知能力会保留。",
+                                    fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(vertical = 10.dp)) }
+                            }
+                        }
+                    }
+                    ProjectSettingsPage.INTERFACE -> {
+                        val draft = runnerUiDesignerDraft(snapshot.manifest.runnerUi)
+                        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                            item(key = "interface-tools") {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                    Text("运行前配置", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.Accent)
+                                    Text("用户启动脚本前填写的表单 · ${draft.fields.size} 个字段", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        SettingsOutlineAction("预览界面", !busy && snapshot.manifest.runnerUi != null, Modifier.weight(1f)) { interfacePreviewVisible = true }
+                                        SettingsOutlineAction("高级 JSON", !busy, Modifier.weight(1f), ::editRunnerUi)
                                     }
                                 }
                             }
-                            if (pair.size == 1) Spacer(Modifier.weight(1f))
-                        }
-                        HorizontalDivider(color = AutoScriptPalette.Border)
-                    }
-                    item { Text("仅声明脚本允许使用的能力，不代表已获得 Root 权限。已声明的未知能力会保留。",
-                        fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(vertical = 10.dp)) }
-                }
-            }
-            ProjectSettingsPage.INTERFACE -> {
-                val draft = runnerUiDesignerDraft(snapshot.manifest.runnerUi)
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text("运行前配置", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AutoScriptPalette.Accent)
-                    Text("用户启动脚本前填写的表单 · ${draft.fields.size} 个字段", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SettingsOutlineAction("预览界面", !busy && snapshot.manifest.runnerUi != null, Modifier.weight(1f)) { interfacePreviewVisible = true }
-                        SettingsOutlineAction("高级 JSON", !busy, Modifier.weight(1f), ::editRunnerUi)
-                    }
-                }
-                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    if (draft.fields.isEmpty()) item { SettingsEmptyState("尚未配置运行界面", "常规排版请从编辑器右侧打开界面设计器；高级 JSON 仅用于配置数据") }
-                    if (draft.description.isNotBlank()) item {
-                        Text(draft.description, fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(bottom = 8.dp),
-                            maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    }
-                    items(draft.fields, key = { it.id }) { field ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(field.label, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(field.id, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (draft.fields.isEmpty()) item { SettingsEmptyState("尚未配置运行界面", "常规排版请从编辑器右侧打开界面设计器；高级 JSON 仅用于配置数据") }
+                            if (draft.description.isNotBlank()) item {
+                                Text(draft.description, fontSize = 11.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(bottom = 8.dp),
+                                    maxLines = 3, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(field.kind.label + if (field.required) " · 必填" else " · 可选", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                            items(draft.fields, key = { it.id }) { field ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(field.label, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(field.id, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Text(field.kind.label + if (field.required) " · 必填" else " · 可选", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                                }
+                                HorizontalDivider(color = AutoScriptPalette.Border)
+                            }
                         }
-                        HorizontalDivider(color = AutoScriptPalette.Border)
                     }
                 }
             }
@@ -526,27 +546,32 @@ private fun ProjectSettingsWindow(
     onDismiss: () -> Unit,
     footer: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     preferredHeight: Dp = 480.dp,
+    headerActions: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Dialog(onDismissRequest = { if (!busy) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(14.dp).imePadding()) {
-            val height = minOf(maxHeight * if (maxHeight < 400.dp) .94f else .84f, preferredHeight)
-            Surface(Modifier.widthIn(max = 560.dp).fillMaxWidth().height(height).align(Alignment.Center),
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(8.dp).imePadding()) {
+            val short = studioShortViewport(maxHeight.value)
+            val fontScale = LocalDensity.current.fontScale
+            val height = minOf(maxHeight, preferredHeight)
+            Surface(Modifier.width(studioDialogWidth(maxWidth.value, 420).dp).height(height).align(Alignment.Center),
                 color = Color.White, shape = RoundedCornerShape(5.dp), shadowElevation = 10.dp) {
                 Column {
-                    Row(Modifier.fillMaxWidth().height(54.dp).padding(start = 12.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = studioCompactControlHeight(if (short) 38 else 46, fontScale).dp)
+                        .padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(title, color = AutoScriptPalette.Accent, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text(title, color = AutoScriptPalette.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(subtitle, color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Box(Modifier.size(36.dp).clickable(enabled = !busy, onClick = onDismiss), contentAlignment = Alignment.Center) {
+                        headerActions()
+                        Box(Modifier.size(30.dp).clickable(enabled = !busy, onClick = onDismiss), contentAlignment = Alignment.Center) {
                             Text("×", fontSize = 24.sp, color = AutoScriptPalette.TextSecondary)
                         }
                     }
                     HorizontalDivider(color = AutoScriptPalette.Divider)
                     Column(Modifier.weight(1f).fillMaxWidth(), content = content)
                     HorizontalDivider(color = AutoScriptPalette.Divider)
-                    Row(Modifier.fillMaxWidth().height(42.dp), content = footer)
+                    Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(if (short) 30 else 34, fontScale).dp), content = footer)
                 }
             }
         }
@@ -563,16 +588,16 @@ private fun SettingsFooterAction(label: String, enabled: Boolean, modifier: Modi
 
 @Composable
 private fun SettingsOutlineAction(label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    Box(modifier.height(34.dp).border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(4.dp))
+    Box(modifier.heightIn(min = 30.dp).border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(4.dp))
         .clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(label, fontSize = 12.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+        Text(label, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 3.dp, vertical = 4.dp), style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
             color = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
     }
 }
 
 @Composable
 private fun SettingsFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(Modifier.height(26.dp).background(if (selected) AutoScriptPalette.AccentSoft else AutoScriptPalette.PageBackground, RoundedCornerShape(4.dp))
+    Box(Modifier.heightIn(min = 26.dp).background(if (selected) AutoScriptPalette.AccentSoft else AutoScriptPalette.PageBackground, RoundedCornerShape(4.dp))
         .selectable(selected = selected, onClick = onClick, role = Role.Tab).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
         Text(label, fontSize = 11.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
             color = if (selected) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
@@ -610,7 +635,7 @@ private fun ProjectResourceRow(
         value = withContext(Dispatchers.IO) { resourceDetails(file, kind) }
     }
     Row(
-        modifier = Modifier.fillMaxWidth().height(54.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
             ResourcePreview(file, kind, resourceRevision)

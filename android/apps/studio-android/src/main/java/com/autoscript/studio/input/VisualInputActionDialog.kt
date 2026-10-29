@@ -1,33 +1,13 @@
 package com.autoscript.studio
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.autoscript.studio.StudioDialog as Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.runtime.api.RuntimeProtocol
 
@@ -50,103 +30,48 @@ internal fun inputActionUnavailableReason(action: VisualInputAction, canPickPoin
     else -> null
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun VisualInputActionDialog(
     canPickPoint: Boolean,
     backendFeatures: Int?,
     onDismiss: () -> Unit,
     onPick: (ImageToolMode) -> Unit,
-    onFloatingPick: ((ImageToolMode) -> Unit)? = null,
     onOpenPermissions: (() -> Unit)? = null,
     onRefresh: (() -> Unit)? = null,
     onRecord: (() -> Unit)? = null,
 ) {
-    var screenshot by remember { mutableStateOf(onFloatingPick == null) }
-    val blue = AutoScriptPalette.Accent
-    val muted = AutoScriptPalette.TextSecondary
     val basicReason = inputActionUnavailableReason(VisualInputAction.TAP, canPickPoint, backendFeatures)
     val pointerReason = inputActionUnavailableReason(VisualInputAction.LONG_PRESS, canPickPoint, backendFeatures)
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(12.dp)) {
-            Surface(Modifier.widthIn(max = 420.dp).fillMaxWidth().heightIn(max = maxHeight).align(Alignment.Center),
-                color = Color.White, shape = RoundedCornerShape(5.dp), shadowElevation = 9.dp) {
-                Column {
-                    Row(Modifier.fillMaxWidth().height(40.dp).padding(start = 12.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("触控", color = blue, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Text(if (backendFeatures == null && canPickPoint) "读取中" else if (basicReason != null) "未就绪" else if (pointerReason == null) "Root · 单指" else "Root · 基础输入",
-                            color = if (basicReason == null) blue else muted, fontSize = 10.sp,
-                            modifier = Modifier.background(Color(0xFFF3F5F8), RoundedCornerShape(3.dp)).padding(horizontal = 7.dp, vertical = 3.dp))
-                        InputPanelButton("×", onDismiss, Modifier.width(36.dp).fillMaxHeight())
-                    }
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
-                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("定位方式", color = muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                            if (onFloatingPick != null) InputPanelButton(if (!screenshot) "● 悬浮选点" else "悬浮选点", { screenshot = false }, Modifier.height(32.dp).padding(horizontal = 8.dp))
-                            InputPanelButton(if (screenshot) "● 截图选点" else "截图选点", { screenshot = true }, Modifier.height(32.dp).padding(horizontal = 8.dp))
-                        }
-                        VisualInputAction.entries.chunked(2).forEach { row ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                row.forEach { action ->
-                                    val reason = inputActionUnavailableReason(action, canPickPoint, backendFeatures)
-                                    InputActionTile(action, reason, Modifier.weight(1f)) {
-                                        // Recheck availability on activation as well as when drawing the card.
-                                        if (inputActionUnavailableReason(action, canPickPoint, backendFeatures) == null) {
-                                            if (!screenshot && onFloatingPick != null) onFloatingPick(action.mode) else onPick(action.mode)
-                                        }
-                                    }
-                                }
-                                if (row.size == 1) Spacer(Modifier.weight(1f))
-                            }
-                        }
-                        Text(when {
-                            backendFeatures == null && canPickPoint -> "正在读取输入服务能力，请稍候。"
-                            basicReason != null -> "$basicReason，请确认 Runner 连接、Root 授权和输入后端。"
-                            pointerReason != null -> "单击、滑动可用；其他动作需后端支持持续单指。"
-                            else -> "定位不会触发目标触摸，加入插件并运行后才执行。"
-                        }, color = muted, fontSize = 10.sp, lineHeight = 14.sp)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            onOpenPermissions?.let { open -> InputPanelButton("权限 / 环境", open, Modifier.weight(1f).height(36.dp).background(blue.copy(alpha = .06f), RoundedCornerShape(4.dp))) }
-                            onRefresh?.let { refresh -> InputPanelButton("重新读取能力", refresh, Modifier.weight(1f).height(36.dp).background(blue.copy(alpha = .06f), RoundedCornerShape(4.dp))) }
-                        }
-                        onRecord?.let { record ->
-                            InputPanelButton("录制动作 · 预览后加入", record,
-                                Modifier.fillMaxWidth().height(32.dp).background(blue.copy(alpha = .06f), RoundedCornerShape(4.dp)))
+    StudioPanelDialog("触控", onDismiss, showFooter = false, landscapeWidthDp = 600, headerActions = {
+        Text(if (basicReason == null) "Root 已就绪" else if (backendFeatures == null) "读取中" else "未就绪",
+            fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+    }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val actions: List<VisualInputAction?> = VisualInputAction.entries + if (onRecord != null) listOf(null) else emptyList()
+            StudioCompactGrid(actions, cellDp = 130, maximum = 4) { action, cell ->
+                if (action == null) StudioToolAction("录制动作", R.drawable.ic_list_24, cell) { onRecord?.invoke() }
+                else {
+                    val reason = inputActionUnavailableReason(action, canPickPoint, backendFeatures)
+                    StudioToolAction(action.title, action.mode.icon, cell, enabled = reason == null) {
+                        if (inputActionUnavailableReason(action, canPickPoint, backendFeatures) == null) {
+                            onPick(action.mode)
                         }
                     }
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
-                    InputPanelButton("取消", onDismiss, Modifier.fillMaxWidth().height(40.dp))
                 }
             }
+            if (basicReason != null || pointerReason != null) Text(when {
+                backendFeatures == null && canPickPoint -> "正在读取输入能力…"
+                basicReason != null -> "$basicReason，请检查运行环境。"
+                else -> "持续触点暂不可用；单击和滑动仍可使用。"
+            }, color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, lineHeight = 14.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                onOpenPermissions?.let { ImageToolCompactAction("权限 / 环境", true, onClick = it) }
+                onRefresh?.let { ImageToolCompactAction("连接 / 读取能力", true, onClick = it) }
+            }
+            ImageToolHelp("在截图中按原像素取点，不会执行触摸。分辨率或方向变化后请重新取点。持续触点需成组执行并最终释放。\n" +
+                VisualInputAction.entries.joinToString("\n") { "${it.title}：${it.detail}" })
         }
-    }
-}
-
-@Composable
-private fun InputActionTile(action: VisualInputAction, reason: String?, modifier: Modifier, onClick: () -> Unit) {
-    val enabled = reason == null
-    val blue = AutoScriptPalette.Accent
-    val shape = RoundedCornerShape(4.dp)
-    Row(modifier.height(62.dp).background(if (enabled) Color(0xFFFAFBFD) else Color(0xFFF5F6F8), shape)
-        .border(1.dp, AutoScriptPalette.Divider, shape).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(26.dp).background(if (enabled) blue.copy(alpha = .09f) else Color(0xFFE9ECF0), RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(action.mode.icon), null, tint = if (enabled) blue else AutoScriptPalette.TextSecondary, modifier = Modifier.size(18.dp))
-        }
-        Column(Modifier.weight(1f).padding(start = 7.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(action.title, color = if (enabled) AutoScriptPalette.TextPrimary else AutoScriptPalette.TextSecondary, fontSize = 13.sp,
-                fontWeight = FontWeight.Medium, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
-            Text(reason ?: action.detail, color = AutoScriptPalette.TextSecondary, fontSize = 10.sp,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
-        }
-    }
-}
-
-@Composable
-private fun InputPanelButton(label: String, onClick: () -> Unit, modifier: Modifier) {
-    Box(modifier.clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(label, color = AutoScriptPalette.TextPrimary, fontSize = 13.sp,
-            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
     }
 }

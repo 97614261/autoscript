@@ -38,8 +38,8 @@ internal fun VisualScriptDialogArguments(contract: BlockContract, arguments: Jso
     val model = remember(project.manifest.runnerUi) { project.manifest.runnerUi?.let { ScriptUiDefinition.parse(it.toString()) } }
     var inputs by remember(contract.kind, arguments) { mutableStateOf(blockPropertyTexts(contract, arguments)) }
     var error by remember { mutableStateOf<String?>(null) }
-    val variables = calculationVariables(project.manifest.variables, flowId, project.manifest.flows)
-        .filter { it.type == ProjectVariableType.STRING }.map { it.name }
+    val variableMetadata = calculationVariables(project.manifest.variables, flowId, project.manifest.flows)
+    val variables = variableMetadata.filter { it.type == ProjectVariableType.STRING }.map { it.name }
     val layout = contract.kind == "ui.dialog"
     fun update(key: String, text: String) { inputs = inputs + (key to text); error = null }
     StudioPanelDialog(contract.title, onDismiss, confirmLabel, onConfirm = {
@@ -64,8 +64,8 @@ internal fun VisualScriptDialogArguments(contract: BlockContract, arguments: Jso
             }
             OutlinedTextField(inputs["timeoutMs"].orEmpty(), { update("timeoutMs", it) }, label = { Text("等待期限 · 毫秒") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             val result = inputs["resultVariable"].orEmpty()
-            DesignerChoice("结果变量 · 字符", result.ifEmpty { if (layout) "不接收" else "请选择" },
-                (if (layout) listOf("" to "不接收") else emptyList()) + variables.map { it to it }, true) { update("resultVariable", it) }
+            CompactVariableChoice("结果变量 · 字符", result,
+                (if (layout) listOf("" to "不接收") else emptyList()) + variables.map { it to it }, true, variableMetadata) { update("resultVariable", it) }
             if (onManageVariables != null) TextButton(onClick = onManageVariables) { Text("维护变量", fontSize = 12.sp) }
             Text(if (layout) "结果：close关闭 / dismiss返回或窗外 / timeout到期。控件值用读取页面参数获取。" else "结果：confirm确定 / cancel取消 / dismiss返回或窗外 / timeout到期。接判断积木比较 confirm。", fontSize = 11.sp)
             error?.let { Text(it, color = AutoScriptPalette.Accent, fontSize = 12.sp) }

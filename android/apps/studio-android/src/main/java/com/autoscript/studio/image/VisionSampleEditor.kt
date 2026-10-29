@@ -1,6 +1,7 @@
 package com.autoscript.studio
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -57,17 +58,22 @@ internal fun VisionSampleEditor(value: String, onChange: (String) -> Unit) {
         DesignerAction(if (raw) "点表" else "原始JSON", onClick = { raw = !raw })
     }
     if (raw || rows == null) {
-        DesignerInput("色点JSON（无效输入会保留）", value, true, Modifier.fillMaxWidth()) { change(it) }
+        ImageToolCompactInput("色点JSON（无效输入会保留）", value, true, Modifier.fillMaxWidth()) { change(it) }
         if (rows == null) Text("当前数据无法显示为点表；修正JSON后再切换，不会自动清空。", fontSize = 10.sp)
     } else {
         Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             rows.forEachIndexed { index, item ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    listOf("dx" to "ΔX", "dy" to "ΔY", "rgb" to "RGB/#HEX", "tolerance" to "容差").forEach { (key, label) ->
-                        DesignerInput("${index + 1} $label", item.asJsonObject[key]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(), true,
-                            Modifier.weight(if (key == "rgb") 1.7f else 1f), numeric = key != "rgb") { change(updateVisionSample(value, index, key, it)) }
+                Column(Modifier.fillMaxWidth().border(1.dp, com.autoscript.core.designsystem.AutoScriptPalette.Divider).padding(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(if (index == 0) "色点1 · 锚点" else "色点${index + 1}", Modifier.weight(1f), fontSize = 10.sp)
+                        ImageToolCompactAction("删除", true) { onChange(rows.deepCopy().apply { remove(index) }.toString()) }
                     }
-                    DesignerAction("删", onClick = { onChange(rows.deepCopy().apply { remove(index) }.toString()) })
+                    StudioCompactGrid(listOf("dx" to "ΔX", "dy" to "ΔY", "rgb" to "RGB/#HEX", "tolerance" to "容差"),
+                        cellDp = 132, maximum = 2, modifier = Modifier.fillMaxWidth()) { (key, label), cell ->
+                        ImageToolCompactInput(label, item.asJsonObject[key]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(), true,
+                            cell, numeric = key != "rgb") { change(updateVisionSample(value, index, key, it)) }
+                    }
                 }
             }
         }

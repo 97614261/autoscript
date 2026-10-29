@@ -19,6 +19,18 @@ class CompactProgramRowTextTest {
         assertEquals("点击", result.title)
         assertEquals("(320, 640)", result.details)
     }
+
+    @Test fun inheritedDisableOnlyMutesRowsWithoutRepeatingAPrefix() {
+        val inherited = compactProgramRowText("[随父级禁用] 弹出提示 · 内容")
+        assertEquals("", inherited.disabledPrefix)
+        assertEquals("弹出提示", inherited.title)
+        assertTrue(inherited.disabled)
+        assertTrue(inherited.inheritedDisabled)
+        val own = compactProgramRowText("[已禁用] 条件判断 · 数量 > 0")
+        assertEquals("已注释  ", own.disabledPrefix)
+        assertTrue(own.disabled)
+        assertEquals("", compactProgramRowText("点击 · (1, 2)").disabledPrefix)
+    }
     @Test fun bracketedParameterIsNotTreatedAsBranch() {
         val result = compactProgramRowText("注释 · [这里] 保留说明")
         assertNull(result.branch)

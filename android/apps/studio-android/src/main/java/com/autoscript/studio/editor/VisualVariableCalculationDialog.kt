@@ -3,7 +3,6 @@ package com.autoscript.studio
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
@@ -144,6 +144,7 @@ internal fun calculationReferencedNames(source: String): Set<String> {
 }
 
 /** Shared compact assignment/calculation UI; Rust, not this editor, owns expression semantics. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun VisualVariableCalculationDialog(
     arguments: JsonObject,
@@ -161,7 +162,6 @@ internal fun VisualVariableCalculationDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<String?>(null) }
     var scope by remember { mutableStateOf("局部") }
-    var selected by remember { mutableStateOf<String?>(null) }
     var fullScreen by remember { mutableStateOf(false) }
     val choices = calculationVariables(variables, currentFlowId, flows).filter { it.type != ProjectVariableType.IMAGE }
     fun insert(token: String, replaceDefault: Boolean = false) {
@@ -172,31 +172,41 @@ internal fun VisualVariableCalculationDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().imePadding().padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
             val limit = maxHeight
-            Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = limit), color = Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 10.dp) {
+            Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.width(studioToolPanelWidth(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 420, 600).dp).heightIn(max = limit), color = Color.White, shape = RoundedCornerShape(8.dp), shadowElevation = 10.dp) {
                 Column {
-                    Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("变量赋值 / 计算", color = AutoScriptPalette.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(32, LocalDensity.current.fontScale).dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("变量赋值 / 计算", color = AutoScriptPalette.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         if (onManageVariables != null) CalculationButton("＋变量", onClick = onManageVariables)
                         StudioPanelFullScreenButton(fullScreen, { fullScreen = !fullScreen })
                     }
                     HorizontalDivider(thickness = hairline(), color = AutoScriptPalette.Divider)
-                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("目标", fontSize = 12.sp, modifier = Modifier.width(38.dp))
                             val variable = choices.firstOrNull { it.name == target }
                             CalculationButton(variable?.let { "${calculationTypeLabel(it.type)} · ${it.name}（${it.scope}）" } ?: "选择目标变量", Modifier.weight(1f)) {
-                                picker = "目标"; selected = target.takeIf(String::isNotBlank)
+                                picker = "目标"
                                 scope = variable?.scope ?: preferredCalculationScope(choices)
                             }
                         }
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            CalculationButton("选择变量") { picker = "来源"; selected = null; scope = preferredCalculationScope(choices) }
+                        Text("$target =", color = AutoScriptPalette.Accent, fontSize = 13.sp)
+                        BasicTextField(
+                            value = expression,
+                            onValueChange = { if (it.text.toByteArray(Charsets.UTF_8).size <= 1024) { expression = it; expressionEdited = true; error = null } },
+                            textStyle = TextStyle(fontSize = 14.sp, color = AutoScriptPalette.TextPrimary, fontFamily = FontFamily.Monospace),
+                            cursorBrush = SolidColor(AutoScriptPalette.Accent),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = if (studioShortViewport(limit.value)) 44.dp else 64.dp).background(AutoScriptPalette.VisualEditor.ControlBackground, RoundedCornerShape(6.dp))
+                                .border(1.dp, AutoScriptPalette.VisualEditor.Border, RoundedCornerShape(6.dp)).padding(9.dp),
+                            decorationBox = { field -> Box { if (expression.text.isBlank()) Text("例如：count + 1 或 int(\"12\")", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp); field() } },
+                        )
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            CalculationButton("选择变量") { picker = "来源"; scope = preferredCalculationScope(choices) }
                             CalculationButton("字符常量") { insert("\"\"", replaceDefault = true); expression = expression.copy(selection = TextRange((expression.selection.start - 1).coerceAtLeast(0))) }
                             CalculationButton("类型转换") { picker = "转换" }
                             CalculationButton("字符处理") { picker = "字符" }
                             CalculationButton("整数运算") { picker = "整数" }
                         }
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             listOf("+", "-", "*", "/", "//", "%", "..", "(", ")").forEach { token ->
                                 CalculationButton(token, Modifier.widthIn(min = 34.dp)) { insert(if (token in listOf("(", ")")) token else " $token ") }
                             }
@@ -206,22 +216,11 @@ internal fun VisualVariableCalculationDialog(
                             CalculationButton("自增 +1", Modifier.weight(1f), enabled = numeric) { expression = TextFieldValue("$target + 1", TextRange(target.length + 4)); expressionEdited = true; error = null }
                             CalculationButton("自减 −1", Modifier.weight(1f), enabled = numeric) { expression = TextFieldValue("$target - 1", TextRange(target.length + 4)); expressionEdited = true; error = null }
                         }
-                        Text("$target =", color = AutoScriptPalette.Accent, fontSize = 13.sp)
-                        BasicTextField(
-                            value = expression,
-                            onValueChange = { if (it.text.toByteArray(Charsets.UTF_8).size <= 1024) { expression = it; expressionEdited = true; error = null } },
-                            textStyle = TextStyle(fontSize = 14.sp, color = AutoScriptPalette.TextPrimary, fontFamily = FontFamily.Monospace),
-                            cursorBrush = SolidColor(AutoScriptPalette.Accent),
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).background(AutoScriptPalette.PageBackground, RoundedCornerShape(3.dp))
-                                .border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).padding(9.dp),
-                            decorationBox = { field -> Box { if (expression.text.isBlank()) Text("例如：count + 1 或 int(\"12\")", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp); field() } },
-                        )
-                        Text("/ 浮点除法 · // 向下整除 · % 取余 · .. 字符连接\nint / float / text 转换；len/sub/find 按字符、起点1、未找到0。byteLen/byteSub/byteFind 按UTF-8字节、起点0、未找到−1，不能截断中文。idiv 向零整除，irem 余数与被除数同号；除零/溢出报错。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                        Text("局部变量仅属于当前插件；图像不参与计算。声明不赋初值：整数/浮点默认为0，字符为空。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                        ImageToolHelp("/ 浮点除法 · // 向下整除 · % 取余 · .. 字符连接\nint / float / text 转换；len/sub/find 按字符、起点1、未找到0。byteLen/byteSub/byteFind 按UTF-8字节、起点0、未找到−1，不能截断中文。idiv 向零整除，irem 余数与被除数同号；除零/溢出报错。\n局部变量仅属于当前插件；图像不参与计算。声明不赋初值：整数/浮点默认为0，字符为空。")
                         error?.let { Text(it, color = AutoScriptPalette.Danger, fontSize = 11.sp) }
                     }
                     HorizontalDivider(thickness = hairline(), color = AutoScriptPalette.Divider)
-                    Row(Modifier.fillMaxWidth().height(42.dp)) {
+                    Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(34, LocalDensity.current.fontScale).dp)) {
                         CalculationFooter("取消", Modifier.weight(1f), onClick = onDismiss)
                         CalculationFooter("清空", Modifier.weight(1f)) { expression = TextFieldValue(); expressionEdited = true; error = null }
                         CalculationFooter(confirmLabel, Modifier.weight(1f), primary = true) {
@@ -252,44 +251,20 @@ internal fun VisualVariableCalculationDialog(
             expressionEdited = true; error = null; picker = null
         }
     } else if (picker != null) {
-        Dialog(onDismissRequest = { picker = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            BoxWithConstraints(Modifier.fillMaxSize().imePadding().padding(10.dp), contentAlignment = Alignment.Center) {
-                Surface(Modifier.widthIn(max = 540.dp).fillMaxWidth().heightIn(max = maxHeight * .8f), color = Color.White, shape = RoundedCornerShape(3.dp), shadowElevation = 10.dp) {
-                    Column {
-                        Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("变量选择", fontSize = 16.sp, color = AutoScriptPalette.Accent, modifier = Modifier.weight(1f))
-                            if (onManageVariables != null) CalculationButton("＋维护变量") { picker = null; onManageVariables() }
-                        }
-                        HorizontalDivider(thickness = hairline(), color = AutoScriptPalette.Divider)
-                        Row(Modifier.weight(1f, fill = false).heightIn(max = 340.dp)) {
-                            Column(Modifier.width(85.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                listOf("局部", "全局", "参数").forEach { label -> CalculationFooter("${label}变量", Modifier.fillMaxWidth().height(42.dp), primary = scope == label) { scope = label; selected = null } }
-                            }
-                            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                                val visible = choices.filter { it.scope == scope }
-                                if (visible.isEmpty()) Text("暂无可用变量", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(12.dp))
-                                visible.forEach { variable -> CalculationFooter("${if (selected == variable.name) "● " else ""}${calculationTypeLabel(variable.type)} · ${variable.name}", Modifier.fillMaxWidth().height(42.dp), primary = selected == variable.name) { selected = variable.name } }
-                            }
-                        }
-                        HorizontalDivider(thickness = hairline(), color = AutoScriptPalette.Divider)
-                        Row(Modifier.fillMaxWidth().height(42.dp)) {
-                            CalculationFooter("取消", Modifier.weight(1f)) { picker = null }
-                            CalculationFooter("确定", Modifier.weight(1f), primary = true) {
-                                selected?.takeIf { name -> choices.any { it.name == name } }?.let { name -> if (picker == "目标") target = name else insert(name, replaceDefault = true); error = null; picker = null }
-                            }
-                        }
-                    }
-                }
+        CompactVariablePickerDialog(if (picker == "目标") "选择目标变量" else "插入变量", variablePickerOptions(choices.map { it.name }, choices),
+            target.takeIf { picker == "目标" }, onDismiss = { picker = null }, initialScope = scope,
+            onManage = onManageVariables?.let { { picker = null; it() } }, onSelect = { name ->
+            if (choices.any { it.name == name }) {
+                if (picker == "目标") target = name else insert(name, replaceDefault = true)
+                error = null; picker = null
             }
-        }
+        })
     }
 }
 
 @Composable
 private fun CalculationButton(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    Box(modifier.height(34.dp).border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-        Text(label, color = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary, fontSize = 11.sp, textAlign = TextAlign.Center)
-    }
+    StudioToolButton(label, modifier, enabled = enabled, onClick = onClick)
 }
 
 @Composable

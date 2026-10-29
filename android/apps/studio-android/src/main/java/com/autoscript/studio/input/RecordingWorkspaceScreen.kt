@@ -28,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /** Real global Root recording. This composable remains mounted while its own Dialog is hidden. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun RecordingWorkspaceScreen(
     projectId: String, flowId: String, design: ProjectDesign, capabilities: Set<String>,
@@ -154,7 +155,7 @@ internal fun RecordingWorkspaceScreen(
                 if ("input.basic" !in capabilities) Text("项目未声明 input.basic，请到项目能力设置开启后再录制。",color=MaterialTheme.colorScheme.error)
                 message?.let { Text(it,color=if (messageIsError) MaterialTheme.colorScheme.error else AutoScriptPalette.TextSecondary,fontSize = 11.sp,
                     modifier = Modifier.heightIn(max = 56.dp).verticalScroll(rememberScrollState())) }
-                Row(horizontalArrangement=Arrangement.spacedBy(2.dp)) {
+                FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
                     if (recordingId == null) RecordingSmallButton(if (reply == null) "开始录制" else "重新录制", enabled = !working && "input.basic" in capabilities, onClick={
                         if (reply != null) restartRequested = true else start()
                     })
@@ -175,8 +176,8 @@ internal fun RecordingWorkspaceScreen(
                 }
                 reply?.let { data -> Text("${data.width}×${data.height} → ${design.width}×${design.height} · ${data.elapsedMs/1000.0}s · ${design.scaleMode}",fontSize = 10.sp) }
                 if (reply != null) {
-                Row(verticalAlignment=Alignment.CenterVertically) {
-                    Text("已选 ${selected.size}/${actions.size}", fontSize = 11.sp, modifier = Modifier.weight(1f))
+                FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("已选 ${selected.size}/${actions.size}", fontSize = 11.sp, modifier = Modifier.padding(vertical = 6.dp))
                     RecordingSmallButton("全选", enabled = !working) { selected=actions.indices.toSet() }
                     RecordingSmallButton("清空", enabled = !working) { selected=emptySet() }
                     RecordingCheck("保留间隔", keepIntervals, !working) { keepIntervals=it }

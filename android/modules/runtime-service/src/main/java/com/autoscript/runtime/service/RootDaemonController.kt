@@ -16,16 +16,9 @@ import java.util.zip.ZipFile
 internal class RootDaemonController(
     private val context: Context,
     private val handler: Handler,
-    private val onStateChanged: (State) -> Unit,
+    private val onStateChanged: (RootConnectionState) -> Unit,
     private val diagnostic: (AppDiagnosticCode, Int?) -> Unit = { _, _ -> },
 ) {
-    enum class State {
-        STOPPED,
-        STARTING,
-        READY,
-        FAILED,
-    }
-
     private val random = SecureRandom()
     private val stopping = AtomicBoolean(false)
     private var observer: FileObserver? = null
@@ -37,72 +30,66 @@ internal class RootDaemonController(
     private var sessionKey: ByteArray? = null
     private var nativeHandle: Long = 0L
     private var nativeAttached = false
-    private var restartAttempts = 0
-    private var restartScheduled = false
-
-    private val startupTimeout = Runnable {
-        if (!stopping.get() && nativeHandle != 0L && observer != null) {
-            diagnostic(AppDiagnosticCode.ROOT_START_TIMEOUT, null)
-            recoverFromFailure()
-        }
-    }
-
-    private val restart = Runnable {
-        restartScheduled = false
-        if (!stopping.get() && nativeHandle != 0L) startAttempt()
-    }
+    @Volatile private var nativeAttachTicket: Long? = null
+    private var startupTimeout: Runnable? = null
+    private val connection = RootConnectionSession(::startAttempt, ::releaseAttempt, onStateChanged)
 
     fun start(handle: Long) {
         check(nativeHandle == 0L) { "RootDaemonController already started" }
         stopping.set(false)
         nativeHandle = handle
-        restartAttempts = 0
-        startAttempt()
+    }
+
+    /** Initial startup or user demand only; never called by a status/disconnect callback. */
+    fun requestConnection() {
+        if (!stopping.get() && nativeHandle != 0L) connection.request()
     }
 
     /** Called on the engine Handler after native I/O detects a broken authenticated channel. */
-    fun onNativeDisconnected() {
-        if (!stopping.get() && nativeHandle != 0L) {
+    fun disconnectTicket(): Long? = connection.readyTicket() ?: nativeAttachTicket
+
+    fun onNativeDisconnected(ticket: Long) {
+        if (!stopping.get() && nativeHandle != 0L && connection.active(ticket)) {
             diagnostic(AppDiagnosticCode.ROOT_DISCONNECTED, null)
-            recoverFromFailure()
+            connection.end(ticket, failed = false)
         }
     }
 
     fun stop() {
         if (nativeHandle == 0L) return
         stopping.set(true)
-        handler.removeCallbacks(startupTimeout)
-        handler.removeCallbacks(restart)
-        restartScheduled = false
-        stopObserver()
-        val handle = nativeHandle
+        connection.stop()
         nativeHandle = 0L
+    }
+
+    private fun releaseAttempt() {
+        startupTimeout?.let(handler::removeCallbacks)
+        startupTimeout = null
+        stopObserver()
         if (nativeAttached) {
-            NativeEngineBridge.nativeDetachRoot(handle)
             nativeAttached = false
+            NativeEngineBridge.nativeDetachRoot(nativeHandle)
         }
         clearSecretAndFiles()
         val process = daemonProcess
         daemonProcess = null
         process?.destroy()
-        onStateChanged(State.STOPPED)
     }
 
-    private fun startAttempt() {
-        if (stopping.get() || nativeHandle == 0L) return
-        onStateChanged(State.STARTING)
-        diagnostic(AppDiagnosticCode.ROOT_START, restartAttempts)
+    private fun startAttempt(ticket: Long) {
+        if (stopping.get() || nativeHandle == 0L || !connection.starting(ticket)) return
+        diagnostic(AppDiagnosticCode.ROOT_START, null)
 
         val runtimeDirectory = File(context.noBackupFilesDir, RUNTIME_DIRECTORY)
         if ((!runtimeDirectory.exists() && !runtimeDirectory.mkdirs()) || !runtimeDirectory.isDirectory) {
             diagnostic(AppDiagnosticCode.ROOT_DIRECTORY_FAILED, null)
-            recoverFromFailure()
+            connection.end(ticket, failed = true)
             return
         }
         runCatching { Os.chmod(runtimeDirectory.absolutePath, DIRECTORY_MODE) }
             .getOrElse {
                 diagnostic(AppDiagnosticCode.ROOT_DIRECTORY_FAILED, null)
-                recoverFromFailure()
+                connection.end(ticket, failed = true)
                 return
             }
 
@@ -115,7 +102,7 @@ internal class RootDaemonController(
         if (daemon == null) {
             diagnostic(AppDiagnosticCode.ROOT_DAEMON_MISSING, null)
             secret.fill(0)
-            recoverFromFailure()
+            connection.end(ticket, failed = true)
             return
         }
 
@@ -129,7 +116,7 @@ internal class RootDaemonController(
             diagnostic(AppDiagnosticCode.ROOT_KEY_FAILED, null)
             secret.fill(0)
             key.delete()
-            recoverFromFailure()
+            connection.end(ticket, failed = true)
             return
         }
 
@@ -137,8 +124,13 @@ internal class RootDaemonController(
         keyFile = key
         readyFile = ready
         sessionKey = secret
-        watchForReady(runtimeDirectory, ready.name)
-        handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MILLIS)
+        watchForReady(runtimeDirectory, ready.name, ticket)
+        startupTimeout = Runnable {
+            if (connection.starting(ticket)) {
+                diagnostic(AppDiagnosticCode.ROOT_START_TIMEOUT, null)
+                connection.end(ticket, failed = true)
+            }
+        }.also { handler.postDelayed(it, STARTUP_TIMEOUT_MILLIS) }
 
         val process = runCatching {
             val command = listOf(
@@ -153,39 +145,42 @@ internal class RootDaemonController(
             ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
         }.getOrElse {
             diagnostic(AppDiagnosticCode.ROOT_SU_START_FAILED, null)
-            recoverFromFailure()
+            connection.end(ticket, failed = true)
             return
         }
         daemonProcess = process
-        consumeProcessOutput(process)
+        consumeProcessOutput(process, ticket)
     }
 
     @Suppress("DEPRECATION")
-    private fun watchForReady(directory: File, readyName: String) {
+    private fun watchForReady(directory: File, readyName: String, ticket: Long) {
         observer = object : FileObserver(directory.absolutePath, CREATE or MOVED_TO) {
             override fun onEvent(event: Int, path: String?) {
-                if (path == readyName) handler.post(::attachNativeClient)
+                if (path == readyName) handler.post { attachNativeClient(ticket) }
             }
         }.also(FileObserver::startWatching)
     }
 
-    private fun attachNativeClient() {
-        if (stopping.get() || nativeAttached) return
+    private fun attachNativeClient(ticket: Long) {
+        if (stopping.get() || nativeAttached || !connection.starting(ticket)) return
         val handle = nativeHandle
         val socket = socketFile
         val secret = sessionKey
         if (handle == 0L || socket == null || secret == null) {
-            recoverFromFailure()
+            connection.end(ticket, failed = true)
             return
         }
         stopObserver()
-        handler.removeCallbacks(startupTimeout)
-        val result = NativeEngineBridge.nativeAttachRoot(
-            handle,
-            socket.absolutePath,
-            secret,
-            REQUEST_TIMEOUT_MILLIS,
-        )
+        startupTimeout?.let(handler::removeCallbacks)
+        startupTimeout = null
+        nativeAttachTicket = ticket
+        val result = try {
+            runCatching {
+                NativeEngineBridge.nativeAttachRoot(handle, socket.absolutePath, secret, REQUEST_TIMEOUT_MILLIS)
+            }.getOrDefault(-1)
+        } finally {
+            nativeAttachTicket = null
+        }
         secret.fill(0)
         sessionKey = null
         keyFile?.delete()
@@ -195,37 +190,11 @@ internal class RootDaemonController(
         if (result == 0) {
             diagnostic(AppDiagnosticCode.ROOT_READY, null)
             nativeAttached = true
-            restartAttempts = 0
-            onStateChanged(State.READY)
+            connection.ready(ticket)
         } else {
             diagnostic(AppDiagnosticCode.ROOT_ATTACH_FAILED, result)
-            recoverFromFailure()
+            connection.end(ticket, failed = true)
         }
-    }
-
-    private fun recoverFromFailure() {
-        if (stopping.get() || nativeHandle == 0L || restartScheduled) return
-        handler.removeCallbacks(startupTimeout)
-        stopObserver()
-        if (nativeAttached) {
-            NativeEngineBridge.nativeDetachRoot(nativeHandle)
-            nativeAttached = false
-        }
-        clearSecretAndFiles()
-        val process = daemonProcess
-        daemonProcess = null
-        process?.destroy()
-
-        if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
-            diagnostic(AppDiagnosticCode.ROOT_RETRIES_EXHAUSTED, null)
-            onStateChanged(State.FAILED)
-            return
-        }
-        val delay = RESTART_DELAYS_MILLIS[restartAttempts]
-        restartAttempts += 1
-        restartScheduled = true
-        onStateChanged(State.STARTING)
-        handler.postDelayed(restart, delay)
     }
 
     private fun stopObserver() {
@@ -306,7 +275,7 @@ internal class RootDaemonController(
         }
     }
 
-    private fun consumeProcessOutput(process: Process) {
+    private fun consumeProcessOutput(process: Process, ticket: Long) {
         Thread({
             var category: AppDiagnosticCode? = null
             runCatching {
@@ -324,8 +293,9 @@ internal class RootDaemonController(
             val exit = runCatching { process.waitFor() }.getOrNull()
             handler.post {
                 if (!stopping.get() && daemonProcess === process) {
+                    val idle = category == AppDiagnosticCode.ROOT_IDLE_RELEASED
                     diagnostic(category ?: AppDiagnosticCode.ROOT_PROCESS_EXITED, exit)
-                    recoverFromFailure()
+                    connection.end(ticket, failed = !idle)
                 }
             }
         }, "autoscript-root-daemon-watch").apply {
@@ -360,10 +330,8 @@ internal class RootDaemonController(
         const val SESSION_KEY_BYTES = 32
         const val TOKEN_BYTES = 16
         const val REQUEST_TIMEOUT_MILLIS = 7_000
-        const val STARTUP_TIMEOUT_MILLIS = 15_000L
+        const val STARTUP_TIMEOUT_MILLIS = 60_000L
         const val IDLE_TIMEOUT_MILLIS = 300_000L
         const val PROCESS_OUTPUT_BUFFER_BYTES = 1_024
-        const val MAX_RESTART_ATTEMPTS = 3
-        val RESTART_DELAYS_MILLIS = longArrayOf(250L, 1_000L, 3_000L)
     }
 }

@@ -96,6 +96,105 @@ class StoreTest(unittest.TestCase):
         (self.store.directory / record['id'] / 'snapshot.zgb').write_bytes(b'x' * len(body))
         self.assertEqual(len(self.store.inventory()[0]), 1)
 
+    def test_replace_legacy_and_replace_again_keep_one_complete_snapshot(self):
+        body, meta = fixture()
+        old = self.upload(body, meta)
+        for stamp in (2000000000, 2000000001):
+            new_body, new_meta = fixture()
+            new_meta['id'] = meta['id']
+            with patch.object(module.time, 'time', return_value=stamp):
+                current = self.store.upload(io.BytesIO(new_body), new_meta, time.monotonic() + 10, replacing=old['sha256'])
+            self.assertEqual(current['id'], old['id'])
+            self.assertEqual(current['createdAt'], stamp * 1000)
+            self.assertEqual(self.store.inventory(), ([current], len(new_body)))
+            with self.store.open_snapshot(current) as source:
+                self.assertEqual(source.read(), new_body)
+            self.assertEqual({path.name for path in (self.store.directory / meta['id']).iterdir()}, {'current.zgb'})
+            old = current
+        self.store.delete(current['id'], current['sha256'])
+        self.assertEqual(self.store.inventory(), ([], 0))
+
+    def test_failed_replace_preserves_original_and_cleans_own_staging(self):
+        body, meta = fixture()
+        old = self.upload(body, meta)
+        new_body, new_meta = fixture()
+        new_meta['id'] = meta['id']
+        for data in (new_body[:-1], b'x' * len(new_body), module.MAGIC + b'x' * (len(new_body) - 8)):
+            with self.assertRaises(wire.Rejected):
+                self.store.upload(io.BytesIO(data), new_meta, time.monotonic() + 10, replacing=old['sha256'])
+            self.assertEqual(self.store.inventory(), ([old], len(body)))
+            with self.store.open_snapshot(old) as source:
+                self.assertEqual(source.read(), body)
+        with patch.object(module.os, 'replace', side_effect=OSError('injected commit failure')):
+            with self.assertRaises(OSError):
+                self.store.upload(io.BytesIO(new_body), new_meta, time.monotonic() + 10, replacing=old['sha256'])
+        self.assertEqual(self.store.inventory(), ([old], len(body)))
+        self.assertEqual(len(list(self.store.directory.iterdir())), 1)
+
+    def test_atomic_commit_keeps_metadata_and_payload_together(self):
+        body, meta = fixture()
+        old = self.upload(body, meta)
+        new_body, new_meta = fixture()
+        new_meta['id'] = meta['id']
+        replace = module.os.replace
+        def commit(source, target):
+            self.assertEqual(self.store.record(meta['id']), old)
+            with self.store.open_snapshot(old) as current:
+                self.assertEqual(current.read(), body)
+            replace(source, target)
+            current = self.store.record(meta['id'])
+            self.assertEqual(current['sha256'], new_meta['sha256'])
+            with self.store.open_snapshot(current) as snapshot:
+                self.assertEqual(snapshot.read(), new_body)
+        with patch.object(module.os, 'replace', side_effect=commit):
+            self.store.upload(io.BytesIO(new_body), new_meta, time.monotonic() + 10, replacing=old['sha256'])
+
+    def test_replace_at_item_and_byte_capacity_uses_net_size(self):
+        body, meta = fixture()
+        old = self.upload(body, meta)
+        new_body, new_meta = fixture()
+        new_meta['id'] = meta['id']
+        with patch.object(module, 'MAX_ITEMS', 1), patch.object(module, 'MAX_TOTAL', len(body)):
+            current = self.store.upload(io.BytesIO(new_body), new_meta, time.monotonic() + 10, replacing=old['sha256'])
+            self.assertEqual(self.store.inventory()[0], [current])
+            with self.assertRaises(wire.Rejected):
+                self.upload(*fixture())
+        larger = new_body + b'x'
+        larger_meta = dict(new_meta, bytes=len(larger), sha256=hashlib.sha256(larger).hexdigest())
+        with patch.object(module, 'MAX_TOTAL', len(body)), self.assertRaises(wire.Rejected):
+            self.store.upload(io.BytesIO(larger), larger_meta, time.monotonic() + 10, replacing=current['sha256'])
+        self.assertEqual(self.store.record(current['id']), current)
+
+    def test_replace_rejects_stale_revision_and_missing_target(self):
+        body, meta = fixture()
+        old = self.upload(body, meta)
+        for changed in (meta, fixture()[1]):
+            with self.assertRaises(wire.Rejected):
+                self.store.upload(io.BytesIO(body), changed, time.monotonic() + 10, replacing='0' * 64)
+        self.assertEqual(self.store.inventory()[0], [old])
+
+    def test_restart_after_commit_with_legacy_cleanup_interrupted(self):
+        body, meta = fixture()
+        old = self.upload(body, meta)
+        new_body, new_meta = fixture()
+        new_meta['id'] = meta['id']
+        replace = module.os.replace
+        def commit_then_interrupt(source, target):
+            replace(source, target)
+            raise OSError('injected interruption after commit')
+        with patch.object(module.os, 'replace', side_effect=commit_then_interrupt), self.assertRaises(OSError):
+            self.store.upload(io.BytesIO(new_body), new_meta, time.monotonic() + 10, replacing=old['sha256'])
+        restarted = module.Store(self.store.directory)
+        for remaining in ('snapshot.zgb', 'record.json'):
+            current = restarted.inventory()[0][0]
+            self.assertEqual(current['sha256'], new_meta['sha256'])
+            with restarted.open_snapshot(current) as source:
+                self.assertEqual(source.read(), new_body)
+            (restarted.directory / meta['id'] / remaining).unlink()
+        self.assertEqual(len(restarted.inventory()[0]), 1)
+        restarted.delete(current['id'], current['sha256'])
+        self.assertEqual(restarted.inventory(), ([], 0))
+
 
 class ProtocolTest(unittest.TestCase):
     def setUp(self):
@@ -179,6 +278,36 @@ class ProtocolTest(unittest.TestCase):
         for method, suffix in [('GET', ''), ('POST', '/delete')]:
             self.assertEqual(self.request(method, url + suffix, revision='"' + '0' * 64 + '"')[0], 409)
         self.assertEqual(len(self.server.store.inventory()[0]), 1)
+
+    def test_signed_replace_capability_and_roundtrip(self):
+        body, meta = fixture()
+        old = self.server.store.upload(io.BytesIO(body), meta, time.monotonic() + 10)
+        self.assertIn('replace', json.loads(self.request('GET', module.INDEX)[1])['capabilities'])
+        new_body, new_meta = fixture()
+        new_meta['id'] = meta['id']
+        url = module.INDEX + '/' + meta['id']
+        encoded = base64.b64encode(wire.encoded(new_meta)).decode()
+        for revision in ('', '"' + '0' * 64 + '"'):
+            self.assertEqual(self.request('POST', url + '/replace', body=new_body, metadata=encoded, revision=revision)[0], 409)
+        status, reply, signed = self.request('POST', url + '/replace', body=new_body, metadata=encoded, revision='"' + old['sha256'] + '"')
+        self.assertEqual(status, 200); self.assertIsNotNone(signed)
+        current = json.loads(reply)['record']
+        listed = json.loads(self.request('GET', module.INDEX)[1])
+        self.assertEqual(listed['records'], [current])
+        self.assertEqual(listed['bytes'], len(new_body))
+        self.assertEqual(self.request('GET', url, revision='"' + old['sha256'] + '"')[0], 409)
+        self.assertEqual(self.request('GET', url, revision='"' + current['sha256'] + '"')[:2], (200, new_body))
+        self.assertEqual(self.request('POST', url + '/delete', revision='"' + current['sha256'] + '"')[0], 200)
+
+    def test_replace_target_is_bound_to_signed_path_and_metadata(self):
+        body, meta = fixture()
+        old = self.server.store.upload(io.BytesIO(body), meta, time.monotonic() + 10)
+        new_body, new_meta = fixture()
+        url = module.INDEX + '/' + meta['id'] + '/replace'
+        encoded = base64.b64encode(wire.encoded(new_meta)).decode()
+        self.assertEqual(self.request('POST', url, body=new_body, metadata=encoded, revision='"' + old['sha256'] + '"')[0], 400)
+        self.assertEqual(self.server.store.inventory()[0], [old])
+        self.assertEqual(self.request('GET', url, revision='"' + old['sha256'] + '"')[0], 404)
 
     def test_corrupt_download_is_signed_failure_not_accepted(self):
         body, record = fixture()

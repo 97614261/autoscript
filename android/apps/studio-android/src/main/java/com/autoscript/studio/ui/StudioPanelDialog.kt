@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
@@ -56,8 +57,9 @@ internal fun StudioPanelDialog(
     fullScreen: Boolean = false,
     showFooter: Boolean = true,
     headerActions: @Composable () -> Unit = {},
-    compactHeader: Boolean = false,
+    compactHeader: Boolean = true,
     onToggleFullScreen: (() -> Unit)? = null,
+    landscapeWidthDp: Int? = null,
     content: @Composable () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -66,13 +68,14 @@ internal fun StudioPanelDialog(
             val fontScale = LocalDensity.current.fontScale
             val short = studioShortViewport(maxHeight.value)
             val denseHeader = compactHeader || short
-            val barHeight = studioCompactControlHeight(if (short) 30 else 40, fontScale).dp
+            val barHeight = studioCompactControlHeight(if (short) 30 else 34, fontScale).dp
             val headerHeight = studioCompactControlHeight(if (denseHeader) 32 else 40, fontScale).dp
             Surface(
-                modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 540.dp).fillMaxWidth(.92f)
+                modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.width(studioToolPanelWidth(
+                    maxWidth.value, maxHeight.value, fontScale, landscapeWidthDp = landscapeWidthDp).dp)
                     .heightIn(max = studioPanelMaxHeight(maxHeight.value, configuration.screenHeightDp, if (short) 8 else 24).dp),
                 color = Color.White,
-                shape = RoundedCornerShape(if (fullScreen) 0.dp else 3.dp),
+                shape = RoundedCornerShape(if (fullScreen) 0.dp else 8.dp),
                 shadowElevation = 10.dp,
             ) {
                 Column {
@@ -82,7 +85,7 @@ internal fun StudioPanelDialog(
                         val controlSize = if (denseHeader) 28.dp else 36.dp
                         val pinnedWidth = 8.dp + controlSize * (if (onToggleFullScreen == null) 1 else 2)
                         val actionsMaxWidth = studioHeaderActionsMaxWidth(maxWidth.value, pinnedWidth.value).dp
-                        Text(title, color = AutoScriptPalette.Accent, fontSize = if (denseHeader) 12.sp else 16.sp,
+                        Text(title, color = AutoScriptPalette.TextPrimary, fontSize = if (denseHeader) 13.sp else 16.sp,
                             fontWeight = if (denseHeader) FontWeight.SemiBold else FontWeight.Bold,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
                             modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal =

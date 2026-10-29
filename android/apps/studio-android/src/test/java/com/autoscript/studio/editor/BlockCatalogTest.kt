@@ -23,7 +23,7 @@ class BlockCatalogTest {
 
     @Test
     fun generatedCatalogIsUniqueSearchableAndBoundToNodeSchemas() {
-        assertEquals(218, BlockCatalog.all.size)
+        assertEquals(219, BlockCatalog.all.size)
         assertEquals(BlockCatalog.all.size, BlockCatalog.all.map { it.kind }.distinct().size)
         assertTrue(BlockCatalog.all.all { it.nodeSchemaId.startsWith("https://autoscript.local/schema/node/") })
         assertTrue(BlockCatalog.search("调用 flow", emptySet()).any { it.contract.kind == "flow.call" })
@@ -85,10 +85,6 @@ class BlockCatalogTest {
                 "vision.findfeatures",
                 "vision.findscaled",
                 "screen.compareframes",
-                "legacy.duodianzhaose",
-                "legacy.duodianbise",
-                "legacy.getrectcolornum",
-                "legacy.getrgbcolor",
             ),
             BlockCatalog.search("", emptySet(), BlockCategory.VISION)
                 .map { it.contract.kind }

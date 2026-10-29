@@ -62,7 +62,8 @@ class ProjectSettingsModelTest {
     }
     @Test
     fun newProjectsSelectAllCurrentBlockCapabilities() {
-        assertEquals(BlockCatalog.all.flatMap { it.requiredCapabilities }.toSet(), defaultScriptCapabilities())
+        assertEquals(BlockCatalog.insertable.flatMap { it.requiredCapabilities }.toSet(), defaultScriptCapabilities())
+        org.junit.Assert.assertFalse("vision.pixel.legacy" in defaultScriptCapabilities())
         org.junit.Assert.assertTrue("ui.floating" in defaultScriptCapabilities())
         org.junit.Assert.assertTrue("device.clipboard" in defaultScriptCapabilities())
     }
@@ -88,9 +89,9 @@ class ProjectSettingsModelTest {
     fun capabilityChoicesPreserveDeclaredUnknownCapabilitiesAndDeduplicate() {
         val options = settingsCapabilityOptions(
             listOf("vision.pixel", "core.task", "vision.pixel"),
-            listOf("custom.future", "core.task"),
+            listOf("custom.future", "core.task", "vision.pixel.legacy"),
         )
-        assertEquals(listOf("core.task", "custom.future", "vision.pixel"), options)
+        assertEquals(listOf("core.task", "custom.future", "vision.pixel", "vision.pixel.legacy"), options)
         assertEquals("custom.future", settingsCapabilityTitle("custom.future"))
         assertEquals("按键与触摸", settingsCapabilityTitle("input.basic"))
     }

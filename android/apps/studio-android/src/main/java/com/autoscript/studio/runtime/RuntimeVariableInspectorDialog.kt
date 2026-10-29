@@ -180,8 +180,8 @@ private fun InspectorDialog(title: String, onDismiss: () -> Unit, content: @Comp
 @Composable
 internal fun InspectorSearchField(value: String, onChange: (String) -> Unit, placeholder: String) {
     BasicTextField(value, onChange, singleLine = true, textStyle = TextStyle(fontSize = 12.sp),
-        modifier = Modifier.fillMaxWidth().height(36.dp).border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(4.dp)).padding(horizontal = 8.dp),
-        decorationBox = { field -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+        modifier = Modifier.fillMaxWidth().heightIn(min = 30.dp).border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
+        decorationBox = { field -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
             if (value.isEmpty()) Text(placeholder, fontSize = 12.sp, color = AutoScriptPalette.TextSecondary)
             field()
         } })
@@ -191,7 +191,7 @@ internal fun InspectorSearchField(value: String, onChange: (String) -> Unit, pla
 internal fun InspectorFilterRow(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground, RoundedCornerShape(4.dp))) {
         options.forEach { (key, label) ->
-            Box(Modifier.weight(1f).height(34.dp).clickable { onSelect(key) }
+            Box(Modifier.weight(1f).heightIn(min = 28.dp).padding(vertical = 4.dp).clickable { onSelect(key) }
                 .background(if (key == selected) Color(0xFFE7EEFF) else Color.Transparent, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
                 Text(label, fontSize = 11.sp, color = if (key == selected) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
             }

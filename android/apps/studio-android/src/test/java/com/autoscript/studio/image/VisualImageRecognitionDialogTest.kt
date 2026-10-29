@@ -10,6 +10,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualImageRecognitionDialogTest {
+    @Test fun numericQuickValuesGoThroughTheSameFullArgumentValidation() {
+        val contract = requireNotNull(BlockCatalog.find("vision.findimage"))
+        val inputs = blockPropertyTexts(contract, arguments())
+        for (field in listOf("tolerance", "similarityPermille", "frequency")) {
+            assertTrue(recognitionValuePresets(field).isNotEmpty())
+            for (value in recognitionValuePresets(field)) {
+                val parsed = requireNotNull(parseRecognitionArguments(contract, inputs + (field to value), listOf(resource)).first)
+                assertEquals(value.toInt(), parsed[field].asInt)
+                assertEquals(arguments()["region"], parsed["region"])
+                assertEquals(arguments()["imagePath"], parsed["imagePath"])
+            }
+        }
+        assertTrue(recognitionValuePresets("frameVariable").isEmpty())
+        val all = requireNotNull(BlockCatalog.find("vision.findallimages"))
+        val initial = recognitionPropertyTexts(all, requireNotNull(initialBlockArguments(all, emptyList(), listOf(resource), "")))
+        for (value in recognitionValuePresets("limit")) {
+            val parsed = requireNotNull(parseRecognitionArguments(all, initial + ("limit" to value), listOf(resource)).first)
+            assertEquals(value.toInt(), parsed["limit"].asInt)
+        }
+        val ocr = requireNotNull(BlockCatalog.find("ocr.alphanumeric"))
+        val ocrInputs = recognitionPropertyTexts(ocr, requireNotNull(initialBlockArguments(ocr, emptyList(), emptyList(), "")))
+        for (value in recognitionValuePresets("minimumConfidencePermille")) {
+            val parsed = requireNotNull(parseRecognitionArguments(ocr, ocrInputs + ("minimumConfidencePermille" to value), emptyList()).first)
+            assertEquals(value.toInt(), parsed["minimumConfidencePermille"].asInt)
+        }
+    }
     @Test fun nativeResultTypesRespectLocalShadowingAndDoNotAutoGrantInput() {
         val global = com.autoscript.project.store.ProjectVariableScope.GLOBAL
         val local = com.autoscript.project.store.ProjectVariableScope.FLOW

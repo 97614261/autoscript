@@ -15,6 +15,11 @@ class CompactProgramLabelTest {
             .endsWith("· (1, 2) → (3, 4) · 500ms"))
     }
 
+    @Test fun physicalPointsAreClearlyMarkedWithoutChangingLegacyDesignLabels() {
+        assertTrue(label("input.tap", """{"x":1200,"y":300,"screenPixels":true}""").contains("屏幕 · (1200, 300)"))
+        assertFalse(label("input.tap", """{"x":1200,"y":300,"screenPixels":false}""").contains("屏幕"))
+    }
+
     @Test fun pluginReturnStatusIsReadableWithoutBooleanInternals() {
         assertEquals("返回成功", label("flow.status.return", """{"success":true}"""))
         assertEquals("返回失败", label("flow.status.return", """{"success":false}"""))

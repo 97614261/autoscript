@@ -5,6 +5,7 @@ import java.util.Locale
 
 /** Generated contracts, not runnable Lua templates or reversible block source. */
 internal object FunctionApiReference {
+    private val currentDocs = GeneratedFunctionDocumentation.all.filterNot { it.name.startsWith("Legacy.") }
     private val explicitKinds = mapOf(
         "Ocr.latinText" to "ocr.alphanumeric",
         "Screen.findFeatures" to "vision.findfeatures",
@@ -36,14 +37,14 @@ internal object FunctionApiReference {
     }
 
     private val aliasesByKind by lazy {
-        GeneratedFunctionDocumentation.all.groupBy { relatedKind(it.name) }
+        currentDocs.groupBy { relatedKind(it.name) }
             .mapValues { (_, docs) -> docs.map { it.name } }
     }
 
     fun aliasesForKind(kind: String): List<String> = aliasesByKind[kind].orEmpty()
 
     val groups: List<FunctionLibraryGroup> by lazy {
-        GeneratedFunctionDocumentation.all.map { doc ->
+        currentDocs.map { doc ->
             val kind = relatedKind(doc.name)
             // UI.waitEvent, Input.resolvePoint and dictionary lifecycle are low-level contracts,
             // not standalone insertable blocks. Keep their documentation without inventing a route.
@@ -127,8 +128,7 @@ internal object FunctionApiReference {
         "Screen.recognitionValue" to "读取识别结果属性",
         "Screen.findAllMultiColor" to "批量多点找色", "Screen.components" to "颜色连通块",
         "Ocr.glyphDetails" to "字库逐字结果", "Ocr.findText" to "从字库结果找文字",
-        "Log.write" to "写入日志", "Legacy.duoDianZhaoSe" to "旧版多点找色", "Legacy.duoDianBiSe" to "旧版多点比色",
-        "Legacy.getRectColorNum" to "旧版区域颜色数", "Legacy.getRgbColor" to "RGB 转颜色值",
+        "Log.write" to "写入日志",
         "Math.distance" to "两点距离", "System.getScreenSize" to "屏幕尺寸",
         "System.elapsedRealtimeMillis" to "单调运行时间",
         "Math.randInt" to "随机整数",

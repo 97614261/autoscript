@@ -32,7 +32,9 @@ internal data class FunctionLibraryUsage(val favorites: List<String> = emptyList
 internal const val FUNCTION_USAGE_KEY = "usage-v1"
 internal fun functionUsagePreferences(context: Context) = context.applicationContext.getSharedPreferences("function-library", Context.MODE_PRIVATE)
 internal fun readFunctionUsage(context: Context): FunctionLibraryUsage = runCatching {
-    FunctionLibraryUsage.decode(functionUsagePreferences(context).getString(FUNCTION_USAGE_KEY, "{}").orEmpty()) { BlockCatalog.find(it) != null }
+    FunctionLibraryUsage.decode(functionUsagePreferences(context).getString(FUNCTION_USAGE_KEY, "{}").orEmpty()) { kind ->
+        BlockCatalog.insertable.any { it.kind == kind }
+    }
 }.getOrDefault(FunctionLibraryUsage())
 
 internal fun updateFunctionUsage(context: Context, change: (FunctionLibraryUsage) -> FunctionLibraryUsage) {

@@ -10,7 +10,9 @@ internal data class CompactProgramRowText(
     val disabled: Boolean,
     val inheritedDisabled: Boolean = false,
     val branchHasHeading: Boolean = false,
-)
+) {
+    val disabledPrefix: String get() = if (disabled && !inheritedDisabled) "已注释  " else ""
+}
 
 /** Standalone headings and body indentation already identify these slots. */
 internal fun compactProgramBranchLabel(branch: String?, hasHeading: Boolean = false): String? = if (hasHeading) null else when (branch) {

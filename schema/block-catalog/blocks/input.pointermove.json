@@ -5,13 +5,39 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/input.pointermove/1/input.pointermove.schema.json",
   "title": "移动触点",
   "category": "task",
-  "summary": "将当前按住的 Root 触点移动到指定设计坐标。",
-  "searchTerms": ["pointerMove", "drag", "移动手指", "拖动"],
-  "requiredCapabilities": ["input.basic"],
+  "summary": "将当前按住的 Root 触点移动到指定坐标（可选屏幕像素或项目设计坐标）。",
+  "searchTerms": [
+    "pointerMove",
+    "drag",
+    "移动手指",
+    "拖动"
+  ],
+  "requiredCapabilities": [
+    "input.basic"
+  ],
   "childBlocks": [],
   "properties": [
-    { "path": "x", "label": "X 坐标", "editor": "integer", "required": true, "defaultValue": "0" },
-    { "path": "y", "label": "Y 坐标", "editor": "integer", "required": true, "defaultValue": "0" }
+    {
+      "path": "x",
+      "label": "X 坐标",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "y",
+      "label": "Y 坐标",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "screenPixels",
+      "label": "屏幕像素坐标",
+      "editor": "boolean",
+      "required": false,
+      "defaultValue": "false"
+    }
   ],
   "migrations": []
 }

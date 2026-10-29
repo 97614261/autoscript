@@ -299,7 +299,7 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                                 val key = if (v.scope == ProjectVariableScope.GLOBAL) "global:${v.name}" else "flow:${v.flowId}:${v.name}"
                                 key to (if (v.scope == ProjectVariableScope.GLOBAL) "全局 · ${v.name}" else "${v.flowId} · ${v.name}")
                             } + snapshot.manifest.flows.find { it.flowId == snapshot.manifest.entryFlowId }?.params.orEmpty().filter { p -> p.get("type").asString in when (f.kind.wireName) { "number" -> setOf("number"); "integer" -> setOf("integer", "number"); "boolean" -> setOf("boolean"); else -> setOf("string") } }.map { p -> p.get("name").asString.let { "param:$it" to "入口参数 · $it" } }
-                            DesignerChoice("绑定", bindings.find { it.first == f.ui.binding }?.second ?: f.ui.binding ?: "不绑定", listOf("" to "不绑定") + bindings, enabled) { style(f.ui.copy(binding = it.takeIf(String::isNotBlank))) }
+                            CompactVariableChoice("绑定", f.ui.binding.orEmpty(), listOf("" to "不绑定") + bindings, enabled) { style(f.ui.copy(binding = it.takeIf(String::isNotBlank))) }
                             DesignerSection("事件动作")
                             val actions = listOf("" to "无动作", "run" to "确认运行", "close" to "关闭 / 停止", "minimize" to "最小化") + draft.pages.map { "page:${it.id}" to "切页 · ${it.title}" } + snapshot.manifest.flows.map { "flow:${it.flowId}" to "插件 · ${it.flowId}" }
                             listOf("click" to "点击", "longClick" to "长按", "change" to "值变化", "selection" to "选择").forEach { (key, label) ->

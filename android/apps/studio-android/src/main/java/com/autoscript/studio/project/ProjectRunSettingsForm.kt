@@ -2,9 +2,7 @@ package com.autoscript.studio
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
@@ -144,12 +142,7 @@ internal fun ProjectRunSettingsForm(
     }
 }
 @Composable private fun RunChoices(label: String, selected: String, options: List<Pair<String, String>>, enabled: Boolean, onChange: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 10.sp, modifier = Modifier.padding(end = 6.dp))
-        options.forEach { (value, title) ->
-            Text(title, fontSize = 11.sp, color = if (value == selected) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary,
-                modifier = Modifier.padding(end = 4.dp).background(if (value == selected) AutoScriptPalette.AccentSoft else AutoScriptPalette.PageBackground)
-                    .clickable(enabled = enabled) { onChange(value) }.padding(horizontal = 8.dp, vertical = 6.dp))
-        }
+    Box(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        StudioCompactChoice(label, selected, options, enabled, onChange)
     }
 }

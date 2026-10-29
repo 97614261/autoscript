@@ -288,6 +288,35 @@ class RuntimeClient(context: Context) {
 
     fun refresh() = publishRemoteState()
 
+    /** Explicit connect/retry. Refresh and feature queries remain read-only. */
+    suspend fun connectRoot(): Boolean {
+        val service = remote ?: return false
+        val generation = lastSessionGeneration ?: return false
+        val ready = awaitRootForOperation(service, generation)
+        if (ready != RuntimeStartReadiness.READY) publishOperationError(
+            if (ready == RuntimeStartReadiness.TIMEOUT) "等待 Root 授权超时，请确认授权后主动重试"
+            else "Root 未连接，请确认设备授权后主动重试；运行环境可查看诊断",
+        )
+        return ready == RuntimeStartReadiness.READY
+    }
+
+    private suspend fun awaitRootForOperation(service: IRuntimeService, generation: Long): RuntimeStartReadiness =
+        requestRuntimeReady(connectionStates, generation, request = {
+            currentCoroutineContext().ensureActive()
+            withContext(Dispatchers.IO) {
+                if (remote !== service || lastSessionGeneration != generation) false
+                else {
+                    val accepted = runCatching { service.requestRootConnection(generation) == RuntimeProtocol.CONTROL_ACCEPTED }
+                        .getOrDefault(false)
+                    if (remote !== service || lastSessionGeneration != generation) false
+                    else {
+                        publishRemoteState()
+                        accepted
+                    }
+                }
+            }
+        })
+
     fun validateScript(
         source: ByteArray,
         chunkName: String = "main.lua",
@@ -576,7 +605,7 @@ class RuntimeClient(context: Context) {
             publishOperationError("Runner会话尚未建立")
             return false
         }
-        val ready = awaitRuntimeReady(connectionStates, generation)
+        val ready = awaitRootForOperation(service, generation)
         if (ready != RuntimeStartReadiness.READY) {
             publishOperationError(if (ready == RuntimeStartReadiness.TIMEOUT) {
                 "等待 Root 就绪超时，请检查 Root 授权后重试"
@@ -936,7 +965,7 @@ class RuntimeClient(context: Context) {
         var accepted = false
         try {
             require(maxDurationMs in 1000..60_000 && eventBudget in 128..16_384) { "录制预算无效" }
-            require(awaitRuntimeReady(connectionStates,generation) == RuntimeStartReadiness.READY) { "Root后端未就绪，或脚本仍在运行" }
+            require(awaitRootForOperation(service, generation) == RuntimeStartReadiness.READY) { "Root后端未就绪，或脚本仍在运行；请确认授权后主动重试" }
             currentCoroutineContext().ensureActive()
             require(recordingLease.get() === lease && remote === service && lastSessionGeneration == generation) { "录制会话已变化" }
             val reply = withContext(Dispatchers.IO) { service.startObservedInputRecording(id,generation,id,projectId,flowId,maxDurationMs,eventBudget,listener) }
@@ -1016,6 +1045,10 @@ class RuntimeClient(context: Context) {
         if (pendingInputPick != null) { publishOperationError("已有选点会话，请先取消"); return null }
         val service = remote ?: return null
         val generation = lastSessionGeneration ?: return null
+        if (awaitRootForOperation(service, generation) != RuntimeStartReadiness.READY) {
+            publishOperationError("Root 输入未连接，请确认授权后主动重试")
+            return null
+        }
         val features = withContext(Dispatchers.IO) { inputFeatures() }
         currentCoroutineContext().ensureActive()
         if (remote !== service || lastSessionGeneration != generation || pendingInputPick != null) return null
@@ -1133,7 +1166,7 @@ class RuntimeClient(context: Context) {
         android.util.Log.i("ZhigouDiagnostics", "UI_CAPTURE_REQUESTED")
         val service = remote ?: return ScreenshotPreviewResult.Unavailable("Runner 未连接，请到我的 / 运行环境重新连接")
         val generation = lastSessionGeneration ?: return ScreenshotPreviewResult.Unavailable("Runner 会话尚未建立")
-        when (awaitRuntimeReady(connectionStates, generation)) {
+        when (awaitRootForOperation(service, generation)) {
             RuntimeStartReadiness.TIMEOUT -> {
                 android.util.Log.w("ZhigouDiagnostics", "UI_CAPTURE_ROOT_WAIT_TIMEOUT")
                 return ScreenshotPreviewResult.Unavailable("等待 Root 就绪超时；请确认已授权智构 Root，并查看运行环境诊断")

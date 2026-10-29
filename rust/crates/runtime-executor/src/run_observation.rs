@@ -23,6 +23,22 @@ pub(super) struct RunContext {
     node: String,
     metrics: bool,
     trace: bool,
+    location: Option<RunLocation>,
+}
+#[derive(Debug, Clone)]
+struct RunLocation {
+    row: u32,
+    flow_name: String,
+    block_title: String,
+}
+
+impl RunContext {
+    fn attach_log_location(&self, event: &mut Value) {
+        if let Some(location) = &self.location {
+            event["visualLocation"] = json!({"line":location.row,
+                "flowName":location.flow_name,"blockTitle":location.block_title});
+        }
+    }
 }
 #[derive(Debug, Clone)]
 pub(super) struct Observation {
@@ -66,6 +82,26 @@ impl Observation {
 }
 
 impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
+    pub(super) fn message_with_run_context(&self, task: TaskToken, error: &str) -> String {
+        self.run_contexts.get(&task).map_or_else(
+            || error.to_owned(),
+            |context| match &context.location {
+                Some(location) => format!(
+                    "位置：插件 {} ({}) · 第{}行 · {} · 积木 {}\n{error}",
+                    location.flow_name,
+                    context.flow,
+                    location.row,
+                    location.block_title,
+                    context.node
+                ),
+                None => format!(
+                    "位置：插件 {} · 积木 {}\n{error}",
+                    context.flow, context.node
+                ),
+            },
+        )
+    }
+
     fn template_observation(
         &self,
         task: TaskToken,
@@ -88,7 +124,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         }
         if opcode == OP_SCREEN_FIND_IMAGE {
             let template = match args.get(1) {
-                Some(LuaScalar::Integer(handle)) => self.legacy_frame_view(task, *handle).ok(),
+                Some(LuaScalar::Integer(handle)) => self.frame_view(task, *handle).ok(),
                 _ => None,
             };
             return template.map_or((Vec::new(), None), |template| {
@@ -134,10 +170,36 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         task: TaskToken,
         values: &[LuaScalar],
     ) -> Result<(), ExecutorError> {
-        let [_, LuaScalar::Bytes(flow), LuaScalar::Bytes(node), LuaScalar::Boolean(trace), LuaScalar::Boolean(metrics)] =
+        let [_, LuaScalar::Bytes(flow), LuaScalar::Bytes(node), LuaScalar::Boolean(trace), LuaScalar::Boolean(metrics), details @ ..] =
             values
         else {
             return Err(ExecutorError::InvalidYield("invalid run context".into()));
+        };
+        let location = match details {
+            [] => None,
+            [LuaScalar::Integer(row), LuaScalar::Bytes(flow_name), LuaScalar::Bytes(block_title)] =>
+            {
+                let text = |bytes: &[u8]| -> Result<String, ExecutorError> {
+                    let text = std::str::from_utf8(bytes).map_err(|_| {
+                        ExecutorError::InvalidYield("invalid run location text".into())
+                    })?;
+                    if bytes.is_empty() || bytes.len() > 512 || text.chars().any(char::is_control) {
+                        return Err(ExecutorError::InvalidYield(
+                            "invalid run location text".into(),
+                        ));
+                    }
+                    Ok(text.to_owned())
+                };
+                Some(RunLocation {
+                    row: u32::try_from(*row)
+                        .ok()
+                        .filter(|row| *row > 0)
+                        .ok_or_else(|| ExecutorError::InvalidYield("invalid visual row".into()))?,
+                    flow_name: text(flow_name)?,
+                    block_title: text(block_title)?,
+                })
+            }
+            _ => return Err(ExecutorError::InvalidYield("invalid run location".into())),
         };
         let identifier = |bytes: &[u8]| -> Result<String, ExecutorError> {
             let text = std::str::from_utf8(bytes)
@@ -161,6 +223,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             node: identifier(node)?,
             metrics: *metrics,
             trace: *trace,
+            location,
         };
         if flow.len() <= 128 && node.len() <= 128 {
             if let (Ok(flow), Ok(node)) = (std::str::from_utf8(flow), std::str::from_utf8(node)) {
@@ -175,7 +238,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             }
         }
         if *trace {
-            self.record_run_event(&json!({"version":1,"kind":"trace","flowId":context.flow,"nodeId":context.node,"phase":"enter"}));
+            let mut event = json!({"version":1,"kind":"trace","flowId":context.flow,"nodeId":context.node,"phase":"enter"});
+            context.attach_log_location(&mut event);
+            self.record_run_event(&event);
         }
         self.run_contexts.insert(task, context);
         self.scheduler.yield_budget(task)?;
@@ -209,7 +274,13 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                     TaskState::Cancelled => "cancelled",
                     TaskState::Running => "running",
                 };
-                self.record_run_event(&json!({"version":1,"kind":"task","flowId":context.flow,"nodeId":context.node,"status":status}));
+                let mut event = json!({"version":1,"kind":"task","flowId":context.flow,"nodeId":context.node,"status":status});
+                context.attach_log_location(&mut event);
+                if state == TaskState::Failed && self.run_events.len() >= 256 {
+                    self.run_events.pop_back();
+                    self.run_events_dropped = self.run_events_dropped.saturating_add(1);
+                }
+                self.record_run_event(&event);
             }
         }
     }
@@ -292,7 +363,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 _ => None,
             };
             if let Some(handle) = integer(0) {
-                if let Ok(view) = self.legacy_frame_view(task, handle) {
+                if let Ok(view) = self.frame_view(task, handle) {
                     fields["frame"] = json!([view.metadata.width, view.metadata.height]);
                 }
             }
@@ -413,6 +484,153 @@ mod tests {
             _: script_api::CancelMode,
         ) {
         }
+    }
+
+    #[test]
+    fn terminal_error_location_survives_a_full_trace_buffer() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        let task = runtime.start_entry_chunk(br"return function() for i=1,300 do coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','skill','node-err',true,false,23,'Skill','Tap') end; error('expected-full-buffer-error') end", "trace-error").unwrap();
+        for _ in 0..50 {
+            runtime.drive().unwrap();
+            if runtime.task_state(task) == Some(TaskState::Failed) {
+                break;
+            }
+        }
+        assert_eq!(runtime.task_state(task), Some(TaskState::Failed));
+        let events = runtime
+            .drain_run_events()
+            .into_iter()
+            .map(|event| serde_json::from_str::<Value>(&event).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 257);
+        assert!(events.iter().any(|event| event["kind"] == "task"
+            && event["status"] == "failed"
+            && event["nodeId"] == "node-err"
+            && event["visualLocation"]["line"] == 23
+            && event["visualLocation"]["blockTitle"] == "Tap"));
+    }
+
+    #[test]
+    fn readable_trace_and_failure_freeze_the_executed_plugin_row_and_title() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        let source = r"return function()
+            coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','flow-1','node-12',true,false,12,'放技能','点击')
+            Log.info('private-output')
+            coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','flow-2','node-12',true,false,7,'普攻','长按')
+            error('private-error-text')
+        end";
+        let task = runtime
+            .start_entry_chunk(source.as_bytes(), "readable-log")
+            .unwrap();
+        for _ in 0..4 {
+            runtime.drive().unwrap();
+        }
+        assert_eq!(runtime.task_state(task), Some(TaskState::Failed));
+        let raw = runtime.drain_run_events();
+        assert_eq!(raw.len(), 3);
+        assert!(!raw.join("").contains("private-"));
+        let events = raw
+            .iter()
+            .map(|event| serde_json::from_str::<Value>(event).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events[0]["visualLocation"],
+            serde_json::json!({"line":12,"flowName":"放技能","blockTitle":"点击"})
+        );
+        assert_eq!(events[0]["flowId"], "flow-1");
+        assert_eq!(
+            events[1]["visualLocation"],
+            serde_json::json!({"line":7,"flowName":"普攻","blockTitle":"长按"})
+        );
+        assert_eq!(events[2]["visualLocation"], events[1]["visualLocation"]);
+        assert_eq!(events[2]["flowId"], "flow-2");
+        assert_eq!(events[2]["status"], "failed");
+        assert_eq!(runtime.drain_script_logs().len(), 1);
+    }
+
+    #[test]
+    fn readable_failure_uses_its_own_task_even_with_trace_disabled() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        let source = r"return function()
+            coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','other','node-1',false,false,3,'其他插件','等待')
+            Task.sleep(100000)
+        end";
+        let other = runtime
+            .start_entry_chunk(source.as_bytes(), "other-task")
+            .unwrap();
+        runtime.drive().unwrap();
+        let source = r"return function()
+            coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','skill','node-1',false,false,9,'技能','找色')
+            error('expected-failure')
+        end";
+        let failed = runtime
+            .start_entry_chunk(source.as_bytes(), "failed-task")
+            .unwrap();
+        for _ in 0..4 {
+            runtime.drive().unwrap();
+        }
+        assert_eq!(runtime.task_state(failed), Some(TaskState::Failed));
+        assert_eq!(runtime.task_state(other), Some(TaskState::Running));
+        let events = runtime.drain_run_events();
+        assert_eq!(events.len(), 1);
+        let event: Value = serde_json::from_str(&events[0]).unwrap();
+        assert_eq!(
+            event["visualLocation"],
+            serde_json::json!({"line":9,"flowName":"技能","blockTitle":"找色"})
+        );
+        assert_eq!(event["flowId"], "skill");
+        assert_eq!(event["status"], "failed");
+        assert_eq!(
+            runtime.execution_position(),
+            Some(("skill".into(), "node-1".into()))
+        );
+    }
+
+    #[test]
+    fn lua_failure_retains_its_own_node_when_trace_is_disabled() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        let other = runtime.start_entry_chunk(br"return function() coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','other','node-other',false,false); Task.sleep(100000) end", "other-task").unwrap();
+        runtime.drive().unwrap();
+        let failed = runtime.start_entry_chunk(br"return function() coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','skill','node-23',false,false); error('expected-input-failure') end", "failed-task").unwrap();
+        for _ in 0..4 {
+            runtime.drive().unwrap();
+        }
+        assert_eq!(runtime.task_state(failed), Some(TaskState::Failed));
+        assert_eq!(runtime.task_state(other), Some(TaskState::Running));
+        let failure = runtime.task_failure(failed).unwrap();
+        assert!(failure.message.contains("skill · 积木 node-23"));
+        assert!(failure.message.contains("expected-input-failure"));
+        assert!(!failure.message.contains("node-other"));
+        let events = runtime
+            .drain_run_events()
+            .into_iter()
+            .map(|event| serde_json::from_str::<Value>(&event).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| event["kind"] == "task"
+            && event["status"] == "failed"
+            && event["flowId"] == "skill"
+            && event["nodeId"] == "node-23"));
+    }
+
+    #[test]
+    fn raw_lua_failure_does_not_borrow_another_tasks_location() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        runtime.start_entry_chunk(br"return function() coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','other','node-other',false,false); Task.sleep(100000) end", "other-task").unwrap();
+        runtime.drive().unwrap();
+        let failed = runtime
+            .start_entry_chunk(br"return function() error('raw-failure') end", "raw-task")
+            .unwrap();
+        for _ in 0..4 {
+            runtime.drive().unwrap();
+        }
+        let failure = runtime.task_failure(failed).unwrap();
+        assert!(failure.message.contains("raw-failure"));
+        assert!(!failure.message.contains("node-other"));
     }
 
     #[test]
@@ -608,6 +826,7 @@ mod tests {
         let events = runtime.drain_run_events();
         assert_eq!(events.len(), 2);
         assert!(!events.join("\n").contains("private-output"));
+        assert!(!events.join("\n").contains("visualLocation"));
         let metric: Value = serde_json::from_str(&events[1]).unwrap();
         assert_eq!(metric["nodeId"], "node-1");
         assert_eq!(metric["status"], "completed");

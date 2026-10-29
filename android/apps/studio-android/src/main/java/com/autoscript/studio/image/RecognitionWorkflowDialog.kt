@@ -13,6 +13,7 @@ import com.autoscript.project.store.ProjectVariableType
 import com.autoscript.studio.generated.BlockContract
 import com.google.gson.JsonObject
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonObject, project: ProjectSnapshot,
     flowId: String, onManageVariables: (() -> Unit)?, onDismiss: () -> Unit, onConfirm: (List<VisualBlockTree>) -> Unit,
@@ -35,7 +36,7 @@ internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonO
     val configured = slots.count { slot -> slot.value !in reserved && slots.count { it.value==slot.value }==1 && variables.any { it.name==slot.value && it.type==slot.type } }
     fun update(next: RecognitionWaitDraft) { draft=next; error=null; suggested=null }
     fun choices(slot: RecognitionVariableSlot) = variables.filter { variable -> variable.type==slot.type && variable.name !in reserved &&
-        slots.none { it.key!=slot.key && it.value==variable.name } }.map { it.name to "${it.scope} · ${it.name}" }
+        slots.none { it.key!=slot.key && it.value==variable.name } }.map { it.name to it.name }
     fun close() { if (draft != initial) discard = true else onDismiss() }
     if (visible) StudioPanelDialog(if(regionOnly) "区域变化 / 稳定等待" else "识别 · 等待与重试", ::close, "选择位置并加入", fullScreen = fullScreen,
         onToggleFullScreen = { fullScreen = !fullScreen }, onConfirm = {
@@ -44,35 +45,37 @@ internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonO
         }) {
         Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 900.dp else 440.dp).verticalScroll(rememberScrollState()).padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            DesignerChoice("方式", draft.mode.label, RecognitionWaitMode.entries.filter { !regionOnly || it in
+            ImageToolChoice("方式", draft.mode.name, RecognitionWaitMode.entries.filter { !regionOnly || it in
                 setOf(RecognitionWaitMode.REGION_CHANGED,RecognitionWaitMode.REGION_STABLE) }.map { it.name to it.label }, true) {
                 update(draft.copy(mode = RecognitionWaitMode.valueOf(it)))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                DesignerInput("总超时 ms", draft.timeout, true, Modifier.weight(1f), numeric = true) { update(draft.copy(timeout = it)) }
-                DesignerInput("重试间隔 ms", draft.interval, true, Modifier.weight(1f), numeric = true) { update(draft.copy(interval = it)) }
+            ImageToolNumberFields(listOf(Triple("timeout", "总超时ms", draft.timeout), Triple("interval", "重试间隔ms", draft.interval)), true) { key, value ->
+                update(if (key == "timeout") draft.copy(timeout = value) else draft.copy(interval = value))
             }
-            if (draft.mode == RecognitionWaitMode.RETRY) DesignerInput("最多尝试次数", draft.attempts, true, Modifier.fillMaxWidth(), numeric = true) { update(draft.copy(attempts = it)) }
-            if (draft.mode == RecognitionWaitMode.ABSENT) DesignerInput("连续未命中 ms", draft.absentMs, true, Modifier.fillMaxWidth(), numeric = true) { update(draft.copy(absentMs = it)) }
+            if (draft.mode == RecognitionWaitMode.RETRY) ImageToolCompactInput("最多尝试次数", draft.attempts, true, Modifier.fillMaxWidth(), numeric = true) { update(draft.copy(attempts = it)) }
+            if (draft.mode == RecognitionWaitMode.ABSENT) ImageToolCompactInput("连续未命中 ms", draft.absentMs, true, Modifier.fillMaxWidth(), numeric = true) { update(draft.copy(absentMs = it)) }
             if(draft.mode.usesFreshFrames()) {
-                Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
-                    DesignerInput("连续通过次数",draft.consecutive,true,Modifier.weight(1f),numeric=true) {update(draft.copy(consecutive=it))}
-                    if(draft.mode==RecognitionWaitMode.STABLE && !ocr) DesignerInput("最大位移 px",draft.driftPx,true,Modifier.weight(1f),numeric=true) {update(draft.copy(driftPx=it))}
-                    if(draft.mode!=RecognitionWaitMode.STABLE) DesignerInput("变化阈值 ‰",draft.changePermille,true,Modifier.weight(1f),numeric=true) {update(draft.copy(changePermille=it))}
-                }
-                if(draft.mode!=RecognitionWaitMode.STABLE) DesignerInput("RGB容差0–255",draft.changeTolerance,true,Modifier.fillMaxWidth(),numeric=true) {update(draft.copy(changeTolerance=it))}
+                val fields = mutableListOf(Triple("consecutive", "连续通过次数", draft.consecutive))
+                if (draft.mode == RecognitionWaitMode.STABLE && !ocr) fields += Triple("driftPx", "最大位移px", draft.driftPx)
+                if (draft.mode != RecognitionWaitMode.STABLE) fields += Triple("changePermille", "变化阈值‰", draft.changePermille)
+                ImageToolNumberFields(fields, true) { key, value -> update(when (key) {
+                    "consecutive" -> draft.copy(consecutive = value)
+                    "driftPx" -> draft.copy(driftPx = value)
+                    else -> draft.copy(changePermille = value)
+                }) }
+                if(draft.mode!=RecognitionWaitMode.STABLE) ImageToolCompactInput("RGB容差0–255",draft.changeTolerance,true,Modifier.fillMaxWidth(),numeric=true) {update(draft.copy(changeTolerance=it))}
                 Text("每次重新截图；旧缓存不计数。当前截图和前帧均须专用图像变量，允许覆盖并按组合释放。区域等待不执行找图；稳定字库要求完整覆盖且全文相同。",fontSize=10.sp)
-                DesignerToggle("两份图像变量均专用于本组合，允许覆盖和释放",draft.confirmFrames,true) {update(draft.copy(confirmFrames=it))}
+                ImageToolToggle("两份图像变量均专用于本组合，允许覆盖和释放",draft.confirmFrames,true) {update(draft.copy(confirmFrames=it))}
             }
             if (ocr) {
-                DesignerInput("目标文字 · 留空为非空文字",draft.targetText,true,Modifier.fillMaxWidth()) { update(draft.copy(targetText=it)) }
-                DesignerToggle("完全一致（否则包含）",draft.exactText,true) { update(draft.copy(exactText=it)) }
+                ImageToolCompactInput("目标文字 · 留空为非空文字",draft.targetText,true,Modifier.fillMaxWidth()) { update(draft.copy(targetText=it)) }
+                ImageToolToggle("完全一致（否则包含）",draft.exactText,true) { update(draft.copy(exactText=it)) }
             }
             if (color || ocr) slots.firstOrNull { it.key=="match" }?.let { slot ->
-                DesignerChoice("条件状态 · 整数1/0",slot.value.ifEmpty { "请选择" },choices(slot),true) { update(recognitionWaitAssign(draft,slot.key,it)) }
+                CompactVariableChoice("条件状态 · 整数1/0",slot.value,choices(slot),true,variables) { update(recognitionWaitAssign(draft,slot.key,it)) }
             }
             Text("变量映射 $configured/${slots.size} · 整数${slots.count { it.type==ProjectVariableType.INTEGER }} / 字符${slots.count { it.type==ProjectVariableType.STRING }}",fontSize=11.sp)
-            Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+            FlowRow(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
                 DesignerAction("快速分配",onClick={
                     suggested=recognitionVariableSuggestion(contract.kind,draft,variables,reserved)
                     if(suggested==null) { error="可用声明变量不足，请维护变量；有效选择会保留，不自动新建";showWork=true }
@@ -81,7 +84,7 @@ internal fun RecognitionWorkflowDialog(contract: BlockContract, arguments: JsonO
                 onManageVariables?.let { DesignerAction("维护变量",onClick=it) }
             }
             if(showWork) slots.filter { it.key!="match" }.forEach { slot ->
-                DesignerChoice("${slot.label} · ${if(slot.type==ProjectVariableType.INTEGER) "整" else "字"}",slot.value.ifEmpty { "请选择" },choices(slot),true) {
+                CompactVariableChoice("${slot.label} · ${if(slot.type==ProjectVariableType.INTEGER) "整" else "字"}",slot.value,choices(slot),true,variables) {
                     update(recognitionWaitAssign(draft,slot.key,it))
                 }
             }

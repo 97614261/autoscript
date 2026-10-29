@@ -50,7 +50,10 @@ internal fun ServerProjectBackupsScreen(
     var records by remember { mutableStateOf<List<ServerBackupRecord>>(emptyList()) }
     var selected by remember { mutableStateOf<String?>(null) }
     var chooseProject by remember { mutableStateOf(false) }
-    var confirmUpload by remember { mutableStateOf(false) }
+    var uploadProject by remember { mutableStateOf<ProjectSummary?>(null) }
+    var uploadMode by remember { mutableStateOf(ServerBackupUploadMode.NEW) }
+    var uploadTargetId by remember { mutableStateOf<String?>(null) }
+    var supportsReplacement by remember { mutableStateOf(false) }
     var restore by remember { mutableStateOf<ServerBackupRecord?>(null) }
     var delete by remember { mutableStateOf<ServerBackupRecord?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -88,6 +91,9 @@ internal fun ServerProjectBackupsScreen(
                     "BACKUP_TOO_LARGE" -> "备份超过 128 MiB，请先精简项目资源。"
                     "BACKUP_SIGNATURE_INVALID" -> "服务签名验证失败，请核对独立备份密钥和服务器配置。"
                     "BACKUP_STORAGE_NEEDS_ATTENTION" -> "服务器存储有异常文件，需要在服务器检查；未自动删除。"
+                    "BACKUP_REPLACE_UNSUPPORTED" -> "当前备份服务尚不支持覆盖，请先更新服务；仍可新增备份。"
+                    "BACKUP_CHANGED", "BACKUP_NOT_FOUND" -> "这份备份已变化或删除，请刷新列表后重新选择；未覆盖其他备份。"
+                    "BACKUP_REPLACE_TARGET_REQUIRED" -> "请先选择要覆盖的服务器备份。"
                     else -> "操作未完成，请检查网络、备份地址和密钥${code?.let { " [$it]" }.orEmpty()}。"
                 }
             } finally {
@@ -97,28 +103,44 @@ internal fun ServerProjectBackupsScreen(
     }
     fun refresh() = runTask("正在读取服务器备份…") { active ->
         records = withContext(Dispatchers.IO) { active.list() }
+        supportsReplacement = active.supportsReplacement
         message = "共 ${records.size} 份服务器备份"
     }
-    fun upload() = runTask("正在加密并上传已保存项目…") { active ->
+    fun prepareUpload() = runTask("正在读取服务器备份…") { active ->
         requireIdle()
         val project = projects.firstOrNull { it.projectId == selected } ?: error("BACKUP_PROJECT_REQUIRED")
+        records = withContext(Dispatchers.IO) { active.list() }
+        supportsReplacement = active.supportsReplacement
+        val lastId = prefs.getString(serverBackupAssociationKey(savedOrigin, savedKey, project.projectId), null)
+        uploadTargetId = lastId?.takeIf { id -> records.any { it.id == id } }
+        uploadMode = if (supportsReplacement && uploadTargetId != null) ServerBackupUploadMode.REPLACE else ServerBackupUploadMode.NEW
+        uploadProject = project
+    }
+    fun upload(project: ProjectSummary, target: ServerBackupRecord?) = runTask("正在加密并上传已保存项目…") { active ->
+        requireIdle()
         val uploaded = withContext(Dispatchers.IO) {
+            if (target != null) {
+                val current = active.list().firstOrNull { it.id == target.id } ?: error("BACKUP_NOT_FOUND")
+                check(active.supportsReplacement) { "BACKUP_REPLACE_UNSUPPORTED" }
+                check(current.sha256 == target.sha256) { "BACKUP_CHANGED" }
+            }
             val zip = File.createTempFile("project-backup-", ".zip", context.cacheDir)
             var encrypted: File? = null
             try {
                 zip.outputStream().use { output -> store.exportProjectBackup(project.projectId,
                     BackupBoundedOutput(output, ServerBackupCrypto.MAX_ZIP, active::check)) }
                 active.check(); requireIdle()
-                val id = ServerBackupCrypto.id()
+                val id = target?.id ?: ServerBackupCrypto.id()
                 encrypted = File.createTempFile("project-backup-", ".zgb", context.cacheDir)
                 zip.inputStream().use { source -> encrypted.outputStream().use { target ->
                     ServerBackupCrypto.encrypt(source, target, savedKey, id, active::check)
                 } }
-                active.upload(encrypted, id, ServerBackupCrypto.encryptName(project.name, savedKey, id))
+                active.upload(encrypted, id, ServerBackupCrypto.encryptName(project.name, savedKey, id), replacing = target)
             } finally { zip.delete(); encrypted?.delete() }
         }
+        prefs.edit().putString(serverBackupAssociationKey(savedOrigin, savedKey, project.projectId), uploaded.id).apply()
         records = (listOf(uploaded) + records.filterNot { it.id == uploaded.id }).sortedByDescending { it.createdAt }
-        message = "备份已上传；不包含未保存草稿和运行数据。"
+        message = if (target == null) "已新增备份；不包含未保存草稿和运行数据。" else "已覆盖所选备份；其余备份保留。"
     }
     fun restoreRecord(record: ServerBackupRecord) = runTask("正在下载并验证备份…") { active ->
         requireIdle()
@@ -162,7 +184,7 @@ internal fun ServerProjectBackupsScreen(
                         } else {
                             savedOrigin = origin.trim(); origin = savedOrigin; savedKey = secret
                             prefs.edit().putString("origin", savedOrigin).putString("key", savedKey).apply()
-                            records = emptyList(); configuring = false; message = "配置已保存，请点刷新连接服务器。"
+                            records = emptyList(); supportsReplacement = false; configuring = false; message = "配置已保存，请点刷新连接服务器。"
                         }
                     }, enabled = progress == null) { Text("保存配置") }
                 }
@@ -171,7 +193,7 @@ internal fun ServerProjectBackupsScreen(
                 Text("只备份已经保存的脚本、界面和项目资源，不含草稿与运行数据。上传/恢复前请关闭编辑窗口并停止脚本。", fontSize = 11.sp)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton({ chooseProject = true }, enabled = ready) { Text(projects.firstOrNull { it.projectId == selected }?.name ?: "选择本机项目", fontSize = 12.sp) }
-                    TextButton({ confirmUpload = true }, enabled = ready && selected != null) { Text("上传备份", fontSize = 12.sp) }
+                    TextButton({ prepareUpload() }, enabled = ready && selected != null) { Text("上传备份", fontSize = 12.sp) }
                     TextButton({ refresh() }, enabled = ready) { Text("刷新列表", fontSize = 12.sp) }
                 }
                 progress?.let { Text(it, fontSize = 12.sp, color = AutoScriptPalette.Accent) }
@@ -197,9 +219,49 @@ internal fun ServerProjectBackupsScreen(
         text = { Column { if (projects.isEmpty()) Text("暂无本机项目") else projects.forEach { project ->
             TextButton({ selected = project.projectId; chooseProject = false }) { Text(project.name) }
         } } }, confirmButton = { TextButton({ chooseProject = false }) { Text("取消") } })
-    if (confirmUpload) StudioConfirmDialog(onDismissRequest = { confirmUpload = false }, title = { Text("上传项目备份") },
-        text = { Text("将加密上传“${projects.firstOrNull { it.projectId == selected }?.name.orEmpty()}”的已保存内容，不含编辑草稿。") },
-        confirmButton = { TextButton({ confirmUpload = false; upload() }) { Text("上传") } }, dismissButton = { TextButton({ confirmUpload = false }) { Text("取消") } })
+    uploadProject?.let { project ->
+        val target = records.firstOrNull { it.id == uploadTargetId }
+        StudioConfirmDialog(onDismissRequest = { uploadProject = null }, title = { Text("上传项目备份") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("本机项目：${project.name}")
+                    FlowRow {
+                        TextButton({ uploadMode = ServerBackupUploadMode.NEW }) {
+                            RadioButton(uploadMode == ServerBackupUploadMode.NEW, onClick = null)
+                            Text("新增一份")
+                        }
+                        TextButton({ uploadMode = ServerBackupUploadMode.REPLACE }, enabled = supportsReplacement && records.isNotEmpty()) {
+                            RadioButton(uploadMode == ServerBackupUploadMode.REPLACE, onClick = null, enabled = supportsReplacement && records.isNotEmpty())
+                            Text("覆盖已有")
+                        }
+                    }
+                    if (!supportsReplacement) Text("服务需更新后才能覆盖；当前仍可新增。", fontSize = 11.sp)
+                    if (uploadMode == ServerBackupUploadMode.REPLACE) {
+                        Text("选择要覆盖的一份，原内容将被替换。旧备份首次需手选，请核对项目和时间。", fontSize = 11.sp)
+                        records.forEach { record ->
+                            TextButton({ uploadTargetId = record.id }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(4.dp)) {
+                                RadioButton(record.id == uploadTargetId, onClick = null)
+                                Column(Modifier.weight(1f)) {
+                                    Text(ServerBackupCrypto.decryptName(record.label, savedKey, record.id), fontSize = 12.sp)
+                                    Text("${date.format(Date(record.createdAt))} · ${record.id.take(8)}", fontSize = 10.sp)
+                                }
+                            }
+                        }
+                        target?.let { Text("将覆盖：${ServerBackupCrypto.decryptName(it.label, savedKey, it.id)} · ${date.format(Date(it.createdAt))}", fontSize = 11.sp, color = AutoScriptPalette.Danger) }
+                    } else Text("保留服务器已有备份，另存一份已保存内容。", fontSize = 11.sp)
+                    Text("不包含未保存草稿和运行数据。", fontSize = 11.sp)
+                }
+            },
+            confirmButton = {
+                TextButton({
+                    val replacing = serverBackupUploadTarget(uploadMode, uploadTargetId, records, supportsReplacement)
+                    uploadProject = null
+                    upload(project, replacing)
+                }, enabled = uploadMode == ServerBackupUploadMode.NEW || supportsReplacement && target != null) {
+                    Text(if (uploadMode == ServerBackupUploadMode.NEW) "新增备份" else "确认覆盖")
+                }
+            }, dismissButton = { TextButton({ uploadProject = null }) { Text("取消") } })
+    }
     restore?.let { record -> StudioConfirmDialog(onDismissRequest = { restore = null }, title = { Text("恢复为新项目") },
         text = { Text("恢复后新增一份本机项目，不覆盖、不自动运行现有项目。") },
         confirmButton = { TextButton({ restore = null; restoreRecord(record) }) { Text("恢复") } }, dismissButton = { TextButton({ restore = null }) { Text("取消") } }) }

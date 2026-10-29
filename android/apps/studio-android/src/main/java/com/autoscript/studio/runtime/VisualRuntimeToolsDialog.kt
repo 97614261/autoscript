@@ -74,8 +74,8 @@ internal fun VisualRuntimeToolsDialog(contract: BlockContract, arguments: JsonOb
             contract.properties.forEach { property ->
                 if (property.path.endsWith("Variable")) {
                     val type = if (contract.kind == "audio.getvolume") ProjectVariableType.INTEGER else ProjectVariableType.STRING
-                    DesignerChoice(property.label, inputs[property.path].orEmpty().ifEmpty { "请选择" },
-                        (if (property.path == "textVariable") listOf("" to "使用固定文字") else emptyList()) + variables.filter { it.type == type }.map { it.name to it.name }, !busy) {
+                    CompactVariableChoice(property.label, inputs[property.path].orEmpty(),
+                        (if (property.path == "textVariable") listOf("" to "使用固定文字") else emptyList()) + variables.filter { it.type == type }.map { it.name to it.name }, !busy, variables) {
                         inputs = inputs + (property.path to it); error = null
                     }
                 } else DesignerInput(property.label, inputs[property.path].orEmpty(), !busy, Modifier.fillMaxWidth(),

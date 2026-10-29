@@ -41,6 +41,7 @@ internal fun visualVariableWarnings(nodes: List<VisualVariableCheckNode>, snapsh
             if (depth > 32 || warnings.size >= 128) return
             if (json.isJsonObject) json.asJsonObject.entrySet().forEach { (key, value) ->
                 if (warnings.size >= 128) return@forEach
+                if (key == "frameVariable" && args["autoCapture"]?.asBoolean == true && recognitionUsesOwnCapture(row.kind)) return@forEach
                 if ((key == "variable" || key.endsWith("Variable") || (key == "name" && row.kind in setOf("variable.set", "variable.calculate", "control.loopmetric")) ||
                         (key in setOf("sourceName", "name") && row.kind == "variable.copy")) && value.isJsonPrimitive && value.asJsonPrimitive.isString
                 ) {

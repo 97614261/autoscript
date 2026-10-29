@@ -104,7 +104,17 @@ internal object ImageToolCodeGen {
         val ocr: ImageToolOcrConfig? = null,
     )
 
-    data class FlowBlockInsertion(val kind: String, val arguments: Map<String, Int> = emptyMap(), val exactTiming: Boolean = false)
+    data class FlowBlockInsertion(val kind: String, val arguments: Map<String, Int> = emptyMap(), val exactTiming: Boolean = false,
+        val screenPixels: Boolean = false)
+
+    /** Picked pixels must not be clamped into the project's letterboxed design area. */
+    fun screenInput(snippet: Snippet): Snippet {
+        val blocks = snippet.flowBlocks.map { block ->
+            block.copy(screenPixels = block.kind in setOf("input.tap", "input.swipe", "input.pointerdown", "input.pointermove"))
+        }
+        return gate(blocks.toLuaCode(), "屏幕像素 · " + snippet.summary.removePrefix("点击设计坐标 "))
+            .copy(flowBlocks = blocks)
+    }
 
     /** `0xRRGGBB` 的六位大写十六进制，供文案与代码共用。 */
     fun formatRgb(rgb: Int): String = "0x%06X".format(rgb and 0xFFFFFF)
@@ -195,9 +205,12 @@ internal object ImageToolCodeGen {
     }
 
     private fun List<FlowBlockInsertion>.toLuaCode(): String = joinToString("\n") { block ->
+        val suffix = if (block.screenPixels) "Screen" else ""
         when (block.kind) {
-            "input.pointerdown" -> "Input.pointerDown(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
-            "input.pointermove" -> "Input.pointerMove(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
+            "input.tap" -> "Input.tap$suffix(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
+            "input.swipe" -> "Input.swipe$suffix(${block.arguments.getValue("x1")}, ${block.arguments.getValue("y1")}, ${block.arguments.getValue("x2")}, ${block.arguments.getValue("y2")}, ${block.arguments.getValue("durationMs")})"
+            "input.pointerdown" -> "Input.pointerDown$suffix(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
+            "input.pointermove" -> "Input.pointerMove$suffix(${block.arguments.getValue("x")}, ${block.arguments.getValue("y")})"
             "input.pointerup" -> "Input.pointerUp()"
             "task.sleep" -> "Task.sleep(${block.arguments.getValue("milliseconds")})"
             else -> error("不支持的触摸动作：${block.kind}")

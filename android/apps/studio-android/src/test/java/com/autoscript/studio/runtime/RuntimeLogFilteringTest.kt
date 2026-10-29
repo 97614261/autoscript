@@ -3,7 +3,6 @@ package com.autoscript.studio
 import androidx.compose.runtime.mutableStateListOf
 import org.junit.Assert.*
 import org.junit.Test
-import java.io.File
 
 class RuntimeLogFilteringTest {
     private val script = "12ms · 脚本调试日志 · 脚本/ERROR: Root failed"
@@ -24,6 +23,9 @@ class RuntimeLogFilteringTest {
         assertTrue(editorConsoleLineIsFailure(script))
         assertTrue(editorConsoleLineIsFailure("12ms · 脚本/ERROR: failure"))
         assertFalse(editorConsoleLineIsFailure("12ms · 脚本/INFO: contains 脚本/ERROR: as text"))
+        assertFalse(editorConsoleLineIsFailure("12ms · 脚本/INFO: 用户文字：诊断：失败"))
+        assertFalse(editorConsoleLineIsFailure("[12:34:56] 诊断：插件 flow-1 运行中"))
+        assertTrue(editorConsoleLineIsFailure("13ms · Runner诊断 · 截图预览失败：后端不可用"))
     }
 
     @Test fun channelsSearchAndFailureFiltersComposeWithoutChangingOriginals() {
@@ -45,10 +47,34 @@ class RuntimeLogFilteringTest {
         assertNotEquals(previous, next)
         assertEquals(listOf(script), previous)
         assertEquals(listOf(script, diagnostic), filterRuntimeConsole(next, "", false))
-        val ui = File("src/main/java/com/autoscript/studio/runtime/RuntimeLogDialog.kt").readText()
-        assertTrue(ui.contains("val snapshot = if (history) lines else lines.toList()"))
-        assertTrue(ui.contains("remember(snapshot, query, failuresOnly, channel, history)"))
-        assertTrue(ui.contains("LogLineDetailDialog(selectedLine"))
+        assertEquals(listOf(script), filterRuntimeConsole(next, "", false, RuntimeConsoleChannel.ESSENTIAL))
+    }
+
+    @Test fun essentialKeepsScriptOutputFailuresAndUnclassifiedLegacyLinesWithoutMutatingRawRecords() {
+        val repeated = "14ms · 脚本/INFO: same result"
+        val records = listOf(diagnostic, script, local, unknown, repeated, repeated,
+            "[12:35:00] 引擎 已停止", "15ms · Runner诊断 · ROOT_STOP_CLEANUP_FAILED")
+        assertEquals(listOf(script, local, unknown, repeated, repeated, records.last()),
+            filterRuntimeConsole(records, "", false, RuntimeConsoleChannel.ESSENTIAL))
+        assertEquals(records, filterRuntimeConsole(records, "", false))
+        assertEquals(listOf(script, local, records.last()), filterRuntimeConsole(records, "", true, RuntimeConsoleChannel.ESSENTIAL))
+    }
+
+    @Test fun compactPresentationRemovesOnlyKnownPrefixesAndPreservesMessageContent() {
+        val message = "Runner状态 · 结果=100(+100) 180\nsecond line"
+        val item = runtimeLogLinePresentation("12ms · 脚本调试日志 · 脚本/INFO: $message")
+        assertEquals(message, item.message)
+        assertEquals("0:00", item.time)
+        assertFalse(item.failure)
+        assertFalse(item.warning)
+        assertEquals("retry", runtimeLogLinePresentation("[09:05:52] 脚本/WARN: retry").message)
+        assertTrue(runtimeLogLinePresentation("[09:05:52] 脚本/WARN: retry").warning)
+        assertTrue(runtimeLogLinePresentation(script).failure)
+        assertEquals("14:36", runtimeLogLinePresentation("876670ms · Runner诊断 · CAPTURE_BACKEND_FAILED").time)
+        assertEquals("CAPTURE_BACKEND_FAILED", runtimeLogLinePresentation("876670ms · Runner诊断 · CAPTURE_BACKEND_FAILED").message)
+        assertEquals(unknown, runtimeLogLinePresentation(unknown).message)
+        assertEquals("", runtimeLogLinePresentation(unknown).time)
+        assertEquals("user text · App诊断 · ROOT_START", runtimeLogLinePresentation("user text · App诊断 · ROOT_START").message)
     }
 
     @Test fun backgroundHistoryFilteringHonorsCancellationDuringAndAfterScanning() {

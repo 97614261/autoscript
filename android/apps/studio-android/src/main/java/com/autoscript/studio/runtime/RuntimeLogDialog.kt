@@ -3,7 +3,6 @@ package com.autoscript.studio
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
@@ -11,10 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -36,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.autoscript.runtime.api.RuntimeLogFiles
 import com.autoscript.runtime.api.RuntimeLogEventCodec
+import com.autoscript.runtime.api.RuntimeScriptLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -47,8 +44,6 @@ import java.util.Locale
 
 private data class LogLoadedSnapshot(val events: String, val statistics: VisionRunStatistics.Report,
     val run: RuntimeLogFiles.Run, val locations: List<RuntimeLogLocation>)
-private data class LogConsoleFilter(val lines: List<String>, val query: String, val failuresOnly: Boolean,
-    val channel: RuntimeConsoleChannel)
 
 @Composable
 internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
@@ -60,6 +55,7 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(0) }
+    var diagnostics by remember { mutableStateOf(false) }
     val overlay = LocalEditorOverlay.current
     DisposableEffect(overlay, tab) {
         overlay?.realtimeLogRequested = tab == 0
@@ -81,11 +77,13 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
     var loadedEvents by remember { mutableStateOf<LogLoadedSnapshot?>(null) }
     var locations by remember { mutableStateOf<List<RuntimeLogLocation>>(emptyList()) }
     var locationMessage by remember { mutableStateOf<String?>(null) }
+    var locatingFailure by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf(VisionRunStatistics.Report(emptyList(), 0, 0, 0)) }
     var errors by remember { mutableStateOf(RuntimeLogLoadErrors()) }
     var exporting by remember { mutableStateOf(false) }
     var exportRun by remember { mutableStateOf<RuntimeLogFiles.Run?>(null) }
-    var cleanupMenu by remember { mutableStateOf(false) }
+    var actionsExpanded by remember { mutableStateOf(false) }
+    var showRunDetails by remember(selected) { mutableStateOf(false) }
     var cleanupIds by remember(projectId) { mutableStateOf<Set<String>?>(null) }
     var cleaning by remember { mutableStateOf(false) }
     var cleanupMessage by remember { mutableStateOf<String?>(null) }
@@ -141,9 +139,14 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
         val loaded = loadedEvents?.takeIf { historyVisible && it.run.id == selected } ?: return@LaunchedEffect
         val requested = historyChannel ?: return@LaunchedEffect
         val result = runtimeLogAttempt { withContext(Dispatchers.IO) {
-            val content = if (requested == "events.jsonl") RuntimeLogEventCodec.preview(loaded.events)
-                else RuntimeLogFiles.read(context.filesDir, loaded.run.id, requested)
-            content.lineSequence().filter(String::isNotBlank).toList()
+            if (requested == "script.log") {
+                val work = currentCoroutineContext()
+                RuntimeScriptLog.history(RuntimeLogFiles.read(context.filesDir, loaded.run.id, requested), loaded.events) { work.ensureActive() }
+            } else {
+                val content = if (requested == "events.jsonl") RuntimeLogEventCodec.preview(loaded.events)
+                    else RuntimeLogFiles.read(context.filesDir, loaded.run.id, requested)
+                content.lineSequence().filter(String::isNotBlank).toList()
+            }
         } }
         errors = errors.completed(RuntimeLogOperation.SNAPSHOT, result)
         result.onSuccess { historyLines = it }
@@ -161,6 +164,24 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
         active?.let { run ->
             exportRun = run
             export.launch("智构运行-${run.id.take(8)}.txt")
+        }
+    }
+    fun locateLatestFailure() {
+        if (onLocate == null || projectId == null || locatingFailure) return
+        scope.launch {
+            locatingFailure = true
+            try {
+                val result = runtimeLogAttempt { withContext(Dispatchers.IO) {
+                    RuntimeLogFiles.list(context.filesDir).firstOrNull { it.metadata["projectId"] == projectId }
+                        ?.let { RuntimeLogFiles.snapshot(context.filesDir, it.id, "events.jsonl") }
+                        ?.takeIf { it.run.metadata["projectId"] == projectId }
+                        ?.let { RuntimeLogLocation.failures(it.events).firstOrNull() }
+                } }
+                result.onSuccess { target ->
+                    locationMessage = if (target == null) "最近一次运行没有可定位的积木错误" else onLocate(target)
+                    if (target != null && locationMessage == null) onDismiss()
+                }.onFailure { locationMessage = "读取错误位置失败，请刷新后重试" }
+            } finally { locatingFailure = false }
         }
     }
     cleanupIds?.let { ids ->
@@ -193,46 +214,77 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
     }
     StudioPanelDialog(title = "运行日志", onDismiss = onDismiss, fullScreen = fullScreen, showFooter = false,
         compactHeader = true, onToggleFullScreen = { fullScreen = !fullScreen }) {
-        BoxWithConstraints(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else
-            Modifier.height(runtimeLogBodyHeightDp(LocalConfiguration.current.screenHeightDp).dp)).padding(horizontal = if (fullScreen) 8.dp else 10.dp)) {
-            val toolbarBudget = maxHeight * .25f
-            Column(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val bodyHeight = studioPanelViewportHeight(maxHeight.value, runtimeLogBodyHeightDp(LocalConfiguration.current.screenHeightDp), fullScreen).dp
+            val toolbarBudget = studioToolbarBudget(bodyHeight.value, if (tab == 0) 1 else 2).dp
+            Column(Modifier.fillMaxWidth().height(bodyHeight).padding(horizontal = if (fullScreen) 8.dp else 10.dp)) {
             Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 30.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                listOf("实时", "历史", "识图统计").forEachIndexed { index, label ->
-                    LogAction(label, { tab = index }, selected = tab == index)
+            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StudioToolSegments((if (tab == 2) 1 else tab).toString(), listOf("0" to "实时", "1" to "历史"), Modifier.weight(1f)) {
+                    tab = it.toInt(); diagnostics = false; channel = "script.log"
                 }
-                LogAction("刷新", { errors = RuntimeLogLoadErrors(); revision++ })
-                if (tab != 0) Box {
-                    LogAction(if (cleaning) "清理中" else "清理", { cleanupMenu = true },
-                        enabled = projectId != null && runs.isNotEmpty() && !cleaning && !exporting && exportRun == null)
-                    DropdownMenu(cleanupMenu, { cleanupMenu = false }, containerColor = Color.White) {
-                        DropdownMenuItem(text = { LogText("删除所选记录") }, enabled = active != null,
-                            onClick = { cleanupIds = active?.let { setOf(it.id) }; cleanupMenu = false })
-                        DropdownMenuItem(text = { LogText("清理当前项目历史") },
-                            onClick = { cleanupIds = runs.map { it.id }.toSet(); cleanupMenu = false })
+                Box {
+                    LogAction("更多 ▾", { actionsExpanded = true })
+                    DropdownMenu(actionsExpanded, { actionsExpanded = false }, modifier = Modifier.heightIn(max = 280.dp), containerColor = Color.White) {
+                        DropdownMenuItem(text = { LogText(if (diagnostics) "返回脚本日志" else "查看内部诊断") }, onClick = {
+                            actionsExpanded = false; diagnostics = !diagnostics
+                            if (tab != 0) { tab = 1; channel = if (diagnostics) "diagnostic.log" else "script.log" }
+                        })
+                        DropdownMenuItem(text = { LogText("识图性能统计") }, onClick = {
+                            actionsExpanded = false; tab = 2; diagnostics = false
+                        })
+                        if (tab == 1) DropdownMenuItem(text = { LogText("执行观测原文") }, onClick = {
+                            actionsExpanded = false; channel = "events.jsonl"; diagnostics = false
+                        })
+                        DropdownMenuItem(text = { LogText("刷新记录") }, enabled = !cleaning, onClick = {
+                            actionsExpanded = false; errors = RuntimeLogLoadErrors(); revision++
+                        })
+                        if (tab == 0 && projectId != null && onLocate != null) DropdownMenuItem(
+                            text = { LogText(if (locatingFailure) "定位中…" else "定位最近错误") }, enabled = !locatingFailure,
+                            onClick = { actionsExpanded = false; locateLatestFailure() })
+                        if (tab == 1 && locate != null) locations.forEachIndexed { index, target ->
+                            DropdownMenuItem(text = { LogText(if (index == 0) "定位错误积木" else "定位其他错误 ${index + 1}") },
+                                onClick = { actionsExpanded = false; locate(target) })
+                        }
+                        if (debugSettings != null && onSaveDebugSettings != null) DropdownMenuItem(text = { LogText("记录设置") },
+                            enabled = settingsEditable, onClick = { actionsExpanded = false; recordingSettings = true })
+                        if (tab != 0 && active != null) {
+                            DropdownMenuItem(text = { LogText(if (showRunDetails) "收起记录详情" else "记录详情") },
+                                onClick = { actionsExpanded = false; showRunDetails = !showRunDetails })
+                            DropdownMenuItem(text = { LogText(if (exporting) "导出中…" else "导出完整日志") },
+                                enabled = !exporting && exportRun == null, onClick = { actionsExpanded = false; startExport() })
+                        }
+                        if (tab == 2) {
+                            DropdownMenuItem(text = { LogText("对比两次运行") }, enabled = active != null && runs.size > 1,
+                                onClick = { actionsExpanded = false; comparing = true })
+                            DropdownMenuItem(text = { LogText(if (screenshotOverview) "查看分组统计" else "截图统计总览") }, onClick = {
+                                actionsExpanded = false; screenshotOverview = !screenshotOverview
+                                if (screenshotOverview) fullScreen = true
+                            })
+                        }
+                        if (tab != 0) {
+                            HorizontalDivider(color = LogBorder)
+                            val canClean = projectId != null && runs.isNotEmpty() && !cleaning && !exporting && exportRun == null
+                            DropdownMenuItem(text = { LogText("删除所选记录") }, enabled = canClean && active != null,
+                                onClick = { actionsExpanded = false; cleanupIds = active?.let { setOf(it.id) } })
+                            DropdownMenuItem(text = { LogText("清理项目历史") }, enabled = canClean,
+                                onClick = { actionsExpanded = false; cleanupIds = runs.map { it.id }.toSet() })
+                        }
                     }
                 }
             }
-            if (tab == 2 || debugSettings != null && onSaveDebugSettings != null)
-                Row(Modifier.fillMaxWidth().heightIn(min = 28.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    if (debugSettings != null && onSaveDebugSettings != null)
-                        LogAction("记录设置", { recordingSettings = true }, enabled = settingsEditable)
-                    if (tab == 2) {
-                        LogAction("对比", { comparing = true }, enabled = active != null && runs.size > 1)
-                        LogAction(if (screenshotOverview) "详情" else "截图总览", {
-                            screenshotOverview = !screenshotOverview
-                            if (screenshotOverview) fullScreen = true
-                        }, selected = screenshotOverview)
-                        if (screenshotOverview) LogAction(if (exporting) "导出中" else "导出", startExport,
-                            enabled = active != null && !exporting && exportRun == null)
-                    }
-                }
             cleanupMessage?.let { LogText(it, color = Color.Gray, size = 10, maxLines = 2) }
             locationMessage?.let { LogText(it, color = Color.Red, size = 10, maxLines = 2) }
             errors.visible(historyVisible = tab != 0)?.let { LogText(it, color = Color.Red, maxLines = 2) }
             }
-            if (tab == 0) Box(Modifier.weight(1f)) { LogConsolePanel(currentLines) }
+            if (tab == 0) key(diagnostics) {
+                Column(Modifier.weight(1f)) {
+                    if (diagnostics) LogText("内部诊断 · Runner / Root / App", color = Color.Gray, size = 10)
+                    Box(Modifier.weight(1f)) { LogConsolePanel(currentLines,
+                        initialChannel = if (diagnostics) RuntimeConsoleChannel.DIAGNOSTIC else RuntimeConsoleChannel.ESSENTIAL) }
+                }
+            }
             else {
                 if (runs.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     LogText("暂无文件日志，运行一次后刷新", color = Color.Gray)
@@ -240,7 +292,7 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                     Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
                     LogRunSelector(runs, selected, onSelect = { selected = it })
                     active?.let { run ->
-                        LogText(RuntimeLogHealth.runSummary(run.metadata), size = 9, color = Color.Gray,
+                        if (showRunDetails) LogText(RuntimeLogHealth.runSummary(run.metadata), size = 9, color = Color.Gray,
                             maxLines = 1, modifier = Modifier.padding(vertical = 1.dp))
                         val dropped = run.metadata["droppedRecords"]?.toLongOrNull() ?: 0
                         val truncated = run.metadata["truncatedRecords"]?.toLongOrNull() ?: 0
@@ -248,34 +300,23 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                         val engineDropped = run.metadata["visionEngineDropped"]?.toLongOrNull() ?: report.dropped
                         if (run.metadata["writerError"] == "true") LogText("写盘错误，观测可能不完整", color = Color.Red, size = 10)
                         if (dropped + truncated + engineDropped + report.malformed > 0) LogText("非完整：丢弃 $dropped / 限额 $truncated / 引擎丢弃 $engineDropped / 无效 ${report.malformed}", color = Color.Red, size = 10)
-                        if (evicted > 0) LogText("已轮转 $evicted 条明细 · 次数为累计，百分位仅保留窗口", color = Color.Gray, size = 9)
+                        if (showRunDetails && evicted > 0) LogText("已轮转 $evicted 条明细 · 次数为累计，百分位仅保留窗口", color = Color.Gray, size = 9)
                     }
-                    if (tab == 1) {
-                        if (locate != null && locations.isNotEmpty()) {
-                            var expanded by remember(selected) { mutableStateOf(false) }
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                LogText("失败位置 · 仅定位当前草稿", Modifier.weight(1f), size = 10, color = Color.Gray)
-                                LogAction("定位", { locate(locations.first()) })
-                                if (locations.size > 1) Box {
-                                    LogAction("其他 ${locations.size - 1}", { expanded = true })
-                                    DropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 200.dp)) {
-                                        locations.drop(1).forEach { target ->
-                                            DropdownMenuItem(text = { LogText("${target.flowId} · ${target.nodeId}", maxLines = 2) },
-                                                onClick = { expanded = false; locate(target) })
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Row(Modifier.fillMaxWidth().heightIn(min = 30.dp).horizontalScroll(rememberScrollState())) {
-                            listOf("script.log" to "脚本", "diagnostic.log" to "状态", "events.jsonl" to "追踪/指标").forEach { (file, label) ->
-                                LogAction(label, { channel = file }, selected = channel == file)
-                            }
-                        }
+                    if (tab == 1 && channel != "script.log") Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        LogText(if (channel == "diagnostic.log") "内部诊断" else "执行观测原文", Modifier.weight(1f), color = Color.Gray, size = 10)
+                        LogAction("返回脚本", { channel = "script.log"; diagnostics = false })
                     }
                     }
                     if (tab == 1) {
-                        Box(Modifier.weight(1f)) { LogConsolePanel(historyLines, history = true) }
+                        key(channel) {
+                            Box(Modifier.weight(1f)) { LogConsolePanel(historyLines, history = true,
+                                initialChannel = if (channel == "script.log") RuntimeConsoleChannel.ESSENTIAL else RuntimeConsoleChannel.ALL,
+                                clockOffsetMs = active?.metadata?.let { meta ->
+                                    val wall = meta["startedAtMs"]?.toLongOrNull()
+                                    val elapsed = meta["startedElapsedMs"]?.toLongOrNull()
+                                    if (wall != null && elapsed != null && elapsed in 0..wall) wall - elapsed else null
+                                }) }
+                        }
                     } else {
                         LogText(if (screenshotOverview) RuntimeLogHealth.visionSummary(report, active?.metadata.orEmpty()) else
                             "耗时 ms · 工作量按行单位 · 同条件/结果分组", size = 10, color = Color.Gray, modifier = Modifier.padding(vertical = 1.dp))
@@ -293,10 +334,7 @@ internal fun RuntimeLogDialog(currentLines: List<String>, projectId: String?,
                             }
                         }
                     }
-                    if (!(tab == 2 && screenshotOverview)) Row(Modifier.fillMaxWidth().heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically) {
-                        LogText("含脚本输出，请注意隐私", color = Color.Gray, size = 10, modifier = Modifier.weight(1f), maxLines = 1)
-                        LogAction(if (exporting) "导出中…" else "导出日志", enabled = active != null && !exporting && exportRun == null, onClick = startExport)
-                    }
+
                 }
             }
             }
@@ -459,160 +497,23 @@ private fun LogScreenshotOverview(sections: List<VisionLogPresentation.Section>)
     }
 }
 
-/** Script output and diagnostics stay separate from the user-facing run prompt window. */
-@Composable
-private fun LogConsolePanel(lines: List<String>, history: Boolean = false) {
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var failuresOnly by remember { mutableStateOf(false) }
-    var copying by remember { mutableStateOf(false) }
-    var copyMessage by remember { mutableStateOf<String?>(null) }
-    var follow by remember { mutableStateOf(true) }
-    var channel by remember { mutableStateOf(RuntimeConsoleChannel.ALL) }
-    var detail by remember { mutableStateOf<String?>(null) }
-    val clipboard = LocalClipboardManager.current
-    // SnapshotStateList is mutable: using its identity as a remember key freezes the first result.
-    val snapshot = if (history) lines else lines.toList()
-    val filter = remember(snapshot, query, failuresOnly, channel, history) {
-        LogConsoleFilter(snapshot, query, failuresOnly, if (history) RuntimeConsoleChannel.ALL else channel)
-    }
-    val filtered = if (!history) remember(filter) {
-        filterRuntimeConsole(filter.lines, filter.query, filter.failuresOnly, filter.channel)
-    } else {
-        val result by produceState<Pair<LogConsoleFilter, List<String>>?>(null, filter) {
-            val visible = withContext(Dispatchers.Default) {
-                val work = currentCoroutineContext()
-                filterRuntimeConsole(filter.lines, filter.query, filter.failuresOnly, filter.channel) { work.ensureActive() }
-            }
-            value = filter to visible
-        }
-        result?.takeIf { it.first === filter }?.second
-    }
-    val visible = filtered.orEmpty()
-    val listState = rememberLazyListState()
-    LaunchedEffect(visible.size, visible.lastOrNull(), follow) {
-        if (follow && visible.isNotEmpty()) listState.animateScrollToItem(visible.lastIndex)
-    }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-    val toolbarBudget = maxHeight * .5f
-    Column(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxWidth().heightIn(max = toolbarBudget).verticalScroll(rememberScrollState())) {
-        if (!history) Row(Modifier.fillMaxWidth().heightIn(min = 28.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            RuntimeConsoleChannel.entries.forEach { option ->
-                LogAction(option.label, { channel = option }, selected = channel == option)
-            }
-        }
-        Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), verticalAlignment = Alignment.CenterVertically) {
-            LogText("${visible.size} 项", Modifier.weight(1f), size = 10, color = Color.Gray)
-            Row(Modifier.weight(3f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            LogAction("仅错误", { failuresOnly = !failuresOnly }, selected = failuresOnly)
-            LogAction(if (follow) "跟随 ✓" else "跟随", { follow = !follow }, selected = follow)
-            LogAction(if (copying) "复制中" else "复制", enabled = visible.isNotEmpty() && !copying, onClick = {
-                val selection = visible.toList()
-                scope.launch {
-                    copying = true; copyMessage = null
-                    try {
-                        val result = runtimeLogAttempt { withContext(Dispatchers.IO) { runtimeLogCopyText(selection) } }
-                        copyMessage = result.fold({ content -> runtimeLogClipboardStatus(content,
-                            { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)) }, { clipboard.getText()?.text })
-                            .replace("完整报告", "完整日志") }, { "日志超过复制容量或生成失败，请筛选后复制或导出。" })
-                    } finally { copying = false }
-                }
-            })
-            }
-        }
-        copyMessage?.let { LogText(it, size = 10, maxLines = 2, color = if (it.startsWith("已")) LogBlue else Color.Red) }
-        BasicTextField(query, { query = it.take(128) }, singleLine = true,
-            textStyle = TextStyle(fontSize = 11.sp, lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)),
-            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).heightIn(min = 30.dp)
-                .border(1.dp, LogBorder, RoundedCornerShape(5.dp)).padding(horizontal = 7.dp, vertical = 6.dp),
-            decorationBox = { field -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                if (query.isEmpty()) LogText(if (history) "筛选本次记录" else "筛选实时日志（最近 200 项）", color = Color.Gray, maxLines = 1)
-                field()
-            } })
-        }
-        if (visible.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-                LogText(if (filtered == null) "正在筛选…" else if (lines.isEmpty()) "暂无运行记录\n运行提示在独立提示窗显示" else "没有符合筛选的日志", color = Color.Gray, align = TextAlign.Center)
-            }
-        } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState) {
-                itemsIndexed(visible) { _, line ->
-                    Row(Modifier.fillMaxWidth().clickable { detail = line }.padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        LogText(line, Modifier.weight(1f), size = 10, maxLines = 2,
-                            color = if (editorConsoleLineIsFailure(line)) Color(0xFFC33F46) else Color(0xFF30384B))
-                        LogText("›", Modifier.padding(horizontal = 5.dp), size = 12, color = LogBlue)
-                    }
-                }
-            }
-        }
-    }
-    }
-    detail?.let { selectedLine -> LogLineDetailDialog(selectedLine, onDismiss = { detail = null }) }
-}
-
-@Composable
-private fun LogLineDetailDialog(line: String, onDismiss: () -> Unit) {
-    var fullScreen by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
-    val clipboard = LocalClipboardManager.current
-    StudioPanelDialog("日志详情", onDismiss, fullScreen = fullScreen, compactHeader = true,
-        onToggleFullScreen = { fullScreen = !fullScreen }, showFooter = false) {
-        Column(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else Modifier.heightIn(max = 420.dp)).padding(10.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                LogText("选中记录 · 原文", Modifier.weight(1f), size = 10, color = Color.Gray)
-                LogAction("复制", {
-                    status = runCatching { runtimeLogCopyText(listOf(line)) }.fold({ content ->
-                        runtimeLogClipboardStatus(content, { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)) },
-                            { clipboard.getText()?.text }).replace("完整报告", "日志原文")
-                    }, { "此条日志超过复制容量，请导出原日志。" })
-                })
-            }
-            status?.let { LogText(it, size = 10, maxLines = 2) }
-            remember(line) { editorProblemAdvice(line) }?.let { advice ->
-                LogText(advice.summary, size = 12, color = Color(0xFFC33F46), modifier = Modifier.padding(vertical = 4.dp))
-                LogText(advice.suggestion, size = 11, color = Color.Gray, modifier = Modifier.padding(bottom = 6.dp))
-            }
-            SelectionContainer(Modifier.weight(1f, fill = false).fillMaxWidth()) {
-                androidx.compose.foundation.lazy.LazyColumn {
-                    item { LogText(line, Modifier.fillMaxWidth().padding(vertical = 4.dp), size = 11) }
-                }
-            }
-        }
-    }
-}
-
 private fun logRunLabel(run: RuntimeLogFiles.Run): String {
     val date = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(run.metadata["startedAtMs"]?.toLongOrNull() ?: 0))
-    val status = when (run.metadata["status"]) { "running" -> "运行中 / 未完整结束"; "ended" -> "已结束"; "stopped" -> "主动停止"; "failed" -> "失败"; "start_failed" -> "启动失败"; else -> "中断" }
+    val status = when (run.metadata["status"]) { "running" -> "运行中"; "ended" -> "已结束"; "stopped" -> "主动停止"; "failed" -> "失败"; "start_failed" -> "启动失败"; else -> "中断" }
     return "$date · $status"
 }
 
 @Composable
 private fun LogRunSelector(runs: List<RuntimeLogFiles.Run>, selected: String?, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val index = runs.indexOfFirst { it.id == selected }
-    Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1f)) {
-            LogAction(runs.getOrNull(index)?.let(::logRunLabel) ?: "选择运行", { expanded = true }, Modifier.fillMaxWidth(), selected = true, align = TextAlign.Start)
-            DropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 240.dp), containerColor = Color.White) {
-                runs.forEach { run ->
-                    DropdownMenuItem(text = { LogText(logRunLabel(run), color = if (run.id == selected) LogBlue else Color.DarkGray) },
-                        onClick = { onSelect(run.id); expanded = false })
-                }
-            }
-        }
-        LogAction("‹", { onSelect(runs[index - 1].id) }, Modifier.width(30.dp), enabled = index > 0)
-        LogAction("›", { onSelect(runs[index + 1].id) }, Modifier.width(30.dp), enabled = index >= 0 && index < runs.lastIndex)
-    }
+    val options = remember(runs) { runs.map { it.id to logRunLabel(it) } }
+    StudioCompactChoice("记录", selected.orEmpty(), options, runs.isNotEmpty(), onSelect)
 }
 
-private val LogBlue = Color(0xFF3867FF)
-private val LogBorder = Color(0xFFE6EAF2)
+internal val LogBlue = Color(0xFF3867FF)
+internal val LogBorder = Color(0xFFE6EAF2)
 
 @Composable
-private fun LogText(text: String, modifier: Modifier = Modifier, color: Color = Color(0xFF30384B), size: Int = 11,
+internal fun LogText(text: String, modifier: Modifier = Modifier, color: Color = Color(0xFF30384B), size: Int = 11,
     maxLines: Int = Int.MAX_VALUE, align: TextAlign = TextAlign.Start, bold: Boolean = false) {
     Text(text, modifier, color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis, textAlign = align,
         style = TextStyle(fontSize = size.sp, lineHeight = (size + 3).sp, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
@@ -620,7 +521,7 @@ private fun LogText(text: String, modifier: Modifier = Modifier, color: Color = 
 }
 
 @Composable
-private fun LogAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false,
+internal fun LogAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false,
     enabled: Boolean = true, align: TextAlign = TextAlign.Center) {
     Box(modifier.heightIn(min = 28.dp).background(if (selected) Color(0xFFF0F4FF) else Color.Transparent, RoundedCornerShape(5.dp))
         .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 6.dp, vertical = 4.dp),

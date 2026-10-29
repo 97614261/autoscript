@@ -87,7 +87,7 @@ pub(crate) fn gesture_bounds(
         let disabled = flow.document.disabled_node_ids();
         for mut nodes in blocks.into_values() {
             nodes.sort_by(|a, b| a.envelope.order_key.cmp(&b.envelope.order_key));
-            let mut path: Option<(String, [i64; 4])> = None;
+            let mut path: Option<(String, [i64; 4], bool)> = None;
             for node in nodes {
                 if disabled.contains(node.envelope.node_id.as_str()) {
                     continue;
@@ -104,18 +104,25 @@ pub(crate) fn gesture_bounds(
                                 .and_then(serde_json::Value::as_i64),
                         )
                 };
+                let raw = node
+                    .envelope
+                    .args
+                    .get("screenPixels")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true);
                 match node.envelope.kind.as_str() {
                     "input.pointerdown" => {
                         path = point().map(|(x, y)| {
                             (
                                 format!("{}:{}", flow.declaration.flow_id, node.envelope.node_id),
                                 [x, y, x, y],
+                                raw,
                             )
                         });
                     }
                     "input.pointermove" => {
-                        if let Some((_, bounds)) = &mut path {
-                            if let Some((x, y)) = point() {
+                        if let Some((_, bounds, path_raw)) = &mut path {
+                            if let Some((x, y)) = point().filter(|_| *path_raw == raw) {
                                 *bounds = [
                                     bounds[0].min(x),
                                     bounds[1].min(y),
@@ -128,7 +135,7 @@ pub(crate) fn gesture_bounds(
                         }
                     }
                     "input.pointerup" => {
-                        if let Some((id, bounds)) = path.take() {
+                        if let Some((id, bounds, _)) = path.take() {
                             result.insert(id, bounds);
                         }
                     }
@@ -156,7 +163,7 @@ local function __random_set(x,y,wait,minimum,maximum,unit)
   __random_state().policy={x=x,y=y,wait=wait,min=minimum,max=maximum,unit=unit}
   __random_state().bounds=nil
 end
-local function __random_bounds(x1,y1,x2,y2) __random_state().bounds={x1,y1,x2,y2} end
+local function __random_bounds(x1,y1,x2,y2,raw) __random_state().bounds={x1,y1,x2,y2,raw==true} end
 local function __random_range(a,b)
   if a>b then error('RANDOMIZATION_NO_VALID_OFFSET',0) end
   if a==b then return a end
@@ -185,7 +192,7 @@ local function __random_down(x,y,raw)
   if gesture.random then
     local p=__random_point(x,y,raw); local first,last=p,nil
     local bounds=state.bounds
-    if bounds and not raw then first=__random_point(bounds[1],bounds[2],false); last=__random_point(bounds[3],bounds[4],false) end
+    if bounds and bounds[5]==raw then first=__random_point(bounds[1],bounds[2],raw); last=__random_point(bounds[3],bounds[4],raw) end
     if p.snapshotId~=first.snapshotId then error('RANDOMIZATION_COORDINATES_CHANGED',0) end
     gesture.dx,gesture.dy=__random_offsets(first,last,policy); gesture.snapshot=p.snapshotId
     __raw_input.pointerDownScreen(p.x+gesture.dx,p.y+gesture.dy,p.snapshotId)
@@ -194,25 +201,30 @@ local function __random_down(x,y,raw)
 end
 function Input.pointerDown(x,y) return __random_down(x,y,false) end
 function Input.pointerDownScreen(x,y) return __random_down(x,y,true) end
-function Input.pointerMove(x,y)
+local function __random_move(x,y,raw,snapshot)
   local state=__random_state(); local gesture=state.gesture
-  if not gesture or not gesture.random then return __raw_input.pointerMove(x,y) end
-  local p=__random_point(x,y,false)
-  if p.snapshotId~=gesture.snapshot then error('RANDOMIZATION_COORDINATES_CHANGED',0) end
+  if not gesture or not gesture.random then return (raw and __raw_input.pointerMoveScreen or __raw_input.pointerMove)(x,y,snapshot) end
+  local p=__random_point(x,y,raw)
+  if p.snapshotId~=gesture.snapshot or (snapshot and p.snapshotId~=snapshot) then error('RANDOMIZATION_COORDINATES_CHANGED',0) end
   local px,py=p.x+gesture.dx,p.y+gesture.dy
   if px<0 or py<0 or px>=p.width or py>=p.height then error('RANDOMIZATION_GESTURE_OUT_OF_BOUNDS',0) end
   return __raw_input.pointerMoveScreen(px,py,p.snapshotId)
 end
+function Input.pointerMove(x,y) return __random_move(x,y,false) end
+function Input.pointerMoveScreen(x,y,snapshot) return __random_move(x,y,true,snapshot) end
 function Input.pointerUp()
   __raw_input.pointerUp(); __random_state().gesture=nil
 end
-function Input.swipe(x1,y1,x2,y2,duration)
+local function __random_swipe(x1,y1,x2,y2,duration,raw,snapshot)
   local policy=__random_state().policy or {x=0,y=0}
-  if policy.x==0 and policy.y==0 then return __raw_input.swipe(x1,y1,x2,y2,duration) end
-  local p,q=__random_point(x1,y1,false),__random_point(x2,y2,false)
+  if policy.x==0 and policy.y==0 then return (raw and __raw_input.swipeScreen or __raw_input.swipe)(x1,y1,x2,y2,duration,snapshot) end
+  local p,q=__random_point(x1,y1,raw),__random_point(x2,y2,raw)
+  if snapshot and (p.snapshotId~=snapshot or q.snapshotId~=snapshot) then error('RANDOMIZATION_COORDINATES_CHANGED',0) end
   local dx,dy=__random_offsets(p,q,policy)
   return __raw_input.swipeScreen(p.x+dx,p.y+dy,q.x+dx,q.y+dy,duration,p.snapshotId)
 end
+function Input.swipe(x1,y1,x2,y2,duration) return __random_swipe(x1,y1,x2,y2,duration,false) end
+function Input.swipeScreen(x1,y1,x2,y2,duration,snapshot) return __random_swipe(x1,y1,x2,y2,duration,true,snapshot) end
 local function __random_sleep(milliseconds,exact)
   local state=__random_state(); local policy=state.policy
   if exact or state.gesture or milliseconds==0 or not policy or not policy.wait then return Task.sleep(milliseconds) end
@@ -270,5 +282,10 @@ mod tests {
     #[test]
     fn randomized_input_always_carries_the_resolved_snapshot_to_the_host() {
         run("__raw_input.tapScreen=function(x,y,s) assert(s==1) end; __raw_input.pointerDownScreen=function(x,y,s) assert(s==1) end; __raw_input.pointerMoveScreen=function(x,y,s) assert(s==1) end;__raw_input.swipeScreen=function(a,b,c,d,ms,s) assert(s==1) end;__random_set(1,1,false,0,0,'milliseconds');Input.tap(5,5);Input.pointerDown(5,5);Input.pointerMove(6,6);Input.pointerUp();Input.swipe(4,4,6,6,100)");
+    }
+
+    #[test]
+    fn screen_gesture_shares_one_offset_and_uses_raw_endpoint_bounds() {
+        run("__random_set(3,3,false,0,0,'milliseconds');__random_bounds(0,0,19,19,true);Input.pointerDownScreen(0,0);local p=moves[1];assert(p[1]==0 and p[2]==0);Input.pointerMoveScreen(19,19);local q=moves[2];assert(q[1]==19 and q[2]==19);Input.pointerUp();__random_set(3,3,false,0,0,'milliseconds');Input.swipeScreen(0,0,19,19,100);local s=moves[3];assert(s[1]==0 and s[2]==0 and s[3]==19 and s[4]==19)");
     }
 }

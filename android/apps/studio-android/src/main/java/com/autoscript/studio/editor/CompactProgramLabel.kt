@@ -56,8 +56,8 @@ private fun ProgramLabelArguments.title(contract: BlockContract): String {
 }
 
 private fun ProgramLabelArguments.details(contract: BlockContract): String = when (contract.kind) {
-    "input.tap", "input.pointerdown", "input.pointermove" -> point("x", "y")
-    "input.swipe" -> parts("${point("x1", "y1")} → ${point("x2", "y2")}", "${input("durationMs")}ms")
+    "input.tap", "input.pointerdown", "input.pointermove" -> parts(if (boolean("screenPixels") == true) "屏幕" else null, point("x", "y"))
+    "input.swipe" -> parts(if (boolean("screenPixels") == true) "屏幕" else null, "${point("x1", "y1")} → ${point("x2", "y2")}", "${input("durationMs")}ms")
     "input.touchdown", "input.touchmove" -> parts("触点 ${input("pointerId")}", point("x", "y"), output())
     "input.touchup" -> parts("触点 ${input("pointerId")}", output())
     "input.keyevent" -> keyLabel(text("keyCode"))

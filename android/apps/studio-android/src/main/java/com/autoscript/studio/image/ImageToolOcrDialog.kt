@@ -98,7 +98,7 @@ internal fun ImageToolOcrDialog(bitmap: Bitmap, initialRoi: ImageToolCodeGen.Roi
             Column {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     RecognitionAvailabilityNotice(when(operation) {Reply.GLYPH->"ocr.glyph";Reply.ALPHANUMERIC_V5->"ocr.alphanumericv5";else->"ocr.alphanumeric"}, runtimeClient)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         listOf(Reply.GLYPH to "字库", Reply.LATIN_TEXT to "英文数字V4",Reply.ALPHANUMERIC_V5 to "V5候选").forEach { (value, label) ->
                             ImageToolCompactAction((if (operation == value || value == Reply.LATIN_TEXT && operation == Reply.ALPHANUMERIC) "✓ " else "") + label, !busy) {
                                 operation = value; threshold = if (value == Reply.GLYPH) "900" else "500"; invalidate()
@@ -119,12 +119,10 @@ internal fun ImageToolOcrDialog(bitmap: Bitmap, initialRoi: ImageToolCodeGen.Roi
                         if(onConfigureResultReader!=null) onConfigureResultReader(args) else readerArguments=args
                     }, compact = true)
                     else Image(bitmap.asImageBitmap(), "取字原图", Modifier.fillMaxWidth().height(if (fullScreen) 160.dp else 96.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        listOf("X", "Y", "宽", "高").forEachIndexed { i, label ->
-                            ImageToolCompactInput(label, bounds[i], !busy, Modifier.weight(1f), numeric = true) {
+                    StudioCompactGrid(listOf("X", "Y", "宽", "高").withIndex().toList(), cellDp = 82, maximum = 4) { (i, label), cell ->
+                            ImageToolCompactInput(label, bounds[i], !busy, cell, numeric = true) {
                                 bounds = bounds.toMutableList().apply { set(i, it.take(10)) }; invalidate()
                             }
-                        }
                     }
                     if (operation == Reply.GLYPH) {
                         ImageToolCompactAction("字库：${dictionary.substringAfterLast('/').ifEmpty { "未选择" }}", !busy, Modifier.fillMaxWidth()) {
@@ -132,12 +130,13 @@ internal fun ImageToolOcrDialog(bitmap: Bitmap, initialRoi: ImageToolCodeGen.Roi
                         }
                         GlyphColorPaletteEditor(palette, !busy) { palette = it; invalidate() }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ImageToolCompactInput(if (operation == Reply.GLYPH) "相似度 ‰" else "置信度 ‰", threshold, !busy,
-                            Modifier.weight(1f), numeric = true) { threshold = it.take(4); invalidate() }
-                        if (operation == Reply.GLYPH) ImageToolCompactInput("空格列数", gap, !busy, Modifier.weight(1f), numeric = true) { gap = it.take(5); invalidate() }
+                    StudioCompactGrid(if (operation == Reply.GLYPH) listOf("相似度 ‰", "空格列数") else listOf("置信度 ‰"), cellDp = 148, maximum = 2) { label, cell ->
+                        ImageToolCompactInput(label, if (label == "空格列数") gap else threshold, !busy, cell, numeric = true) {
+                            if (label == "空格列数") gap = it.take(5) else threshold = it.take(4)
+                            invalidate()
+                        }
                     }
-                    Row {
+                    FlowRow {
                         if (operation == Reply.GLYPH) ImageToolCompactAction(if (detailedPreview) "✓ 逐字预览" else "仅文本预览", !busy) { detailedPreview = !detailedPreview; invalidate() }
                         ImageToolCompactAction(if (showHelp) "收起说明" else "说明", true) { showHelp = !showHelp }
                     }

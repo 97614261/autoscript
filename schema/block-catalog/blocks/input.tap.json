@@ -5,13 +5,39 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/input.tap/1/input.tap.schema.json",
   "title": "点击",
   "category": "task",
-  "summary": "在设计坐标中执行一次 Root 点击。",
-  "searchTerms": ["tap", "click", "单击", "坐标"],
-  "requiredCapabilities": ["input.basic"],
+  "summary": "在坐标（可选屏幕像素或项目设计坐标）中执行一次 Root 点击。",
+  "searchTerms": [
+    "tap",
+    "click",
+    "单击",
+    "坐标"
+  ],
+  "requiredCapabilities": [
+    "input.basic"
+  ],
   "childBlocks": [],
   "properties": [
-    { "path": "x", "label": "X 坐标", "editor": "integer", "required": true, "defaultValue": "0" },
-    { "path": "y", "label": "Y 坐标", "editor": "integer", "required": true, "defaultValue": "0" }
+    {
+      "path": "x",
+      "label": "X 坐标",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "y",
+      "label": "Y 坐标",
+      "editor": "integer",
+      "required": true,
+      "defaultValue": "0"
+    },
+    {
+      "path": "screenPixels",
+      "label": "屏幕像素坐标",
+      "editor": "boolean",
+      "required": false,
+      "defaultValue": "false"
+    }
   ],
   "migrations": []
 }

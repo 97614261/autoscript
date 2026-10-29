@@ -440,7 +440,7 @@ internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObje
         }
     }) {
         Column(Modifier.fillMaxWidth().heightIn(max=360.dp).verticalScroll(rememberScrollState()).padding(10.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-            Text(contract.summary,fontSize=11.sp,color=AutoScriptPalette.TextSecondary)
+            ImageToolHelp(contract.summary)
             if (contract.kind in textRuleKinds) {
                 Text(textRegexResultHint(contract.kind),
                     fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
@@ -468,14 +468,14 @@ internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObje
                         DesignerChoice(field.label,options.find { it.first==inputs[field.path] }?.second ?: "请选择",options,true) { update(field.path,it) }
                     } else DesignerInput(field.label,inputs[field.path].orEmpty(),true,Modifier.fillMaxWidth(),numeric=field.editor!=BlockPropertyEditor.STRING) { update(field.path,it) }
                 }
-                DesignerChoice(if(source.isEmpty()) "来源" else field.label,source.ifEmpty { "固定值" },
-                    listOf("" to "固定值")+choices.map { it.name to it.name },true) { update(path,it) }
+                CompactVariableChoice(if(source.isEmpty()) "来源" else field.label,source,
+                    listOf("" to "固定值")+choices.map { it.name to it.name },true,variables) { update(path,it) }
             }
             val expected=utilityResultType(contract.kind)
             val choices=variables.filter { it.type==expected }.map { it.name to it.name }
             outputs.forEach { key ->
                 val label=contract.properties.first { it.path==key }.label
-                DesignerChoice(label,inputs[key].orEmpty().ifEmpty { "请选择" },choices,true) { update(key,it) }
+                CompactVariableChoice(label,inputs[key].orEmpty(),choices,true,variables) { update(key,it) }
             }
             onManageVariables?.let { TextButton(onClick=it,contentPadding=PaddingValues(horizontal=5.dp,vertical=0.dp)) { Text("维护变量",fontSize=11.sp) } }
             error?.let { Text(it,color=AutoScriptPalette.Accent,fontSize=11.sp) }

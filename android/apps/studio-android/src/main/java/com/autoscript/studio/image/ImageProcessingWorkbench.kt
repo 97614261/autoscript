@@ -2,7 +2,6 @@ package com.autoscript.studio
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -174,8 +173,10 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
         BoxWithConstraints(Modifier.fillMaxSize().background(ToolChrome)) {
         val sideWidth = imageWorkbenchSideWidth(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale).dp
         val sideTools = sideWidth > 0.dp
-        val controlsMax = maxHeight * .28f
-        val statusMax = maxHeight * .14f
+        val controlsMax = maxHeight * .22f
+        val headerMax = maxHeight * .22f
+        val bottomActionsMax = maxHeight * .22f
+        val statusMax = maxHeight * .10f
         val actionsMax = maxHeight * .42f
         val toolScroll = rememberScrollState()
         val toolButtons: @Composable () -> Unit = {
@@ -228,7 +229,8 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().padding(6.dp),
                 horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement=Arrangement.spacedBy(5.dp),verticalAlignment=Alignment.CenterVertically) {
+                FlowRow(Modifier.weight(1f).heightIn(max = headerMax).verticalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("图片工作台", color = androidx.compose.ui.graphics.Color.White, fontSize = 12.sp, maxLines=1)
                 ImageToolButton(if (originalVisible) "原图对照" else "处理图", ButtonBlue, !busy) { selection = ImageToolSelection(); originalVisible = !originalVisible }
                 ImageToolButton("撤销", ButtonGrey, !busy && history?.canUndo == true) { selection = ImageToolSelection(); history?.undo(); revision = history?.revision ?: 0; originalVisible = false }
@@ -258,7 +260,8 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
                     horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { toolButtons() }
                 canvas(Modifier.weight(1f).fillMaxWidth())
                 Column(Modifier.fillMaxWidth().heightIn(max = statusMax).verticalScroll(rememberScrollState())) { status() }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) { actions() }
+                FlowRow(Modifier.fillMaxWidth().heightIn(max = bottomActionsMax).verticalScroll(rememberScrollState()).padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
             }
         }
         }

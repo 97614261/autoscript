@@ -377,6 +377,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
         compactHeader = true, onToggleFullScreen = { fullScreen = !fullScreen }) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
         val compactFooter = studioShortViewport(maxHeight.value)
+        val footerMaxHeight = maxHeight * .4f
         Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 1200.dp else 620.dp)) {
             Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf("取样", "样本 ${samples.size}", "测试设置").forEachIndexed { index, text ->
@@ -446,11 +447,11 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                         }
                         GlyphMakerSection("提取字形", "${palette.colors.size}/16色 · 命中任意色即保留") {
                         GlyphColorPaletteEditor(palette, !busy) { palette = it }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             GlyphAction("提取单个", !busy && image != null && rgb != null && tol != null) { extract(false) }
                             GlyphMakerPrimaryAction("按空隙批量切分", !busy && image != null && rgb != null && tol != null) { extract(true) }
                         }
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text("采样目标", fontSize = 10.sp)
                             GlyphMakerCharacterSet.entries.forEach { group ->
                                 GlyphAction(if (characterSet == group) "✓ ${group.title}" else group.title, !busy) {
@@ -463,7 +464,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                                 customCharacters = it.take(256); nextSampleLabel = ""
                             }
                         if (targetCharacters == null) Text("目标需为1–128个字符，不能含空白；不影响已有样本。", fontSize = 10.sp, color = AutoScriptPalette.Danger)
-                        else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                        else FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             val total = glyphMakerLabelUnits(targetCharacters).size
                             val missing = glyphMakerLabelUnits(targetMissing.orEmpty())
                             Text("已采${total - missing.size}/$total" + if (missing.isEmpty()) " · 目标已齐" else " · 缺采", fontSize = 10.sp)
@@ -496,7 +497,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                     1 -> {
                         GlyphMakerSection("样本库", "${samples.map { it.label }.distinct().size}种字符 · ${samples.size}/256样本") {
                         targetMissing?.let { missing ->
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(if (missing.isEmpty()) "当前采样目标已齐，可继续补同字变体" else "当前目标缺：$missing",
                                     fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                             }
@@ -608,7 +609,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                 GlyphMakerPrimaryAction(if (saving) "保存中…" else "保存字库", !busy && samples.isNotEmpty()) { save() }
             }
             }
-            val footerActions: @Composable RowScope.() -> Unit = {
+            val footerActions: @Composable () -> Unit = {
                 GlyphAction(if (busy && !saving) "取消任务" else "返回", !saving) { if (busy) { cancel(); message = "任务已取消，样本保留" } else close() }
                 if (compactFooter) GlyphMakerPrimaryAction(if (saving) "保存中…" else "保存字库", !busy && samples.isNotEmpty()) { save() }
                 GlyphAction("撤销", !busy && history.canUndo) {
@@ -622,9 +623,8 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                 GlyphAction("快速测试", !busy && image != null && samples.isNotEmpty() && rgb != null && tol != null) { page = 2; test() }
                 if (onUseSaved != null) GlyphAction("保存并识字", !busy && samples.isNotEmpty()) { save(true) }
             }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
-                content = footerActions)
+            FlowRow(Modifier.fillMaxWidth().heightIn(max = footerMaxHeight).verticalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.SpaceEvenly, verticalArrangement = Arrangement.spacedBy(2.dp)) { footerActions() }
         }
         }
     }

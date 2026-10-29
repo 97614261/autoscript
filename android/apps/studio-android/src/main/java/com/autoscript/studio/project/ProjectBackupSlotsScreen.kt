@@ -53,7 +53,7 @@ private data class SlotConfirm(val action: SlotAction, val slot: Int)
 /**
  * `activity_backup_slots.xml` + `item_backup_slot.xml`：58dp 标题栏（项目名 + “可用 N 槽位”）、
  * 11sp 提示条、minHeight 92 的槽位卡（48dp 标题块 + 30dp 备注行 + 40dp 按钮行，三个 28dp 按钮），
- * 备份/恢复进行时底部 58dp 进度面板。
+ * 备份/恢复进行时底部紧凑进度面板。
  *
  * 行为对照 `dk.java`：空槽把“恢复/删除”设为 GONE（备份按钮因此撑满整行）；占用槽的备注行恒显示，
  * 备注为空时填默认文案；三个按钮都先弹确认框，备份那次还带备注输入。
@@ -89,30 +89,34 @@ internal fun ProjectBackupSlotsScreen(
                 )
             }
         }
-        Text(
-            if (localProjectExists) "备份会覆盖所选槽位；恢复会导入为一个新项目，不覆盖本地项目" else "本机没有这个项目；恢复会把槽位导入为新项目",
-            color = AutoScriptPalette.TextSecondary,
-            fontSize = 11.sp,
-            modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 10.dp),
-        )
-        message?.let {
-            Text(
-                it,
-                color = if (it.startsWith("已")) AutoScriptPalette.Accent else AutoScriptPalette.Danger,
-                fontSize = 11.sp,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-            )
-        }
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            item(key = "backup-explanation") {
+                Text(
+                    if (localProjectExists) "备份会覆盖所选槽位；恢复会导入为一个新项目，不覆盖本地项目" else "本机没有这个项目；恢复会把槽位导入为新项目",
+                    color = AutoScriptPalette.TextSecondary,
+                    fontSize = 11.sp,
+                    modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+            message?.let {
+                item(key = "backup-message") {
+                    Text(
+                        it,
+                        color = if (it.startsWith("已")) AutoScriptPalette.Accent else AutoScriptPalette.Danger,
+                        fontSize = 11.sp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
+            }
             items(slots, key = BackupSlot::index) { slot ->
                 Surface(Modifier.fillMaxWidth().heightIn(min = 92.dp), color = Color.White, shape = RoundedCornerShape(14.dp)) {
                     Column {
                         Column(
-                            Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 13.dp),
+                            Modifier.fillMaxWidth().heightIn(min = 42.dp).padding(horizontal = 13.dp, vertical = 4.dp),
                             verticalArrangement = Arrangement.Center,
                         ) {
                             Text("备份槽位 ${slot.index}", color = AutoScriptPalette.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -133,7 +137,7 @@ internal fun ProjectBackupSlotsScreen(
                         // dk.java：占用槽位时备注行恒显示，备注为空时填默认文案，不是整行隐藏。
                         if (slot.occupied) {
                             Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 3.dp).height(30.dp)
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 3.dp).heightIn(min = 26.dp)
                                     .background(AutoScriptPalette.AccentSoft, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -149,7 +153,7 @@ internal fun ProjectBackupSlotsScreen(
                             }
                         }
                         Row(
-                            Modifier.fillMaxWidth().height(40.dp).padding(start = 12.dp, top = 2.dp, end = 12.dp, bottom = 6.dp),
+                            Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(start = 12.dp, top = 2.dp, end = 12.dp, bottom = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             SlotButton("备份", SlotButtonStyle.PRIMARY, enabled = localProjectExists && !busy, Modifier.weight(1f)) {
@@ -169,7 +173,7 @@ internal fun ProjectBackupSlotsScreen(
             }
         }
         if (progressLabel != null) {
-            Column(Modifier.fillMaxWidth().height(58.dp).background(Color.White).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(min = 34.dp).background(Color.White).padding(horizontal = 12.dp, vertical = 5.dp)) {
                 Text(progressLabel, color = AutoScriptPalette.TextPrimary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().padding(top = 7.dp).height(4.dp),

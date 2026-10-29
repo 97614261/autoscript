@@ -15,11 +15,13 @@ internal fun ProgramLabelArguments.visionDetails(kind: String): String? = when (
         } else null,
         output() ?: matchOutputs())
     "vision.findcolor", "vision.findallcolor", "vision.countcolor", "vision.components" -> parts(
-        color("rgb"), text("tolerance")?.let { "容差 $it" }, region(), output() ?: matchOutputs())
+        colorGroupSummary() ?: color("rgb"), if (additionalColorCount() == null) text("tolerance")?.let { "容差 $it" } else null, region(),
+        if (kind == "vision.countcolor") text("limit")?.let { if (it == "0") "统计全部" else "最多 $it 像素" }
+        else if (kind == "vision.findallcolor") text("limit")?.let { "最多 $it 点" } else null, output() ?: matchOutputs())
     "vision.findmulticolor", "vision.findallmulticolor" -> parts(color("anchorRgb")?.let { "基准 $it" },
         arraySize("samples")?.let { "$it 个偏移点" } ?: text("samples")?.let { "已配置色点" }, region(), output() ?: matchOutputs())
-    "vision.comparecolor", "vision.getcolor" -> parts(pointArgument(), color("rgb"),
-        if (kind == "vision.comparecolor") text("tolerance")?.let { "容差 $it" } else null, output())
+    "vision.comparecolor", "vision.getcolor" -> parts(pointArgument(), colorGroupSummary() ?: color("rgb"),
+        if (kind == "vision.comparecolor" && additionalColorCount() == null) text("tolerance")?.let { "容差 $it" } else null, output())
     "vision.readresult", "vision.result" -> parts(text("sourceVariable"),
         text("index")?.let { "第 $it 项" }, enum("field"), output() ?: output("targetVariable"))
     "vision.resultaction" -> parts(text("sourceVariable"),
@@ -59,3 +61,5 @@ private fun ProgramLabelArguments.matchOutputs(): String? = parts(
     output("foundVariable"), if (text("xVariable") != null || text("yVariable") != null)
         "坐标→(${text("xVariable") ?: "?"}, ${text("yVariable") ?: "?"})" else null,
 ).takeIf(String::isNotBlank)
+
+private fun ProgramLabelArguments.colorGroupSummary(): String? = additionalColorCount()?.let { "${it + 1} 色 · 任意命中" }

@@ -456,7 +456,9 @@ class VisualProjectStateTest {
             },
         ))
         editor.selectedNodeId = owner
-        assertTrue(editor.addElseIfBranch())
+        assertTrue(editor.addElseIfBranch(JsonObject().apply {
+            addProperty("variable", "score"); addProperty("operator", "equals"); addProperty("value", 2)
+        }))
         assertEquals(listOf("then", "else", "elseIf0"), editor.childBlockNames(owner))
         assertEquals(1, editor.nodeArguments(owner)!!.getAsJsonArray("elseIf").size())
 
@@ -543,6 +545,26 @@ class VisualProjectStateTest {
         assertTrue(editor.undo())
         assertEquals(listOf("owner", "child", "tail"), editor.rows.map { it.nodeId })
         assertFalse(editor.canUndo)
+    }
+
+    @Test fun bulkDeleteKeepsUnselectedRowsAcrossBlocksAndSupportsOneRedo() {
+        val source = listOf(
+            node("owner", "block-root", "a0", "control.repeat", depth = 0, childBlocks = "\"childBlocks\":{\"body\":\"body\"},"),
+            node("child", "body", "a0", "task.noop", parent = "owner", depth = 1),
+            node("keep-child", "body", "a1", "task.noop", parent = "owner", depth = 1),
+            node("keep-root", "block-root", "a1", "task.noop", depth = 0),
+            node("tail", "block-root", "a2", "task.noop", depth = 0),
+        ).joinToString("\n", postfix = "\n")
+        val editor = VisualEditorState.create(source, "block-root")
+        assertTrue(editor.selectNodes(listOf("child", "tail")))
+        assertTrue(editor.deleteSelection())
+        assertEquals(listOf("owner", "keep-child", "keep-root"), editor.rows.map { it.nodeId })
+        assertTrue(editor.undo())
+        assertEquals(source, editor.currentSource)
+        assertFalse(editor.canUndo)
+        assertTrue(editor.redo())
+        assertEquals(listOf("owner", "keep-child", "keep-root"), editor.rows.map { it.nodeId })
+        assertFalse(editor.canRedo)
     }
 
     @Test

@@ -780,57 +780,64 @@ internal fun WorkspaceHeader(
     onRefresh: () -> Unit,
 ) {
     var sortMenu by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val columns = if (maxWidth.value / LocalDensity.current.fontScale >= 245f) 4 else 2
-            val tools = listOf(
-                Triple(R.drawable.studio_add_24, "新建", onCreate), Triple(R.drawable.ic_download_24, "导入", onImport),
-                Triple(R.drawable.ic_backup_outline_24, "备份", onBackup), Triple(R.drawable.project_refresh_20, "刷新", onRefresh),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                tools.chunked(columns).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        row.forEach { (icon, label, action) ->
-                            WorkspaceToolbarAction(icon, label, Modifier.weight(1f), enabled, action, prominent = label == "新建")
+    val configuration = LocalConfiguration.current
+    val dense = configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp <= 480
+    val tools = listOf(
+        Triple(R.drawable.studio_add_24, "新建", onCreate), Triple(R.drawable.ic_download_24, "导入", onImport),
+        Triple(R.drawable.ic_backup_outline_24, "备份", onBackup), Triple(R.drawable.project_refresh_20, "刷新", onRefresh),
+    )
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
+        val inline = dense && maxWidth.value >= 520f * LocalDensity.current.fontScale.coerceAtLeast(1f)
+        val search: @Composable () -> Unit = {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(Modifier.weight(1f), color = Color(0xFFEEF0FA), shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White)) {
+                    Row(Modifier.heightIn(min = if (dense) 32.dp else 38.dp).padding(horizontal = 10.dp, vertical = if (dense) 4.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(painterResource(R.drawable.editor_more_search_24), null, tint = WorkspaceTextSecondary, modifier = Modifier.size(16.dp))
+                        BasicTextField(query, onQueryChange, singleLine = true, cursorBrush = SolidColor(ProjectListAccent),
+                            textStyle = TextStyle(fontSize = 12.sp, color = WorkspaceTextPrimary),
+                            modifier = Modifier.weight(1f).padding(horizontal = 7.dp).semantics { contentDescription = "搜索项目名称" },
+                            decorationBox = { input ->
+                                Box {
+                                    if (query.isEmpty()) Text("搜索项目名称", color = WorkspaceTextSecondary, fontSize = 12.sp)
+                                    input()
+                                }
+                            })
+                        if (query.isNotEmpty()) Icon(painterResource(R.drawable.editor_close_24), "清空搜索", tint = WorkspaceTextSecondary,
+                            modifier = Modifier.size(24.dp).clickable { onQueryChange("") }.padding(4.dp))
+                    }
+                }
+                Box {
+                    Surface(onClick = { sortMenu = true }, color = Color.White.copy(alpha = .9f), shape = RoundedCornerShape(12.dp)) {
+                        Row(Modifier.heightIn(min = if (dense) 32.dp else 38.dp).padding(horizontal = 10.dp, vertical = if (dense) 4.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(order.label, color = ProjectListAccent, fontSize = 11.sp)
+                            Icon(painterResource(R.drawable.editor_chevron_down_16), "项目排序", tint = ProjectListAccent,
+                                modifier = Modifier.padding(start = 3.dp).size(12.dp))
+                        }
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        ProjectListOrder.entries.forEach { option ->
+                            DropdownMenuItem(text = { Text(option.label, fontSize = 12.sp,
+                                color = if (order == option) ProjectListAccent else WorkspaceTextPrimary) },
+                                onClick = { sortMenu = false; onOrderChange(option) })
                         }
                     }
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.weight(1f), color = Color(0xFFEEF0FA), shape = RoundedCornerShape(12.dp),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White)) {
-                Row(Modifier.heightIn(min = 38.dp).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(painterResource(R.drawable.editor_more_search_24), null, tint = WorkspaceTextSecondary, modifier = Modifier.size(16.dp))
-                    BasicTextField(query, onQueryChange, singleLine = true, cursorBrush = SolidColor(ProjectListAccent),
-                        textStyle = TextStyle(fontSize = 12.sp, color = WorkspaceTextPrimary),
-                        modifier = Modifier.weight(1f).padding(horizontal = 7.dp).semantics { contentDescription = "搜索项目名称" },
-                        decorationBox = { input ->
-                            Box {
-                                if (query.isEmpty()) Text("搜索项目名称", color = WorkspaceTextSecondary, fontSize = 12.sp)
-                                input()
-                            }
-                        })
-                    if (query.isNotEmpty()) Icon(painterResource(R.drawable.editor_close_24), "清空搜索", tint = WorkspaceTextSecondary,
-                        modifier = Modifier.size(24.dp).clickable { onQueryChange("") }.padding(4.dp))
+        if (inline) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                tools.forEach { (icon, label, action) ->
+                    WorkspaceToolbarAction(icon, label, Modifier.width(58.dp), enabled, action, prominent = label == "新建", dense = true)
                 }
+                Box(Modifier.weight(1f)) { search() }
             }
-            Box {
-                Surface(onClick = { sortMenu = true }, color = Color.White.copy(alpha = .9f), shape = RoundedCornerShape(12.dp)) {
-                    Row(Modifier.heightIn(min = 38.dp).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(order.label, color = ProjectListAccent, fontSize = 11.sp)
-                        Icon(painterResource(R.drawable.editor_chevron_down_16), "项目排序", tint = ProjectListAccent,
-                            modifier = Modifier.padding(start = 3.dp).size(12.dp))
-                    }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(if (dense) 4.dp else 8.dp)) {
+                StudioCompactGrid(tools, cellDp = 60, maximum = 4) { (icon, label, action), cell ->
+                    WorkspaceToolbarAction(icon, label, cell, enabled, action, prominent = label == "新建", dense = dense)
                 }
-                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                    ProjectListOrder.entries.forEach { option ->
-                        DropdownMenuItem(text = { Text(option.label, fontSize = 12.sp,
-                            color = if (order == option) ProjectListAccent else WorkspaceTextPrimary) },
-                            onClick = { sortMenu = false; onOrderChange(option) })
-                    }
-                }
+                search()
             }
         }
     }
@@ -844,6 +851,7 @@ private fun WorkspaceToolbarAction(
     enabled: Boolean,
     onClick: () -> Unit,
     prominent: Boolean = false,
+    dense: Boolean = false,
 ) {
     Surface(
         modifier = modifier,
@@ -854,7 +862,7 @@ private fun WorkspaceToolbarAction(
         enabled = enabled,
     ) {
         Row(Modifier.then(if (prominent) Modifier.background(StudioBrandGradient) else Modifier)
-            .heightIn(min = 38.dp).padding(horizontal = 5.dp, vertical = 7.dp),
+            .heightIn(min = if (dense) 32.dp else 38.dp).padding(horizontal = 5.dp, vertical = if (dense) 4.dp else 7.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             val tint = (if (prominent) Color.White else StudioInk).copy(alpha = if (enabled) 1f else .45f)
             Icon(painterResource(icon), null, tint = tint, modifier = Modifier.size(17.dp))

@@ -4,6 +4,71 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StudioPanelGeometryTest {
+    @Test fun entryPanelsOnlyUseExtraWidthWhenTheActualViewportCanSupportIt() {
+        assertEquals(600f, studioToolPanelWidth(720f, 320f, 1f, landscapeWidthDp = 600))
+        assertEquals(544f, studioToolPanelWidth(560f, 280f, 1f, landscapeWidthDp = 600))
+        assertEquals(344f, studioToolPanelWidth(360f, 640f, 1f, landscapeWidthDp = 600))
+        assertEquals(400f, studioToolPanelWidth(720f, 320f, 1.6f, landscapeWidthDp = 600))
+        assertEquals(400f, studioToolPanelWidth(720f, 320f, 1f))
+        assertEquals(400f, studioToolPanelWidth(Float.NaN, 320f, 1f, landscapeWidthDp = 600))
+    }
+    @Test fun compactToolGridsFitFourAcrossWithoutSqueezingPortraitOrLargeFonts() {
+        assertEquals(4, studioCompactGridColumns(584f, 1f, 130, 4))
+        assertEquals(3, studioCompactGridColumns(504f, 1f, 130, 4))
+        assertEquals(2, studioCompactGridColumns(344f, 1f, 130, 4))
+        assertEquals(2, studioCompactGridColumns(584f, 1.6f, 130, 4))
+        assertEquals(1, studioCompactGridColumns(240f, 2f, 130, 4))
+    }
+    @Test fun sideNavigationNeedsEnoughWidthAndAShortViewport() {
+        assertTrue(studioWideShortLayout(640f, 360f, 1f))
+        assertTrue(studioWideShortLayout(960f, 440f, 1.5f))
+        assertFalse(studioWideShortLayout(360f, 640f, 1f))
+        assertFalse(studioWideShortLayout(540f, 280f, 1f))
+        assertFalse(studioWideShortLayout(640f, 360f, 1.5f))
+        assertFalse(studioWideShortLayout(800f, 600f, 1f))
+        assertFalse(studioWideShortLayout(Float.POSITIVE_INFINITY, 280f, 1f))
+        assertFalse(studioWideShortLayout(640f, Float.NaN, 1f))
+        assertFalse(studioWideShortLayout(640f, 0f, 1f))
+        assertTrue(studioWideShortLayout(576f, 300f, 1f, 520))
+    }
+    @Test fun toolSectionsTogetherPreserveAtLeastSixtyPercentForTheirList() {
+        for (height in listOf(0f, 60f, 100f, 180f, 320f, 600f)) for (sections in 1..3) {
+            val each = studioToolbarBudget(height, sections)
+            assertTrue(each >= 0f && each <= 112f)
+            assertTrue(each * sections <= height * .4f + .001f)
+        }
+        assertEquals(24f, studioToolbarBudget(120f, 2))
+        assertEquals(0f, studioToolbarBudget(-30f))
+        assertEquals(40f, studioToolbarBudget(100f, 0))
+        assertEquals(112f, studioToolbarBudget(Float.NaN))
+    }
+    @Test fun compactFormsDoNotExpandWithLandscapeButStillFitTinyWindows() {
+        for (preferred in listOf(360, 400, 420, 520)) {
+            assertEquals(preferred.toFloat(), studioDialogWidth(1080f, preferred))
+            assertEquals(preferred.toFloat(), studioDialogWidth(1600f, preferred))
+            assertEquals(264f, studioDialogWidth(280f, preferred))
+            assertEquals(1f, studioDialogWidth(0f, preferred))
+            assertEquals(preferred.toFloat(), studioDialogWidth(Float.POSITIVE_INFINITY, preferred))
+            for (width in listOf(120f, 240f, 360f, 480f)) {
+                val actual = studioDialogWidth(width, preferred)
+                assertTrue(actual > 0f && actual <= width - 16f)
+                assertTrue(actual <= preferred)
+            }
+        }
+    }
+    @Test fun imageFieldsAndShortcutsWrapBeforeTheirLabelsAndValuesAreSqueezed() {
+        assertEquals(4, studioCompactGridColumns(380f, 1f, 82, 4))
+        assertEquals(3, studioCompactGridColumns(300f, 1f, 82, 4))
+        assertEquals(2, studioCompactGridColumns(380f, 1.8f, 82, 4))
+        assertEquals(1, studioCompactGridColumns(260f, 1.8f, 142, 2))
+        assertEquals(1, studioCompactGridColumns(Float.NaN, 1f, 82, 4))
+        assertEquals(1, studioCompactGridColumns(0f, 1f, 82, 4))
+        for (width in listOf(240f, 280f, 380f, 480f)) for (font in listOf(1f, 1.5f, 2f)) {
+            val columns = studioCompactGridColumns(width, font, 82, 4)
+            val cell = (width - (columns - 1) * 6f) / columns
+            assertTrue(cell >= 82f * font || columns == 1)
+        }
+    }
     @Test fun outputChoicesUseWholeLabelsAndWrapBeforeLargeFontCanClipThem() {
         assertEquals(4, debugOutputChoiceColumns(480f, 1f))
         assertEquals(4, debugOutputChoiceColumns(360f, 1f))

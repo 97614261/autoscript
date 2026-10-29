@@ -9,14 +9,51 @@
   "sideEffect": "none",
   "timeoutMs": 3000,
   "resourceOwnership": "borrowed_frame",
-  "summary": "比较帧内一个像素与目标颜色是否落在逐通道容差内。",
+  "summary": "比较帧内一个像素与目标颜色是否落在逐通道容差内。可选备选色组命中任意颜色，同一像素只返回或计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。",
   "params": [
-    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的帧句柄。" },
-    { "name": "x", "type": "integer", "required": true, "summary": "帧内横坐标。" },
-    { "name": "y", "type": "integer", "required": true, "summary": "帧内纵坐标。" },
-    { "name": "rgb", "type": "integer", "required": true, "summary": "0xRRGGBB目标颜色。" },
-    { "name": "tolerance", "type": "integer", "required": true, "summary": "0至255的逐通道容差。" }
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "任务持有的帧句柄。"
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "required": true,
+      "summary": "帧内横坐标。"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "required": true,
+      "summary": "帧内纵坐标。"
+    },
+    {
+      "name": "rgb",
+      "type": "integer",
+      "required": true,
+      "summary": "0xRRGGBB目标颜色。"
+    },
+    {
+      "name": "tolerance",
+      "type": "integer",
+      "required": true,
+      "summary": "0至255的逐通道容差。"
+    },
+    {
+      "name": "additionalColors",
+      "type": "string",
+      "required": false,
+      "summary": "可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。"
+    }
   ],
-  "returns": { "type": "boolean", "nullable": false, "summary": "是否匹配。" },
-  "legacyAliases": ["CompareColor"]
+  "returns": {
+    "type": "boolean",
+    "nullable": false,
+    "summary": "是否匹配。"
+  },
+  "legacyAliases": [
+    "CompareColor"
+  ]
 }

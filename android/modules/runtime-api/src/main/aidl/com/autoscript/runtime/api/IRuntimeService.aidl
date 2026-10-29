@@ -55,4 +55,6 @@ interface IRuntimeService {
     int beginVisionPreparation(long requestId, long expectedGeneration, String sourceDigest, in String[] components, IVisionPreparationListener listener);
     int cancelVisionPreparation(long requestId, long expectedGeneration);
     boolean isVisionPreparationActive();
+    /** Explicit user demand; status reads never start or retry Root authorization. */
+    int requestRootConnection(long expectedGeneration);
 }

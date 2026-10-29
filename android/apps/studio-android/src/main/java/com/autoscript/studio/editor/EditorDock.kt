@@ -192,7 +192,6 @@ internal fun EditorDock(
     onCreateImageBlock: ((String) -> Unit)? = null,
     /** 按键面板的截图定位入口；进入时指定单击或滑动模式。 */
     onOpenInputPointPicker: ((ImageToolMode) -> Unit)? = null,
-    onOpenInputFloatingPicker: ((ImageToolMode) -> Unit)? = null,
     inputPickOpenRequest: Int = 0,
     inputBackendFeatures: Int? = null,
     onOpenPermissions: (() -> Unit)? = null,
@@ -220,6 +219,9 @@ internal fun EditorDock(
     val statusText = editorDockStatusText(executionStatus, dismissed = false)
     var statusDismissed by rememberSaveable(projectName, statusText) { mutableStateOf(false) }
     var collapsedProgramNodeIds by rememberSaveable(projectName, sourceName) {
+        mutableStateOf<List<String>>(emptyList())
+    }
+    var collapsedProgramBranchKeys by rememberSaveable(projectName, sourceName) {
         mutableStateOf<List<String>>(emptyList())
     }
     var localFollowExecution by remember(projectName, running) { mutableStateOf(true) }
@@ -274,11 +276,14 @@ internal fun EditorDock(
         if (programLocateRequest > 0) {
             focusedNodeId = null
             collapsedProgramNodeIds = collapsedProgramNodeIds - editorCollapsedAncestorIds(displayedTreeNodes, programSelectedNodeId).toSet()
+            collapsedProgramBranchKeys = collapsedProgramBranchKeys - editorBranchAncestorKeys(displayedTreeNodes, programSelectedNodeId)
         }
     }
     fun submitSnippet(snippet: String, onCommitted: () -> Unit = {}) {
         val branch = selectedBranch
-        if (branch != null && onInsertIntoBranch != null) onInsertIntoBranch(snippet, branch, onCommitted)
+        if (isConditionBranchInsertion(snippet) && onInsertPositioned != null)
+            onInsertPositioned(snippet, EditorInsertPosition.BELOW, onCommitted)
+        else if (branch != null && onInsertIntoBranch != null) onInsertIntoBranch(snippet, branch, onCommitted)
         else pendingInsertSnippet = EditorPendingSnippet(snippet, onCommitted, currentFlowId, programSource,
             programSelectedNodeId, programSelectedNodeIds.toSet())
     }
@@ -296,6 +301,19 @@ internal fun EditorDock(
             }
         }
     }
+    fun toggleBranchExpansion(ownerId: String, slot: String) {
+        val key = editorBranchKey(ownerId, slot)
+        val branch = editorTreeDisplayRows(editorFocusedTreeNodes(displayedTreeNodes, effectiveFocusId), collapsedProgramBranchKeys)
+            .filterIsInstance<EditorTreeDisplayRow.Branch>().firstOrNull { it.key == key } ?: return
+        if (branch.empty) return
+        if (branch.expanded) {
+            if (programExecutionAvailable) setFollowExecution(false)
+            collapsedProgramBranchKeys = (collapsedProgramBranchKeys + key).distinct()
+            if (key in editorBranchAncestorKeys(displayedTreeNodes, programSelectedNodeId)) {
+                onProgramBranchSelected?.invoke(ownerId, slot) ?: onProgramNodeSelected(ownerId)
+            }
+        } else collapsedProgramBranchKeys = collapsedProgramBranchKeys - key
+    }
     LaunchedEffect(programSelectedNodeId, programCurrentNodeId, sourceName, followExecution, effectiveFocusId) {
         if (followExecution && programCurrentNodeId != null && effectiveFocusId != null &&
             editorFocusedTreeNodes(displayedTreeNodes, effectiveFocusId).none { it.id == programCurrentNodeId }) focusedNodeId = null
@@ -303,6 +321,10 @@ internal fun EditorDock(
             val target = if (programCurrentNodeId != null) programCurrentNodeId.takeIf { followExecution } else programSelectedNodeId
             val ancestors = editorCollapsedAncestorIds(displayedTreeNodes, target).toSet()
             collapsedProgramNodeIds = collapsedProgramNodeIds.filterNot { it in ancestors }
+        }
+        if (collapsedProgramBranchKeys.isNotEmpty()) {
+            val target = if (programCurrentNodeId != null) programCurrentNodeId.takeIf { followExecution } else programSelectedNodeId
+            collapsedProgramBranchKeys = collapsedProgramBranchKeys - editorBranchAncestorKeys(displayedTreeNodes, target)
         }
     }
     val effectiveSelection = if (selectedBranch != null) emptySet()
@@ -349,6 +371,8 @@ internal fun EditorDock(
     LaunchedEffect(programNodes) {
         val activeIds = programNodes.asSequence().map(EditorProgramNode::nodeId).toHashSet()
         collapsedProgramNodeIds = collapsedProgramNodeIds.filter(activeIds::contains)
+        val activeBranches = editorTreeBranchKeys(displayedTreeNodes)
+        collapsedProgramBranchKeys = collapsedProgramBranchKeys.filter(activeBranches::contains)
         if (focusedNodeId != null && displayedTreeNodes.none { it.id == focusedNodeId && it.container }) focusedNodeId = null
     }
 
@@ -496,6 +520,7 @@ internal fun EditorDock(
                         functionLibrary = false
                         toolDialog = null
                         inputActionDialogVisible = true
+                        onRefreshInputCapabilities?.invoke()
                     }
                 },
                 onTool = { entry ->
@@ -510,7 +535,10 @@ internal fun EditorDock(
                     onProgramNodeSelected(nodeId)
                 },
                 onToggleNode = ::toggleNodeExpansion,
+                collapsedBranchKeys = collapsedProgramBranchKeys,
+                onToggleBranchExpansion = ::toggleBranchExpansion,
                 onEditSelection = { nodeEditorVisible = true },
+                onDeleteSelection = ::requestDelete,
                 onNodeActions = { nodeId ->
                     if (editingEnabled) {
                         if (nodeId !in effectiveSelection) {
@@ -637,8 +665,11 @@ internal fun EditorDock(
             onToggleNode = onProgramNodeSelectionToggled,
             onSetSelection = onProgramSelectionChanged,
             onToggleExpansion = ::toggleNodeExpansion,
+            collapsedBranchKeys = collapsedProgramBranchKeys,
+            onToggleBranchExpansion = ::toggleBranchExpansion,
             onSetFolded = { folded ->
                 collapsedProgramNodeIds = if (folded) displayedTreeNodes.filter { it.container }.map { it.id } else emptyList()
+                collapsedProgramBranchKeys = if (folded) editorTreeBranchKeys(displayedTreeNodes).toList() else emptyList()
                 if (folded && selectedBranch != null) onProgramNodeSelected(selectedBranch.ownerId)
                 if (folded) {
                     val index = displayedTreeNodes.indexOfFirst { it.id == programSelectedNodeId }
@@ -738,7 +769,10 @@ internal fun EditorDock(
     if (consoleVisible) RuntimeLogDialog(consoleLines, logProjectId,
         debugSettings = debugSettings, settingsEditable = editingEnabled,
         onSaveDebugSettings = { settings -> onSaveDebugSettings(settings) {} }, onLocate = onLocateRuntimeLog?.let { locate ->
-        { target -> locate(target).also { if (it == null) collapsedProgramNodeIds = emptyList() } }
+        { target -> locate(target).also { if (it == null) {
+            collapsedProgramNodeIds = emptyList()
+            collapsedProgramBranchKeys = emptyList()
+        } } }
     }) { consoleVisible = false }
     if ((sourceEditorVisible || selectedNodeSourceId != null) && programSource != null && onApplyProgramSource != null && !running) {
         val root = projectFlows.firstOrNull { it.flowId == currentFlowId }?.rootBlockId
@@ -787,10 +821,6 @@ internal fun EditorDock(
                 inputActionDialogVisible = false
                 onOpenInputPointPicker?.invoke(mode)
             },
-            onFloatingPick = onOpenInputFloatingPicker?.let { open -> { mode ->
-                inputActionDialogVisible = false
-                open(mode)
-            } },
         )
     }
     if (sourceManagerVisible && sourceTree != null) {
@@ -846,6 +876,9 @@ internal fun EditorDock(
     }
     toolDialog?.let { dialog ->
         val completion = remember(dialog, projectName, currentFlowId, sourceName) { EditorInsertionCompletion { toolDialog = null } }
+        val conditionContext = remember(dialog) { EditorPendingSnippet("", {}, currentFlowId, programSource,
+            programSelectedNodeId, programSelectedNodeIds.toSet()) }
+        val conditionBranch = remember(dialog) { selectedBranch }
         DisposableEffect(completion) { onDispose { completion.cancel() } }
         if (onOpenDebugTool != null && dialog in setOf(EditorToolPanel.VARIABLE_CHECK, EditorToolPanel.RUNTIME_VARIABLES)) {
             LaunchedEffect(dialog) { toolDialog = null; onOpenDebugTool(dialog) }
@@ -867,7 +900,11 @@ internal fun EditorDock(
             debugSettings = debugSettings,
             onSaveDebugSettings = onSaveDebugSettings,
         ) { snippet ->
-            submitSnippet(snippet, completion::committed)
+            if (dialog == EditorToolPanel.JUDGMENT && (!editingEnabled ||
+                    !conditionContext.matches(currentFlowId, programSource, programSelectedNodeId, programSelectedNodeIds) ||
+                    conditionBranch != selectedBranch)) {
+                insertionError = "插件、草稿、选择或运行状态已变化，未加入；请重新打开条件"
+            } else submitSnippet(snippet, completion::committed)
         }
     }
     pendingInsertSnippet?.let { request ->
@@ -894,6 +931,7 @@ internal fun EditorDock(
             programSource = programSource,
             onSelect = { nodeId ->
                 collapsedProgramNodeIds = emptyList()
+                collapsedProgramBranchKeys = emptyList()
                 focusedNodeId = null
                 if (programExecutionAvailable) setFollowExecution(false)
                 onProgramNodeSelected(nodeId)

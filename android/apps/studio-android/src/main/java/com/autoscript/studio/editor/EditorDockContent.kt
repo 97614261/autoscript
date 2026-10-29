@@ -82,7 +82,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.geometry.Offset as GuideOffset
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.buildAnnotatedString
@@ -150,6 +149,7 @@ internal fun EditorDockPanel(
     onSelectNode: (String) -> Unit,
     onToggleNode: (String) -> Unit,
     onEditSelection: () -> Unit,
+    onDeleteSelection: () -> Unit,
     onNodeActions: (String) -> Unit,
     onOpenMoreMenu: () -> Unit,
     onMoreAnchor: (Rect) -> Unit,
@@ -166,9 +166,15 @@ internal fun EditorDockPanel(
     focusNodeId: String? = null,
     focusPath: List<EditorFocusCrumb> = emptyList(),
     onFocus: (String?) -> Unit = {},
+    collapsedBranchKeys: Collection<String> = emptySet(),
+    onToggleBranchExpansion: ((String, String) -> Unit)? = null,
 ) {
     val viewNodes = remember(nodes, focusNodeId) { editorFocusedTreeNodes(nodes, focusNodeId) }
-    val displayRows = remember(viewNodes) { editorTreeDisplayRows(viewNodes) }
+    val displayRows = remember(viewNodes, collapsedBranchKeys) { editorTreeDisplayRows(viewNodes, collapsedBranchKeys) }
+    val grouping = remember(displayRows) { editorTreeGrouping(displayRows) }
+    val groupFocusKey = currentNodeId?.let { "node:$it" } ?: selectedBranch?.let { "branch:${it.ownerId}:${it.slot}" }
+        ?: selectedNodeId?.let { "node:$it" }
+    val focusedGroups = remember(grouping, groupFocusKey) { grouping.focusedGroups(groupFocusKey) }
     val impact = remember(nodes, selectedNodeIds) { editorSelectionImpact(nodes, selectedNodeIds) }
     val descendantCounts = remember(nodes) { editorDescendantCounts(nodes) }
     var expandedSummaryId by remember(selectedNodeId, selectedNodeIds) { mutableStateOf<String?>(null) }
@@ -281,10 +287,11 @@ internal fun EditorDockPanel(
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     EditorFocusBreadcrumb(focusPath, onFocus)
                     if (selectionCount > 1) {
-                        Box(Modifier.fillMaxWidth().heightIn(min = 20.dp).background(Color(0xFFF8FAFD)).padding(horizontal = 5.dp),
-                            contentAlignment = Alignment.CenterStart) {
-                            Text(impact.label, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 2,
+                        Row(Modifier.fillMaxWidth().heightIn(min = 24.dp).background(Color(0xFFF8FAFD)).padding(horizontal = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text(impact.label, Modifier.weight(1f), fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 2,
                                 overflow = TextOverflow.Ellipsis)
+                            EditorEditSelectionButton("删除所选", editingEnabled, onClick = onDeleteSelection)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().nestedScroll(manualScroll)) {
@@ -298,6 +305,8 @@ internal fun EditorDockPanel(
                                     itemsIndexed(displayRows, key = { _, row -> row.key }) { visibleIndex, row ->
                                         when (row) {
                                             is EditorTreeDisplayRow.Branch -> EditorBranchHeading(row,
+                                                grouping = grouping.rows[visibleIndex], focusedGroups = focusedGroups,
+                                                onToggle = onToggleBranchExpansion?.let { toggle -> { toggle(row.ownerId, row.slot) } },
                                                 selected = selectedBranch?.let { it.ownerId == row.ownerId && it.slot == row.slot } == true,
                                                 enabled = editingEnabled && onSelectBranch != null,
                                                 onSelect = { onSelectBranch?.invoke(row.ownerId, row.slot) })
@@ -320,6 +329,8 @@ internal fun EditorDockPanel(
                                                     onLongClick = { onNodeActions(node.id) },
                                                     expandedSummary = expandedSummaryId == node.id,
                                                     descendantCount = descendantCounts[node.id] ?: 0,
+                                                    displayDepth = row.depth,
+                                                    grouping = grouping.rows[visibleIndex], focusedGroups = focusedGroups,
                                                 )
                                             }
                                         }
@@ -493,10 +504,15 @@ internal fun EditorNodeEditDialog(
     focusPath: List<EditorFocusCrumb> = emptyList(),
     onFocus: (String?) -> Unit = {},
     onBatchParameters: (() -> Unit)? = null,
+    collapsedBranchKeys: Collection<String> = emptySet(),
+    onToggleBranchExpansion: ((String, String) -> Unit)? = null,
 ) {
     val selectedIndex = nodes.indexOfFirst { it.id == selectedNodeId }
     val viewNodes = remember(nodes, focusNodeId) { editorFocusedTreeNodes(nodes, focusNodeId) }
-    val displayRows = remember(viewNodes) { editorTreeDisplayRows(viewNodes) }
+    val displayRows = remember(viewNodes, collapsedBranchKeys) { editorTreeDisplayRows(viewNodes, collapsedBranchKeys) }
+    val grouping = remember(displayRows) { editorTreeGrouping(displayRows) }
+    val groupFocusKey = selectedBranch?.let { "branch:${it.ownerId}:${it.slot}" } ?: selectedNodeId?.let { "node:$it" }
+    val focusedGroups = remember(grouping, groupFocusKey) { grouping.focusedGroups(groupFocusKey) }
     val descendantCounts = remember(nodes) { editorDescendantCounts(nodes) }
     var expandedSummaryId by remember(selectedNodeId, selectedNodeIds) { mutableStateOf<String?>(null) }
     var rangeStart by remember(displayRows) { mutableStateOf<String?>(null) }
@@ -564,6 +580,7 @@ internal fun EditorNodeEditDialog(
                             if (onSetSelection != null) onSetSelection(emptySet())
                             else editorSelectionToggleIds(nodes.map { it.id }, checkedIds, selectAll = false).forEach { onToggleNode?.invoke(it) }
                         }
+                        EditorEditSelectionButton("删除所选", hasSelection, onClick = onDeleteSelected)
                         EditorEditSelectionButton(if (rangeStart == null) "范围" else "取消范围",
                             editingEnabled && onSetSelection != null && selectedBranch == null && visibleSelectedIndex >= 0) {
                             rangeStart = if (rangeStart == null) selectedNodeId else null
@@ -571,7 +588,7 @@ internal fun EditorNodeEditDialog(
                         }
                         EditorEditSelectionButton("聚焦", focusTarget != null && focusTarget != focusNodeId) { onFocus(focusTarget) }
                         if (short) {
-                            EditorEditSelectionButton("展开", nodes.any { it.container && !it.expanded }) { onSetFolded(false) }
+                            EditorEditSelectionButton("展开", nodes.any { it.container && !it.expanded } || collapsedBranchKeys.isNotEmpty()) { onSetFolded(false) }
                             EditorEditSelectionButton("折叠", nodes.any { it.container && it.expanded }) { onSetFolded(true) }
                         }
                     }
@@ -586,7 +603,7 @@ internal fun EditorNodeEditDialog(
                         overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp),
                         style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
                     if (!short) Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        EditorEditSelectionButton("展开全部", nodes.any { it.container && !it.expanded }) { onSetFolded(false) }
+                        EditorEditSelectionButton("展开全部", nodes.any { it.container && !it.expanded } || collapsedBranchKeys.isNotEmpty()) { onSetFolded(false) }
                         EditorEditSelectionButton("折叠全部", nodes.any { it.container && it.expanded }) { onSetFolded(true) }
                     }
                 }
@@ -597,9 +614,12 @@ internal fun EditorNodeEditDialog(
                         Text("当前插件还没有积木", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp,
                             modifier = Modifier.fillMaxWidth().padding(20.dp), textAlign = TextAlign.Center)
                     }
-                    itemsIndexed(displayRows, key = { _, row -> row.key }) { _, row ->
+                    itemsIndexed(displayRows, key = { _, row -> row.key }) { visibleIndex, row ->
                         if (row is EditorTreeDisplayRow.Branch) {
                             EditorBranchHeading(row,
+                                grouping = grouping.rows[visibleIndex], focusedGroups = focusedGroups,
+                                onToggle = onToggleBranchExpansion?.let { toggle -> { toggle(row.ownerId, row.slot) } },
+                                extraLeadingDp = EDITOR_TREE_CHECK_WIDTH_DP,
                                 selected = selectedBranch?.let { it.ownerId == row.ownerId && it.slot == row.slot } == true,
                                 enabled = editingEnabled && rangeStart == null && onSelectBranch != null,
                                 onSelect = { onSelectBranch?.invoke(row.ownerId, row.slot) })
@@ -611,13 +631,8 @@ internal fun EditorNodeEditDialog(
                             Modifier.fillMaxWidth().heightIn(min = EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp)
                                 .background(if (node.id in checkedIds) Color(0xFFE7EEFF) else Color.White)
                                 .clickable { selectRow(node.id) }
-                                .drawBehind {
-                                    repeat(node.depth.coerceIn(0, 32)) { level ->
-                                        val x = editorTreeGuideOffset(level).dp.toPx()
-                                        drawLine(Color(0xFFDDE3EE), GuideOffset(x, 0f), GuideOffset(x, size.height), strokeWidth = 1.dp.toPx())
-                                    }
-                                }
-                                .padding(start = editorTreeRowIndent(node.depth).dp),
+                                .editorTreeGroups(grouping.rows[visibleIndex], focusedGroups)
+                                .padding(start = editorTreeRowIndent(row.depth).dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Box(Modifier.width(EDITOR_TREE_EXPAND_WIDTH_DP.dp).heightIn(min = EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp)
@@ -662,7 +677,8 @@ internal fun EditorNodeEditDialog(
                     EditorEditButton(EditorEditTool.UNDO, canUndo && editingEnabled) { onCommand(EditorProgramCommand.UNDO) },
                     EditorEditButton(EditorEditTool.REDO, canRedo && editingEnabled) { onCommand(EditorProgramCommand.REDO) },
                     EditorEditButton(EditorEditTool.CUT, hasSelection) { onCommand(EditorProgramCommand.CUT) },
-                    EditorEditButton(EditorEditTool.DELETE, hasSelection, onClick = onDeleteSelected),
+                    EditorEditButton(EditorEditTool.DELETE, hasSelection,
+                        title = if (checkedIds.size > 1) "批量删除" else "删除", onClick = onDeleteSelected),
                     EditorEditButton(EditorEditTool.ANNOTATE, singleSelection && onAnnotateSelected != null) { onAnnotateSelected?.invoke() },
                     EditorEditButton(EditorEditTool.TOGGLE_DISABLED, hasSelection,
                         title = if (disabledSelection) "恢复执行" else "注释执行") { onCommand(EditorProgramCommand.TOGGLE_DISABLED) },
@@ -726,7 +742,8 @@ internal fun editorVisibleTreeNodes(nodes: List<EditorTreeNode>): List<EditorTre
 
 @Composable
 private fun EditorBranchHeading(branch: EditorTreeDisplayRow.Branch, selected: Boolean,
-    enabled: Boolean, onSelect: () -> Unit) {
+    enabled: Boolean, onSelect: () -> Unit, grouping: EditorTreeGroupedRow, focusedGroups: Set<String>,
+    onToggle: (() -> Unit)?, extraLeadingDp: Int = 0) {
     val color = if (branch.disabled) Color(0xFF959DAA)
         else if (branch.slot == "success" || branch.slot == "then") Color(0xFF377B69)
         else if (branch.slot.startsWith("elseIf")) Color(0xFF6975AF) else Color(0xFF9D6554)
@@ -734,16 +751,28 @@ private fun EditorBranchHeading(branch: EditorTreeDisplayRow.Branch, selected: B
         .semantics {
             contentDescription = childBlockLabel(branch.slot)
             this.selected = selected
-            stateDescription = if (selected) "已选中加入位置" else "可选择加入位置"
+            stateDescription = (if (selected) "已选中加入位置" else "可选择加入位置") +
+                if (branch.empty) "，空分支" else if (branch.expanded) "，已展开" else "，${branch.descendantCount}项已折叠"
         }
-        .background(if (selected) Color(0xFFE7EEFF) else color.copy(alpha = .055f))
+        .background(if (selected) Color(0xFFE7EEFF) else Color.White)
+        .editorTreeGroups(grouping, focusedGroups)
         .clickable(enabled = enabled, onClickLabel = "选择${childBlockLabel(branch.slot)}作为加入位置", onClick = onSelect)
-        .padding(start = (editorTreeRowIndent(branch.depth) + EDITOR_TREE_EXPAND_WIDTH_DP).dp,
+        .padding(start = (editorTreeRowIndent(branch.depth) + extraLeadingDp).dp,
             end = 5.dp, top = 3.dp, bottom = 3.dp),
         verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(EDITOR_TREE_EXPAND_WIDTH_DP.dp).heightIn(min = 18.dp)
+            .clickable(enabled = !branch.empty && onToggle != null,
+                onClickLabel = if (branch.expanded) "折叠${childBlockLabel(branch.slot)}" else "展开${childBlockLabel(branch.slot)}") {
+                onToggle?.invoke()
+            }, contentAlignment = Alignment.Center) {
+            if (!branch.empty) Icon(painterResource(R.drawable.editor_tree_expand_15),
+                contentDescription = if (branch.expanded) "折叠${childBlockLabel(branch.slot)}" else "展开${childBlockLabel(branch.slot)}",
+                tint = color, modifier = Modifier.size(10.dp).rotate(if (branch.expanded) 0f else -90f))
+        }
         Text(compactProgramBranchLabel(childBlockLabel(branch.slot)) ?: childBlockLabel(branch.slot), color = color, fontSize = 11.sp,
-            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)), fontWeight = FontWeight.Medium)
+            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)), fontWeight = FontWeight.SemiBold)
         if (branch.empty) Text(" · 空", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
+        else if (!branch.expanded) Text(" · ${branch.descendantCount}项", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
         if (selected) Text(" · 已选", color = EditorBlue, fontSize = 10.sp)
     }
 }
@@ -762,6 +791,9 @@ internal fun EditorProgramTreeRow(
     onLongClick: () -> Unit,
     expandedSummary: Boolean = false,
     descendantCount: Int = 0,
+    displayDepth: Int = node.depth,
+    grouping: EditorTreeGroupedRow? = null,
+    focusedGroups: Set<String> = emptySet(),
 ) {
     val emphasis = editorExecutionEmphasis(current, executing, recent)
     val entryFlash = remember(node.id) { Animatable(0f) }
@@ -776,18 +808,15 @@ internal fun EditorProgramTreeRow(
         Modifier.fillMaxWidth().heightIn(min = EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp)
             .semantics { if (current) stateDescription = emphasis.label else if (selected) stateDescription = "已选中" }
             .background(if (current) emphasis.background else if (selected) Color(0xFFEFF3FF) else Color.White)
+            .then(if (grouping == null) Modifier else Modifier.editorTreeGroups(grouping, focusedGroups))
             .drawBehind {
                 if (current && entryFlash.value > 0f) drawRect(Brush.horizontalGradient(listOf(
                     emphasis.accent.copy(alpha = .17f * entryFlash.value), Color.Transparent)))
                 if (selected || current) drawRect(if (current) emphasis.accent else EditorBlue,
                     size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height))
-                repeat(node.depth.coerceIn(0, 32)) { level ->
-                    val x = editorTreeGuideOffset(level).dp.toPx()
-                    drawLine(Color(0xFFE4E8F1), GuideOffset(x, 0f), GuideOffset(x, size.height), strokeWidth = 1.dp.toPx())
-                }
             }
             .combinedClickable(onClick = onSelect, onLongClick = onLongClick, onLongClickLabel = "积木操作")
-            .padding(start = editorTreeRowIndent(node.depth).dp, end = 3.dp),
+            .padding(start = editorTreeRowIndent(displayDepth).dp, end = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -836,7 +865,7 @@ internal fun EditorProgramLabel(
         else node.displayRow ?: compactProgramRowText(node.label)
     val muted = if (parts.disabled) Color(0xFF959DAA) else Color(0xFF758094)
     val text = buildAnnotatedString {
-        if (parts.disabled) withStyle(SpanStyle(color = muted)) { append(if (parts.inheritedDisabled) "随父级禁用  " else "已注释  ") }
+        if (parts.disabledPrefix.isNotEmpty()) withStyle(SpanStyle(color = muted)) { append(parts.disabledPrefix) }
         compactProgramBranchLabel(parts.branch, parts.branchHasHeading)?.let { branch ->
             withStyle(SpanStyle(color = Color(0xFF6975AF))) { append("$branch ") }
         }

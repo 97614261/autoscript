@@ -257,7 +257,7 @@ class ProjectStore(
             manifest.runtimeApi.substringAfter('.').toInt() < 8 &&
             flowSources.values.any { source ->
                 source.lineSequence().filter(String::isNotBlank).any { line ->
-                    runCatching { usesApi18TextTool(JsonParser.parseString(line).asJsonObject) }.getOrDefault(false)
+                    runCatching { usesApi18ExtendedTool(JsonParser.parseString(line).asJsonObject) }.getOrDefault(false)
                 }
             }
         ) {
@@ -820,7 +820,7 @@ class ProjectStore(
             val node = JsonParser.parseString(line).asJsonObject
             val kind = node.get("kind")?.asString
             when {
-                usesApi18TextTool(node) -> 8
+                usesApi18ExtendedTool(node) -> 8
                 kind in setOf("text.urlencode","text.urldecode","text.tohex","text.fromhex","text.tobase64","text.frombase64","text.findnth","text.betweennth","path.name","path.parent","path.normalize","path.join","screen.frameinfo","screen.captureregion") -> 8
                 kind=="ui.command" && node.getAsJsonObject("args")?.get("operation")?.asString in setOf("get:pages","get:controls") -> 8
                 kind in setOf("input.touchdown","input.touchmove","input.touchup") -> 8
@@ -836,10 +836,18 @@ class ProjectStore(
         }.getOrDefault(0)
     } ?: 0
 
-    private fun usesApi18TextTool(node: JsonObject): Boolean =
+    private fun usesApi18ExtendedTool(node: JsonObject): Boolean =
         node.get("kind")?.asString == "text.numberat" ||
+            node.get("kind")?.asString == "legacy.getrectcolornum" &&
+            node.getAsJsonObject("args")?.get("autoCapture")?.asBoolean == true ||
+            node.get("kind")?.asString in setOf("vision.countcolor", "vision.findallcolor") &&
+            node.getAsJsonObject("args")?.get("limit")?.asLong?.let { it == 0L || it > 256L } == true ||
+            node.get("kind")?.asString in setOf("vision.findcolor", "vision.comparecolor", "vision.countcolor", "vision.findallcolor") &&
+            node.getAsJsonObject("args")?.get("additionalColors")?.asString?.isNotEmpty() == true ||
             node.get("kind")?.asString == "ocr.alphanumeric" &&
-            node.getAsJsonObject("args")?.get("includeSymbols")?.asBoolean == true
+            node.getAsJsonObject("args")?.get("includeSymbols")?.asBoolean == true ||
+            node.get("kind")?.asString in setOf("input.tap", "input.swipe", "input.pointerdown", "input.pointermove") &&
+            node.getAsJsonObject("args")?.get("screenPixels")?.asBoolean == true
 
     /**
      * 新建 Flow。`flowId` 是引用身份（ASCII），`fileName` 是源文件管理里显示的名字（允许中文），

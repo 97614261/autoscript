@@ -383,6 +383,28 @@ impl InputArbiter {
             .map(|lease| lease.expires_at)
             .min()
     }
+
+    /// Checks whether a standalone release can be omitted after backend cleanup.
+    /// Expired leases still count until their physical cleanup has been confirmed.
+    ///
+    /// # Errors
+    /// Rejects stopped arbiters, pending transactions, and foreign pointer owners.
+    pub fn pointer_up_is_redundant(
+        &self,
+        task: TaskToken,
+        pointer_id: u8,
+    ) -> Result<bool, InputError> {
+        if !self.accepting {
+            return Err(InputError::Stopped);
+        }
+        if self.active.is_some() || self.queued != 0 {
+            return Err(InputError::TransactionAlreadyActive);
+        }
+        if self.pressed_pointers.values().any(|lease| lease.task != task) {
+            return Err(InputError::PointerOwnedByAnotherTask);
+        }
+        Ok(!self.pressed_pointers.contains_key(&pointer_id))
+    }
 }
 
 fn validate_pointer_sequence(

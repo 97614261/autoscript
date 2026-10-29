@@ -3,28 +3,30 @@ package com.autoscript.studio
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.autoscript.studio.StudioDialog as Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectFlow
 import com.autoscript.project.store.ProjectVariable
@@ -65,12 +67,12 @@ internal fun loopInsertionFromHint(hint: String): LoopInsertion? = runCatching {
 
 internal data class LoopDraft(
     val mode: LoopMode = LoopMode.REPEAT, val variableMode: Boolean = false,
-    val count: String = "3", val time: String = "3", val unit: LoopTimeUnit = LoopTimeUnit.SECONDS,
+    val count: String = "3", val time: String = "3000", val unit: LoopTimeUnit = LoopTimeUnit.MILLISECONDS,
     val countVariable: String = "", val timeVariable: String = "", val countOutput: String = "", val elapsedOutput: String = "",
-    val elapsedUnit: LoopTimeUnit = LoopTimeUnit.SECONDS, val maxIterations: String = "10000",
+    val elapsedUnit: LoopTimeUnit = LoopTimeUnit.MILLISECONDS, val maxIterations: String = "10000",
     val cancellable: Boolean = true, val yieldMs: String = "1",
-    val delay: String = "100", val delayVariable: String = "", val checkCount: String = "3", val checkTime: String = "3",
-    val checkCountVariable: String = "", val checkTimeVariable: String = "", val checkUnit: LoopTimeUnit = LoopTimeUnit.SECONDS,
+    val delay: String = "100", val delayVariable: String = "", val checkCount: String = "3", val checkTime: String = "3000",
+    val checkCountVariable: String = "", val checkTimeVariable: String = "", val checkUnit: LoopTimeUnit = LoopTimeUnit.MILLISECONDS,
     val iterationOutput: String = "", val loopElapsedOutput: String = "",
 )
 internal data class LoopBuildResult(val insertion: LoopInsertion? = null, val error: String? = null)
@@ -87,11 +89,11 @@ internal fun loopDraftFromArguments(kind: String, args: JsonObject): LoopDraft {
         },
         variableMode = listOf("timesVariable", "durationVariable", "millisecondsVariable", "limitVariable").any(args::has),
         count = text("times", "3"), countVariable = text("timesVariable"),
-        time = text("durationMs", "3"), timeVariable = text("durationVariable"), unit = if (args.has("durationVariable")) unit("durationUnit") else LoopTimeUnit.MILLISECONDS,
+        time = text("durationMs", "3000"), timeVariable = text("durationVariable"), unit = if (args.has("durationVariable")) unit("durationUnit") else LoopTimeUnit.MILLISECONDS,
         countOutput = text("name"), elapsedOutput = text("name"), elapsedUnit = unit("unit"),
         maxIterations = text("maxIterations", "10000"), delay = text("milliseconds", "100"), delayVariable = text("millisecondsVariable"),
         cancellable = kind != "control.while", yieldMs = text("yieldMs", "1"),
-        checkCount = text("limit", "3"), checkTime = text("limit", "3"), checkCountVariable = text("limitVariable"),
+        checkCount = text("limit", "3"), checkTime = text("limit", "3000"), checkCountVariable = text("limitVariable"),
         checkTimeVariable = text("limitVariable"), checkUnit = unit("unit"),
         iterationOutput = text(if (kind == "control.repeat") "indexVariable" else "iterationVariable"),
         loopElapsedOutput = text("elapsedVariable"),
@@ -109,6 +111,44 @@ internal fun loopModeCanEdit(mode: LoopMode, lockedKind: String?, cancellable: B
     lockedKind == null || (if (!cancellable && mode in setOf(LoopMode.FOREVER, LoopMode.TIMED))
         "control.while" else loopModeKind(mode)) == lockedKind
 
+internal fun loopDraftForMode(draft: LoopDraft, mode: LoopMode): LoopDraft = draft.copy(mode = mode,
+    variableMode = when (mode) {
+        LoopMode.REPEAT -> draft.countVariable.isNotEmpty()
+        LoopMode.TIMED -> draft.timeVariable.isNotEmpty()
+        LoopMode.WAIT -> draft.delayVariable.isNotEmpty()
+        LoopMode.CHECK_COUNT -> draft.checkCountVariable.isNotEmpty()
+        LoopMode.CHECK_TIME -> draft.checkTimeVariable.isNotEmpty()
+        else -> false
+    })
+
+internal fun clearLoopInputVariable(draft: LoopDraft, mode: LoopMode): LoopDraft {
+    val milliseconds = when (mode) {
+        LoopMode.TIMED -> loopMilliseconds(draft.time, draft.unit)
+        LoopMode.CHECK_TIME -> loopMilliseconds(draft.checkTime, draft.checkUnit)
+        else -> null
+    }
+    val literal = when (mode) {
+        LoopMode.REPEAT -> draft.copy(countVariable = "")
+        LoopMode.TIMED -> draft.copy(timeVariable = "", time = milliseconds?.toString() ?: draft.time,
+            unit = if (milliseconds != null) LoopTimeUnit.MILLISECONDS else draft.unit)
+        LoopMode.WAIT -> draft.copy(delayVariable = "")
+        LoopMode.CHECK_COUNT -> draft.copy(checkCountVariable = "")
+        LoopMode.CHECK_TIME -> draft.copy(checkTimeVariable = "", checkTime = milliseconds?.toString() ?: draft.checkTime,
+            checkUnit = if (milliseconds != null) LoopTimeUnit.MILLISECONDS else draft.checkUnit)
+        else -> draft
+    }
+    return loopDraftForMode(literal, mode)
+}
+
+internal fun loopDraftForDialog(draft: LoopDraft): LoopDraft {
+    var normalized = draft
+    // Convert only literal durations; legacy variable and output units retain their meaning.
+    for (mode in listOf(LoopMode.TIMED, LoopMode.CHECK_TIME)) {
+        if (!loopDraftForMode(normalized, mode).variableMode) normalized = clearLoopInputVariable(normalized, mode)
+    }
+    return loopDraftForMode(normalized, draft.mode)
+}
+
 internal fun loopPickerChoices(key: String, draft: LoopDraft, variables: List<CalculationVariable>): List<CalculationVariable> {
     val types = when (key) {
         "count", "countOutput", "delay", "checkCount", "iterationOutput" -> setOf(ProjectVariableType.INTEGER)
@@ -119,6 +159,25 @@ internal fun loopPickerChoices(key: String, draft: LoopDraft, variables: List<Ca
     val output = key in setOf("countOutput", "elapsedOutput", "iterationOutput", "loopElapsedOutput")
     return variables.filter { it.type in types && (!output || it.scope != "参数") }
 }
+
+internal fun applyLoopPickerSelection(draft: LoopDraft, key: String, value: String): LoopDraft = when (key) {
+    "count" -> draft.copy(mode = LoopMode.REPEAT, countVariable = value, variableMode = true)
+    "time" -> draft.copy(mode = LoopMode.TIMED, timeVariable = value, variableMode = true)
+    "delay" -> draft.copy(mode = LoopMode.WAIT, delayVariable = value, variableMode = true)
+    "checkCount" -> draft.copy(mode = LoopMode.CHECK_COUNT, checkCountVariable = value, variableMode = true)
+    "checkTime" -> draft.copy(mode = LoopMode.CHECK_TIME, checkTimeVariable = value, variableMode = true)
+    "countOutput" -> draft.copy(countOutput = value)
+    "elapsedOutput" -> draft.copy(elapsedOutput = value)
+    "iterationOutput" -> draft.copy(iterationOutput = value)
+    "loopElapsedOutput" -> draft.copy(loopElapsedOutput = value)
+    "countPreset" -> draft.copy(mode = LoopMode.REPEAT, count = value, countVariable = "", variableMode = false)
+    "checkCountPreset" -> draft.copy(mode = LoopMode.CHECK_COUNT, checkCount = value, checkCountVariable = "", variableMode = false)
+    "timePreset" -> draft.copy(mode = LoopMode.TIMED, time = value, timeVariable = "", variableMode = false, unit = LoopTimeUnit.MILLISECONDS)
+    "checkTimePreset" -> draft.copy(mode = LoopMode.CHECK_TIME, checkTime = value, checkTimeVariable = "", variableMode = false, checkUnit = LoopTimeUnit.MILLISECONDS)
+    "delayPreset" -> draft.copy(mode = LoopMode.WAIT, delay = value, delayVariable = "", variableMode = false)
+    else -> draft
+}
+
 internal fun loopMilliseconds(value: String, unit: LoopTimeUnit, allowZero: Boolean = false): Long? = runCatching {
     require(value.length in 1..64 && value.trim().matches(Regex("[0-9]+(?:\\.[0-9]+)?")))
     val milliseconds = BigDecimal(value.trim()).multiply(BigDecimal.valueOf(unit.factor))
@@ -198,103 +257,65 @@ internal fun buildLoopInsertion(draft: LoopDraft, variables: List<CalculationVar
     LoopBuildResult(LoopInsertion(kind, args))
 }.getOrElse { LoopBuildResult(error = it.message ?: "循环参数无效") }
 
-/** All loop operations stay visible in one compact parameter page. */
+/** Keep loop creation and operations inside a loop in the same bounded editor. */
 @Composable
 internal fun VisualLoopDialog(
     variables: List<ProjectVariable>, currentFlowId: String, flows: List<ProjectFlow>,
     onDismiss: () -> Unit, onInsert: (String) -> Unit, onManageVariables: (() -> Unit)? = null,
     initialDraft: LoopDraft = LoopDraft(), lockedKind: String? = null, confirmLabel: String = "加入",
 ) {
-    var draft by remember(initialDraft) { mutableStateOf(initialDraft) }
+    var draft by remember(initialDraft) { mutableStateOf(loopDraftForDialog(initialDraft)) }
     var error by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<String?>(null) }
     var pickerScope by remember { mutableStateOf("局部") }
+    val scroll = rememberScrollState()
     val choices = calculationVariables(variables, currentFlowId, flows)
     fun openPicker(key: String) {
         picker = key
         pickerScope = preferredCalculationScope(loopPickerChoices(key, draft, choices))
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(8.dp).imePadding()) {
-            Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().heightIn(max = maxHeight).align(Alignment.Center), color = Color.White, shape = RoundedCornerShape(8.dp), shadowElevation = 10.dp) {
-                Column {
-                    Box(Modifier.fillMaxWidth().height(34.dp), contentAlignment = Alignment.Center) { Text(draft.mode.title, color = AutoScriptPalette.Accent, fontSize = 14.sp) }
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
-                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(Modifier.fillMaxWidth().height(32.dp).background(Color(0xFFF3F5F8), RoundedCornerShape(6.dp)).padding(3.dp)) {
-                            listOf(false to "固定值", true to "变量").forEach { (value, text) ->
-                                LoopButton(text, { draft = draft.copy(variableMode = value); error = null }, Modifier.weight(1f).fillMaxHeight(), selected = draft.variableMode == value)
-                            }
-                        }
-                        fun choose(mode: LoopMode) {
-                            if (!loopModeCanEdit(mode, lockedKind, draft.cancellable)) error = "修改时请保留积木类型；其他类型请从循环入口新增"
-                            else { draft = draft.copy(mode = mode); error = null }
-                        }
-                        LoopRow(LoopMode.FOREVER, draft.mode, { choose(LoopMode.FOREVER) }) { Text(if (draft.cancellable) "可停止 · 每轮让步" else "可停止 · 有次数上限", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp) }
-                        LoopRow(LoopMode.REPEAT, draft.mode, { choose(LoopMode.REPEAT) }) {
-                            if (draft.variableMode) LoopSelect("整", draft.countVariable) { openPicker("count") }
-                            else LoopValue(draft.count, { draft = draft.copy(count = it); error = null }, "预设次数") { openPicker("countPreset") }
-                        }
-                        LoopRow(LoopMode.TIMED, draft.mode, { choose(LoopMode.TIMED) }) {
-                            if (draft.variableMode) LoopSelect("数", draft.timeVariable) { openPicker("time") }
-                            else LoopValue(draft.time, { draft = draft.copy(time = it); error = null }, "预设时长") { openPicker("timePreset") }
-                        }
-                        if (draft.mode == LoopMode.TIMED) LoopUnits("时长单位", draft.unit) { draft = draft.copy(unit = it) }
-                        if (draft.mode in setOf(LoopMode.REPEAT, LoopMode.FOREVER, LoopMode.TIMED)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("序号输出", fontSize = 11.sp, modifier = Modifier.width(64.dp))
-                                Box(Modifier.weight(1f)) { LoopSelect("整", draft.iterationOutput,
-                                    onClear = { draft = draft.copy(iterationOutput = "") }) { openPicker("iterationOutput") } }
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("耗时(ms)", fontSize = 11.sp, modifier = Modifier.width(64.dp))
-                                Box(Modifier.weight(1f)) { LoopSelect("数", draft.loopElapsedOutput,
-                                    onClear = { draft = draft.copy(loopElapsedOutput = "") }) { openPicker("loopElapsedOutput") } }
-                            }
-                            Text("输出可留空；序号从1起，可用于读取JSON列表项，耗时为毫秒。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                        }
-                        LoopRow(LoopMode.COUNT, draft.mode, { choose(LoopMode.COUNT) }) { LoopSelect("整", draft.countOutput) { openPicker("countOutput") } }
-                        LoopRow(LoopMode.ELAPSED, draft.mode, { choose(LoopMode.ELAPSED) }) { LoopSelect(if (draft.elapsedUnit == LoopTimeUnit.MILLISECONDS) "数" else "浮", draft.elapsedOutput) { openPicker("elapsedOutput") } }
-                        if (draft.mode == LoopMode.ELAPSED) LoopUnits("读取单位", draft.elapsedUnit) { draft = draft.copy(elapsedUnit = it, elapsedOutput = "") }
-                        if (draft.mode in setOf(LoopMode.FOREVER, LoopMode.TIMED)) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(if (draft.cancellable) "每轮让步(毫秒)" else "旧节点安全次数上限", color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                                LoopInput(if (draft.cancellable) draft.yieldMs else draft.maxIterations, {
-                                    draft = if (draft.cancellable) draft.copy(yieldMs = it) else draft.copy(maxIterations = it); error = null
-                                }, Modifier.width(110.dp))
-                            }
-                            Text(if (draft.cancellable) "无次数上限；让步1～1000毫秒，停止、限时、跳出或会话资源保护可结束。" else "保留旧节点次数保护；新加入的无限／限时循环使用可取消让步，不自动更改旧行为。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
-                        }
-                        if (draft.mode in setOf(LoopMode.COUNT, LoopMode.ELAPSED)) Text("加入循环体：执行到这一行读取最近循环，不新增循环。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
-                        run {
-                            HorizontalDivider(color = AutoScriptPalette.Divider)
-                            LoopRow(LoopMode.WAIT, draft.mode, { choose(LoopMode.WAIT) }) {
-                                if (draft.variableMode) LoopSelect("整", draft.delayVariable) { openPicker("delay") }
-                                else LoopValue(draft.delay, { draft = draft.copy(delay = it); error = null }, "毫秒") { openPicker("delayPreset") }
-                            }
-                            LoopRow(LoopMode.CHECK_COUNT, draft.mode, { choose(LoopMode.CHECK_COUNT) }) {
-                                if (draft.variableMode) LoopSelect("整", draft.checkCountVariable) { openPicker("checkCount") }
-                                else LoopValue(draft.checkCount, { draft = draft.copy(checkCount = it); error = null }, "预设次数") { openPicker("checkCountPreset") }
-                            }
-                            LoopRow(LoopMode.CHECK_TIME, draft.mode, { choose(LoopMode.CHECK_TIME) }) {
-                                if (draft.variableMode) LoopSelect("数", draft.checkTimeVariable) { openPicker("checkTime") }
-                                else LoopValue(draft.checkTime, { draft = draft.copy(checkTime = it); error = null }, "预设时长") { openPicker("checkTimePreset") }
-                            }
-                            if (draft.mode == LoopMode.CHECK_TIME) LoopUnits("检查单位", draft.checkUnit) { draft = draft.copy(checkUnit = it) }
-                            if (draft.mode in setOf(LoopMode.CHECK_COUNT, LoopMode.CHECK_TIME)) Text("放入循环体，达到此阈值就结束最近循环。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
-                        }
-                        error?.let { Text(it, color = Color(0xFFD14949), fontSize = 11.sp) }
-                    }
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
-                    Row(Modifier.fillMaxWidth().height(36.dp)) {
-                        LoopButton("取消", onDismiss, Modifier.weight(1f).fillMaxHeight(), muted = true)
-                        LoopButton(confirmLabel, {
-                            val result = buildLoopInsertion(draft, choices)
-                            error = result.error
-                            result.insertion?.let { onInsert(it.hint()) }
-                        }, Modifier.weight(1f).fillMaxHeight())
-                    }
+    fun changeMode(mode: LoopMode) {
+        if (!loopModeCanEdit(mode, lockedKind, draft.cancellable)) error = "修改时请保留积木类型；其他类型请从循环入口新增"
+        else { draft = loopDraftForMode(draft, mode); error = null }
+    }
+    StudioPanelDialog("循环", onDismiss, showFooter = false, landscapeWidthDp = 320) {
+        Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f, fill = false).fillMaxWidth().drawWithContent {
+                drawContent()
+                // Keep the scroll thumb in viewport space rather than inside the moving form.
+                if (scroll.maxValue > 0 && scroll.viewportSize > 0) {
+                    val thumb = (size.height * scroll.viewportSize / (scroll.maxValue.toFloat() + scroll.viewportSize))
+                        .coerceIn(20.dp.toPx().coerceAtMost(size.height), size.height)
+                    val top = (size.height - thumb) * scroll.value / scroll.maxValue
+                    drawRoundRect(AutoScriptPalette.TextSecondary.copy(alpha = .4f),
+                        topLeft = Offset(size.width - 3.dp.toPx(), top), size = Size(2.dp.toPx(), thumb),
+                        cornerRadius = CornerRadius(1.dp.toPx()))
                 }
+            }.verticalScroll(scroll).padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val update: (LoopDraft) -> Unit = { draft = it; error = null }
+                val canSelect: (LoopMode) -> Boolean = { loopModeCanEdit(it, lockedKind, draft.cancellable) }
+                LoopLegacyRows(draft, update, canSelect, ::changeMode, ::openPicker)
+                if (draft.mode in setOf(LoopMode.FOREVER, LoopMode.REPEAT, LoopMode.TIMED)) {
+                    HorizontalDivider(color = AutoScriptPalette.Divider)
+                    Text("循环输出与设置", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = AutoScriptPalette.TextSecondary)
+                    LoopExtraSettings(draft, update, ::openPicker)
+                } else Text(when (draft.mode) {
+                    LoopMode.COUNT, LoopMode.ELAPSED -> "放入循环体，执行到这一行时读取最近一层循环。"
+                    LoopMode.CHECK_COUNT, LoopMode.CHECK_TIME -> "放入循环体，达到阈值时结束最近一层循环。"
+                    else -> "只等待，不创建循环体。"
+                }, fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.TextSecondary)
+            }
+            error?.let { Text(it, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = AutoScriptPalette.Danger, fontSize = 11.sp) }
+            HorizontalDivider(color = AutoScriptPalette.Divider)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                LoopButton("取消", onDismiss, Modifier.weight(1f).heightIn(min = 36.dp), muted = true)
+                Box(Modifier.width(1.dp).height(24.dp).background(AutoScriptPalette.Divider))
+                LoopButton(confirmLabel, {
+                    val result = buildLoopInsertion(draft, choices)
+                    error = result.error
+                    result.insertion?.let { onInsert(it.hint()) }
+                }, Modifier.weight(1f).heightIn(min = 36.dp))
             }
         }
     }
@@ -304,81 +325,213 @@ internal fun VisualLoopDialog(
         val values = when (key) {
             "countPreset", "checkCountPreset" -> (1..10).map { it.toString() } + listOf("20", "30", "50", "100", "1000")
             "delayPreset" -> listOf("0", "50", "100", "200", "500", "1000", "3000")
-            else -> listOf("0.5", "1", "2", "3", "5", "10", "30", "60", "300")
+            else -> listOf("500", "1000", "2000", "3000", "5000", "10000", "30000", "60000", "300000")
         }
-        StudioPanelDialog(if (preset) "选择预设" else "选择变量", { picker = null }, showFooter = false, compactHeader = true) {
-                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    if (!preset) {
-                        Row(Modifier.fillMaxWidth().height(34.dp)) {
-                            listOf("局部", "全局", "参数").forEach { item -> LoopButton(item, { pickerScope = item }, Modifier.weight(1f).fillMaxHeight(), selected = pickerScope == item) }
-                            onManageVariables?.let { LoopButton("＋维护", it, Modifier.weight(1f).fillMaxHeight()) }
+        fun select(value: String) {
+            draft = applyLoopPickerSelection(draft, key, value)
+            picker = null; error = null
+        }
+        if (!preset) CompactVariablePickerDialog(options = variablePickerOptions(eligible.map { it.name }, eligible),
+            selected = null, onDismiss = { picker = null }, onSelect = ::select, initialScope = pickerScope,
+            onManage = onManageVariables)
+        else StudioPanelDialog("常用数值", { picker = null }, showFooter = false) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                    .padding(8.dp)) {
+                    StudioCompactGrid(values, cellDp = 76, maximum = 4) { value, cell ->
+                        val label = when {
+                            key.contains("Count", true) -> "$value 次"
+                            else -> "$value 毫秒"
                         }
+                        StudioToolButton(label, cell) { select(value) }
                     }
-                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
-                        if (!preset) Text("仅显示类型匹配的变量；参数/局部优先于同名全局。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, modifier = Modifier.padding(vertical = 5.dp))
-                        val filtered = eligible.filter { it.scope == pickerScope }
-                        if (!preset && filtered.isEmpty()) Text("暂无匹配变量，可点＋维护添加后返回选择。", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 14.dp))
-                        val entries = if (preset) values.map { it to if (key.contains("Count", true) || key == "countPreset") "$it 次" else if (key == "delayPreset") "$it 毫秒" else "$it 秒" }
-                            else filtered.map { it.name to "${calculationTypeLabel(it.type)} · ${it.name}  (${it.scope})" }
-                        entries.forEach { (value, label) ->
-                            LoopButton(label, {
-                                draft = when (key) {
-                                    "count" -> draft.copy(countVariable = value); "time" -> draft.copy(timeVariable = value)
-                                    "countOutput" -> draft.copy(countOutput = value); "elapsedOutput" -> draft.copy(elapsedOutput = value)
-                                    "iterationOutput" -> draft.copy(iterationOutput = value); "loopElapsedOutput" -> draft.copy(loopElapsedOutput = value)
-                                    "delay" -> draft.copy(delayVariable = value); "checkCount" -> draft.copy(checkCountVariable = value); "checkTime" -> draft.copy(checkTimeVariable = value)
-                                    "countPreset" -> draft.copy(count = value); "checkCountPreset" -> draft.copy(checkCount = value)
-                                    "timePreset" -> draft.copy(time = value, unit = LoopTimeUnit.SECONDS)
-                                    "checkTimePreset" -> draft.copy(checkTime = value, checkUnit = LoopTimeUnit.SECONDS)
-                                    else -> draft.copy(delay = value)
-                                }; picker = null; error = null
-                            }, Modifier.fillMaxWidth().height(38.dp), muted = !preset)
-                            HorizontalDivider(color = AutoScriptPalette.Divider)
-                        }
-                    }
-                    LoopButton("取消", { picker = null }, Modifier.fillMaxWidth().height(40.dp), muted = true)
                 }
+                HorizontalDivider(color = AutoScriptPalette.Divider)
+                Row(Modifier.fillMaxWidth().heightIn(min = 30.dp)) {
+                    LoopButton("取消", { picker = null }, Modifier.weight(1f).heightIn(min = 30.dp), muted = true)
+                }
+            }
         }
     }
 }
 
-@Composable private fun LoopButton(text: String, onClick: () -> Unit, modifier: Modifier, selected: Boolean = false, muted: Boolean = false) {
-    Box(modifier.background(if (selected) Color.White else Color.Transparent, RoundedCornerShape(4.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(text, color = if (muted) AutoScriptPalette.TextPrimary else AutoScriptPalette.Accent, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis,
+private fun loopModeLabel(mode: LoopMode): String = when (mode) {
+    LoopMode.COUNT -> "读取次数"
+    LoopMode.ELAPSED -> "读取耗时"
+    LoopMode.WAIT -> "等待 / 空循环"
+    LoopMode.CHECK_COUNT -> "到次跳出"
+    LoopMode.CHECK_TIME -> "到时跳出"
+    else -> mode.title
+}
+
+@Composable
+private fun LoopLegacyRows(draft: LoopDraft, onChange: (LoopDraft) -> Unit, canSelect: (LoopMode) -> Boolean,
+    onSelect: (LoopMode) -> Unit, openPicker: (String) -> Unit) {
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val stacked = maxWidth.value < 280f * androidx.compose.ui.platform.LocalDensity.current.fontScale
+        Column(Modifier.fillMaxWidth().selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LoopMode.entries.forEach { mode ->
+                val active = draft.mode == mode
+                val enabled = canSelect(mode)
+                fun pick(key: String) { onSelect(mode); openPicker(key) }
+                val parameter: @Composable () -> Unit = {
+                    if (!enabled) Text("保留当前积木类型", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary.copy(alpha = .5f))
+                    else when (mode) {
+                        LoopMode.FOREVER -> Text(if (draft.cancellable) "直到停止或跳出" else "保留安全次数保护",
+                            fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.TextSecondary)
+                        LoopMode.REPEAT -> LoopVariableRow({ pick("count") }) {
+                            if (draft.countVariable.isNotEmpty()) LoopSelect("", draft.countVariable,
+                                onClear = { onChange(clearLoopInputVariable(draft, mode)) }, clearLabel = "数值", showIcon = false) { pick("count") }
+                            else LoopValue(draft.count, { onChange(draft.copy(mode = mode, variableMode = false, count = it)) }, unitLabel = "次") { pick("countPreset") }
+                        }
+                        LoopMode.TIMED -> LoopVariableRow({ pick("time") }) {
+                            if (draft.timeVariable.isNotEmpty()) LoopSelect(draft.unit.label, draft.timeVariable,
+                                onClear = { onChange(clearLoopInputVariable(draft, mode)) }, clearLabel = "数值", showIcon = false) { pick("time") }
+                            else LoopValue(draft.time, { onChange(draft.copy(mode = mode, variableMode = false, time = it)) },
+                                unitLabel = draft.unit.label) { pick("timePreset") }
+                        }
+                        LoopMode.COUNT -> LoopVariableRow({ pick("countOutput") }) {
+                            LoopSelect("整", draft.countOutput, showIcon = false) { pick("countOutput") }
+                        }
+                        LoopMode.ELAPSED -> LoopVariableRow({ pick("elapsedOutput") }) {
+                            LoopSelect(draft.elapsedUnit.label, draft.elapsedOutput, showIcon = false) { pick("elapsedOutput") }
+                        }
+                        LoopMode.WAIT -> LoopVariableRow({ pick("delay") }) {
+                            if (draft.delayVariable.isNotEmpty()) LoopSelect("毫秒", draft.delayVariable,
+                                onClear = { onChange(clearLoopInputVariable(draft, mode)) }, clearLabel = "数值", showIcon = false) { pick("delay") }
+                            else LoopValue(draft.delay, { onChange(draft.copy(mode = mode, variableMode = false, delay = it)) }, unitLabel = "毫秒") { pick("delayPreset") }
+                        }
+                        LoopMode.CHECK_COUNT -> LoopVariableRow({ pick("checkCount") }) {
+                            if (draft.checkCountVariable.isNotEmpty()) LoopSelect("", draft.checkCountVariable,
+                                onClear = { onChange(clearLoopInputVariable(draft, mode)) }, clearLabel = "数值", showIcon = false) { pick("checkCount") }
+                            else LoopValue(draft.checkCount, { onChange(draft.copy(mode = mode, variableMode = false, checkCount = it)) }, unitLabel = "次") { pick("checkCountPreset") }
+                        }
+                        LoopMode.CHECK_TIME -> LoopVariableRow({ pick("checkTime") }) {
+                            if (draft.checkTimeVariable.isNotEmpty()) LoopSelect(draft.checkUnit.label, draft.checkTimeVariable,
+                                onClear = { onChange(clearLoopInputVariable(draft, mode)) }, clearLabel = "数值", showIcon = false) { pick("checkTime") }
+                            else LoopValue(draft.checkTime, { onChange(draft.copy(mode = mode, variableMode = false, checkTime = it)) },
+                                unitLabel = draft.checkUnit.label) { pick("checkTimePreset") }
+                        }
+                    }
+                }
+                val title: @Composable () -> Unit = {
+                    Row(Modifier.heightIn(min = 30.dp).selectable(active, enabled = enabled, role = Role.RadioButton) {
+                        focus.clearFocus(); onSelect(mode)
+                    }.padding(horizontal = 3.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.size(12.dp).border(1.dp,
+                            if (active) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary.copy(alpha = if (enabled) .6f else .3f),
+                            RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
+                            if (active) Box(Modifier.size(6.dp).background(AutoScriptPalette.Accent, RoundedCornerShape(50)))
+                        }
+                        Text(loopModeLabel(mode), fontSize = 11.sp, lineHeight = 14.sp,
+                            color = if (enabled) AutoScriptPalette.TextPrimary else AutoScriptPalette.TextSecondary.copy(alpha = .5f))
+                    }
+                }
+                if (stacked) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    title()
+                    Box(Modifier.fillMaxWidth().padding(start = 21.dp)) { parameter() }
+                } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.width(98.dp)) { title() }
+                    Box(Modifier.weight(1f)) { parameter() }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LoopExtraSettings(draft: LoopDraft, onChange: (LoopDraft) -> Unit, openPicker: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LoopLabeledField("序号输出") {
+            LoopSelect("整数", draft.iterationOutput, onClear = { onChange(draft.copy(iterationOutput = "")) }) { openPicker("iterationOutput") }
+        }
+        LoopLabeledField("耗时输出") {
+            LoopSelect("数值", draft.loopElapsedOutput, onClear = { onChange(draft.copy(loopElapsedOutput = "")) }) { openPicker("loopElapsedOutput") }
+        }
+        if (draft.mode != LoopMode.REPEAT) LoopLabeledField(if (draft.cancellable) "让步 / 毫秒" else "安全次数上限") {
+            LoopInput(if (draft.cancellable) draft.yieldMs else draft.maxIterations,
+                { onChange(if (draft.cancellable) draft.copy(yieldMs = it) else draft.copy(maxIterations = it)) }, Modifier.fillMaxWidth())
+        }
+        Text("输出可留空；序号从1起，耗时单位为毫秒。", fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.TextSecondary)
+        if (draft.mode != LoopMode.REPEAT) Text(if (draft.cancellable) "每轮让步1～1000毫秒，可停止或跳出。" else "保留旧节点安全次数保护，不自动改变原行为。",
+            fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.TextSecondary)
+    }
+}
+
+@Composable
+private fun LoopLabeledField(label: String, content: @Composable () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val stacked = maxWidth.value < 260f * androidx.compose.ui.platform.LocalDensity.current.fontScale
+        if (stacked) StudioFormGroup(label, content = content)
+        else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, Modifier.width(66.dp), fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.TextSecondary)
+            Box(Modifier.weight(1f)) { content() }
+        }
+    }
+}
+
+@Composable
+private fun LoopVariableRow(onVariable: () -> Unit, value: @Composable () -> Unit) {
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(Modifier.weight(1f)) { value() }
+        val shape = RoundedCornerShape(6.dp)
+        Box(Modifier.width(36.dp).heightIn(min = 30.dp).clip(shape)
+            .background(AutoScriptPalette.AccentSoft, shape)
+            .border(1.dp, AutoScriptPalette.VisualEditor.Border, shape)
+            .clickable(role = Role.Button) { focus.clearFocus(); onVariable() }
+            .padding(horizontal = 4.dp, vertical = 5.dp), contentAlignment = Alignment.Center) {
+            Text("变量", fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.Accent)
+        }
+    }
+}
+
+@Composable private fun LoopButton(text: String, onClick: () -> Unit, modifier: Modifier, muted: Boolean = false) {
+    Box(modifier.clip(RoundedCornerShape(5.dp))
+        .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 5.dp, vertical = 5.dp), contentAlignment = Alignment.Center) {
+        Text(text, color = if (muted) AutoScriptPalette.TextSecondary else AutoScriptPalette.Accent,
+            fontSize = 12.sp, fontWeight = if (muted) FontWeight.Normal else FontWeight.Medium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
     }
 }
-@Composable private fun LoopRow(mode: LoopMode, selected: LoopMode, onSelect: () -> Unit, content: @Composable () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 34.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).clickable(onClick = onSelect), verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected == mode, onSelect, Modifier.size(28.dp))
-            Text(mode.title, color = AutoScriptPalette.TextPrimary, fontSize = 12.sp, maxLines = 1)
-        }
-        Box(Modifier.weight(1.5f), contentAlignment = Alignment.Center) { content() }
-    }
-}
 @Composable private fun LoopInput(value: String, onChange: (String) -> Unit, modifier: Modifier) {
-    BasicTextField(value, { onChange(it.take(64)) }, singleLine = true, textStyle = TextStyle(color = AutoScriptPalette.TextPrimary, fontSize = 13.sp, textAlign = TextAlign.Center, platformStyle = PlatformTextStyle(includeFontPadding = false)),
-        modifier = modifier.height(32.dp).background(Color(0xFFFAFBFC), RoundedCornerShape(3.dp)).border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)),
-        decorationBox = { field -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { field() } })
+    ImageToolCompactInput("", value, true, modifier.heightIn(min = 30.dp), numeric = true, dense = true) { onChange(it.take(64)) }
 }
-@Composable private fun LoopValue(value: String, onChange: (String) -> Unit, label: String, onPreset: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        LoopInput(value, onChange, Modifier.weight(1f))
-        LoopButton("$label ▾", onPreset, Modifier.weight(1.15f).height(32.dp).border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)))
+@Composable private fun LoopValue(value: String, onChange: (String) -> Unit,
+    unitLabel: String? = null, onPreset: () -> Unit) {
+    ImageToolCompactInput("", value, true, Modifier.fillMaxWidth().heightIn(min = 30.dp), numeric = true, dense = true, trailing = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            unitLabel?.let { Text(it, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary) }
+            LoopInlineAction("常用", onPreset)
+        }
+    }) { onChange(it.take(64)) }
+}
+@Composable private fun LoopSelect(type: String, name: String, onClear: (() -> Unit)? = null,
+    clearLabel: String = "清空", showIcon: Boolean = true,
+    onClick: () -> Unit) {
+    val shape = RoundedCornerShape(6.dp)
+    Row(Modifier.fillMaxWidth().heightIn(min = 30.dp).background(AutoScriptPalette.VisualEditor.ControlBackground, shape)
+        .border(1.dp, AutoScriptPalette.VisualEditor.Border, shape), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).clickable(onClick = onClick).padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (type.isNotEmpty()) Text(type, color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
+            Text(name.ifEmpty { if (showIcon) "选择变量" else "未选择" }, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (showIcon) androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(R.drawable.ic_list_24), "选择变量",
+                Modifier.size(16.dp), tint = AutoScriptPalette.Accent)
+        }
+        if (name.isNotEmpty() && onClear != null) LoopInlineAction(clearLabel, onClear)
     }
 }
-@Composable private fun LoopSelect(type: String, name: String, onClear: (() -> Unit)? = null, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(32.dp).border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)), verticalAlignment = Alignment.CenterVertically) {
-        Text(type, color = AutoScriptPalette.Accent, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 7.dp))
-        Text(name.ifEmpty { "未选择" }, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (name.isNotEmpty() && onClear != null) LoopButton("清空", onClear, Modifier.width(34.dp).fillMaxHeight())
-        LoopButton("选择变量", onClick, Modifier.width(62.dp).fillMaxHeight())
-    }
-}
-@Composable private fun LoopUnits(title: String, value: LoopTimeUnit, onChange: (LoopTimeUnit) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
-        LoopTimeUnit.entries.forEach { unit -> LoopButton(unit.label, { onChange(unit) }, Modifier.width(52.dp).fillMaxHeight().background(if (unit == value) Color(0xFFEAF0FF) else Color.Transparent, RoundedCornerShape(3.dp))) }
+
+@Composable private fun LoopInlineAction(text: String, onClick: () -> Unit) {
+    Box(Modifier.heightIn(min = 24.dp).clickable(onClick = onClick).padding(horizontal = 5.dp),
+        contentAlignment = Alignment.Center) {
+        Text(text, fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.Accent)
     }
 }

@@ -265,7 +265,7 @@ function Input.pointerDown(x, y) end
 ---@param y integer 设计坐标Y。
 function Input.pointerMove(x, y) end
 
----释放当前任务持有的单指触点；其他任务不能代替持有者释放。
+---释放当前任务持有的单指触点；已弹起且清理已确认时不发送重复输入，直接成功。其他任务不能代替持有者释放。
 function Input.pointerUp() end
 
 ---按原始屏幕像素点击，不再进行设计坐标缩放。
@@ -316,9 +316,9 @@ function Input.touchDown(pointerId, x, y) end
 ---@return integer value 最多5个真实并发触点，由同一任务独占整组手势；设计坐标映射后注入，Root须明确协商多指支持。不支持时拒绝，不降级为单指。暂停/取消/结束/租约超时释放；用等待和逐触点移动组合捏合、旋转、双指拖动。确认返回1，不代表目标App已处理。
 function Input.touchMove(pointerId, x, y) end
 
----最多5个真实并发触点，由同一任务独占整组手势；设计坐标映射后注入，Root须明确协商多指支持。不支持时拒绝，不降级为单指。暂停/取消/结束/租约超时释放；用等待和逐触点移动组合捏合、旋转、双指拖动。确认返回1，不代表目标App已处理。
+---释放指定的自有触点；已弹起且清理已确认时不发送重复输入，直接成功。其他任务仍不能代为释放。Root须明确协商多指支持，不支持时拒绝；停止、取消、过期及清理失败仍报错。
 ---@param pointerId integer 触点编号0–4
----@return integer value 最多5个真实并发触点，由同一任务独占整组手势；设计坐标映射后注入，Root须明确协商多指支持。不支持时拒绝，不降级为单指。暂停/取消/结束/租约超时释放；用等待和逐触点移动组合捏合、旋转、双指拖动。确认返回1，不代表目标App已处理。
+---@return integer value 释放成功或已确认处于弹起状态时返回1；不代表目标App已处理。停止、取消、过期及触点清理失败仍报错。
 function Input.touchUp(pointerId) end
 
 Screen = Screen or {}
@@ -383,7 +383,7 @@ function Screen.frameInfo(frame) end
 ---@return integer value 传给Screen.cache获得任务图像；识别坐标是区域局部坐标，Screen.mapPoint显式映射回原屏。
 function Screen.captureRegion(left, top, right, bottom) end
 
----在租用帧的半开ROI内按行优先查找颜色。
+---在租用帧的半开ROI内按行优先查找颜色。可选备选色组命中任意颜色，同一像素只返回或计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。
 ---@param frame integer 任务持有的帧句柄。
 ---@param rgb integer 0xRRGGBB颜色。
 ---@param tolerance integer 0至255的逐通道容差。
@@ -391,8 +391,9 @@ function Screen.captureRegion(left, top, right, bottom) end
 ---@param top integer ROI上边界，包含。
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
----@return Point value 首个匹配点；未找到时为nil。
-function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom) end
+---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
+---@return Point value 首个匹配点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
+function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, additionalColors) end
 
 ---使用不可变模板帧执行有界透明像素模板匹配。
 ---@param frame integer 待搜索帧句柄。
@@ -414,14 +415,15 @@ function Screen.findImage(frame, template, tolerance, similarityPermille, left, 
 ---@return integer value 0xRRGGBB颜色值。
 function Screen.getColor(frame, x, y) end
 
----比较帧内一个像素与目标颜色是否落在逐通道容差内。
+---比较帧内一个像素与目标颜色是否落在逐通道容差内。可选备选色组命中任意颜色，同一像素只返回或计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。
 ---@param frame integer 任务持有的帧句柄。
 ---@param x integer 帧内横坐标。
 ---@param y integer 帧内纵坐标。
 ---@param rgb integer 0xRRGGBB目标颜色。
 ---@param tolerance integer 0至255的逐通道容差。
+---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
 ---@return boolean value 是否匹配。
-function Screen.compareColor(frame, x, y, rgb, tolerance) end
+function Screen.compareColor(frame, x, y, rgb, tolerance, additionalColors) end
 
 ---在半开ROI内按行优先查找锚点色和最多64个有符号偏移采样点。
 ---@param frame integer 任务持有的帧句柄。
@@ -432,10 +434,10 @@ function Screen.compareColor(frame, x, y, rgb, tolerance) end
 ---@param top integer ROI上边界，包含。
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
----@return Point value 首个匹配锚点；未找到时为nil。
+---@return Point value 首个匹配锚点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
 function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left, top, right, bottom) end
 
----统计半开ROI内的匹配颜色，达到limit后立即返回。
+---统计半开ROI内的匹配像素，limit为0统计全部、正数达到即返回。可选备选色组命中任意颜色，同一像素只计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。
 ---@param frame integer 任务持有的帧句柄。
 ---@param rgb integer 0xRRGGBB目标颜色。
 ---@param tolerance integer 0至255的逐通道容差。
@@ -443,11 +445,12 @@ function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left,
 ---@param top integer ROI上边界，包含。
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
----@param limit integer 1至256的提前停止上限。
----@return integer value 匹配数量，最大为limit。
-function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit) end
+---@param limit integer 0统计全部匹配像素；1至64000000为提前停止上限。0或大于256需Screen.colorLimitsVersion=1。
+---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
+---@return integer value 匹配像素数量；limit为0时返回全区域计数，正数时最多返回limit。合法非空ROI超出实际帧时整次返回0并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
+function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors) end
 
----按行优先返回半开ROI内最多limit个匹配颜色坐标。
+---按行优先返回半开ROI内最多limit个匹配颜色坐标。可选备选色组命中任意颜色，同一像素只返回或计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。
 ---@param frame integer 任务持有的帧句柄。
 ---@param rgb integer 0xRRGGBB目标颜色。
 ---@param tolerance integer 0至255的逐通道容差。
@@ -455,9 +458,10 @@ function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limi
 ---@param top integer ROI上边界，包含。
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
----@param limit integer 1至256的返回数量上限。
----@return Point[] value 按行优先排序的坐标数组。
-function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit) end
+---@param limit integer 1至2048的返回数量上限。 大于256需Screen.colorLimitsVersion=1。
+---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
+---@return Point[] value 按行优先排序的坐标数组。合法非空ROI超出实际帧时整次返回空数组并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
+function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors) end
 
 ---按给定顺序匹配1–64个已声明图片，共享比较预算，返回第一个匹配的模板标识、坐标与得分。
 ---@param frame integer 缓存帧句柄。

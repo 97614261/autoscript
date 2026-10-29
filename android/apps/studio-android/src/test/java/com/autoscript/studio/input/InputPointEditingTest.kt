@@ -12,7 +12,7 @@ class InputPointEditingTest {
 
     @Test fun allSevenActionsGenerateTypedBlocksWithSharedPhysicalCoordinateMapping() {
         InputPointAction.entries.forEach { action ->
-            val snippet = inputPointSnippet(reply(action), 720, 1280, "stretch")
+            val snippet = inputPointSnippet(reply(action), 720, 1280, "stretch", screenPixels = false)
             assertNull(snippet.rejection)
             assertTrue(snippet.flowBlocks.isNotEmpty())
             if (action != InputPointAction.UP) {
@@ -24,10 +24,41 @@ class InputPointEditingTest {
         assertEquals(listOf("input.pointerup"), inputPointSnippet(reply(InputPointAction.UP), 720, 1280, "stretch").flowBlocks.map { it.kind })
     }
 
+    @Test fun newPortraitAndLandscapePicksKeepExactPhysicalPixelsForEveryAction() {
+        for ((width, height) in listOf(720 to 1280, 1280 to 720)) {
+            InputPointAction.entries.forEach { action ->
+                val picked = reply(action).copy(width = width, height = height, x1 = width - 2, y1 = height - 3,
+                    x2 = width - 20, y2 = height - 30)
+                val snippet = inputPointSnippet(picked, 720, 1280, "letterbox")
+                assertNull(snippet.rejection)
+                val blocks = prepareInputBlocks(snippet, setOf("input.basic", "core.task"))
+                if (action != InputPointAction.UP) {
+                    val args = blocks.first().second
+                    assertEquals(width - 2, args.get(if (action == InputPointAction.SWIPE) "x1" else "x").asInt)
+                    assertEquals(height - 3, args.get(if (action == InputPointAction.SWIPE) "y1" else "y").asInt)
+                    assertTrue(args.get("screenPixels").asBoolean)
+                    assertTrue(snippet.code.contains("Screen("))
+                }
+                blocks.filter { it.first.kind == "task.sleep" }.forEach { assertTrue(it.second.get("exactTiming").asBoolean) }
+                blocks.filter { it.first.kind in setOf("input.pointerup", "task.sleep") }.forEach { assertFalse(it.second.has("screenPixels")) }
+            }
+        }
+    }
+
     @Test fun preparationRequiresRealCapabilitiesAndRejectsUnrelatedNodes() {
         val snippet = inputPointSnippet(reply(InputPointAction.LONG_PRESS), 720, 1280, "stretch")
         assertThrows(IllegalArgumentException::class.java) { prepareInputBlocks(snippet, emptySet()) }
         assertThrows(IllegalArgumentException::class.java) { prepareInputBlocks(snippet.copy(flowBlocks = listOf(ImageToolCodeGen.FlowBlockInsertion("control.goto"))), setOf("input.basic", "core.task")) }
+    }
+
+    @Test fun screenCoordinateFlagSurvivesInsertionAndReversibleSourceEditing() {
+        val picked = reply(InputPointAction.LONG_PRESS).copy(width = 1280, height = 720, x1 = 1200, y1 = 300)
+        val editor = VisualEditorState.create("", "root")
+        assertTrue(editor.insertBlocks(prepareInputBlocks(inputPointSnippet(picked, 720, 1280, "letterbox"), setOf("input.basic", "core.task"))))
+        val original = editor.currentSource
+        val exported = pluginSourceToolchain.export(original, "root")
+        assertTrue(exported.text.contains("[\"screenPixels\"] = true"))
+        assertEquals(original, pluginSourceToolchain.parse(exported.text, original, "root", emptySet()).text)
     }
 
     @Test fun batchPositionsKeepGestureOrderAndOneUndo() {

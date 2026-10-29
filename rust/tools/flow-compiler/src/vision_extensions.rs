@@ -737,7 +737,7 @@ fn result_options(a: &Map<String, Value>) -> Result<Value, &'static str> {
     let limit = match shape {
         "IMAGES" => 64,
         "SCALED_IMAGE" => 1,
-        "COLORS" | "COMPONENTS" => 256,
+        "COMPONENTS" => 256,
         _ => 2048,
     };
     if !fields.contains(&field)

@@ -48,6 +48,7 @@ class RuntimeAppDiagnosticsTest {
         }
         assertEquals(AppDiagnosticCode.ROOT_PROCESS_LINK_FAILED, rootProcessFailureCode("CANNOT LINK EXECUTABLE"))
         assertEquals(AppDiagnosticCode.ROOT_PROCESS_COMMAND_MISSING, rootProcessFailureCode("su: not found"))
+        assertEquals(AppDiagnosticCode.ROOT_IDLE_RELEASED, rootProcessFailureCode("daemon connection idle timeout"))
         assertNull(rootProcessFailureCode("arbitrary output"))
     }
 

@@ -29,6 +29,7 @@ class RuntimeStartReadinessTest {
     @Test fun rootFailureDisconnectAndReplacedSessionReject() {
         listOf(
             starting.copy(rootState = RuntimeRootState.FAILED),
+            starting.copy(rootState = RuntimeRootState.STOPPED),
             starting.copy(phase = RuntimeConnectionPhase.DISCONNECTED),
             starting.copy(sessionGeneration = 8L),
             starting.copy(rootState = RuntimeRootState.READY, engineState = RuntimeEngineState.PAUSED),
@@ -52,5 +53,69 @@ class RuntimeStartReadinessTest {
         assertFalse(captureUnavailableMessage(ready).contains("无Root"))
         assertTrue(captureUnavailableMessage(ready.copy(engineState = RuntimeEngineState.PAUSED)).contains("先停止"))
         assertTrue(captureUnavailableMessage(ready.copy(phase = RuntimeConnectionPhase.DISCONNECTED)).contains("断开"))
+    }
+
+    @Test fun explicitOperationCanReconnectStoppedOrFailedRoot() = runBlocking {
+        for (previous in listOf(RuntimeRootState.STOPPED, RuntimeRootState.FAILED)) {
+            val states = MutableStateFlow(starting.copy(rootState = previous))
+            var requests = 0
+            val result = async(start = CoroutineStart.UNDISPATCHED) {
+                requestRuntimeReady(states, 7L, request = {
+                    requests++
+                    states.value = starting
+                    true
+                })
+            }
+            assertFalse(result.isCompleted)
+            states.value = starting.copy(rootState = RuntimeRootState.READY)
+            assertEquals(RuntimeStartReadiness.READY, result.await())
+            assertEquals(1, requests)
+        }
+    }
+
+    @Test fun failedAuthorizationDoesNotAutomaticallyRequestAgain() = runBlocking {
+        val states = MutableStateFlow(starting)
+        var requests = 0
+        val result = async(start = CoroutineStart.UNDISPATCHED) {
+            requestRuntimeReady(states, 7L, request = { requests++; true })
+        }
+        states.value = starting.copy(rootState = RuntimeRootState.FAILED)
+        assertEquals(RuntimeStartReadiness.REJECTED, result.await())
+        assertEquals(1, requests)
+    }
+
+    @Test fun connectionReleasedWhileWaitingRejectsWithoutWaitingForAnotherAttempt() = runBlocking {
+        val states = MutableStateFlow(starting)
+        var requests = 0
+        val result = async(start = CoroutineStart.UNDISPATCHED) {
+            requestRuntimeReady(states, 7L, request = { requests++; true })
+        }
+        states.value = starting.copy(rootState = RuntimeRootState.STOPPED)
+        assertEquals(RuntimeStartReadiness.REJECTED, result.await())
+        assertEquals(1, requests)
+    }
+
+    @Test fun staleSessionOrBusyRunNeverRequestsAuthorization() = runBlocking {
+        for (state in listOf(starting.copy(sessionGeneration = 8L),
+                starting.copy(phase = RuntimeConnectionPhase.DISCONNECTED),
+                starting.copy(engineState = RuntimeEngineState.PAUSED))) {
+            assertEquals(RuntimeStartReadiness.REJECTED, requestRuntimeReady(MutableStateFlow(state), 7L,
+                request = { fail("Must not request Root"); true }))
+        }
+    }
+
+    @Test fun requestRejectionTimeoutAndCancellationRemainSingleAttempt() = runBlocking {
+        val states = MutableStateFlow(starting)
+        assertEquals(RuntimeStartReadiness.REJECTED, requestRuntimeReady(states, 7L, request = { false }))
+        var requests = 0
+        assertEquals(RuntimeStartReadiness.TIMEOUT, requestRuntimeReady(states, 7L,
+            request = { requests++; true }, timeoutMillis = 1L))
+        val waiting = async(start = CoroutineStart.UNDISPATCHED) {
+            requestRuntimeReady(states, 7L, request = { requests++; true })
+        }
+        waiting.cancelAndJoin()
+        states.value = starting.copy(rootState = RuntimeRootState.READY)
+        assertTrue(waiting.isCancelled)
+        assertEquals(2, requests)
     }
 }

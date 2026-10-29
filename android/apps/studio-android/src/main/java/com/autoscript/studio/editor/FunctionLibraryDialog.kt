@@ -114,7 +114,7 @@ internal fun FunctionLibraryDialog(
         val short = studioShortViewport(maxHeight.value)
         val availableHeight = studioPanelMaxHeight(maxHeight.value, screenHeight, if (short) 8 else 24).dp
         Surface(
-            modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 680.dp).fillMaxWidth(.96f)
+            modifier = if (fullScreen) Modifier.fillMaxSize() else Modifier.width(studioDialogWidth(maxWidth.value, 520).dp)
                 .height(minOf(if (short) availableHeight else panelHeight, availableHeight)),
             color = Color.White,
             shape = RoundedCornerShape(if (fullScreen) 0.dp else 6.dp),
@@ -322,7 +322,8 @@ private fun FunctionLibraryDetailDialog(entry: FunctionLibraryEntry, capabilitie
         .coerceIn(330, 540).coerceAtMost((LocalConfiguration.current.screenHeightDp - 48).coerceAtLeast(160)).dp
     var fullScreen by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 620.dp).fillMaxWidth(.94f).height(height),
+        BoxWithConstraints((if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).imePadding(), contentAlignment = Alignment.Center) {
+        Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.width(studioDialogWidth(maxWidth.value, 420).dp).height(minOf(height, maxHeight)),
             color = Color.White, shape = RoundedCornerShape(if (fullScreen) 0.dp else 6.dp), shadowElevation = 10.dp) {
             Column {
                 Row(Modifier.fillMaxWidth().height(44.dp).padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -381,6 +382,7 @@ private fun FunctionLibraryDetailDialog(entry: FunctionLibraryEntry, capabilitie
                     }
                 }
             }
+        }
         }
     }
 }

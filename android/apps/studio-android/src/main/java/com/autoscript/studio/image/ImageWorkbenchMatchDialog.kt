@@ -21,6 +21,7 @@ import java.io.FileOutputStream
 
 /** Tests the displayed processed bitmap, not a fresh screen or a silently substituted algorithm. */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ImageWorkbenchMatchDialog(bitmap: Bitmap, selection: ImageToolCodeGen.Roi?, snapshot: ProjectSnapshot,
     runtimeClient: RuntimeClient, onResult: (Reply?) -> Unit, onDismiss: () -> Unit,
     onConfirm: ((RecognitionPreviewConfiguration, ImageToolCodeGen.Roi, () -> Boolean) -> Unit)? = null,
@@ -71,31 +72,35 @@ internal fun ImageWorkbenchMatchDialog(bitmap: Bitmap, selection: ImageToolCodeG
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             RecognitionAvailabilityNotice(if(feature) "vision.findfeatures" else if (gray) "vision.findgray" else "vision.findimage", runtimeClient)
             Text("范围 X${region.left} Y${region.top} ${region.width}×${region.height}px", fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton(enabled = !busy, onClick = { feature=false;gray = false;scaled=false; invalidate(); message = "像素找图，不自动改变算法" }) { Text(if (!gray && !scaled && !feature) "● 像素" else "像素") }
-                TextButton(enabled = !busy, onClick = { feature=false;gray = true;scaled=false; invalidate(); message = "灰度找图，不使用颜色容差" }) { Text(if (gray) "● 灰度" else "灰度") }
-                TextButton(enabled=!busy,onClick={feature=false;gray=false;scaled=true;invalidate();message="有界多尺度像素匹配，不是灰度最高分；近1000‰优先"}) {Text(if(scaled) "● 多尺度" else "多尺度")}
-                TextButton(enabled=!busy,onClick={feature=true;gray=false;scaled=false;invalidate();message="ORB/RANSAC，适合有纹理且不透明的图片；ROI≤1M像素，得分是内点比例"}) {Text(if(feature) "● 特征" else "特征")}
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                ImageToolCompactAction(if (!gray && !scaled && !feature) "● 像素" else "像素", !busy) { feature=false;gray = false;scaled=false; invalidate(); message = "像素找图，不自动改变算法" }
+                ImageToolCompactAction(if (gray) "● 灰度" else "灰度", !busy) { feature=false;gray = true;scaled=false; invalidate(); message = "灰度找图，不使用颜色容差" }
+                ImageToolCompactAction(if (scaled) "● 多尺度" else "多尺度", !busy) { feature=false;gray=false;scaled=true;invalidate();message="有界多尺度像素匹配，不是灰度最高分；近1000‰优先" }
+                ImageToolCompactAction(if (feature) "● 特征" else "特征", !busy) { feature=true;gray=false;scaled=false;invalidate();message="ORB/RANSAC，适合有纹理且不透明的图片；ROI≤1M像素，得分是内点比例" }
             }
-            if (!gray && !feature) DesignerChoice("方向", recognitionSearchDirections[direction],
+            if (!gray && !feature) ImageToolChoice("方向", direction.toString(),
                 recognitionSearchDirections.mapIndexed { index, label -> index.toString() to label }, !busy) {
                 direction = it.toInt(); invalidate(); message = "方向已修改，请重新测试"
             }
             if (paths.isEmpty()) Text("请先保存或导入项目图片作为模板", fontSize = 11.sp)
             if(scaled) {
-                Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                    ImageToolCompactInput("最小 ‰",scaleMin,!busy,Modifier.weight(1f),numeric=true) {scaleMin=it.take(4);invalidate()}
-                    ImageToolCompactInput("最大 ‰",scaleMax,!busy,Modifier.weight(1f),numeric=true) {scaleMax=it.take(4);invalidate()}
-                    ImageToolCompactInput("步长 ‰",scaleStep,!busy,Modifier.weight(1f),numeric=true) {scaleStep=it.take(4);invalidate()}
+                StudioCompactGrid(listOf("最小 ‰", "最大 ‰", "步长 ‰"), cellDp = 104, maximum = 3) { label, cell ->
+                    val value = when (label) { "最小 ‰" -> scaleMin; "最大 ‰" -> scaleMax; else -> scaleStep }
+                    ImageToolCompactInput(label, value, !busy, cell, numeric = true) {
+                        when (label) { "最小 ‰" -> scaleMin = it.take(4); "最大 ‰" -> scaleMax = it.take(4); else -> scaleStep = it.take(4) }
+                        invalidate()
+                    }
                 }
                 Text("250–4000‰，最多16档；单档模板≤256K像素、合计1亿比较。最近邻缩放，只返回首个达标位置和实际比例。",fontSize=10.sp)
             }
             TextButton(enabled = !busy && paths.isNotEmpty(), onClick = { pickTemplate = true }) {
                 Text("模板：${template.removePrefix("assets/images/").ifEmpty { "请选择" }}", fontSize = 11.sp)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(similarity, { if(it.length<=16) similarity = it; invalidate(); message = "参数已修改，请重新测试" }, enabled = !busy, singleLine = true, label = { Text("相似度 ‰") }, modifier = Modifier.weight(1f))
-                if (!gray && !feature) OutlinedTextField(tolerance, { if(it.length<=16) tolerance = it; invalidate(); message = "参数已修改，请重新测试" }, enabled = !busy, singleLine = true, label = { Text("容差") }, modifier = Modifier.weight(1f))
+            StudioCompactGrid(if (gray || feature) listOf("相似度 ‰") else listOf("相似度 ‰", "容差"), cellDp = 148, maximum = 2) { label, cell ->
+                ImageToolCompactInput(label, if (label == "容差") tolerance else similarity, !busy, cell, numeric = true) {
+                    if (it.length <= 16) { if (label == "容差") tolerance = it else similarity = it }
+                    invalidate(); message = "参数已修改，请重新测试"
+                }
             }
             Text(message, fontSize = 11.sp)
             if(!feature) ImageToolCompactAction("分析候选位置差异",!busy && config!=null) {diagnostics=true}

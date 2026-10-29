@@ -96,6 +96,8 @@ pub(crate) enum LogLevel {
 pub(crate) struct TapArgs {
     pub x: i32,
     pub y: i32,
+    #[serde(default, rename = "screenPixels")]
+    pub screen_pixels: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -103,6 +105,8 @@ pub(crate) struct TapArgs {
 pub(crate) struct PointerArgs {
     pub x: i32,
     pub y: i32,
+    #[serde(default, rename = "screenPixels")]
+    pub screen_pixels: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -113,6 +117,8 @@ pub(crate) struct SwipeArgs {
     pub x2: i32,
     pub y2: i32,
     pub duration_ms: u32,
+    #[serde(default)]
+    pub screen_pixels: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -323,6 +329,8 @@ pub(crate) struct ScreenReleaseArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct GetColorArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub point: PointArgs,
     pub result_variable: String,
@@ -331,9 +339,13 @@ pub(crate) struct GetColorArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindColorArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub rgb: u32,
     pub tolerance: u8,
+    #[serde(default)]
+    pub additional_colors: String,
     pub region: RectArgs,
     pub found_variable: String,
     pub x_variable: String,
@@ -343,10 +355,14 @@ pub(crate) struct FindColorArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CompareColorArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub point: PointArgs,
     pub rgb: u32,
     pub tolerance: u8,
+    #[serde(default)]
+    pub additional_colors: String,
     pub result_variable: String,
 }
 
@@ -362,6 +378,8 @@ pub(crate) struct MultiColorSampleArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindMultiColorArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub anchor_rgb: u32,
     pub anchor_tolerance: u8,
@@ -375,20 +393,28 @@ pub(crate) struct FindMultiColorArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CountColorArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub rgb: u32,
     pub tolerance: u8,
+    #[serde(default)]
+    pub additional_colors: String,
     pub region: RectArgs,
-    pub limit: u16,
+    pub limit: u32,
     pub result_variable: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindAllColorArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub rgb: u32,
     pub tolerance: u8,
+    #[serde(default)]
+    pub additional_colors: String,
     pub region: RectArgs,
     pub limit: u16,
     pub result_variable: String,
@@ -715,6 +741,8 @@ pub(crate) struct LegacyDuoDianBiSeArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LegacyGetRectColorNumArgs {
+    #[serde(default)]
+    pub auto_capture: bool,
     pub frame_variable: String,
     pub region: LegacyRegionArgs,
     pub colors: Vec<LegacyColorSpecArgs>,
@@ -1310,7 +1338,20 @@ fn validate_builtin_node(
             parse_task_arguments(kind, node, manifest)
         }
         "input.tap" | "input.pointerdown" | "input.pointermove" | "input.pointerup"
-        | "input.swipe" | "input.keyevent" => parse_input_arguments(kind, node),
+        | "input.swipe" | "input.keyevent" => {
+            if node
+                .envelope
+                .args
+                .get("screenPixels")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && !runtime_api_at_least(&manifest.runtime_api, 1, 8)
+            {
+                Err("屏幕像素输入需要runtimeApi 1.8")
+            } else {
+                parse_input_arguments(kind, node)
+            }
+        }
         "control.if" | "control.repeat" | "control.while" | "control.cycle"
         | "control.loopmetric" | "control.loopcheck" => {
             parse_control_arguments(kind, node, manifest, errors)
@@ -2676,6 +2717,15 @@ fn validate_builtin_capabilities(
         | "vision.countcolor"
         | "vision.findallcolor" => {
             require_capability(node, "vision.pixel", capabilities, errors);
+            if node
+                .envelope
+                .args
+                .get("autoCapture")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                require_capability(node, "screen.capture", capabilities, errors);
+            }
         }
         "vision.findimage" | "vision.findallimages" => {
             require_capability(node, "vision.template", capabilities, errors);
@@ -2713,6 +2763,19 @@ fn validate_builtin_capabilities(
         | "legacy.getrectcolornum"
         | "legacy.getrgbcolor" => {
             require_capability(node, "vision.pixel.legacy", capabilities, errors);
+            if kind == "legacy.getrectcolornum"
+                && node
+                    .envelope
+                    .args
+                    .get("autoCapture")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            {
+                require_capability(node, "screen.capture", capabilities, errors);
+                if !runtime_api_at_least(&manifest.runtime_api, 1, 8) {
+                    invalid_arguments(node, "临时截图颜色计数需要runtimeApi 1.8", errors);
+                }
+            }
         }
         _ => {}
     }
@@ -2859,6 +2922,36 @@ fn parse_visual_node(
     node: &flow_ir::FlowNode,
     manifest: &ProjectManifest,
 ) -> Result<BuiltinNodeArgs, &'static str> {
+    if matches!(kind, "vision.countcolor" | "vision.findallcolor")
+        && node
+            .envelope
+            .args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n == 0 || n > 256)
+        && !runtime_api_at_least(&manifest.runtime_api, 1, 8)
+    {
+        return Err("扩展颜色数量需要runtimeApi 1.8");
+    }
+    if matches!(
+        kind,
+        "vision.findcolor" | "vision.comparecolor" | "vision.countcolor" | "vision.findallcolor"
+    ) {
+        if let Some(extra) = node.envelope.args.get("additionalColors") {
+            let extra = extra.as_str().ok_or("颜色组必须为文本")?;
+            if !extra.is_empty() && !runtime_api_at_least(&manifest.runtime_api, 1, 8) {
+                return Err("多色组需要runtimeApi 1.8");
+            }
+            let rgb = node
+                .envelope
+                .args
+                .get("rgb")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or("invalid primary RGB")?;
+            pixel_vision::color_palette::parse(rgb, 0, extra)?;
+        }
+    }
     match kind {
         "screen.capture" | "screen.release" => parse_screen_resource_node(kind, node),
         "vision.getcolor"
@@ -3190,7 +3283,7 @@ fn parse_extended_pixel_node(
             .ok()
             .filter(|value| {
                 value.rgb <= 0xFF_FFFF
-                    && (1..=256).contains(&value.limit)
+                    && value.limit <= 64_000_000
                     && valid_rect(&value.region)
                     && valid_variable_names([&value.frame_variable, &value.result_variable])
             })
@@ -3201,7 +3294,7 @@ fn parse_extended_pixel_node(
                 .ok()
                 .filter(|value| {
                     value.rgb <= 0xFF_FFFF
-                        && (1..=256).contains(&value.limit)
+                        && (1..=2048).contains(&value.limit)
                         && valid_rect(&value.region)
                         && valid_variable_names([&value.frame_variable, &value.result_variable])
                 })

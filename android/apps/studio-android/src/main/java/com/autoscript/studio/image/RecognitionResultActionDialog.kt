@@ -44,21 +44,18 @@ internal fun RecognitionResultActionDialog(project: ProjectSnapshot, flowId: Str
         if(error==null) { val parsed=parseBlockArguments(contract,inputs,null,emptyMap(),project.manifest.resources);error=parsed.second;parsed.first?.let { onConfirm(listOf(contract to it)) } }
     }) {
         Column(Modifier.fillMaxWidth().heightIn(max=if(fullScreen) 900.dp else 380.dp).verticalScroll(rememberScrollState()).padding(10.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-            DesignerChoice("结果集合",inputs["sourceVariable"].orEmpty(),variables.filter { it.type==ProjectVariableType.STRING }.map { it.name to it.name },true) { update("sourceVariable",it) }
+            CompactVariableChoice("结果集合",inputs["sourceVariable"].orEmpty(),variables.filter { it.type==ProjectVariableType.STRING }.map { it.name to it.name },true,variables) { update("sourceVariable",it) }
             val shape=RecognitionResultShape.entries.firstOrNull { it.name==inputs["shape"] }
-            DesignerChoice("结果类型",shape?.label ?: "请选择",RecognitionResultShape.entries.filter { !it.isSummary() && it!=RecognitionResultShape.SCALED_IMAGE }.map { it.name to it.label },true) { update("shape",it) }
+            ImageToolChoice("结果类型",inputs["shape"].orEmpty(),RecognitionResultShape.entries.filter { !it.isSummary() && it!=RecognitionResultShape.SCALED_IMAGE }.map { it.name to it.label },true) { update("shape",it) }
             shape?.let { Text(recognitionResultProducerHint(it),fontSize=10.sp) }
-            DesignerChoice("处理范围",inputs["selection"].orEmpty(),listOf("first" to "首项","all" to "逐项（有界）"),true) { update("selection",it) }
-            DesignerChoice("动作位置",inputs["anchor"].orEmpty(),listOf("center" to "矩形中心 / 颜色点","topLeft" to "左上 / 颜色点"),true) { update("anchor",it) }
-            DesignerChoice("动作",inputs["action"].orEmpty(),listOf("tap" to "点击","hold" to "按下不弹起","tapWait" to "点击后等待","pressRelease" to "按下后定时弹起"),true) { update("action",it) }
-            Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                DesignerInput("最多项",inputs["limit"].orEmpty(),true,Modifier.weight(1f),numeric=true) { update("limit",it) }
-                DesignerInput("时长ms",inputs["durationMs"].orEmpty(),true,Modifier.weight(1f),numeric=true) { update("durationMs",it) }
-            }
-            Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) { listOf("offsetX" to "X偏移","offsetY" to "Y偏移").forEach { (key,label) -> DesignerInput(label,inputs[key].orEmpty(),true,Modifier.weight(1f),numeric=true) { update(key,it) } } }
-            DesignerToggle("确认来自原屏、未裁剪/旋转/缩放",inputs["screenConfirmed"]=="true",true) { update("screenConfirmed",it.toString()) }
-            Text("不会识别或截图。仅当前脚本执行到此处才操作。动作前校验全部所选坐标和当前屏幕尺寸；无结果不操作。处理图请先自行完成坐标映射，不得直接勾选确认。",fontSize=10.sp)
-            Text("逐项最多64；按下不弹起仅首项，脚本需明确弹起，停止仍清理。不要沿用上次运行的结果。",fontSize=10.sp)
+            ImageToolChoice("处理范围",inputs["selection"].orEmpty(),listOf("first" to "首项","all" to "逐项（有界）"),true) { update("selection",it) }
+            ImageToolChoice("动作位置",inputs["anchor"].orEmpty(),listOf("center" to "矩形中心 / 颜色点","topLeft" to "左上 / 颜色点"),true) { update("anchor",it) }
+            ImageToolChoice("动作",inputs["action"].orEmpty(),listOf("tap" to "点击","hold" to "按下不弹起","tapWait" to "点击后等待","pressRelease" to "按下后定时弹起"),true) { update("action",it) }
+            ImageToolNumberFields(listOf("limit" to "最多项", "durationMs" to "时长ms", "offsetX" to "X偏移", "offsetY" to "Y偏移")
+                .map { (key, label) -> Triple(key, label, inputs[key].orEmpty()) }, true, ::update)
+            ImageToolToggle("确认来自原屏、未裁剪/旋转/缩放",inputs["screenConfirmed"]=="true",true) { update("screenConfirmed",it.toString()) }
+            Text("处理图须先映射原屏；无结果不操作。按下不弹起需配合弹起动作。", fontSize = 10.sp)
+            ImageToolHelp("仅当前脚本执行到此处才操作，不会截图或识别；动作前校验全部坐标和屏幕尺寸。逐项最多64，按下不弹起仅首项。结果应来自本次运行，不能沿用上次结果。")
             DesignerAction("维护变量",onClick=onManageVariables)
             error?.let { Text(it,fontSize=11.sp,color=com.autoscript.core.designsystem.AutoScriptPalette.Danger) }
         }

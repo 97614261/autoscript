@@ -40,12 +40,12 @@ internal fun ImagePipelineInsertDialog(pipeline: ImageProcessingPipeline, origin
                 if (originalImagePath != null) TextButton(onClick = { assetSource = true }) { Text(if (assetSource) "● 项目原图" else "项目原图", fontSize = 11.sp) }
             }
             if (assetSource) Text(originalImagePath.orEmpty().removePrefix("assets/images/"), fontSize = 10.sp)
-            DesignerChoice("中间帧变量", scratch.ifEmpty { "请选择图像变量" }, images, true) { scratch = it }
-            DesignerChoice("最终图像变量", output.ifEmpty { "请选择图像变量" }, images, true) { output = it }
+            CompactVariableChoice("中间帧变量", scratch, images, true, variables) { scratch = it }
+            CompactVariableChoice("最终图像变量", output, images, true, variables) { output = it }
             if (recognitionTail != null) {
                 Text("接${recognitionTail.title} · 已测试参数", fontSize = 12.sp)
-                recognitionTail.outputs.forEach { field -> DesignerChoice(field.label, outputNames[field.field].orEmpty().ifEmpty { "请选择" },
-                    variables.filter { it.type == field.type }.map { it.name to it.name }, true) { outputNames = outputNames + (field.field to it) } }
+                recognitionTail.outputs.forEach { field -> CompactVariableChoice(field.label, outputNames[field.field].orEmpty(),
+                    variables.filter { it.type == field.type }.map { it.name to it.name }, true, variables) { outputNames = outputNames + (field.field to it) } }
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Checkbox(retainFinal, { retainFinal = it }); Text("识别后保留最终图像", fontSize = 11.sp)
                 }

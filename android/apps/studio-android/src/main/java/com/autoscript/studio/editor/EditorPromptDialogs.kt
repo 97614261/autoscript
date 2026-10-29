@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -76,15 +77,16 @@ internal fun <T> EditorOptionDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
             val availableHeight = maxHeight
+            val controlHeight = studioCompactControlHeight(32, LocalDensity.current.fontScale).dp
             Surface(
-                modifier = Modifier.fillMaxWidth().heightIn(max = availableHeight),
+                modifier = Modifier.width(studioDialogWidth(maxWidth.value, 360).dp).heightIn(max = availableHeight),
                 color = Color.White,
                 shape = RoundedCornerShape(2.dp),
                 shadowElevation = 9.dp,
             ) {
                 Column {
                     Row(
-                        Modifier.fillMaxWidth().height(42.dp).padding(start = 14.dp, end = 5.dp),
+                        Modifier.fillMaxWidth().height(controlHeight).padding(start = 14.dp, end = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(title, color = AutoScriptPalette.DialogTitle, fontSize = 16.sp, modifier = Modifier.weight(1f))
@@ -109,20 +111,20 @@ internal fun <T> EditorOptionDialog(
                         }
                         options.forEachIndexed { index, (_, label) ->
                             Row(
-                                Modifier.fillMaxWidth().height(43.dp).clickable { selectedIndex = index }.padding(horizontal = 15.dp),
+                                Modifier.fillMaxWidth().heightIn(min = controlHeight).padding(vertical = 5.dp).clickable { selectedIndex = index }.padding(horizontal = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(label, color = Color(0xFF20242C), fontSize = 14.sp, modifier = Modifier.weight(1f))
                                 Text(
                                     if (selectedIndex == index) "◉" else "○",
                                     color = AutoScriptPalette.DialogTitle,
-                                    fontSize = 28.sp,
+                                    fontSize = 20.sp,
                                 )
                             }
                         }
                     }
                     Box(Modifier.fillMaxWidth().height(hairline()).background(AutoScriptPalette.Divider))
-                    Row(Modifier.fillMaxWidth().height(42.dp)) {
+                    Row(Modifier.fillMaxWidth().height(controlHeight)) {
                         Box(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
                             Text("取消", color = Color(0xFF20242C), fontSize = 14.sp)
                         }

@@ -123,20 +123,19 @@ internal fun ImageRecognitionTestDialog(
     val parametersValid = configuration != null
     var fullScreen by remember { mutableStateOf(false) }
     if (visible) Dialog(onDismissRequest = { cancelRecognition(); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 550.dp).fillMaxWidth(.94f)
-            .heightIn(max = minOf(520, (LocalConfiguration.current.screenHeightDp - 32).coerceAtLeast(120)).dp),
+        BoxWithConstraints((if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).imePadding(), contentAlignment = Alignment.Center) {
+        Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.width(studioDialogWidth(maxWidth.value, 420).dp)
+            .heightIn(max = minOf(520.dp, maxHeight)),
             color = Color.White, shape = RoundedCornerShape(if (fullScreen) 0.dp else 6.dp)) {
             Column {
                 RecognitionHeader("识别测试 · 已保存图片", { cancelRecognition(); onDismiss() }, fullScreen) { fullScreen = !fullScreen }
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     RecognitionChoice("截屏：${source.substringAfterLast('/').ifEmpty { "未选择" }}", Modifier.fillMaxWidth(), enabled = !busy) { pickSource = true }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(Reply.TEMPLATE to "像素找图", Reply.GRAY_TEMPLATE to "灰度找图").forEach { (value, label) ->
-                            RecognitionChoice((if (operation == value) "● " else "") + label, Modifier.weight(1f), enabled = !busy &&
-                                (value == Reply.TEMPLATE || onInsertRecognition != null)) { operation = value; invalidate() }
+                    StudioCompactGrid(listOf(Reply.TEMPLATE to "像素找图", Reply.GRAY_TEMPLATE to "灰度找图", -1 to "取字测试"), cellDp = 112, maximum = 3) { (value, label), cell ->
+                        if (value == -1) RecognitionChoice(label, cell, enabled = !busy && bitmap != null && region != null && onInsertRecognition != null) { showOcr = true }
+                        else RecognitionChoice((if (operation == value) "● " else "") + label, cell, enabled = !busy &&
+                            (value == Reply.TEMPLATE || onInsertRecognition != null)) { operation = value; invalidate() }
                         }
-                        RecognitionChoice("取字测试", Modifier.weight(1f), enabled = !busy && bitmap != null && region != null && onInsertRecognition != null) { showOcr = true }
-                    }
                     RecognitionChoice("模板：${template.substringAfterLast('/').ifEmpty { "未选择" }}", Modifier.fillMaxWidth(), enabled = !busy) { pickSource = false }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(Modifier.weight(1f)) {
@@ -148,20 +147,18 @@ internal fun ImageRecognitionTestDialog(
                             RecognitionInput(similarity, { if (it.length <= 16) { similarity = it; invalidate() } }, Modifier.fillMaxWidth(), numeric = true, enabled = !busy)
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        listOf("X", "Y", "宽", "高").forEachIndexed { index, label ->
-                            DesignerInput("$label px", boundTexts[index], !busy && bitmap != null, Modifier.weight(1f), numeric = true) { value ->
+                    StudioCompactGrid(listOf("X", "Y", "宽", "高").withIndex().toList(), cellDp = 82, maximum = 4) { (index, label), cell ->
+                            ImageToolCompactInput(label, boundTexts[index], !busy && bitmap != null, cell, numeric = true) { value ->
                                 if (value.length <= 16) bounds = boundTexts.toMutableList().apply { this[index] = value }
                                 invalidate()
                             }
-                        }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         TextButton(enabled = !busy && bitmap != null, onClick = { bounds = null; invalidate() }) { Text("使用原图全范围", fontSize = 11.sp) }
                         Text(if (region == null) "范围无效，须在原图内" else "右/下边界不包含", fontSize = 10.sp,
                             color = if (region == null) AutoScriptPalette.Danger else AutoScriptPalette.TextSecondary)
                     }
-                    if (operation == Reply.TEMPLATE) DesignerChoice("搜索方向", recognitionSearchDirections[direction],
+                    if (operation == Reply.TEMPLATE) ImageToolChoice("搜索方向", direction.toString(),
                         recognitionSearchDirections.mapIndexed { index, label -> index.toString() to label }, !busy) {
                         direction = it.toInt(); invalidate()
                     }
@@ -231,6 +228,7 @@ internal fun ImageRecognitionTestDialog(
                     }) { Text("回填找图配置") }
                 }
             }
+        }
         }
     }
     val ocrBitmap = bitmap

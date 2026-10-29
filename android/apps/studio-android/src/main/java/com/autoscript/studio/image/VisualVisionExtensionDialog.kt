@@ -97,6 +97,7 @@ internal fun VisualVisionExtensionDialog(contract: BlockContract, arguments: Jso
     var error by remember { mutableStateOf<String?>(null) }
     var discard by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
     var filterEditor by remember { mutableStateOf(false) }
     var maskEditor by remember { mutableStateOf(false) }
     var cleanupEditor by remember { mutableStateOf(false) }
@@ -105,8 +106,12 @@ internal fun VisualVisionExtensionDialog(contract: BlockContract, arguments: Jso
     var lastMask by remember(initial) {mutableStateOf(initial["mask"].orEmpty())}
     var lastCleanup by remember(initial) {mutableStateOf(initial["cleanup"].orEmpty().ifEmpty {ProjectImageCleanup().encode()})}
     var lastFilter by remember(initial) { mutableStateOf(initial["filter"].orEmpty().ifEmpty { ProjectImageFilter().encode() }) }
-    val canCapture = contract.kind in setOf("vision.findallmulticolor", "vision.components", "ocr.glyphdetails", "vision.findscaled") && allowCaptureSource
-    var capture by remember(initial) { mutableStateOf(canCapture) }
+    val canCapture = recognitionCanWrapCapture(contract.kind) && allowCaptureSource
+    val defaultCaptureSource = rememberDefaultImageCaptureSource()
+    val initialCapture = remember(initial) {
+        canCapture && initialImageCaptureSource(true, false, defaultCaptureSource).capture
+    }
+    var capture by remember(initial) { mutableStateOf(initialCapture) }
     var overwriteConfirmed by remember(initial) { mutableStateOf(false) }
     val variables = calculationVariables(project.manifest.variables, flowId, project.manifest.flows)
     fun update(key: String, value: String) { inputs = inputs + (key to value); error = null; if(key=="frameVariable") overwriteConfirmed=false }
@@ -125,7 +130,7 @@ internal fun VisualVisionExtensionDialog(contract: BlockContract, arguments: Jso
             if (contract.kind == "vision.findallmulticolor") visionSamplesFromSelection(selected)?.let { update("samples",it) }
         }
     }
-    if (visible && regionWait==null) StudioPanelDialog(contract.title, { if (inputs != initial || capture != canCapture) discard = true else onDismiss() }, confirmLabel,
+    if (visible && regionWait==null) StudioPanelDialog(contract.title, { if (inputs != initial || capture != initialCapture) discard = true else onDismiss() }, confirmLabel,
         fullScreen = fullScreen, onToggleFullScreen = { fullScreen = !fullScreen }, onConfirm = {
         error = visionExtensionArgumentError(contract.kind, inputs, variables)
         if(error==null && canCapture && capture && !overwriteConfirmed) error="请确认专用截图暂存变量允许覆盖，并在识别后释放"
@@ -135,13 +140,22 @@ internal fun VisualVisionExtensionDialog(contract: BlockContract, arguments: Jso
             parsed.first?.let { if (onConfirmSource != null) onConfirmSource(it, capture) else onConfirm(it) }
         }
     }) {
-        Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 900.dp else 360.dp).verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(contract.summary, fontSize = 11.sp)
+        Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 900.dp else 360.dp).verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (canCapture) {
+                ImageCaptureSourceControl(ImageCaptureSource.fromCapture(capture), onSelect = {
+                    capture = it.capture
+                    overwriteConfirmed = false
+                    error = null
+                })
+                if (capture) ImageToolToggle("专用暂存变量，允许覆盖并释放", overwriteConfirmed, true) { overwriteConfirmed = it }
+            }
+            DesignerAction(if (showHelp) "收起说明" else "参数说明", onClick = { showHelp = !showHelp })
+            if (showHelp) Text(contract.summary, fontSize = 11.sp)
             if(contract.kind=="screen.compareframes" && onWorkflow!=null) {
                 DesignerAction("区域变化 / 稳定等待",onClick={
                     runCatching {regionWaitArguments(inputs,variables)}.onSuccess {regionWait=it}.onFailure {error=it.message}
                 })
-                Text("先选当前截图变量和范围，即可组合等待；不需要模板，也不必先配置前帧或普通比较输出。",fontSize=10.sp)
+                if (showHelp) Text("先选当前截图变量和范围，即可组合等待；不需要模板，也不必先配置前帧或普通比较输出。",fontSize=10.sp)
             }
             if(onPickFromScreen!=null && contract.kind in setOf("screen.compareframes","vision.findscaled"))
                 DesignerAction("选范围",onClick={onPickFromScreen(ImageToolMode.REGION)})
@@ -149,19 +163,15 @@ internal fun VisualVisionExtensionDialog(contract: BlockContract, arguments: Jso
                 Row { DesignerAction("选范围", onClick = { onPickFromScreen(ImageToolMode.REGION) }); DesignerAction(if (contract.kind == "vision.findallmulticolor") "屏幕选色点" else "屏幕取色", onClick = {
                     onPickFromScreen(if (contract.kind == "vision.findallmulticolor") ImageToolMode.MULTI_COLOR else ImageToolMode.COLOR)
                 }) }
-            if (listOf("left","top","right","bottom").all { it in inputs }) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf("left" to "左","top" to "上","right" to "右不含","bottom" to "下不含").forEach { (key,label) ->
-                    DesignerInput(label,inputs[key].orEmpty(),true,Modifier.weight(1f),numeric=true) { update(key,it) }
-                }
+            if (listOf("left","top","right","bottom").all { it in inputs }) StudioCompactGrid(
+                listOf("left" to "左","top" to "上","right" to "右不含","bottom" to "下不含"), cellDp = 104, maximum = 4) { (key, label), cell ->
+                ImageToolCompactInput(label,inputs[key].orEmpty(),true,cell,numeric=true) { update(key,it) }
             }
-            if (canCapture) DesignerChoice("图像来源", if (capture) "运行时截图" else "已有图像", listOf("capture" to "运行时截图", "frame" to "已有图像"), true) { capture = it == "capture";overwriteConfirmed=false }
-            if (canCapture) Text(if (capture) "截图写入所选图像变量，识别后释放；原值会被覆盖。" else "读取已有图像，不截图也不释放；坐标属于来源图像。", fontSize = 10.sp)
-            if(canCapture && capture) DesignerToggle("专用暂存变量，允许覆盖并释放",overwriteConfirmed,true) { overwriteConfirmed=it }
             contract.properties.forEach { property ->
                 val key = property.path
                 if (key in setOf("left","top","right","bottom")) return@forEach
                 if(key=="additionalColors") {
-                    DesignerInput(property.label,inputs[key].orEmpty(),true,Modifier.fillMaxWidth()) {update(key,it)}
+                    ImageToolCompactInput(property.label,inputs[key].orEmpty(),true,Modifier.fillMaxWidth()) {update(key,it)}
                     DesignerAction("编辑前景色组",onClick={runCatching {glyphPaletteFromInputs(inputs["foregroundRgb"].orEmpty(),inputs["tolerance"].orEmpty(),inputs[key].orEmpty())}
                         .onSuccess {glyphPalette=it}.onFailure {error="请检查主色、容差及附加色格式"}})
                     return@forEach
@@ -196,22 +206,25 @@ internal fun VisualVisionExtensionDialog(contract: BlockContract, arguments: Jso
                             else -> ProjectVariableType.STRING
                         }
                         val sourceKey=if(contract.kind=="ocr.findtext") "detailsVariable" else "frameVariable"
-                        DesignerChoice(property.label, inputs[key].orEmpty().ifEmpty { "请选择" }, variables.filter { it.type == expected &&
+                        val label = if (canCapture && key == "frameVariable") {
+                            if (capture) "截图暂存" else "来源图像"
+                        } else property.label
+                        CompactVariableChoice(label, inputs[key].orEmpty(), variables.filter { it.type == expected &&
                             (key!="resultVariable" || it.name!=inputs[sourceKey]) && (key!=sourceKey || it.name!=inputs["resultVariable"])
-                        }.map { it.name to it.name }+(if(key in setOf("xVariable","yVariable")) listOf("" to "固定值") else emptyList()), true) { update(key, it) }
+                        }.map { it.name to it.name }+(if(key in setOf("xVariable","yVariable")) listOf("" to "固定值") else emptyList()), true, variables) { update(key, it) }
                     }
-                    key == "dictionaryPath" -> DesignerChoice(property.label, inputs[key].orEmpty(), project.manifest.resources.filter(::isGlyphDictionaryResource).map { it.get("path").asString.let { path -> path to path } }, true) { update(key, it) }
-                    key == "imagePath" -> DesignerChoice(property.label,inputs[key].orEmpty(),project.manifest.resources.filter {it["kind"]?.asString=="image"}.map {it["path"].asString.let {path->path to path.removePrefix("assets/images/")}},true) {update(key,it)}
+                    key == "dictionaryPath" -> ImageToolChoice(property.label, inputs[key].orEmpty(), project.manifest.resources.filter(::isGlyphDictionaryResource).map { it.get("path").asString.let { path -> path to path } }, true) { update(key, it) }
+                    key == "imagePath" -> ImageToolChoice(property.label,inputs[key].orEmpty(),project.manifest.resources.filter {it["kind"]?.asString=="image"}.map {it["path"].asString.let {path->path to path.removePrefix("assets/images/")}},true) {update(key,it)}
                     property.editor in setOf(BlockPropertyEditor.ENUM, BlockPropertyEditor.INTEGER_ENUM) -> {
                         val labels = mapOf("rotate90" to "顺时针90°", "rotate180" to "180°", "rotate270" to "顺时针270°", "flipX" to "水平镜像", "flipY" to "垂直镜像", "gray" to "灰度", "threshold" to "灰度二值化", "filter" to "多组滤色", "mask" to "模板蒙版", "resize" to "缩放", "4" to "4邻接", "8" to "8邻接")+imageCleanupLabels
-                        DesignerChoice(property.label, inputs[key].orEmpty(), property.choices.map { it to (labels[it] ?: it) }, true) {
+                        ImageToolChoice(property.label, inputs[key].orEmpty(), property.choices.map { it to (labels[it] ?: it) }, true) {
                             if(key=="mode") changeMode(it) else update(key,it)
                         }
                     }
-                    else -> DesignerInput(property.label, inputs[key].orEmpty(), true, Modifier.fillMaxWidth(), numeric = property.editor == BlockPropertyEditor.INTEGER) { update(key, it) }
+                    else -> ImageToolCompactInput(property.label, inputs[key].orEmpty(), true, Modifier.fillMaxWidth(), numeric = property.editor == BlockPropertyEditor.INTEGER) { update(key, it) }
                 }
             }
-            Text("范围使用来源帧原像素；颜色、连通块、逐字结果用“读取识别结果属性”读取，不受通用Data数据项预算限制。", fontSize = 11.sp)
+            if (showHelp) Text("范围使用来源帧原像素；颜色、连通块、逐字结果用“读取识别结果属性”读取，不受通用Data数据项预算限制。", fontSize = 11.sp)
             onManageVariables?.let { TextButton(onClick = it) { Text("维护变量", fontSize = 11.sp) } }
             error?.let { Text(it, fontSize = 11.sp) }
         }

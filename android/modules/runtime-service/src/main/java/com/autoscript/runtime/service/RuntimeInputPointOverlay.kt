@@ -14,6 +14,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.EditText
+import android.widget.ScrollView
 import android.text.InputType
 import android.text.InputFilter
 import com.autoscript.runtime.api.InputPointAction
@@ -27,16 +28,22 @@ internal class RuntimeInputPointOverlay(
 ) {
     private val manager = context.getSystemService(WindowManager::class.java)
     private val windows = mutableListOf<View>()
-    private var start: TextView? = null
-    private var end: TextView? = null
+    private var start: View? = null
+    private var end: View? = null
     private var panel: LinearLayout? = null
     private var durationDialog: AlertDialog? = null
+    private var coordinateText: TextView? = null
     private var requestId = 0L
     private var features = 0
     private var action = InputPointAction.TAP
     private var durationMs = 800
     private var screen = Point()
     private var rotation = 0
+    private val preferences = context.getSharedPreferences("input-point-toolbar", Context.MODE_PRIVATE)
+    private var panelLeft: Int? = null
+    private var panelTop: Int? = null
+    private val positionKey get() = if (screen.x > screen.y) "landscape" else "portrait"
+    private val chrome = 0xE61E2531.toInt()
     private val blue = 0xFF3F6BFF.toInt()
     private val gray = 0xFF858D9B.toInt()
 
@@ -46,6 +53,8 @@ internal class RuntimeInputPointOverlay(
         action = initialAction
         features = inputFeatures
         screen = displaySize()
+        panelLeft = preferences.getFloat("$positionKey-x", Float.NaN).takeIf { it.isFinite() }?.let { (it.coerceIn(0f, 1f) * screen.x).toInt() }
+        panelTop = preferences.getFloat("$positionKey-y", Float.NaN).takeIf { it.isFinite() }?.let { (it.coerceIn(0f, 1f) * screen.y).toInt() }
         @Suppress("DEPRECATION")
         rotation = manager.defaultDisplay.rotation
         try {
@@ -65,6 +74,7 @@ internal class RuntimeInputPointOverlay(
         start = null
         end = null
         panel = null
+        coordinateText = null
         requestId = 0L
     }
 
@@ -89,12 +99,9 @@ internal class RuntimeInputPointOverlay(
         if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
     }
 
-    private fun marker(label: String, color: Int, x: Int, y: Int): TextView {
+    private fun marker(label: String, color: Int, x: Int, y: Int): View {
         val size = dp(48)
-        val view = text("☝\n$label", 16f, color).apply {
-            background = shape(0xEEFFFFFF.toInt(), color, dp(24).toFloat())
-            contentDescription = "$label 点位；拖动定位，点击设置；不会点击目标应用"
-        }
+        val view = InputPointReticleView(context, label, color)
         val layout = params(size, size, (x - size / 2).coerceIn(-size / 2, screen.x - size / 2 - 1),
             (y - size / 2).coerceIn(-size / 2, screen.y - size / 2 - 1))
         var rawX = 0f
@@ -122,6 +129,7 @@ internal class RuntimeInputPointOverlay(
                         layout.x = (left + dx.toInt()).coerceIn(-size / 2, screen.x - size / 2 - 1)
                         layout.y = (top + dy.toInt()).coerceIn(-size / 2, screen.y - size / 2 - 1)
                         runCatching { manager.updateViewLayout(view, layout) }
+                        updateCoordinateText()
                     }
                     true
                 }
@@ -134,6 +142,7 @@ internal class RuntimeInputPointOverlay(
             }
         }
         view.setOnClickListener { guardUi { renderPanel(expanded = true) } }
+        view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateCoordinateText() }
         add(view, layout)
         return view
     }
@@ -158,17 +167,35 @@ internal class RuntimeInputPointOverlay(
 
     private fun renderPanel(expanded: Boolean) {
         remove(panel)
-        val width = minOf(dp(320), screen.x - dp(16)).coerceAtLeast(1)
+        coordinateText = null
+        val width = minOf(dp(340), screen.x - dp(16)).coerceAtLeast(1)
+        val controlHeight = dp((32 * context.resources.configuration.fontScale.coerceIn(1f, 2f)).toInt())
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            background = shape(0xFFFFFFFF.toInt(), 0xFFD9DEE7.toInt(), dp(5).toFloat())
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = shape(chrome, 0xFF394356.toInt(), dp(8).toFloat())
             elevation = dp(8).toFloat()
         }
-        root.addView(text("${action.title} · 拖手指定位，点击手指设置", 12f, blue).apply {
+        val toolbar = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
+        val handle = text("◎\n${action.title}", 10f, 0xFFFFFFFF.toInt()).apply {
+            contentDescription = "${action.title}：点击切换设置，拖动工具条"
+            background = shape(blue, blue, dp(4).toFloat())
             setOnClickListener { guardUi { renderPanel(!expanded) } }
-        }, LinearLayout.LayoutParams(-1, dp(34)))
+        }
+        toolbar.addView(handle, LinearLayout.LayoutParams(dp(42), controlHeight + dp(6)))
+        coordinateText = text("", 10f, 0xFFD5DCE8.toInt())
+        updateCoordinateText()
+        toolbar.addView(coordinateText, LinearLayout.LayoutParams(0, -2, 1f))
+        toolbar.addView(button(if (expanded) "收起" else "设置") { renderPanel(!expanded) }, LinearLayout.LayoutParams(dp(44), controlHeight))
+        toolbar.addView(button("确定") { finish(InputPointPickReply.SUCCESS) }.apply {
+            background = shape(0xFF1FA971.toInt(), 0xFF1FA971.toInt(), dp(4).toFloat())
+        }, LinearLayout.LayoutParams(dp(48), controlHeight))
+        toolbar.addView(button("×") { finish(InputPointPickReply.CANCELLED, "已取消选点") }.apply {
+            contentDescription = "取消选点"
+        }, LinearLayout.LayoutParams(dp(30), controlHeight))
+        root.addView(toolbar)
         if (expanded) {
+            val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             InputPointAction.entries.chunked(3).forEach { actions ->
                 val row = LinearLayout(context)
                 actions.forEach { selected ->
@@ -178,35 +205,77 @@ internal class RuntimeInputPointOverlay(
                         else if (start == null) start = marker("起", blue, screen.x / 2, screen.y / 2)
                         if (selected.needsEnd) ensureEnd() else { remove(end); end = null }
                         renderPanel(true)
-                    }.apply { if (selected == action) background = shape(0xFFEFF3FF.toInt(), blue, dp(3).toFloat()) },
-                        LinearLayout.LayoutParams(0, dp(38), 1f))
+                    }.apply { if (selected == action) background = shape(blue, blue, dp(3).toFloat()) },
+                        LinearLayout.LayoutParams(0, controlHeight, 1f))
                 }
-                root.addView(row)
+                body.addView(row)
             }
-            val first = center(start)
-            val last = center(end)
-            root.addView(text(if (action == InputPointAction.UP) "仅释放本任务持有的单指"
-                else "起点 ${first.x},${first.y}" + if (action.needsEnd) "  →  终点 ${last.x},${last.y}" else "",
-                11f, gray), LinearLayout.LayoutParams(-1, dp(32)))
             if (action.needsDuration) {
                 val row = LinearLayout(context)
-                row.addView(button("−100") { durationMs = (durationMs - 100).coerceAtLeast(100); renderPanel(true) }, LinearLayout.LayoutParams(0, dp(38), 1f))
-                row.addView(button("${durationMs}ms ✎") { editDuration() }, LinearLayout.LayoutParams(0, dp(38), 1f))
-                row.addView(button("+100") { durationMs = (durationMs + 100).coerceAtMost(5000); renderPanel(true) }, LinearLayout.LayoutParams(0, dp(38), 1f))
-                root.addView(row)
+                row.addView(button("−100") { durationMs = (durationMs - 100).coerceAtLeast(100); renderPanel(true) }, LinearLayout.LayoutParams(0, controlHeight, 1f))
+                row.addView(button("${durationMs}ms ✎") { editDuration() }, LinearLayout.LayoutParams(0, controlHeight, 1f))
+                row.addView(button("+100") { durationMs = (durationMs + 100).coerceAtMost(5000); renderPanel(true) }, LinearLayout.LayoutParams(0, controlHeight, 1f))
+                body.addView(row)
+            }
+            // The action row stays visible while only additional settings scroll.
+            body.measure(View.MeasureSpec.makeMeasureSpec((width - dp(8)).coerceAtLeast(1), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            val bodyHeight = inputPointPanelBodyHeight(screen.y, dp(16), controlHeight + dp(14), body.measuredHeight)
+            root.addView(ScrollView(context).apply { isFillViewport = false; addView(body) }, LinearLayout.LayoutParams(-1, bodyHeight))
+        }
+        root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec((screen.y - dp(16)).coerceAtLeast(1), View.MeasureSpec.AT_MOST))
+        panel = root
+        val position = inputPointPanelPosition(panelLeft ?: (screen.x - width) / 2,
+            panelTop ?: screen.y / 3, width, root.measuredHeight, screen.x, screen.y)
+        val layout = params(width, -2, position.first, position.second)
+        add(root, layout)
+        installPanelDrag(handle, root, layout)
+    }
+
+    private fun installPanelDrag(handle: View, root: View, layout: WindowManager.LayoutParams) {
+        var rawX = 0f
+        var rawY = 0f
+        var left = 0
+        var top = 0
+        var moved = false
+        val slop = ViewConfiguration.get(context).scaledTouchSlop
+        handle.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    rawX = event.rawX; rawY = event.rawY
+                    left = layout.x; top = layout.y; moved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - rawX
+                    val dy = event.rawY - rawY
+                    if (abs(dx) > slop || abs(dy) > slop) moved = true
+                    if (moved) {
+                        val position = inputPointPanelPosition(left + dx.toInt(), top + dy.toInt(),
+                            root.width, root.height, screen.x, screen.y)
+                        layout.x = position.first; layout.y = position.second
+                        panelLeft = layout.x; panelTop = layout.y
+                        guardUi { manager.updateViewLayout(root, layout) }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (moved) preferences.edit().putFloat("$positionKey-x", layout.x.toFloat() / screen.x.coerceAtLeast(1))
+                        .putFloat("$positionKey-y", layout.y.toFloat() / screen.y.coerceAtLeast(1)).apply()
+                    else if (event.actionMasked == MotionEvent.ACTION_UP) handle.performClick()
+                    true
+                }
+                else -> false
             }
         }
-        val footer = LinearLayout(context)
-        footer.addView(button("取消") { finish(InputPointPickReply.CANCELLED, "已取消选点") }, LinearLayout.LayoutParams(0, dp(40), 1f))
-        footer.addView(button(if (expanded) "确认点位" else "设置动作") {
-            if (expanded) finish(InputPointPickReply.SUCCESS) else renderPanel(true)
-        }, LinearLayout.LayoutParams(0, dp(40), 1f))
-        root.addView(footer)
-        root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(screen.y - dp(16), View.MeasureSpec.AT_MOST))
-        panel = root
-        add(root, params(width, -2, (screen.x - width) / 2,
-            (screen.y - root.measuredHeight - dp(32)).coerceAtLeast(0)))
+    }
+
+    private fun updateCoordinateText() {
+        val first = center(start)
+        val last = center(end)
+        coordinateText?.text = if (action == InputPointAction.UP) "仅释放本任务持有的单指"
+            else "起点 ${first.x},${first.y}" + if (action.needsEnd) " → 终点 ${last.x},${last.y}" else ""
     }
 
     private fun finish(status: Int, message: String = "") {
@@ -229,7 +298,8 @@ internal class RuntimeInputPointOverlay(
         windows += view
     }
 
-    private fun button(label: String, enabled: Boolean = true, click: () -> Unit): TextView = text(label, 13f, if (enabled) blue else gray).apply {
+    private fun button(label: String, enabled: Boolean = true, click: () -> Unit): TextView = text(label, 11f, if (enabled) 0xFFFFFFFF.toInt() else gray).apply {
+        background = shape(0xFF3A4252.toInt(), chrome, dp(4).toFloat())
         isEnabled = enabled
         setOnClickListener { guardUi(click) }
     }
@@ -254,6 +324,7 @@ internal class RuntimeInputPointOverlay(
         durationDialog = dialog
         dialog.setOnDismissListener { if (durationDialog === dialog) durationDialog = null }
         dialog.show()
+        dialog.window?.setLayout(minOf(dp(320), screen.x - dp(16)).coerceAtLeast(1), WindowManager.LayoutParams.WRAP_CONTENT)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val value = input.text.toString().toIntOrNull()
             if (value == null || value !in 100..5000) input.error = "请输入100–5000毫秒"

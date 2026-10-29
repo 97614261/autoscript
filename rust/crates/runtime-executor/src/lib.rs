@@ -41,6 +41,8 @@ pub fn validate_private_data_call(
 mod codec_runtime;
 #[cfg(test)]
 mod codec_tests;
+#[cfg(test)]
+mod color_roi_tests;
 mod frame_png;
 mod glyph_details;
 mod host_utility_runtime;
@@ -110,7 +112,7 @@ const OP_SCREEN_BEGIN_SERIES: u32 = 5_200;
 const OP_SCREEN_CACHE_SERIES_FRAME: u32 = 5_201;
 const OP_SCREEN_RELEASE_SERIES: u32 = 5_202;
 const MAX_MULTI_COLOR_SAMPLES: usize = 64;
-const MAX_LUA_COLOR_RESULTS: usize = 256;
+const MAX_LUA_COLOR_RESULTS: usize = 2048;
 const MAX_TEMPLATE_PIXEL_COMPARISONS: u64 = 1_000_000_000;
 const OP_OCR_LOAD_DICTIONARY: u32 = 6_000;
 const OP_OCR_RELEASE_DICTIONARY: u32 = 6_001;
@@ -118,6 +120,7 @@ const OP_OCR_GLYPH: u32 = 6_100;
 const MAX_PROJECT_CAPABILITIES: usize = 64;
 const MAX_SCRIPT_LOG_ENTRIES: usize = 200;
 const MAX_SCRIPT_LOG_BYTES: usize = 2_048;
+const MAX_COLOR_ROI_WARNINGS: usize = 128;
 const MAX_SCRIPT_PROMPT_ENTRIES: usize = 64;
 const MAX_SCRIPT_PROMPT_BYTES: usize = 2_048;
 const MAX_UI_CONTROLS: usize = 256;
@@ -669,6 +672,7 @@ pub struct RuntimeExecutor<C, H> {
     dictionaries: Arc<Mutex<DictionaryStore>>,
     script_logs: VecDeque<String>,
     script_logs_dropped: u64,
+    color_roi_warnings: BTreeSet<(TaskToken, String)>,
     script_prompts: VecDeque<String>,
     output_switches: ScriptOutputSwitches,
     run_events: VecDeque<String>,
@@ -767,6 +771,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             dictionaries,
             script_logs: VecDeque::with_capacity(MAX_SCRIPT_LOG_ENTRIES),
             script_logs_dropped: 0,
+            color_roi_warnings: BTreeSet::new(),
             script_prompts: VecDeque::with_capacity(MAX_SCRIPT_PROMPT_ENTRIES),
             output_switches: ScriptOutputSwitches {
                 logs: true,
@@ -978,11 +983,12 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                             .complete(task, format!("{values:?}").into_bytes(), &[])?;
                     }
                     Err(error) => {
+                        let message = self.message_with_run_context(task, &error.to_string());
                         self.scheduler.fail(
                             task,
                             TaskFailure {
                                 code: "LUA_RUNTIME_ERROR".to_owned(),
-                                message: error.to_string(),
+                                message,
                             },
                         )?;
                     }
@@ -1382,7 +1388,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             )
             .then(automation_core::TemplateSearchMetrics::default)
         });
-        let result = match opcode {
+        let mut result = match opcode {
             OP_SCREEN_CACHE => self.cache_frame(task, args),
             OP_SCREEN_RELEASE => self.release_frame(task, args),
             OP_SCREEN_LOAD_IMAGE => self.load_image(task, args),
@@ -1407,6 +1413,15 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             OP_SCREEN_RELEASE_SERIES => self.release_capture_series(task, args),
             _ => return Err(ExecutorError::UnknownOpcode(opcode)),
         };
+        if !self.scheduler.handle().cancellation_requested(task) {
+            if let Some(input) = result
+                .as_ref()
+                .err()
+                .and_then(|error| self.color_roi_miss(task, opcode, args, error))
+            {
+                result = Ok(input);
+            }
+        }
         let status = if self.scheduler.handle().cancellation_requested(task) {
             "cancelled"
         } else {
@@ -1427,6 +1442,49 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         self.resume_inputs.insert(task, input);
         self.scheduler.yield_budget(task)?;
         Ok(())
+    }
+
+    fn color_roi_miss(
+        &mut self,
+        task: TaskToken,
+        opcode: u32,
+        args: &[LuaScalar],
+        error: &str,
+    ) -> Option<LuaInput> {
+        let name = match opcode {
+            OP_SCREEN_FIND_COLOR => "区域找色",
+            OP_SCREEN_FIND_MULTI_COLOR => "多点找色",
+            OP_SCREEN_COUNT_COLOR => "颜色计数",
+            OP_SCREEN_FIND_ALL_COLOR => "查找全部颜色",
+            _ => return None,
+        };
+        // Recover only an actual frame-boundary mismatch after normal argument validation.
+        // Malformed regions, invalid colors/limits and frame ownership errors remain errors.
+        if !matches!(error, "InvalidRoi" | "Vision(InvalidRoi)") {
+            return None;
+        }
+        let LuaScalar::Integer(frame) = args.first()? else {
+            return None;
+        };
+        let [left, top, right, bottom] = integer_args::<4>(args.get(3..7)?).ok()?;
+        let roi = search_options(left, top, right, bottom).ok()?.roi;
+        let view = self.frame_view(task, *frame).ok()?;
+        let (width, height) = (view.metadata.width, view.metadata.height);
+        if roi.right <= width && roi.bottom <= height {
+            return None;
+        }
+        if self.output_switches.logs && self.color_roi_warnings.len() < MAX_COLOR_ROI_WARNINGS {
+            let message = self.message_with_run_context(task, &format!(
+                "COLOR_ROI_OUT_OF_BOUNDS: {name}范围({left},{top})-({right},{bottom})超出截图{width}x{height}，本次按未命中返回；请切换到取样时的方向或重新选择范围。"
+            ));
+            if self.color_roi_warnings.insert((task, message.clone())) {
+                self.record_script_log("WARN", &message);
+            }
+        }
+        Some(match opcode {
+            OP_SCREEN_FIND_COLOR | OP_SCREEN_FIND_MULTI_COLOR => point_input(None),
+            _ => LuaInput::Values(vec![LuaScalar::Boolean(true), LuaScalar::Integer(0)]),
+        })
     }
 
     fn cache_frame(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
@@ -1495,7 +1553,19 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn find_color(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let (args, additional) = color_group_args::<7>(args)?;
         let [frame, rgb, tolerance, left, top, right, bottom] = integer_args::<7>(args)?;
+        if !additional.is_empty() {
+            let colors = decode_color_group(rgb, tolerance, additional)?;
+            let view = self.frame_view(task, frame)?;
+            let point = pixel_vision::color_palette::find_any_color(
+                view.image_view().map_err(|e| format!("{e:?}"))?,
+                &colors,
+                search_options(left, top, right, bottom)?,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+            return Ok(point_input(point.map(|point| (point.x, point.y))));
+        }
         let handle = decode_frame_handle(frame)?;
         let options = search_options(left, top, right, bottom)?;
         let target = decode_rgb(rgb)?;
@@ -1734,7 +1804,22 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn compare_color(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let (args, additional) = color_group_args::<5>(args)?;
         let [frame, x, y, rgb, tolerance] = integer_args::<5>(args)?;
+        if !additional.is_empty() {
+            let colors = decode_color_group(rgb, tolerance, additional)?;
+            let view = self.frame_view(task, frame)?;
+            let matched = pixel_vision::color_palette::compare_any_color(
+                view.image_view().map_err(|e| format!("{e:?}"))?,
+                decode_point(x, y)?,
+                &colors,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+            return Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Boolean(matched),
+            ]));
+        }
         let matched = self
             .frames
             .lock()
@@ -1808,8 +1893,27 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn count_color(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let (args, additional) = color_group_args::<8>(args)?;
         let [frame, rgb, tolerance, left, top, right, bottom, limit] = integer_args::<8>(args)?;
-        let limit = decode_result_limit(limit)?;
+        let limit = usize::try_from(limit)
+            .ok()
+            .filter(|n| *n <= pixel_vision::MAX_COLOR_COUNT)
+            .ok_or("color count limit must be between 0 and 64000000")?;
+        if !additional.is_empty() {
+            let colors = decode_color_group(rgb, tolerance, additional)?;
+            let view = self.frame_view(task, frame)?;
+            let count = pixel_vision::count_any_color(
+                view.image_view().map_err(|e| format!("{e:?}"))?,
+                &colors,
+                search_options(left, top, right, bottom)?,
+                limit,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+            return Ok(LuaInput::Values(vec![
+                LuaScalar::Boolean(true),
+                LuaScalar::Integer(count as i64),
+            ]));
+        }
         let count = self
             .frames
             .lock()
@@ -1831,21 +1935,33 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn find_all_color(&self, task: TaskToken, args: &[LuaScalar]) -> Result<LuaInput, String> {
+        let (args, additional) = color_group_args::<8>(args)?;
         let [frame, rgb, tolerance, left, top, right, bottom, limit] = integer_args::<8>(args)?;
-        let points = self
-            .frames
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .find_all_colors(
-                task,
-                decode_frame_handle(frame)?,
-                self.scheduler.resources(),
-                decode_rgb(rgb)?,
-                decode_tolerance(tolerance)?,
+        let points = if additional.is_empty() {
+            self.frames
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .find_all_colors(
+                    task,
+                    decode_frame_handle(frame)?,
+                    self.scheduler.resources(),
+                    decode_rgb(rgb)?,
+                    decode_tolerance(tolerance)?,
+                    search_options(left, top, right, bottom)?,
+                    decode_result_limit(limit)?,
+                )
+                .map_err(|error| format!("{error:?}"))?
+        } else {
+            let colors = decode_color_group(rgb, tolerance, additional)?;
+            let view = self.frame_view(task, frame)?;
+            pixel_vision::color_palette::find_all_any_colors(
+                view.image_view().map_err(|e| format!("{e:?}"))?,
+                &colors,
                 search_options(left, top, right, bottom)?,
                 decode_result_limit(limit)?,
             )
-            .map_err(|error| format!("{error:?}"))?;
+            .map_err(|e| format!("{e:?}"))?
+        };
         let mut values = Vec::with_capacity(2 + points.len() * 2);
         values.push(LuaScalar::Boolean(true));
         values.push(LuaScalar::Integer(
@@ -1868,7 +1984,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         else {
             return Err("Legacy.duoDianZhaoSe requires frame, left, top, width, height, parameters, direction and percentage".to_owned());
         };
-        let frame = self.legacy_frame_view(task, *frame)?;
+        let frame = self.frame_view(task, *frame)?;
         let points = duo_dian_zhao_se(
             frame.image_view().map_err(|error| format!("{error:?}"))?,
             legacy_coordinate(*left, "left")?,
@@ -1894,7 +2010,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         else {
             return Err("Legacy.duoDianBiSe requires frame, parameters and percentage".to_owned());
         };
-        let frame = self.legacy_frame_view(task, *frame)?;
+        let frame = self.frame_view(task, *frame)?;
         let matched = duo_dian_bi_se(
             frame.image_view().map_err(|error| format!("{error:?}"))?,
             legacy_text(parameters, "DuoDianBiSe parameters")?,
@@ -1921,7 +2037,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                     .to_owned(),
             );
         };
-        let frame = self.legacy_frame_view(task, *frame)?;
+        let frame = self.frame_view(task, *frame)?;
         let count = get_rect_color_num(
             frame.image_view().map_err(|error| format!("{error:?}"))?,
             legacy_coordinate(*left, "left")?,
@@ -1954,7 +2070,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         ]))
     }
 
-    fn legacy_frame_view(
+    fn frame_view(
         &self,
         task: TaskToken,
         encoded: i64,
@@ -2515,20 +2631,26 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 "Log.write message exceeds 2048 UTF-8 bytes".to_owned(),
             ));
         }
-        let message = std::str::from_utf8(message)
-            .map_err(|_| ExecutorError::InvalidYield("Log.write message must be UTF-8".to_owned()))?
-            .replace(['\r', '\n'], "\\n");
+        let message = std::str::from_utf8(message).map_err(|_| {
+            ExecutorError::InvalidYield("Log.write message must be UTF-8".to_owned())
+        })?;
+        self.record_script_log(level, message);
+        self.resume_inputs.insert(task, LuaInput::Boolean(true));
+        self.scheduler.yield_budget(task)?;
+        Ok(())
+    }
+
+    fn record_script_log(&mut self, level: &str, message: &str) {
         if self.output_switches.logs && self.script_logs.len() >= MAX_SCRIPT_LOG_ENTRIES {
             self.script_logs.pop_front();
             self.script_logs_dropped = self.script_logs_dropped.saturating_add(1);
         }
         if self.output_switches.logs {
-            self.script_logs
-                .push_back(format!("脚本/{level}: {message}"));
+            self.script_logs.push_back(format!(
+                "脚本/{level}: {}",
+                message.replace(['\r', '\n'], "\\n")
+            ));
         }
-        self.resume_inputs.insert(task, LuaInput::Boolean(true));
-        self.scheduler.yield_budget(task)?;
-        Ok(())
     }
 
     fn apply_prompt(&mut self, task: TaskToken, args: &[LuaScalar]) -> Result<(), ExecutorError> {
@@ -3187,6 +3309,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         self.record_task_terminal(*task, state);
         self.recognition_results.clear_task(*task);
         self.regexes.clear_task(*task);
+        self.color_roi_warnings.retain(|(owner, _)| owner != task);
         self.run_contexts.remove(task);
         self.resume_inputs.remove(task);
         if let Some((owner, timer)) = self.callback_tasks.remove(task) {
@@ -3290,6 +3413,31 @@ fn integer_args<const N: usize>(args: &[LuaScalar]) -> Result<[i64; N], String> 
 
 fn utility_opcode(opcode: u32) -> bool {
     matches!(opcode,1000 | 1010..=1024 | 2002 | 14007..=14012 | 14200..=14237 | 14300..=14302 | 14400..=14403)
+}
+
+fn color_group_args<const N: usize>(args: &[LuaScalar]) -> Result<(&[LuaScalar], &str), String> {
+    if args.len() == N {
+        return Ok((args, ""));
+    }
+    if let [head @ .., LuaScalar::Bytes(value)] = args {
+        if head.len() == N && value.len() <= pixel_vision::color_palette::MAX_ADDITIONAL_BYTES {
+            return Ok((
+                head,
+                std::str::from_utf8(value).map_err(|_| "invalid color group encoding")?,
+            ));
+        }
+    }
+    Err("invalid color group arguments".to_owned())
+}
+
+fn decode_color_group(
+    rgb: i64,
+    tolerance: i64,
+    additional: &str,
+) -> Result<Vec<pixel_vision::ColorSpec>, String> {
+    let rgb = encode_rgb(decode_rgb(rgb)?);
+    let tolerance = u8::try_from(tolerance).map_err(|_| "invalid color tolerance")?;
+    pixel_vision::color_palette::parse(rgb, tolerance, additional).map_err(str::to_owned)
 }
 
 fn decode_rgb(value: i64) -> Result<Color, String> {
@@ -5037,6 +5185,48 @@ mod tests {
     }
 
     #[test]
+    fn full_color_count_and_2048_coordinates_cross_the_real_lua_host_bridge() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut executor = executor(&clock, VirtualHost::new(64, 64));
+        let capture = executor
+            .frame_pool()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .publish_capture(
+                FrameMetadata {
+                    width: 64,
+                    height: 64,
+                    row_stride: 256,
+                    pixel_stride: 4,
+                    format: FrameFormat::Rgba8888,
+                    rotation: Rotation::Degrees0,
+                    timestamp_nanos: 1,
+                    snapshot_id: 1,
+                },
+                &[10, 20, 30, 255].repeat(4096),
+            )
+            .unwrap();
+        let source = format!(
+            r"return function()
+            local frame = Screen.cache({})
+            assert(Screen.countColor(frame,0x0a141e,0,0,0,64,64,0)==4096)
+            local points = Screen.findAllColor(frame,0x0a141e,0,0,0,64,64,2048)
+            assert(#points==2048 and points[2048].x==63 and points[2048].y==31)
+            local palette = Screen.findAllColor(frame,0x000000,0,0,0,64,64,2048,'0A141E:0')
+            assert(#palette==2048 and palette[2048].x==63 and palette[2048].y==31)
+            Screen.release(frame)
+        end",
+            capture.0
+        );
+        let task = executor
+            .start_entry_chunk(source.as_bytes(), "color-limits-bridge")
+            .unwrap();
+        executor.drive().unwrap();
+        assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        assert_eq!(executor.resources().resource_count(), 0);
+    }
+
+    #[test]
     fn extended_pixel_api_round_trips_lua_tables_and_releases_the_frame() {
         let clock = ManualClock::new(MonoTime::ZERO);
         let mut executor = executor(&clock, VirtualHost::new(3, 2));
@@ -5064,6 +5254,22 @@ mod tests {
         let source = format!(
             r"return function()
                 local frame = Screen.cache({})
+                assert(Screen.colorGroupVersion == 1)
+                assert(Screen.colorLimitsVersion == 1)
+                assert(Screen.countColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 0) == 3)
+                assert(Screen.countColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 64000000) == 3)
+                assert(Screen.countColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 0, '010203:0') == 5)
+                assert(#Screen.findAllColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 2048) == 3)
+                assert(not pcall(Screen.countColor, frame, 0x0a141e, 0, 0, 0, 3, 2, -1))
+                assert(not pcall(Screen.findAllColor, frame, 0x0a141e, 0, 0, 0, 3, 2, 2049))
+                group_compared = Screen.compareColor(frame, 1, 0, 0x0a141e, 0, '010203:0')
+                group_missed = Screen.compareColor(frame, 0, 1, 0x0a141e, 0, '010203:0')
+                group_count = Screen.countColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 256, '0A141F:1;010203:0')
+                local group = Screen.findAllColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 256, '0A141F:1;010203:0')
+                group_size, group_second_x = #group, group[2].x
+                local first = Screen.findColor(frame, 0x28323c, 0, 0, 0, 3, 2, '010203:0')
+                group_first_x, group_first_y = first.x, first.y
+                group_empty = Screen.countColor(frame, 0x0a141e, 0, 0, 0, 3, 2, 256, '')
                 sampled_rgb = Screen.getColor(frame, 0, 0)
                 compared = Screen.compareColor(frame, 0, 0, 0x0a141e, 0)
                 local multi = Screen.findMultiColor(frame, 0x28323c, 0, {{{{x=0,y=-1,rgb=0x0a141e,tolerance=0}}}}, 0, 0, 3, 2)
@@ -5080,6 +5286,28 @@ mod tests {
             .expect("start");
         executor.drive().expect("drive");
         assert_eq!(executor.task_state(task), Some(TaskState::Completed));
+        for (name, expected) in [
+            ("group_count", 5),
+            ("group_size", 5),
+            ("group_second_x", 1),
+            ("group_first_x", 1),
+            ("group_first_y", 0),
+            ("group_empty", 3),
+        ] {
+            assert_eq!(
+                executor.lua().global_scalar(name).unwrap(),
+                LuaScalar::Integer(expected),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            executor.lua().global_scalar("group_compared").unwrap(),
+            LuaScalar::Boolean(true)
+        );
+        assert_eq!(
+            executor.lua().global_scalar("group_missed").unwrap(),
+            LuaScalar::Boolean(false)
+        );
         assert_eq!(
             executor.lua().global_scalar("sampled_rgb").expect("rgb"),
             LuaScalar::Integer(0x000a_141e)

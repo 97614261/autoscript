@@ -125,7 +125,7 @@ internal fun ImageTemplateSaveDialog(
     )) {
         BoxWithConstraints(Modifier.fillMaxWidth().imePadding(), contentAlignment = Alignment.Center) {
         val short = studioShortViewport(maxHeight.value)
-        Surface(Modifier.widthIn(max = 460.dp).fillMaxWidth(.92f)
+        Surface(Modifier.width(studioDialogWidth(maxWidth.value, 380).dp)
             .heightIn(max = studioPanelMaxHeight(maxHeight.value, LocalConfiguration.current.screenHeightDp, if (short) 8 else 32).dp),
             shape = RoundedCornerShape(4.dp), color = androidx.compose.ui.graphics.Color.White, shadowElevation = 10.dp) {
             Column {

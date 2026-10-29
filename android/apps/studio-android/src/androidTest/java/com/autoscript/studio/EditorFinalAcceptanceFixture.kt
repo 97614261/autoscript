@@ -224,16 +224,17 @@ internal object EditorFinalAcceptanceFixture {
                 test.runOnMainSync { compact = false }
             }
             record("closeout-live-log-mutable-snapshot-and-history-filter-channel-switch") {
-                open("logs"); await("live line") { label("脚本/INFO: QA_LIVE_FIRST") != null }
+                open("logs"); await("live line") { label("QA_LIVE_FIRST") != null }
                 test.runOnMainSync { live += "脚本/ERROR: QA_LIVE_SECOND" }
-                await("live update") { label("脚本/ERROR: QA_LIVE_SECOND") != null }
-                click("仅错误"); await("live filter") { label("脚本/INFO: QA_LIVE_FIRST") == null }
-                click("历史"); await("history loaded") { label("脚本/INFO: QA_HISTORY_1024") != null }
-                input(0, "QA_HISTORY_1000"); await("history filter") { label("脚本/INFO: QA_HISTORY_1000") != null }
-                check(label("脚本/INFO: QA_HISTORY_1024") == null)
-                input(0, ""); click("状态")
-                await("history diagnostic") { label("Runner诊断 · QA_HISTORY_DIAGNOSTIC") != null }
-                click("脚本"); await("history returned") { label("脚本/INFO: QA_HISTORY_1024") != null }
+                await("live update") { label("QA_LIVE_SECOND") != null }
+                click("错误"); await("live filter") { label("QA_LIVE_FIRST") == null }
+                click("历史"); await("history loaded") { label("QA_HISTORY_1024") != null }
+                click("搜索日志")
+                input(0, "QA_HISTORY_1000"); await("history filter") { label("QA_HISTORY_1000") != null }
+                check(label("QA_HISTORY_1024") == null)
+                input(0, ""); click("更多 ▾"); click("查看内部诊断")
+                await("history diagnostic") { label("QA_HISTORY_DIAGNOSTIC") != null }
+                click("返回脚本"); await("history returned") { label("QA_HISTORY_1024") != null }
                 click("最大化全屏"); await("log full") { label("还原窗口") != null }
                 click("关闭"); await("log closed") { label("运行日志") == null }
             }

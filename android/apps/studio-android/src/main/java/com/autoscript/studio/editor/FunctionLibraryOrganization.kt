@@ -4,7 +4,7 @@ import com.autoscript.studio.generated.BlockCategory
 
 internal val FUNCTION_GROUP_ORDER = listOf(
     "插件", "变量", "文本", "集合", "计算", "按键", "屏幕", "图像", "文字",
-    "判断", "循环", "跳转", "界面", "浮窗", "文件", "系统", "时间", "音频", "任务", "调试", "旧版兼容",
+    "判断", "循环", "跳转", "界面", "浮窗", "文件", "系统", "时间", "音频", "任务", "调试",
 )
 
 internal val SCRIPT_DIALOG_KINDS = listOf("ui.confirm", "ui.dialog", "ui.dialogclose")
@@ -30,7 +30,6 @@ internal fun functionGroup(kind: String, category: BlockCategory? = null): Strin
     "clipboard", "app", "network" -> "系统"
     "date" -> "时间"
     "audio" -> "音频"
-    "legacy" -> "旧版兼容"
     "timer" -> "任务"
     "control" -> when (kind) {
         "control.if" -> "判断"
@@ -73,7 +72,6 @@ internal fun functionSection(kind: String): String = when {
     kind.startsWith("text.") -> "截取与处理"
     kind in setOf("vision.findimage", "vision.findgray", "vision.findfeatures", "vision.findscaled", "vision.findallimages", "vision.result") -> "图片匹配"
     kind.startsWith("vision.") -> "颜色识别"
-    kind.startsWith("legacy.") -> "旧工程兼容"
     else -> ""
 }
 
@@ -81,5 +79,5 @@ internal fun functionSectionOrder(kind: String): Int = listOf(
     "", "赋值与计算", "条件分支", "循环结构", "循环指标与退出", "调用插件", "调用参数", "返回参数与状态",
     "读取与查询", "集合修改", "图片读取", "文件管理", "文本文件", "目录", "键值存储", "编码与压缩",
     "查找与判断", "截取与处理", "正则", "图片匹配", "颜色识别", "图像处理",
-    "提示与日志", "对话框", "输出开关", "文字说明", "时钟读取", "日期计算", "旧工程兼容",
+    "提示与日志", "对话框", "输出开关", "文字说明", "时钟读取", "日期计算",
 ).indexOf(functionSection(kind))

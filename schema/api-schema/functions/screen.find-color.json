@@ -9,16 +9,63 @@
   "sideEffect": "none",
   "timeoutMs": 3000,
   "resourceOwnership": "borrowed_frame",
-  "summary": "在租用帧的半开ROI内按行优先查找颜色。",
+  "summary": "在租用帧的半开ROI内按行优先查找颜色。可选备选色组命中任意颜色，同一像素只返回或计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。",
   "params": [
-    { "name": "frame", "type": "integer", "required": true, "summary": "任务持有的帧句柄。" },
-    { "name": "rgb", "type": "integer", "required": true, "summary": "0xRRGGBB颜色。" },
-    { "name": "tolerance", "type": "integer", "required": true, "summary": "0至255的逐通道容差。" },
-    { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
-    { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
-    { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
-    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" }
+    {
+      "name": "frame",
+      "type": "integer",
+      "required": true,
+      "summary": "任务持有的帧句柄。"
+    },
+    {
+      "name": "rgb",
+      "type": "integer",
+      "required": true,
+      "summary": "0xRRGGBB颜色。"
+    },
+    {
+      "name": "tolerance",
+      "type": "integer",
+      "required": true,
+      "summary": "0至255的逐通道容差。"
+    },
+    {
+      "name": "left",
+      "type": "integer",
+      "required": true,
+      "summary": "ROI左边界，包含。"
+    },
+    {
+      "name": "top",
+      "type": "integer",
+      "required": true,
+      "summary": "ROI上边界，包含。"
+    },
+    {
+      "name": "right",
+      "type": "integer",
+      "required": true,
+      "summary": "ROI右边界，不包含。"
+    },
+    {
+      "name": "bottom",
+      "type": "integer",
+      "required": true,
+      "summary": "ROI下边界，不包含。"
+    },
+    {
+      "name": "additionalColors",
+      "type": "string",
+      "required": false,
+      "summary": "可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。"
+    }
   ],
-  "returns": { "type": "Point", "nullable": true, "summary": "首个匹配点；未找到时为nil。" },
-  "legacyAliases": ["FindColor"]
+  "returns": {
+    "type": "Point",
+    "nullable": true,
+    "summary": "首个匹配点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。"
+  },
+  "legacyAliases": [
+    "FindColor"
+  ]
 }

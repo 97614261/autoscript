@@ -36,7 +36,7 @@ class EditorTreeFoldingTest {
         assertTrue(source.contains("val index = displayedTreeNodes.indexOfFirst { it.id == programSelectedNodeId }"))
         val dialog = source.substringAfter("fun EditorNodeEditDialog(").substringBefore("fun editorTreeBreadcrumb(")
         assertTrue(dialog.contains("itemsIndexed(displayRows"))
-        assertTrue(dialog.contains("editorTreeDisplayRows(viewNodes)"))
+        assertTrue(dialog.contains("editorTreeDisplayRows(viewNodes, collapsedBranchKeys)"))
         assertTrue(dialog.contains("editorMinimumScrollRequest(visibleSelectedIndex"))
         assertTrue(dialog.contains("editListState.scrollToItem(request.index, request.offset)"))
         assertTrue(dialog.contains("onToggleExpansion(node.id)"))

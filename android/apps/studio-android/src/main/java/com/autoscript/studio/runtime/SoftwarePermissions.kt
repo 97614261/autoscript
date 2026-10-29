@@ -197,6 +197,7 @@ private fun SoftwarePermissionsDialog(runtimeClient: RuntimeClient, startupPromp
                 "启用输入法" to { open(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) },
                 "选择输入法" to { context.getSystemService(android.view.inputmethod.InputMethodManager::class.java).showInputMethodPicker();revision++ },
                 "重新检查" to { scope.launch { withContext(Dispatchers.IO) { runtimeClient.refresh() }; revision++ } },
+                "连接 Root" to { scope.launch { runtimeClient.connectRoot(); revision++ } },
                 "声明权限" to { showDeclared = !showDeclared },
             )
             actions.chunked(3).forEach { row ->

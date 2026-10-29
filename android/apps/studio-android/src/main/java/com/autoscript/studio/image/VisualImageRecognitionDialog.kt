@@ -300,10 +300,22 @@ internal fun recognitionProjectError(contract: BlockContract, arguments: JsonObj
     }
     val action = arguments["successAction"]?.asString ?: "none"
     val required = contract.requiredCapabilities.toMutableSet()
+    if (arguments["autoCapture"]?.asBoolean == true) required += "screen.capture"
     if (action != "none") required += "input.basic"
     if (action != "none" || contract.kind == "vision.findallimages") required += "core.task"
     val missing = required - snapshot.manifest.capabilities.toSet()
     return if (missing.isEmpty()) null else "项目未启用能力：${missing.sorted().joinToString()}（请在设置中启用）"
+}
+
+internal fun recognitionFrameVariableError(contract: BlockContract, arguments: JsonObject,
+    snapshot: ProjectSnapshot?, flowId: String, capture: Boolean): String? {
+    if (snapshot == null || !arguments.has("frameVariable") || capture && recognitionUsesOwnCapture(contract.kind)) return null
+    val frame = arguments["frameVariable"].asString
+    val declared = calculationVariables(snapshot.manifest.variables, flowId, snapshot.manifest.flows)
+        .any { it.name == frame && it.type == ProjectVariableType.IMAGE }
+    if (declared) return null
+    return if (capture) "截图暂存需选择已声明的图像变量；请先维护变量，或改用可自动管理临时帧的识别方式"
+        else "共用图像需选择已声明的图像变量，并先用截图或加载图片积木赋值；也可切换为每次截图"
 }
 
 /** One compact shell for all supported recognition types, shared by both visual editor hosts. */
@@ -338,7 +350,10 @@ internal fun VisualImageRecognitionDialog(
     var manualRegions by remember(contract.kind, arguments) {
         mutableStateOf(if (applyInitialTemplateRegion) emptySet<String>() else setOf(contract.kind))
     }
-    val initialCapture = automaticCapture || arguments["autoCapture"]?.asBoolean == true
+    val defaultCaptureSource = rememberDefaultImageCaptureSource()
+    val initialCapture = remember(contract.kind, arguments) {
+        initialImageCaptureSource(automaticCapture, arguments["autoCapture"]?.asBoolean == true, defaultCaptureSource).capture
+    }
     var capture by remember(contract.kind, arguments) { mutableStateOf(initialCapture) }
     var discard by remember(contract.kind, arguments) { mutableStateOf(false) }
     var workflow by remember(contract.kind, arguments) { mutableStateOf<Pair<BlockContract, JsonObject>?>(null) }
@@ -346,7 +361,9 @@ internal fun VisualImageRecognitionDialog(
     var manualActionConfirm by remember(contract.kind, arguments) { mutableStateOf<Pair<BlockContract,JsonObject>?>(null) }
     val activeContract = requireNotNull(BlockCatalog.find(activeKind))
     val inputs = drafts.getValue(activeKind)
+    val singlePage = recognitionSinglePage(activeKind)
     val effectiveCapture = if (automaticCapture) capture else inputs["autoCapture"] == "true"
+    val canChooseCaptureSource = "frameVariable" in inputs && (automaticCapture || recognitionUsesOwnCapture(activeKind))
     fun requestClose() {
         if (activeKind != contract.kind || capture != initialCapture || drafts.any { (kind, values) -> values != baselines[kind] }) discard = true
         else onDismiss()
@@ -359,6 +376,8 @@ internal fun VisualImageRecognitionDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<String?>(null) }
     var glyphPalette by remember { mutableStateOf<GlyphPaletteDraft?>(null) }
+    var colorPaletteDraft by remember { mutableStateOf<GlyphPaletteDraft?>(null) }
+    var colorPalettePicking by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf(RecognitionSection.MATCH) }
     val contentScroll = key(section) { rememberScrollState() }
     var showCoordinates by remember { mutableStateOf(true) }
@@ -398,8 +417,13 @@ internal fun VisualImageRecognitionDialog(
     val variables = (knownVariables + inputs.filterKeys { it.endsWith("Variable") }.values).filter(String::isNotBlank).distinct().sorted()
     LaunchedEffect(captureSelection) {
         captureSelection?.let { selection ->
-            if (selection.roi != null) manualRegions += activeKind
-            drafts = drafts + (activeKind to recognitionSelectionInputs(drafts.getValue(activeKind), selection))
+            if (colorPalettePicking && glyphPalette != null) {
+                colorPaletteDraft = colorPaletteDraft?.let { recognitionPaletteSelection(it, selection) }
+                colorPalettePicking = false
+            } else {
+                if (selection.roi != null) manualRegions += activeKind
+                drafts = drafts + (activeKind to recognitionSelectionInputs(drafts.getValue(activeKind), selection))
+            }
         }
     }
     LaunchedEffect(captureTemplatePath) {
@@ -411,20 +435,20 @@ internal fun VisualImageRecognitionDialog(
     if (visible && workflow == null) Dialog(onDismissRequest = ::requestClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints((if (fullScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).imePadding(), contentAlignment = Alignment.Center) {
         val short = studioShortViewport(maxHeight.value)
-        Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.widthIn(max = 550.dp).fillMaxWidth(.96f)
-            .heightIn(max = min(540f, maxHeight.value).dp),
+        Surface(if (fullScreen) Modifier.fillMaxSize() else Modifier.width(studioDialogWidth(maxWidth.value, if (singlePage) 360 else 420).dp)
+            .heightIn(max = min(if (singlePage) 500f else 540f, maxHeight.value).dp),
             shape = RoundedCornerShape(if (fullScreen) 0.dp else 6.dp), color = Color.White, shadowElevation = 8.dp) {
             val navigation: @Composable () -> Unit = {
                 if (activeKind != "vision.result") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(recognitionFrameSummary(inputs + ("autoCapture" to effectiveCapture.toString()), effectiveCapture), Modifier.weight(1f).clickable { section = RecognitionSection.ADVANCED },
+                        Text(if (singlePage) "原始像素 · ${ImageCaptureSource.fromCapture(effectiveCapture).title}" else recognitionFrameSummary(inputs + ("autoCapture" to effectiveCapture.toString()), effectiveCapture), Modifier.weight(1f).clickable { if (singlePage) showHelp = !showHelp else section = RecognitionSection.ADVANCED },
                             color = AutoScriptPalette.TextSecondary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         RecognitionChoice(when (recognitionScreenPickMode(activeKind)) {
                             ImageToolMode.CROP -> "截图取材"; ImageToolMode.COLOR, ImageToolMode.MULTI_COLOR -> "取点取色"; else -> "屏幕框选"
                         }, enabled = onPickFromScreen != null) { onPickFromScreen?.invoke(recognitionScreenPickMode(activeKind)) }
                         if (allowKindChange && snapshot != null) RecognitionChoice("类型 ▾") { picker = "kind" }
                     }
-                    Row(Modifier.fillMaxWidth().height(34.dp).background(AutoScriptPalette.VisualEditor.ControlBackground)) {
+                    if (!singlePage) Row(Modifier.fillMaxWidth().height(34.dp).background(AutoScriptPalette.VisualEditor.ControlBackground)) {
                         RecognitionSection.entries.forEach { item ->
                             Box(Modifier.weight(1f).fillMaxHeight().background(if (section == item) AutoScriptPalette.AccentSoft else Color.Transparent)
                                 .clickable { section = item }, contentAlignment = Alignment.Center) {
@@ -437,23 +461,32 @@ internal fun VisualImageRecognitionDialog(
                 }
             }
             Column {
-                RecognitionHeader(activeContract.title, ::requestClose, fullScreen, compact = short) { fullScreen = !fullScreen }
+                RecognitionHeader(activeContract.title, ::requestClose, fullScreen, compact = short || singlePage) { fullScreen = !fullScreen }
                 if (!short) navigation()
                 HorizontalDivider(color = AutoScriptPalette.Divider)
-                Column(Modifier.weight(1f, fill = false).verticalScroll(contentScroll).padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(contentScroll).padding(if (singlePage) 6.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(if (singlePage) 3.dp else 5.dp)) {
                     // In a keyboard-sized viewport only title and commit actions stay fixed.
                     if (short) navigation()
-                    if (runtimeClient != null) RecognitionAvailabilityNotice(activeKind, runtimeClient)
+                    if ("frameVariable" in inputs) {
+                        ImageCaptureSourceControl(ImageCaptureSource.fromCapture(effectiveCapture), onSelect =
+                            if (canChooseCaptureSource) { source ->
+                                if (automaticCapture) capture = source.capture
+                                else update("autoCapture", source.capture.toString())
+                                overwriteConfirmed = false
+                                error = null
+                            } else null)
+                        if (!effectiveCapture || !recognitionUsesOwnCapture(activeKind)) {
+                            RecognitionVariableRow(if (effectiveCapture) "截图暂存" else "来源图像", inputs["frameVariable"].orEmpty(),
+                                { update("frameVariable", it); error = null }) { picker = "frameVariable" }
+                        }
+                        if (automaticCapture && effectiveCapture && !recognitionUsesOwnCapture(activeKind)) {
+                            ImageToolToggle("专用暂存变量，允许覆盖并释放", overwriteConfirmed, true) { overwriteConfirmed = it }
+                        }
+                    }
+                    if (runtimeClient != null && (!singlePage || showHelp)) RecognitionAvailabilityNotice(activeKind, runtimeClient)
                     if (activeKind in setOf("vision.findimage", "vision.findgray", "vision.findallimages"))
                         Text("找到走成功，未找到走失败；加入后点分支标题添加操作。旧积木保存参数后显示分支。",
                             fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                    if (automaticCapture && activeKind != "vision.result") RecognitionSettingRow("图像来源") {
-                        RecognitionChoice(if (capture) "运行时截图" else "已有图像", Modifier.weight(1f)) { capture = !capture;overwriteConfirmed=false }
-                    }
-                    if (automaticCapture && !effectiveCapture && "frameVariable" in inputs) {
-                        RecognitionVariableRow("共用帧", inputs["frameVariable"].orEmpty(), { update("frameVariable", it); error = null }) { picker = "frameVariable" }
-                        Text("本次不截图、不释放；多项识别共用此帧，完成后显式释放。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                    }
                     if (section == RecognitionSection.MATCH && activeKind in setOf("vision.findimage", "vision.findgray")) {
                         val templateSource = recognitionTemplateSource(inputs)
                         Row(Modifier.heightIn(min = 74.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -483,17 +516,19 @@ internal fun VisualImageRecognitionDialog(
                             Text(it, color = AutoScriptPalette.Danger, fontSize = 10.sp)
                         }
                     }
-                    if (section == RecognitionSection.MATCH && "region" in inputs) {
+                    if ((singlePage || section == RecognitionSection.MATCH) && "region" in inputs) {
                         val region = inputs.getValue("region").split(',').map { it.toLongOrNull() }
                         val bounds = if (region.size == 4 && region.all { it != null }) {
                             listOf(region[0]!!, region[1]!!, region[2]!! - region[0]!!, region[3]!! - region[1]!!).map(Long::toString)
                         } else listOf("", "", "", "")
                         RecognitionSettingRow("选取范围", onLabelClick = onPickFromScreen?.let { pick -> { pick(ImageToolMode.REGION) } }) {
-                            bounds.forEachIndexed { index, value ->
+                            if (singlePage) RecognitionChoice("X:${bounds[0]} Y:${bounds[1]} · ${bounds[2]}×${bounds[3]}", Modifier.weight(1f)) { picker = "bounds" }
+                            else bounds.forEachIndexed { index, value ->
                                 RecognitionChoice("${listOf("X", "Y", "W", "H")[index]}:$value", Modifier.weight(1f)) { picker = "bounds" }
                             }
+                            if (singlePage) RecognitionChoice("框选", enabled = onPickFromScreen != null) { onPickFromScreen?.invoke(ImageToolMode.REGION) }
                         }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (!singlePage) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             RecognitionChoice("屏幕框选", Modifier.weight(1f), enabled = onPickFromScreen != null) { onPickFromScreen?.invoke(ImageToolMode.REGION) }
                             RecognitionChoice("设计范围", Modifier.weight(1f), enabled = snapshot != null && activeKind != "ocr.alphanumeric") {
                                 snapshot?.let {
@@ -523,27 +558,40 @@ internal fun VisualImageRecognitionDialog(
                                 color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
                         }
                     }
+                    if (activeKind == "vision.countcolor") {
+                        ImageToolToggle("提前停止（可选）", inputs["limit"] != "0", true) {
+                            update("limit", if (it) "1000" else "0"); error = null
+                        }
+                        if (inputs["limit"] == "0") Text("统计所选范围内全部匹配像素，不设数量上限。",
+                            fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                    }
                     activeContract.properties.filter { property ->
                         property.path !in setOf("frameVariable", "imagePath", "region", "foundVariable", "xVariable", "yVariable", "leftVariable", "topVariable", "rightVariable", "bottomVariable", "autoCapture")
                     }.forEach { property ->
                         val propertySection = recognitionPropertySection(property.path)
-                        if (activeKind != "vision.result" && propertySection != section &&
+                        if (!singlePage && activeKind != "vision.result" && propertySection != section &&
                             !(section == RecognitionSection.MATCH && propertySection == RecognitionSection.OUTPUT && property.required)) return@forEach
                         if (property.path == "imageDirectory" && activeKind == "vision.findimage") return@forEach
+                        if (property.path == "limit" && activeKind == "vision.countcolor" && inputs["limit"] == "0") return@forEach
                         if (!recognitionPropertyVisible(property.path, inputs)) return@forEach
-                        if (property.path == "similarityPermille" && "tolerance" in inputs) return@forEach
                         RecognitionSettingRow(when (property.path) {
                             "tolerance" -> "像素容差"; "dictionaryPath" -> "字库选择"; "anchorRgb" -> "锚点颜色"
+                            "limit" -> if (activeKind == "vision.countcolor") "达到数量即停" else "数量上限"; "additionalColors" -> if (activeKind in recognitionColorGroupKinds) "匹配色组" else "前景色组"
                             "samples" -> "偏移点"; "sourceVariable" -> "结果来源"; "targetVariable" -> "接收变量"
+                            "resultVariable" -> if (activeKind == "vision.countcolor") "计数变量" else "结果变量"
                             "field" -> "结果属性"; "index" -> "结果序号"; else -> property.label
+                        }, onLabelClick = if (recognitionValuePresets(property.path, activeKind).isEmpty()) null else {
+                            { picker = "preset:${property.path}" }
                         }) {
                             when {
                                 property.path == "additionalColors" -> {
-                                    RecognitionChoice("编辑前景色组", Modifier.weight(1f)) {
-                                        runCatching { glyphPaletteFromInputs(inputs["foregroundRgb"].orEmpty(),inputs["tolerance"].orEmpty(),inputs["additionalColors"].orEmpty()) }
-                                            .onSuccess { glyphPalette=it }.onFailure { error="请检查主色、容差和附加色格式" }
+                                    val colorGroup = activeKind in recognitionColorGroupKinds
+                                    val count = inputs[property.path].orEmpty().split(';').count { it.isNotBlank() } + 1
+                                    RecognitionChoice(if (colorGroup) "$count 色 · 任意命中 · 编辑" else "编辑前景色组", Modifier.weight(1f)) {
+                                        runCatching { glyphPaletteFromInputs(inputs[if (colorGroup) "rgb" else "foregroundRgb"].orEmpty(),inputs["tolerance"].orEmpty(),inputs["additionalColors"].orEmpty()) }
+                                            .onSuccess { glyphPalette=it; colorPaletteDraft=it; colorPalettePicking=false }.onFailure { error="请检查主色、容差和附加色格式" }
                                     }
-                                    RecognitionInput(inputs[property.path].orEmpty(), { update(property.path,it); error=null }, Modifier.weight(1f))
+                                    if (!colorGroup) RecognitionInput(inputs[property.path].orEmpty(), { update(property.path,it); error=null }, Modifier.weight(1f))
                                 }
                                 property.path == "successAction" -> RecognitionChoice(recognitionActions[inputs[property.path]] ?: "不执行", Modifier.weight(1f)) { picker = property.path }
                                 property.editor == BlockPropertyEditor.BOOLEAN -> RecognitionChoice(if (inputs[property.path] == "true") "开启" else "关闭", Modifier.weight(1f)) { update(property.path, (inputs[property.path] != "true").toString()) }
@@ -562,19 +610,15 @@ internal fun VisualImageRecognitionDialog(
                                 }
                                 else -> RecognitionInput(inputs[property.path].orEmpty(), { update(property.path, it); error = null }, Modifier.weight(1f), numeric = property.editor == BlockPropertyEditor.INTEGER)
                             }
-                            if (property.path == "tolerance" && "similarityPermille" in inputs) {
-                                Text("相似度‰", fontSize = 10.sp)
-                                RecognitionInput(inputs["similarityPermille"].orEmpty(), { update("similarityPermille", it); error = null }, Modifier.weight(1f), numeric = true)
-                            }
                         }
                     }
-                    if (section in setOf(RecognitionSection.MATCH, RecognitionSection.OUTPUT) && "foundVariable" in inputs) {
+                    if ((singlePage || section in setOf(RecognitionSection.MATCH, RecognitionSection.OUTPUT)) && "foundVariable" in inputs) {
                         RecognitionSettingRow("是否找到") {
                             RecognitionInput(inputs["foundVariable"].orEmpty(), { update("foundVariable", it); error = null }, Modifier.weight(1f))
                             RecognitionChoice("选择") { picker = "foundVariable" }
                             if (section == RecognitionSection.OUTPUT) RecognitionChoice(if (showCoordinates) "收起坐标 ▴" else "显示坐标 ▾") { showCoordinates = !showCoordinates }
                         }
-                        if (showCoordinates || section == RecognitionSection.MATCH) RecognitionSettingRow("坐标变量") {
+                        if (singlePage || showCoordinates || section == RecognitionSection.MATCH) RecognitionSettingRow("坐标变量") {
                             RecognitionChoice("X:${inputs["xVariable"]}", Modifier.weight(1f)) { picker = "xVariable" }
                             RecognitionChoice("Y:${inputs["yVariable"]}", Modifier.weight(1f)) { picker = "yVariable" }
                         }
@@ -584,24 +628,18 @@ internal fun VisualImageRecognitionDialog(
                         if (activeKind == "vision.result") Text("数量 / 截断用序号0；逐项属性从1开始。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
                         Spacer(Modifier.weight(1f))
                     }
-                    if (section == RecognitionSection.ADVANCED && activeKind != "vision.result") {
-                        if ("frameVariable" in inputs && (!automaticCapture || effectiveCapture) && (!effectiveCapture || !recognitionUsesOwnCapture(activeKind))) RecognitionVariableRow(if (effectiveCapture) "截图暂存帧" else "帧变量", inputs["frameVariable"].orEmpty(), { update("frameVariable", it); error = null }) { picker = "frameVariable" }
+                    if ((singlePage || section == RecognitionSection.ADVANCED) && activeKind != "vision.result") {
                         if (activeKind == "vision.findimage") {
                             listOf("leftVariable", "topVariable", "rightVariable", "bottomVariable").forEachIndexed { index, field ->
                                 RecognitionVariableRow(listOf("左边界变量", "上边界变量", "右边界变量", "下边界变量")[index], inputs[field].orEmpty(), { update(field, it); error = null }) { picker = field }
                             }
                             Text("范围变量留空使用固定值；变量在运行时必须为非负整数，右/下边界不包含。", color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
                         }
-                        if ("frameVariable" in inputs) Text(when {
+                        if ("frameVariable" in inputs && (!singlePage || showHelp)) Text(when {
                             !effectiveCapture -> "读取已有图像，不截图、不释放用户帧；范围属于来源图像原像素。"
                             recognitionUsesOwnCapture(activeKind) -> "自动截图并释放内部临时帧；不覆盖用户图像变量。范围为原始屏幕像素。"
                             else -> "加入截图→识别→释放；截图暂存帧原值会被覆盖，请选择专用图像变量。"
                         }, color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
-                        if(automaticCapture && effectiveCapture && !recognitionUsesOwnCapture(activeKind) && "frameVariable" in inputs)
-                            DesignerToggle("专用暂存帧，允许覆盖并释放",overwriteConfirmed,true) { overwriteConfirmed=it }
-                        if ("autoCapture" in inputs) {
-                            if (!automaticCapture) RecognitionSettingRow("自动截图") { RecognitionChoice(if (effectiveCapture) "开启" else "关闭", Modifier.weight(1f)) { update("autoCapture", (!effectiveCapture).toString()) } }
-                        }
                         RecognitionChoice(if (showHelp) "收起参数说明 ▴" else "查看参数说明 ▾", Modifier.fillMaxWidth()) { showHelp = !showHelp }
                         if (showHelp) Text(recognitionAlgorithmHelp(activeKind), color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
                     }
@@ -609,26 +647,23 @@ internal fun VisualImageRecognitionDialog(
                     val parsed = parseRecognitionArguments(activeContract, templateAwareInputs() ?: return@RecognitionChoice, resources)
                     error = parsed.second
                     if (parsed.first != null) {
-                        if (!effectiveCapture) error = "等待识别需要每次采集新画面，请选择运行时截图"
-                        else if(!recognitionUsesOwnCapture(activeKind) && !overwriteConfirmed) error="请先在更多参数确认专用暂存帧允许覆盖并释放"
+                        if (!effectiveCapture) error = "等待识别需要新画面，请选择每次截图"
+                        else if(!recognitionUsesOwnCapture(activeKind) && !overwriteConfirmed) error="请确认专用暂存帧允许覆盖并释放"
                         else workflow = activeContract to requireNotNull(parsed.first).deepCopy()
                     }
                 }
                 error?.let { Text(it, Modifier.fillMaxWidth().background(AutoScriptPalette.AccentSoft).padding(horizontal = 8.dp, vertical = 5.dp),
                     color = AutoScriptPalette.Danger, fontSize = 11.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                 }
-                RecognitionFooter("取消", confirmLabel, ::requestClose, compact = short) {
+                RecognitionFooter("取消", confirmLabel, ::requestClose, compact = short || singlePage) {
                     val parsed = parseRecognitionArguments(activeContract, templateAwareInputs() ?: return@RecognitionFooter, resources)
                     val configured = parsed.first?.deepCopy()?.apply {
                         if (automaticCapture && has("autoCapture")) addProperty("autoCapture", effectiveCapture)
                     }
                     error = parsed.second ?: configured?.let { recognitionProjectError(activeContract, it, snapshot, currentFlowId) }
-                    if (configured != null && error == null && automaticCapture && (!effectiveCapture || !recognitionUsesOwnCapture(activeKind))) {
-                        val frame = configured["frameVariable"]?.asString
-                        if (snapshot != null && frame != null && calculationVariables(snapshot.manifest.variables, currentFlowId, snapshot.manifest.flows).none { it.name == frame && it.type == ProjectVariableType.IMAGE }) error = "已有图像需选择已声明的图像变量"
-                    }
+                    if (configured != null && error == null) error = recognitionFrameVariableError(activeContract, configured, snapshot, currentFlowId, effectiveCapture)
                     if(configured!=null && error==null && automaticCapture && effectiveCapture && !recognitionUsesOwnCapture(activeKind) && "frameVariable" in inputs && !overwriteConfirmed)
-                        error="请在更多参数确认专用截图暂存帧允许覆盖并释放"
+                        error="请确认专用截图暂存帧允许覆盖并释放"
                     if (configured != null && error == null) {
                         if(!effectiveCapture && configured["successAction"]?.asString !in setOf(null,"none")) manualActionConfirm=activeContract to configured.deepCopy()
                         else if (onConfirmSource != null) onConfirmSource(activeContract, configured, effectiveCapture) else onConfirm(activeContract, configured)
@@ -641,6 +676,12 @@ internal fun VisualImageRecognitionDialog(
     if(visible) manualActionConfirm?.let { (selected,configured) -> EditorPromptDialog("确认已有帧动作坐标", "已有帧可能来自裁剪、旋转或缩放。找到后的动作直接使用原屏像素；只有确定该帧与当前屏幕坐标一致才继续，否则取消并关闭动作。",
         {manualActionConfirm=null},{manualActionConfirm=null;if(onConfirmSource!=null) onConfirmSource(selected,configured,false) else onConfirm(selected,configured)},"取消","确认原屏坐标") }
     if (visible) picker?.let { field ->
+        if (field.startsWith("preset:")) {
+            val path = field.removePrefix("preset:")
+            RecognitionPicker(if (activeKind == "vision.countcolor" && path == "limit") "计数上限 · 0统计全部，其余达到即停止" else "常用数值 · 选后仍可手动输入", recognitionValuePresets(path, activeKind), inputs[path].orEmpty(),
+                onDismiss = { picker = null }, onSelect = { value -> update(path, value); picker = null; error = null })
+            return@let
+        }
         if (field == "samplesEditor") {
             RecognitionSamplesDialog(inputs["samples"].orEmpty(), { picker = null }) { update("samples", it); picker = null; error = null }
             return@let
@@ -708,13 +749,20 @@ internal fun VisualImageRecognitionDialog(
                 }
                 picker = null
                 error = null
-            }, allowNewValue = requiredType == null && enumProperty == null && resourceProperty == null && field !in setOf("kind", "support", "direction", "imageDirectory", "successAction"))
+            }, allowNewValue = requiredType == null && enumProperty == null && resourceProperty == null && field !in setOf("kind", "support", "direction", "imageDirectory", "successAction"),
+            variableOptions = if (enumProperty == null && resourceProperty == null && field !in setOf("kind", "support", "direction", "imageDirectory", "successAction"))
+                variablePickerOptions(choices, snapshot?.let { calculationVariables(it.manifest.variables, currentFlowId, it.manifest.flows) }.orEmpty()) else null)
     }
-    if(visible) glyphPalette?.let { initial -> GlyphColorPaletteDialog(initial,{glyphPalette=null}) { colors ->
-        update("foregroundRgb","#%06X".format(java.util.Locale.ROOT,colors.first().rgb))
+    if(visible) glyphPalette?.let { initial -> GlyphColorPaletteDialog(initial,{glyphPalette=null; colorPaletteDraft=null; colorPalettePicking=false},
+        title = if (activeKind in recognitionColorGroupKinds) "匹配色组" else "字库前景色组",
+        description = if (activeKind in recognitionColorGroupKinds) "最多16色，各自容差。命中任意一色即成功；重叠像素只计一次。多点找色则要求多个位置同时匹配。" else "最多16色，各自容差，命中任意颜色即为文字笔画。",
+        currentDraft = colorPaletteDraft, onDraftChange = { colorPaletteDraft=it },
+        onPickFromScreen = onPickFromScreen?.let { pick -> { colorPalettePicking=true; pick(ImageToolMode.COLOR) } },
+    ) { colors ->
+        update(if (activeKind in recognitionColorGroupKinds) "rgb" else "foregroundRgb","#%06X".format(java.util.Locale.ROOT,colors.first().rgb))
         update("tolerance",colors.first().tolerance.toString())
         update("additionalColors",com.autoscript.project.store.ProjectGlyphColor.encodeAdditional(colors.drop(1)))
-        glyphPalette=null;error=null
+        glyphPalette=null;colorPaletteDraft=null;colorPalettePicking=false;error=null
     } }
     if (discard && visible) EditorPromptDialog("放弃识别参数？", "本次参数、图像来源及模板选择尚未加入，放弃后不会修改原积木。",
         { discard = false }, { discard = false; onDismiss() }, "继续编辑", "放弃")
@@ -723,6 +771,14 @@ internal fun VisualImageRecognitionDialog(
 }
 
 private val recognitionDirections = recognitionSearchDirections
+
+internal fun recognitionSinglePage(kind: String): Boolean = kind in recognitionColorGroupKinds || kind in setOf("vision.getcolor", "vision.findmulticolor", "vision.result")
+
+internal val recognitionColorGroupKinds = setOf("vision.findcolor", "vision.comparecolor", "vision.countcolor", "vision.findallcolor")
+
+/** Palette picks replace the selected slot without changing the comparison point or search area. */
+internal fun recognitionPaletteSelection(draft: GlyphPaletteDraft, selection: ImageToolCodeGen.VisualSelection): GlyphPaletteDraft =
+    selection.points.firstOrNull()?.let { draft.copy(replaceOnPick = true).pick(it.rgb and 0xFFFFFF) } ?: draft
 
 internal fun recognitionTemplatePaths(text: String): List<String> = runCatching {
     require(text.toByteArray(Charsets.UTF_8).size <= 16_384)
@@ -766,8 +822,8 @@ private val recognitionActions = linkedMapOf("none" to "不执行", "tap" to "�
 
 @Composable
 private fun RecognitionSettingRow(label: String, onLabelClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 34.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, Modifier.width(68.dp).then(if (onLabelClick != null) Modifier.clickable(onClick = onLabelClick) else Modifier), color = if (onLabelClick != null) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary, style = TextStyle(fontSize = 11.sp, lineHeight = 13.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(if (onLabelClick != null) "$label ▾" else label, Modifier.width(72.dp).then(if (onLabelClick != null) Modifier.clickable(onClick = onLabelClick) else Modifier), color = if (onLabelClick != null) AutoScriptPalette.Accent else AutoScriptPalette.TextPrimary, style = TextStyle(fontSize = 11.sp, lineHeight = 13.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)), maxLines = 2, overflow = TextOverflow.Ellipsis)
         content()
     }
 }
@@ -784,12 +840,9 @@ private fun RecognitionBoundsDialog(region: String, snapshot: ProjectSnapshot?, 
             Column(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("X", "Y", "宽", "高").forEachIndexed { index, name ->
-                        Column(Modifier.weight(1f)) {
-                            Text(name, Modifier.fillMaxWidth(), textAlign = TextAlign.Center, fontSize = 11.sp)
-                            RecognitionInput(bounds[index], { bounds = bounds.toMutableList().apply { set(index, it) }; error = null }, numeric = true)
-                        }
+                StudioCompactGrid(listOf("X", "Y", "宽", "高").withIndex().toList(), cellDp = 82, maximum = 4) { (index, name), cell ->
+                    ImageToolCompactInput(name, bounds[index], true, cell, numeric = true) {
+                        bounds = bounds.toMutableList().apply { set(index, it) }; error = null
                     }
                 }
                 snapshot?.let { project -> RecognitionChoice("设计范围（不是设备分辨率）") { bounds = listOf("0", "0", project.manifest.design.width.toString(), project.manifest.design.height.toString()) } }
@@ -809,7 +862,7 @@ private fun RecognitionBoundsDialog(region: String, snapshot: ProjectSnapshot?, 
 internal fun RecognitionHeader(title: String, onDismiss: () -> Unit, fullScreen: Boolean = false, compact: Boolean = false, onToggleFullScreen: (() -> Unit)? = null) {
     val height = studioCompactControlHeight(if (compact) 30 else 40, androidx.compose.ui.platform.LocalDensity.current.fontScale).dp
     Row(Modifier.fillMaxWidth().height(height).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f), color = AutoScriptPalette.Accent, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+        Text(title, Modifier.weight(1f), color = AutoScriptPalette.TextPrimary, fontSize = if (compact) 13.sp else 15.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
         if (onToggleFullScreen != null) StudioPanelFullScreenButton(fullScreen, onToggleFullScreen, compact)
         Box(Modifier.size(height).clickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
@@ -831,27 +884,22 @@ private fun RecognitionFooter(left: String, right: String, onLeft: () -> Unit, c
 
 @Composable
 internal fun RecognitionInput(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, numeric: Boolean = false, enabled: Boolean = true) {
-    BasicTextField(value, { if (it.length <= 128) onChange(it) }, singleLine = true, enabled = enabled,
-        textStyle = TextStyle(color = AutoScriptPalette.TextPrimary, fontSize = 12.sp, lineHeight = 14.sp, platformStyle = PlatformTextStyle(includeFontPadding = false), textAlign = if (numeric) TextAlign.Center else TextAlign.Start),
-        keyboardOptions = KeyboardOptions(keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text),
-        modifier = modifier.height(studioCompactControlHeight(30, LocalConfiguration.current.fontScale).dp).background(AutoScriptPalette.VisualEditor.ControlBackground, RoundedCornerShape(3.dp)).border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)),
-        decorationBox = { inner -> Box(Modifier.fillMaxSize().padding(horizontal = 6.dp), contentAlignment = if (numeric) Alignment.Center else Alignment.CenterStart) { inner() } })
+    ImageToolCompactInput("", value, enabled, modifier, numeric = numeric) { if (it.length <= 128) onChange(it) }
 }
 
 @Composable
 internal fun RecognitionChoice(value: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    Box(modifier.height(studioCompactControlHeight(30, LocalConfiguration.current.fontScale).dp).border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(3.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
-        Text(value, color = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary, style = TextStyle(fontSize = 11.sp, lineHeight = 13.sp, platformStyle = PlatformTextStyle(includeFontPadding = false)), maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
+    StudioToolButton(value, modifier, enabled = enabled, onClick = onClick)
 }
 
 @Composable
 private fun RecognitionVariableRow(label: String, value: String, onChange: (String) -> Unit, onSelect: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, Modifier.width(64.dp), fontSize = 12.sp, maxLines = 1)
-        RecognitionInput(value, onChange, Modifier.weight(1f))
-        RecognitionChoice("选择", onClick = onSelect)
-    }
+    ImageToolCompactInput(label, value, true, Modifier.fillMaxWidth(), trailing = {
+        Box(Modifier.size(24.dp).clickable(onClick = onSelect), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(R.drawable.ic_list_24),
+                "选择变量", Modifier.size(16.dp), tint = AutoScriptPalette.Accent)
+        }
+    }) { if (it.length <= 128) onChange(it) }
 }
 
 @Composable
@@ -876,7 +924,13 @@ private fun RecognitionSamplesDialog(value: String, onDismiss: () -> Unit, onCon
 }
 
 @Composable
-private fun RecognitionPicker(title: String, choices: List<String>, current: String, onDismiss: () -> Unit, onSelect: (String) -> Unit, allowNewValue: Boolean = false, disabledValues: Set<String> = emptySet()) {
+private fun RecognitionPicker(title: String, choices: List<String>, current: String, onDismiss: () -> Unit, onSelect: (String) -> Unit, allowNewValue: Boolean = false,
+    disabledValues: Set<String> = emptySet(), variableOptions: List<VariablePickerOption>? = null) {
+    if (variableOptions != null) {
+        CompactVariablePickerDialog(title, variableOptions.map { it.copy(enabled = it.enabled && it.value !in disabledValues) }, current,
+            onDismiss, onSelect, allowNewValue = allowNewValue)
+        return
+    }
     var search by remember { mutableStateOf("") }
     StudioPanelDialog(title, onDismiss, compactHeader = true) {
                 val filtered = choices.filter { it.contains(search, ignoreCase = true) }

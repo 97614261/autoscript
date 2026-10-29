@@ -22,17 +22,32 @@ internal fun captureUnavailableMessage(state: RuntimeConnectionState): String = 
 internal fun runtimeStartReadiness(state: RuntimeConnectionState, generation: Long): RuntimeStartReadiness = when {
     state.phase != RuntimeConnectionPhase.CONNECTED || state.sessionGeneration != generation -> RuntimeStartReadiness.REJECTED
     state.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING) -> RuntimeStartReadiness.REJECTED
-    state.rootState == RuntimeRootState.FAILED -> RuntimeStartReadiness.REJECTED
+    state.rootState in setOf(RuntimeRootState.FAILED, RuntimeRootState.STOPPED) -> RuntimeStartReadiness.REJECTED
     state.engineState == RuntimeEngineState.UNKNOWN -> RuntimeStartReadiness.WAITING
     state.rootState == RuntimeRootState.READY -> RuntimeStartReadiness.READY
     else -> RuntimeStartReadiness.WAITING
 }
 
-/** Root startup has a 15 s service-side deadline; allow callback delivery, but never wait forever. */
+/** One authorization attempt has 60 s, followed by bounded native attach and state delivery. */
 internal suspend fun awaitRuntimeReady(
     states: StateFlow<RuntimeConnectionState>,
     generation: Long,
-    timeoutMillis: Long = 20_000L,
+    timeoutMillis: Long = 70_000L,
 ): RuntimeStartReadiness = withTimeoutOrNull(timeoutMillis) {
     runtimeStartReadiness(states.first { runtimeStartReadiness(it, generation) != RuntimeStartReadiness.WAITING }, generation)
 } ?: RuntimeStartReadiness.TIMEOUT
+
+/** Passive state observation never requests Root; callers invoke this only for user demand. */
+internal suspend fun requestRuntimeReady(
+    states: StateFlow<RuntimeConnectionState>,
+    generation: Long,
+    request: suspend () -> Boolean,
+    timeoutMillis: Long = 70_000L,
+): RuntimeStartReadiness {
+    val current = states.value
+    if (current.phase != RuntimeConnectionPhase.CONNECTED || current.sessionGeneration != generation ||
+        current.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING))
+        return RuntimeStartReadiness.REJECTED
+    if (!request()) return RuntimeStartReadiness.REJECTED
+    return awaitRuntimeReady(states, generation, timeoutMillis)
+}

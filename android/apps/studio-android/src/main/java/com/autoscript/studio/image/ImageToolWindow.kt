@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -99,10 +101,16 @@ internal fun ImageToolWindow(
         var workbenchFilterOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
         var workbenchPolygonOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
         var glyphMakerOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
+        var pixelAdjustOpen by remember(bitmap, mode) { mutableStateOf(false) }
         var glyphUse by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf<Triple<ProjectSnapshot, ImageToolOcrConfig, ImageToolCodeGen.Roi?>?>(null) }
 
-        var toolbarX by rememberSaveable { mutableFloatStateOf(Float.NaN) }
-        var toolbarY by rememberSaveable { mutableFloatStateOf(Float.NaN) }
+        val context = LocalContext.current
+        val toolbarPreferences = remember(context) { context.getSharedPreferences("image-toolbar", android.content.Context.MODE_PRIVATE) }
+        val positionKey = if (viewWidth > viewHeight) "landscape" else "portrait"
+        var toolbarX by remember(positionKey) { mutableFloatStateOf(
+            toolbarPreferences.getFloat("$positionKey-x", Float.NaN).takeIf { it.isFinite() }?.let { it.coerceIn(0f, 1f) * viewWidth } ?: Float.NaN) }
+        var toolbarY by remember(positionKey) { mutableFloatStateOf(
+            toolbarPreferences.getFloat("$positionKey-y", Float.NaN).takeIf { it.isFinite() }?.let { it.coerceIn(0f, 1f) * viewHeight } ?: Float.NaN) }
         // 工具条会因模式增加“缩放 / 容差 / 时长”等按钮，不能假定恒定宽度。
         // 首帧先用最大的保守值，完成测量后再按真实宽度计算可拖动边界。
         var toolbarMeasuredWidthPx by remember { mutableFloatStateOf(0f) }
@@ -132,7 +140,7 @@ internal fun ImageToolWindow(
         }
 
         val toolbarWidthPx = toolbarMeasuredWidthPx.takeIf { it > 0f }
-            ?: with(density) { TOOLBAR_FALLBACK_WIDTH.toPx() }
+            ?: minOf(viewWidth, with(density) { TOOLBAR_FALLBACK_WIDTH.toPx() })
         val toolbarHeightPx = toolbarMeasuredHeightPx.takeIf {it>0f} ?: with(density) { TOOLBAR_HEIGHT.toPx() }
         // 参考初始化把工具条放在水平居中、高度 1/3 处。
         val resolvedToolbar = clampToolbar(
@@ -211,7 +219,6 @@ internal fun ImageToolWindow(
             viewport = viewport,
             selection = selection,
             crosshair = crosshair,
-            mapping = mapping,
         )
 
         hint?.let { ImageToolHintBanner(it) }
@@ -249,6 +256,11 @@ internal fun ImageToolWindow(
                 )
                 toolbarX = next.first
                 toolbarY = next.second
+            },
+            onDragEnd = {
+                if (viewWidth > 0 && viewHeight > 0 && toolbarX.isFinite() && toolbarY.isFinite())
+                    toolbarPreferences.edit().putFloat("$positionKey-x", toolbarX / viewWidth)
+                        .putFloat("$positionKey-y", toolbarY / viewHeight).apply()
             },
             onToggleMenu = { menuOpen = !menuOpen },
             onZoom = { zoomMode = true },
@@ -304,6 +316,8 @@ internal fun ImageToolWindow(
             },
             onCropToTemplate = { selection.box?.let(onCropToTemplate) },
             onClose = onClose,
+            onAdjust = if (bitmap != null && (mode.usesDragBox || mode.usesCrosshair || mode.usesPressPick || mode.usesSlideMarkers))
+                ({ menuOpen = false; pixelAdjustOpen = true }) else null,
             onProcessing = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
                 ({ menuOpen = false; workbenchFilterOpen=false;workbenchPolygonOpen=false; workbenchOpen = true }) else null,
             onFilter = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
@@ -312,11 +326,35 @@ internal fun ImageToolWindow(
                 ({menuOpen=false;workbenchFilterOpen=false;workbenchPolygonOpen=true;workbenchOpen=true}) else null,
             onMakeGlyph = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
                 ({ menuOpen = false; glyphMakerOpen = true }) else null,
-            modifier = Modifier.widthIn(max = maxWidth).onSizeChanged { measured ->
+            modifier = Modifier.widthIn(max = (maxWidth - 8.dp).coerceAtLeast(1.dp))
+                .heightIn(max = (maxHeight - 8.dp).coerceAtLeast(1.dp)).onSizeChanged { measured ->
                 toolbarMeasuredWidthPx = measured.width.toFloat()
                 toolbarMeasuredHeightPx = measured.height.toFloat()
             },
         )
+
+        if (pixelAdjustOpen && bitmap != null) {
+            val current = viewport?.toImage(crosshair.x, crosshair.y) ?: (bitmap.width / 2 to bitmap.height / 2)
+            val pixels = when {
+                mode.usesSlideMarkers -> listOf(slideStart ?: (bitmap.width / 4 to bitmap.height / 2),
+                    slideEnd ?: (bitmap.width * 3 / 4 to bitmap.height / 2))
+                mode.usesPressPick -> selection.points.map { it.x to it.y }
+                else -> listOf(current)
+            }
+            ImageToolPixelAdjustDialog(mode, bitmap.width, bitmap.height, selection.box, pixels,
+                onDismiss = { pixelAdjustOpen = false }, onApply = { rectangle, points ->
+                    when {
+                        mode.usesDragBox -> selection = selection.copy(box = rectangle)
+                        mode.usesSlideMarkers -> { slideStart = points[0]; slideEnd = points[1] }
+                        mode.usesPressPick -> selection = selection.copy(points = points.map { (x, y) ->
+                            ImageToolCodeGen.PickedPoint(x, y, bitmap.getPixel(x, y) and 0xFFFFFF)
+                        })
+                        else -> points.firstOrNull()?.let { (x, y) -> viewport?.toView(x, y)?.let { crosshair = Offset(it.first, it.second) } }
+                    }
+                    blocked = null
+                    pixelAdjustOpen = false
+                })
+        }
 
         val ocrSource = bitmap
         if (glyphMakerOpen && bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null) {
@@ -345,7 +383,7 @@ internal fun ImageToolWindow(
         }
 
         if (menuOpen) {
-            val menuWidth = with(density) { MENU_WIDTH.toPx() }
+            val menuWidth = minOf(with(density) { MENU_WIDTH.toPx() }, (viewWidth - with(density) { 8.dp.toPx() }).coerceAtLeast(1f))
             val menuHeight = minOf(with(density) { MENU_HEIGHT.toPx() }, (viewHeight - with(density) { 12.dp.toPx() }).coerceAtLeast(1f))
             val placement = menuPlacement(
                 toolbarLeft = resolvedToolbar.first,
@@ -360,7 +398,8 @@ internal fun ImageToolWindow(
                 current = mode,
                 onPick = ::switchMode,
                 recorderAvailable = onOpenRecorder != null,
-                modifier = Modifier.heightIn(max = with(density) { menuHeight.toDp() }).offset {
+                modifier = Modifier.width(with(density) { menuWidth.toDp() })
+                    .heightIn(max = with(density) { menuHeight.toDp() }).offset {
                     IntOffset(placement.first.roundToInt(), placement.second.roundToInt())
                 },
             )
@@ -425,19 +464,20 @@ private fun buildSnippet(
     mapping: ImageToolCodeGen.DesignMapping,
     onError: (String) -> Unit,
 ): ImageToolCodeGen.Snippet? = runCatching {
-    when (mode) {
+    val inputMapping = ImageToolCodeGen.DesignMapping(mapping.captureWidth, mapping.captureHeight, mapping.captureWidth, mapping.captureHeight)
+    val snippet = when (mode) {
         ImageToolMode.REGION -> ImageToolCodeGen.region(selection.box!!, mapping)
         ImageToolMode.TAP -> ImageToolCodeGen.tap(
             crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"),
-            mapping,
+            inputMapping,
         )
         ImageToolMode.LONG_PRESS -> ImageToolCodeGen.longPress(
             crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"),
             gestureDuration,
-            mapping,
+            inputMapping,
         )
-        ImageToolMode.POINTER_DOWN -> ImageToolCodeGen.pointerDown(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), mapping)
-        ImageToolMode.POINTER_MOVE -> ImageToolCodeGen.pointerMove(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), mapping)
+        ImageToolMode.POINTER_DOWN -> ImageToolCodeGen.pointerDown(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), inputMapping)
+        ImageToolMode.POINTER_MOVE -> ImageToolCodeGen.pointerMove(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), inputMapping)
         ImageToolMode.POINTER_UP -> ImageToolCodeGen.pointerUp()
         // 取色用的是抬手时取到的点，不是准星——参考 colorpicker 没有常驻准星。
         ImageToolMode.COLOR -> ImageToolCodeGen.getColor(selection.points.first(), mapping)
@@ -454,7 +494,7 @@ private fun buildSnippet(
             val pixel = { p: Pair<Int, Int> ->
                 ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0)
             }
-            ImageToolCodeGen.swipe(pixel(start), pixel(end), swipeDuration, mapping)
+            ImageToolCodeGen.swipe(pixel(start), pixel(end), swipeDuration, inputMapping)
         }
         ImageToolMode.DRAG -> {
             val start = slideStart ?: error("请先设置拖动起点")
@@ -462,20 +502,22 @@ private fun buildSnippet(
             val pixel = { p: Pair<Int, Int> ->
                 ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0)
             }
-            ImageToolCodeGen.drag(pixel(start), pixel(end), gestureDuration, mapping)
+            ImageToolCodeGen.drag(pixel(start), pixel(end), gestureDuration, inputMapping)
         }
         else -> null
     }
+    if (snippet != null && mode in setOf(ImageToolMode.TAP, ImageToolMode.SWIPE, ImageToolMode.LONG_PRESS,
+            ImageToolMode.DRAG, ImageToolMode.POINTER_DOWN, ImageToolMode.POINTER_MOVE, ImageToolMode.POINTER_UP))
+        ImageToolCodeGen.screenInput(snippet) else snippet
 }.getOrElse { error ->
     onError(error.message ?: "生成失败")
     null
 }
 
 private val TOOLBAR_FALLBACK_WIDTH = 304.dp
-private val TOOLBAR_HEIGHT = 44.dp
-private val MENU_WIDTH = 124.dp
-// Follow the actual two-column menu instead of hiding the last tools on short displays.
-private val MENU_HEIGHT = (((ImageToolMode.menuOrder.size + 1) / 2) * 60 + 8).dp
+private val TOOLBAR_HEIGHT = 34.dp
+private val MENU_WIDTH = 180.dp
+private val MENU_HEIGHT = (((ImageToolMode.menuOrder.size + 3) / 4) * 40 + 8).dp
 
 internal val ToolChrome = Color(0xE61E2531)
 internal val BoxStroke = Color(0xFFFF4D4F)

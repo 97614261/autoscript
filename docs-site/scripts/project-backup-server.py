@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import secrets
 import socket
+import struct
 import tempfile
 import threading
 import time
@@ -25,6 +26,7 @@ MAX_FILE = 129 * 1024 * 1024
 MAX_TOTAL = 2 * 1024 * 1024 * 1024
 MAX_ITEMS = 32
 MAGIC = b'ZGBK0001'
+PACK_MAGIC = b'ZGBS0001'
 
 
 def valid_id(value):
@@ -62,7 +64,17 @@ class Store:
         wire.common.no_links(directory)
         if not directory.is_dir():
             raise wire.Rejected('BACKUP_NOT_FOUND', 404)
-        if {path.name for path in directory.iterdir()} != {'snapshot.zgb', 'record.json'}:
+        names = {path.name for path in directory.iterdir()}
+        if 'current.zgb' in names:
+            if not names <= {'current.zgb', 'snapshot.zgb', 'record.json'}:
+                raise wire.Rejected('BACKUP_STORAGE_NEEDS_ATTENTION', 409)
+            for name in names:
+                wire.regular(directory / name)
+            record, offset = self.packed_record(directory / 'current.zgb')
+            if record['id'] != identity or (directory / 'current.zgb').stat().st_size != offset + record['bytes']:
+                raise wire.Rejected('BACKUP_STORAGE_NEEDS_ATTENTION', 409)
+            return record
+        if names != {'snapshot.zgb', 'record.json'}:
             raise wire.Rejected('BACKUP_STORAGE_NEEDS_ATTENTION', 409)
         info = wire.regular(directory / 'record.json')
         if info.st_size > 4096:
@@ -71,6 +83,30 @@ class Store:
         if record['id'] != identity or wire.regular(directory / 'snapshot.zgb').st_size != record['bytes']:
             raise wire.Rejected('BACKUP_STORAGE_NEEDS_ATTENTION', 409)
         return record
+
+    @staticmethod
+    def packed_record(path):
+        wire.regular(path)
+        with path.open('rb') as source:
+            header = source.read(12)
+            if len(header) != 12 or header[:8] != PACK_MAGIC:
+                raise wire.Rejected('BACKUP_STORAGE_NEEDS_ATTENTION', 409)
+            size = struct.unpack('>I', header[8:])[0]
+            if not 1 <= size <= 4096:
+                raise wire.Rejected('BACKUP_METADATA_INVALID')
+            record = validate_record(wire.parse_json(source.read(size)), stored=True)
+        return record, 12 + size
+
+    def open_snapshot(self, record):
+        directory = self.directory / record['id']
+        if (directory / 'current.zgb').exists():
+            current, offset = self.packed_record(directory / 'current.zgb')
+            if current != record:
+                raise wire.Rejected('BACKUP_CHANGED', 409)
+            source = (directory / 'current.zgb').open('rb')
+            source.seek(offset)
+            return source
+        return (directory / 'snapshot.zgb').open('rb')
 
     def inventory(self):
         names = [path.name for path in self.directory.iterdir()]
@@ -82,19 +118,28 @@ class Store:
             raise wire.Rejected('BACKUP_STORAGE_NEEDS_ATTENTION', 409)
         return sorted(records, key=lambda item: (item['createdAt'], item['id']), reverse=True), used
 
-    def upload(self, stream, metadata, deadline):
+    def upload(self, stream, metadata, deadline, replacing=None):
         metadata = validate_record(metadata)
         records, used = self.inventory()
         target = self.directory / metadata['id']
-        if target.exists():
+        previous = None
+        if replacing is not None:
+            previous = self.record(metadata['id'])
+            if replacing != previous['sha256']:
+                raise wire.Rejected('BACKUP_CHANGED', 409)
+        elif target.exists():
             raise wire.Rejected('BACKUP_ID_EXISTS', 409)
-        if len(records) >= MAX_ITEMS or used + metadata['bytes'] > MAX_TOTAL:
+        if (previous is None and len(records) >= MAX_ITEMS) or used - (previous['bytes'] if previous else 0) + metadata['bytes'] > MAX_TOTAL:
             raise wire.Rejected('BACKUP_CAPACITY', 409)
         staging = Path(tempfile.mkdtemp(prefix='.upload-', dir=self.directory))
         try:
+            record = dict(metadata, createdAt=int(time.time() * 1000))
             digest = hashlib.sha256()
             remaining = metadata['bytes']
             with (staging / 'snapshot.zgb').open('xb') as output:
+                if previous:
+                    encoded = wire.encoded(record)
+                    output.write(PACK_MAGIC + struct.pack('>I', len(encoded)) + encoded)
                 prefix = bytearray()
                 read = getattr(stream, 'read1', stream.read)
                 while remaining:
@@ -116,12 +161,19 @@ class Store:
                 os.fsync(output.fileno())
             if digest.hexdigest() != metadata['sha256']:
                 raise wire.Rejected('BACKUP_DIGEST_MISMATCH')
-            record = dict(metadata, createdAt=int(time.time() * 1000))
-            with (staging / 'record.json').open('xb') as output:
-                output.write(wire.encoded(record))
-                output.flush()
-                os.fsync(output.fileno())
-            os.rename(staging, target)
+            if previous:
+                # Metadata and encrypted body switch together, without deleting the old snapshot first.
+                os.replace(staging / 'snapshot.zgb', target / 'current.zgb')
+                wire.sync_directory(target)
+                for name in ('snapshot.zgb', 'record.json'):
+                    (target / name).unlink(missing_ok=True)
+                wire.sync_directory(target)
+            else:
+                with (staging / 'record.json').open('xb') as output:
+                    output.write(wire.encoded(record))
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.rename(staging, target)
             wire.sync_directory(self.directory)
             return record
         finally:
@@ -137,8 +189,8 @@ class Store:
         source = self.directory / identity
         deleted = self.directory / ('.deleting-' + secrets.token_hex(16))
         os.rename(source, deleted)
-        for name in ('snapshot.zgb', 'record.json'):
-            (deleted / name).unlink()
+        for name in ('snapshot.zgb', 'record.json', 'current.zgb'):
+            (deleted / name).unlink(missing_ok=True)
         deleted.rmdir()
         wire.sync_directory(self.directory)
 
@@ -177,11 +229,11 @@ class Handler(wire.Handler):
 
     def authenticate(self):
         self.identity = None
-        match = re.fullmatch(re.escape(INDEX) + r'/([a-f0-9]{32})(/delete)?', self.path)
+        match = re.fullmatch(re.escape(INDEX) + r'/([a-f0-9]{32})(/(delete|replace))?', self.path)
         if self.path not in (CHALLENGE, INDEX) and not match:
             raise wire.Rejected('INVALID_ENDPOINT', 404)
         if match:
-            self.identity, self.deleting = match.group(1), bool(match.group(2))
+            self.identity, self.operation = match.group(1), match.group(3)
         if self.headers.get_all('Origin') or self.headers.get_all('Authorization') or self.headers.get_all('Transfer-Encoding'):
             raise wire.Rejected('INVALID_HEADERS', 401)
         if sum(len(key) + len(value) for key, value in self.headers.items()) > 16384:
@@ -222,7 +274,8 @@ class Handler(wire.Handler):
                 if self.header('If-Match'):
                     raise wire.Rejected('INVALID_READ_REQUEST')
                 records, used = self.server.store.inventory()
-                self.reply(200, {'protocol': 1, 'records': records, 'bytes': used, 'maxItems': MAX_ITEMS, 'maxBytes': MAX_TOTAL})
+                self.reply(200, {'protocol': 1, 'records': records, 'bytes': used, 'maxItems': MAX_ITEMS, 'maxBytes': MAX_TOTAL,
+                                 'capabilities': ['replace']})
             elif self.path == INDEX and upload:
                 if self.header('Content-Type') != 'application/octet-stream' or self.header('If-Match'):
                     raise wire.Rejected('BACKUP_CONTENT_TYPE_REQUIRED', 415)
@@ -239,13 +292,26 @@ class Handler(wire.Handler):
                 record = self.server.store.record(self.identity)
                 if self.header('If-Match') != '"' + record['sha256'] + '"':
                     raise wire.Rejected('BACKUP_CHANGED', 409)
-                if self.deleting and upload:
+                if self.operation == 'replace' and upload:
+                    if self.header('Content-Type') != 'application/octet-stream':
+                        raise wire.Rejected('BACKUP_CONTENT_TYPE_REQUIRED', 415)
+                    try:
+                        metadata = wire.parse_json(base64.b64decode(self.header('X-Release-Metadata'), validate=True))
+                    except (ValueError, TypeError):
+                        raise wire.Rejected('BACKUP_METADATA_INVALID') from None
+                    validate_record(metadata)
+                    if metadata['id'] != self.identity or metadata['bytes'] != int(self.header('Content-Length')) or metadata['sha256'] != self.body_sha:
+                        raise wire.Rejected('BACKUP_METADATA_INVALID')
+                    replaced = self.server.store.upload(self.rfile, metadata, deadline, replacing=record['sha256'])
+                    self.reply(200, {'ok': True, 'record': replaced})
+                elif self.operation == 'delete' and upload:
                     if int(self.header('Content-Length', '0')) != 0 or self.header('Content-Type') or self.header('X-Release-Metadata') or self.body_sha != wire.EMPTY_SHA256:
                         raise wire.Rejected('INVALID_DELETE_REQUEST')
                     self.server.store.delete(self.identity, record['sha256'])
                     self.reply(200, {'ok': True, 'id': self.identity})
-                elif not self.deleting and not upload:
-                    with (self.server.store.directory / self.identity / 'snapshot.zgb').open('rb') as source:
+                elif self.operation is None and not upload:
+                    with self.server.store.open_snapshot(record) as source:
+                        start = source.tell()
                         digest = hashlib.sha256()
                         while chunk := source.read(65536):
                             if time.monotonic() >= deadline:
@@ -253,7 +319,7 @@ class Handler(wire.Handler):
                             digest.update(chunk)
                         if digest.hexdigest() != record['sha256']:
                             raise wire.Rejected('BACKUP_DIGEST_MISMATCH')
-                        source.seek(0)
+                        source.seek(start)
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/octet-stream')
                         self.send_header('Content-Length', str(record['bytes']))

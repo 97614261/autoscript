@@ -56,29 +56,30 @@ internal fun VisualFrameResourceDialog(contract: BlockContract, arguments: JsonO
         }
     }) {
         Column(Modifier.fillMaxWidth().heightIn(max=if(fullScreen) 900.dp else 360.dp).verticalScroll(rememberScrollState()).padding(10.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-            Text(contract.summary,fontSize=11.sp)
-            contract.properties.forEach {property ->
+            val numericProperties = contract.properties.filter { it.editor == BlockPropertyEditor.INTEGER && !it.path.endsWith("Variable") }
+            contract.properties.filter { it !in numericProperties }.forEach {property ->
                 val key=property.path
                 when {
-                    key == "imagePath" -> DesignerChoice(property.label,inputs[key].orEmpty().ifEmpty {"请选择"},
+                    key == "imagePath" -> ImageToolChoice(property.label,inputs[key].orEmpty().ifEmpty {"请选择"},
                         project.manifest.resources.filter {it.get("kind")?.asString=="image"}.mapNotNull {it.get("path")?.asString}
                             .map {it to it.removePrefix("assets/images/")},true) {update(key,it)}
                     key.endsWith("Variable") -> {
                         val expected=if(key=="sourceVariable" || (key=="resultVariable" && contract.kind in setOf("screen.series","screen.frameinfo"))) ProjectVariableType.STRING else ProjectVariableType.IMAGE
-                        DesignerChoice(property.label,inputs[key].orEmpty().ifEmpty {"请选择"},variables.filter {it.type==expected}.map {it.name to it.name},true) {update(key,it)}
+                        CompactVariableChoice(property.label,inputs[key].orEmpty(),variables.filter {it.type==expected}.map {it.name to it.name},true,variables) {update(key,it)}
                     }
-                    property.editor==BlockPropertyEditor.BOOLEAN -> DesignerChoice(property.label,inputs[key].orEmpty(),listOf("true" to "允许","false" to "不允许"),true) {update(key,it)}
-                    else -> DesignerInput(property.label,inputs[key].orEmpty(),true,Modifier.fillMaxWidth(),numeric=true) {update(key,it)}
+                    property.editor==BlockPropertyEditor.BOOLEAN -> ImageToolChoice(property.label,inputs[key].orEmpty(),listOf("true" to "允许","false" to "不允许"),true) {update(key,it)}
+                    else -> ImageToolCompactInput(property.label,inputs[key].orEmpty(),true,Modifier.fillMaxWidth(),numeric=true) {update(key,it)}
                 }
             }
-            if(contract.kind=="screen.capture") Text("获取一帧到已声明的图像变量；后续找图、找色、识字选择已有图像，共用这帧。全部完成后释放；点击或等待画面变化后应重新采集。",fontSize=11.sp)
-            else if(contract.kind=="screen.release") Text("仅释放本任务持有的普通图像帧；释放后不要继续识别。系列借用帧请释放所属帧系列。",fontSize=11.sp)
-            else if(contract.kind=="screen.loadimage") Text("仅加载已登记项目图片，不截图；句柄只在当前任务内有效，后续用释放帧积木释放。",fontSize=11.sp)
-            else if(contract.kind=="screen.captureregion") Text("原屏像素范围，不使用设计比例；识别返回区域局部坐标，用映射原屏坐标转换。使用后释放图像。",fontSize=11.sp)
-            else if(contract.kind=="screen.crop") Text("原像素裁剪，不换算设计比例；右、下边界不包含。新帧和源帧分别管理。",fontSize=11.sp)
-            else if(contract.kind=="screen.frameinfo") Text("读取已有图像，不自动截图或释放。图片资源先用加载项目图片获得图像变量；读取后按需要释放。",fontSize=11.sp)
-            else Text("系列句柄只在采集任务内有效，不能保存到文件后跨运行读取；取出帧是借用，释放系列后失效。",fontSize=11.sp)
-            onManageVariables?.let {TextButton(onClick=it) {Text("维护变量",fontSize=11.sp)}}
+            ImageToolNumberFields(numericProperties.map { Triple(it.path, it.label, inputs[it.path].orEmpty()) }, true, ::update)
+            ImageToolHelp(contract.summary + "\n" + if(contract.kind=="screen.capture") "获取一帧到已声明的图像变量；后续找图、找色、识字选择已有图像，共用这帧。全部完成后释放；点击或等待画面变化后应重新采集。"
+            else if(contract.kind=="screen.release") "仅释放本任务持有的普通图像帧；释放后不要继续识别。系列借用帧请释放所属帧系列。"
+            else if(contract.kind=="screen.loadimage") "仅加载已登记项目图片，不截图；句柄只在当前任务内有效，后续用释放帧积木释放。"
+            else if(contract.kind=="screen.captureregion") "原屏像素范围，不使用设计比例；识别返回区域局部坐标，用映射原屏坐标转换。使用后释放图像。"
+            else if(contract.kind=="screen.crop") "原像素裁剪，不换算设计比例；右、下边界不包含。新帧和源帧分别管理。"
+            else if(contract.kind=="screen.frameinfo") "读取已有图像，不自动截图或释放。图片资源先用加载项目图片获得图像变量；读取后按需要释放。"
+            else "系列句柄只在采集任务内有效，不能保存到文件后跨运行读取；取出帧是借用，释放系列后失效。")
+            onManageVariables?.let { ImageToolCompactAction("维护变量", true, onClick = it) }
             error?.let {Text(it,fontSize=11.sp)}
         }
     }

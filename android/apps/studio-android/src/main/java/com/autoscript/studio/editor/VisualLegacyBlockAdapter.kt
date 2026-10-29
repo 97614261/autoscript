@@ -85,6 +85,13 @@ internal fun legacyDockBlockArguments(
     snippet: String,
     defaults: JsonObject,
 ): JsonObject = defaults.deepCopy().apply {
+    if (contract.kind == "control.if") {
+        configuredConditionInsertion(snippet)?.takeUnless { it.elseIf }?.let { insertion ->
+            keySet().toList().forEach(::remove)
+            insertion.arguments.entrySet().forEach { (key, value) -> add(key, value.deepCopy()) }
+            return@apply
+        }
+    }
     if (contract.kind in setOf("task.runprompt", "task.prompt", "task.log", "task.message", "task.comment", "task.sleep",
             "flow.call", "flow.call.branch", "flow.status.return", "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
         snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + contract.kind + "\n")) {

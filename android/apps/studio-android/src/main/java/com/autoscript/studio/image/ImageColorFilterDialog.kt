@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -147,22 +148,29 @@ private fun ColorFilterContent(initial: ProjectImageFilter, onDismiss: () -> Uni
     }
     ProvideTextStyle(LocalTextStyle.current.copy(lineHeight=14.sp)) {
     StudioPanelDialog("滤色 · 规则与方案",::close,fullScreen=full,onToggleFullScreen={full=!full},showFooter=false,compactHeader=true) {
-        Column(Modifier.fillMaxWidth().heightIn(max=if(full)1000.dp else 620.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val short = studioShortViewport(maxHeight.value)
+        val previewHeight = if (short) studioPopupPreviewHeight(maxHeight.value).toInt().coerceAtLeast(1) else if (full) 180 else 112
+        val previewContent: @Composable () -> Unit = {
             if (source != null) {
-                Row(Modifier.padding(horizontal=8.dp)) {
+                FlowRow(Modifier.padding(horizontal=8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     ImageToolCompactAction(if(showOriginal) "● 原图" else "原图",true) { showOriginal=true }
                     ImageToolCompactAction(if(!showOriginal) "● 滤色图" else "滤色图",true) { showOriginal=false }
                     Text("${source.width}×${source.height}px",fontSize=10.sp,modifier=Modifier.padding(6.dp))
                 }
                 val shown=if(showOriginal) source else preview?.takeIf { it.first==signature }?.second ?: source
-                ColorFilterCanvas(shown,source,if(full)180 else 112,!saving) { rgb ->
+                ColorFilterCanvas(shown,source,previewHeight,!saving) { rgb ->
                     draft=draft.copy(rgb="%06X".format(rgb));message="已取原图颜色 #${draft.rgb}，不读取滤色后的黑白值"
                 }
                 Text(if(candidate==null) "参数无效，当前显示原图；请修正颜色或容差" else if(previewBusy) "正在生成当前规则预览…" else previewMessage,fontSize=10.sp,color=AutoScriptPalette.TextSecondary,modifier=Modifier.padding(horizontal=8.dp,vertical=3.dp))
             }
+        }
+        Column(Modifier.fillMaxWidth().heightIn(max=if(full)1000.dp else 620.dp)) {
+            if (!short) previewContent()
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(8.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-                DesignerChoice("滤色方式",when(filter.space) { "relative" -> "相对 · 通道差";"custom" -> "自定义 · 逐条方式";else -> "绝对 · RGB色差" },listOf("absolute" to "绝对 · RGB色差","relative" to "相对 · 允许共同明暗变化","custom" to "自定义 · 逐条方式"),!saving) { filter=filter.copy(space=it) }
-                Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                if (short) previewContent()
+                ImageToolChoice("滤色方式",filter.space,listOf("absolute" to "绝对 · RGB色差","relative" to "相对 · 允许共同明暗变化","custom" to "自定义 · 逐条方式"),!saving) { filter=filter.copy(space=it) }
+                FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp), verticalArrangement=Arrangement.spacedBy(2.dp)) {
                     ImageToolCompactAction(if(filter.output=="binary") "● 黑白输出" else "黑白输出",!saving) { filter=filter.copy(output="binary") }
                     ImageToolCompactAction(if(filter.output=="keep") "● 透明保留" else "透明保留",!saving) { filter=filter.copy(output="keep") }
                     ImageToolCompactAction(if(filter.invert) "✓ 反选" else "反选",!saving) { filter=filter.copy(invert=!filter.invert) }
@@ -183,7 +191,7 @@ private fun ColorFilterContent(initial: ProjectImageFilter, onDismiss: () -> Uni
                     ImageToolCompactInput("G差",draft.g,!saving,Modifier.weight(1f),numeric=true) { draft=draft.copy(g=it.take(3)) }
                     ImageToolCompactInput("B差",draft.b,!saving,Modifier.weight(1f),numeric=true) { draft=draft.copy(b=it.take(3)) }
                 }
-                if(filter.space=="custom") DesignerChoice("当前规则",if(draft.space=="relative") "相对" else "绝对",listOf("absolute" to "绝对","relative" to "相对"),!saving) { draft=draft.copy(space=it) }
+                if(filter.space=="custom") ImageToolChoice("当前规则",draft.space,listOf("absolute" to "绝对","relative" to "相对"),!saving) { draft=draft.copy(space=it) }
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(3.dp)) {
                     ImageToolCompactAction("加颜色",!saving && candidate!=null && filter.rules.size<32) {
                         filter=requireNotNull(candidate).copy(rules=requireNotNull(candidate).rules+ProjectColorRule(0xFFFFFF));selected=filter.rules.lastIndex;draft=ColorRuleDraft.from(filter.rules[selected])
@@ -211,13 +219,15 @@ private fun ColorFilterContent(initial: ProjectImageFilter, onDismiss: () -> Uni
                     }
                 }
                 Text("相对模式比较通道差，不区分灰色的整体亮暗；排除规则优先。黑白找图需模板与画面使用对应滤色，透明模板则忽略未保留区域。制字后运行也需对画面应用同样处理。",fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
+                if (short) Text(message,fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
             }
             HorizontalDivider()
-            Text(message,fontSize=10.sp,color=AutoScriptPalette.TextSecondary,modifier=Modifier.padding(horizontal=8.dp,vertical=4.dp))
+            if (!short) Text(message,fontSize=10.sp,color=AutoScriptPalette.TextSecondary,modifier=Modifier.padding(horizontal=8.dp,vertical=4.dp))
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {
                 ImageToolCompactAction("取消滤色",!saving, onClick=::close)
                 GlyphMakerPrimaryAction("应用滤色",!saving && candidate!=null) { onApply(requireNotNull(candidate)) }
             }
+        }
         }
     }
     }
@@ -230,7 +240,7 @@ private fun ColorFilterContent(initial: ProjectImageFilter, onDismiss: () -> Uni
 private fun ColorFilterCanvas(shown: Bitmap, source: Bitmap, height: Int, enabled: Boolean, onPick: (Int)->Unit) {
     val pick by rememberUpdatedState(onPick)
     val image=remember(shown) { shown.asImageBitmap() }
-    Canvas(Modifier.fillMaxWidth().height(height.dp).background(Color(0xff272b37)).semantics { contentDescription="滤色预览取色" }
+    Canvas(Modifier.fillMaxWidth().height(height.dp).clipToBounds().background(Color(0xff272b37)).semantics { contentDescription="滤色预览取色" }
         .pointerInput(source,enabled) { detectTapGestures { point -> if(enabled && !source.isRecycled) {
             val viewport=glyphMakerFocus(ImageToolViewport.fit(source.width,source.height,size.width.toFloat(),size.height.toFloat()))
             viewport.toImage(point.x,point.y)?.let { (x,y) -> val pixel=source[x,y];if(pixel ushr 24 != 0) pick(pixel and 0xFFFFFF) }

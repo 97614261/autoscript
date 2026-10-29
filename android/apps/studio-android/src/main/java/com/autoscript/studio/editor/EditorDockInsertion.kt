@@ -21,6 +21,17 @@ internal fun applyConfiguredEditorInsertion(context: EditorPasteRequest, project
     return if (accepted) null else "无法把${contract.title}加入当前位置"
 }
 
+internal fun applyConfiguredElseIfInsertion(context: EditorPasteRequest, projectId: String, flowId: String,
+    editor: VisualEditorState, arguments: JsonObject, capabilities: Set<String>, canMutate: Boolean): String? {
+    if (!canMutate) return "请停止运行并完成当前操作后再修改插件"
+    if (!context.matches(projectId, flowId, editor)) return "插件、草稿或选择已变化，未加入；请返回重新选择"
+    val contract = requireNotNull(BlockCatalog.find("control.if"))
+    if (!capabilities.containsAll(contract.requiredCapabilities)) return "项目能力已变化，未加入否则如果"
+    if (!validConfiguredConditionArguments(arguments)) return "否则如果条件无效，未加入分支"
+    return if (editor.addElseIfBranch(arguments, context.primary)) null
+        else "请选中一个“如果”节点；否则如果最多32个"
+}
+
 /** View-only insertion target; the real owner remains an anchor, never a branch node identity. */
 internal data class EditorBranchSelection(val ownerId: String, val slot: String, val source: String) {
     fun matches(editor: VisualEditorState): Boolean = source == editor.currentSource &&

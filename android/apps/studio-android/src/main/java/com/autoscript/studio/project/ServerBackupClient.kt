@@ -24,6 +24,8 @@ internal class ServerBackupClient(origin: String, private val key: String) : Clo
     @Volatile private var connection: HttpURLConnection? = null
     private val root = "/api/project-backup/v1"
     private val emptyHash = ServerBackupCrypto.sha(byteArrayOf())
+    var supportsReplacement: Boolean = false
+        private set
     companion object {
         private val watchdog = ScheduledThreadPoolExecutor(1) { task -> Thread(task, "project-backup-timeout").apply { isDaemon = true } }
             .apply { removeOnCancelPolicy = true }
@@ -37,6 +39,7 @@ internal class ServerBackupClient(origin: String, private val key: String) : Clo
     override fun close() { cancelled.set(true); connection?.disconnect() }
 
     fun list(): List<ServerBackupRecord> {
+        supportsReplacement = false
         val value = json(request("GET", "$root/backups"))
         require(value["protocol"]?.asInt == 1)
         val records = value.getAsJsonArray("records")
@@ -44,15 +47,20 @@ internal class ServerBackupClient(origin: String, private val key: String) : Clo
         return records.map { record(it.asJsonObject) }.also { items ->
             require(items.map { it.id }.toSet().size == items.size && items.sumOf { it.bytes } <= 2L * 1024 * 1024 * 1024)
             require(value["bytes"].asLong == items.sumOf { it.bytes })
+            supportsReplacement = value.getAsJsonArray("capabilities")?.any { it.isJsonPrimitive && it.asString == "replace" } == true
         }
     }
-    fun upload(file: File, id: String, label: String): ServerBackupRecord {
+    fun upload(file: File, id: String, label: String, replacing: ServerBackupRecord? = null): ServerBackupRecord {
         check()
+        require(replacing == null || replacing.id == id) { "BACKUP_REPLACE_TARGET_INVALID" }
+        check(replacing == null || supportsReplacement) { "BACKUP_REPLACE_UNSUPPORTED" }
         val size = file.length()
         require(size in 36..ServerBackupCrypto.MAX_ENCRYPTED)
         val hash = hash(file)
         val meta = JsonObject().apply { addProperty("id", id); addProperty("label", label); addProperty("bytes", size); addProperty("sha256", hash) }
-        val bytes = request("POST", "$root/backups", metadata = ServerBackupCrypto.base64(meta.toString().toByteArray()), file = file, bodyHash = hash)
+        val bytes = request("POST", if (replacing == null) "$root/backups" else "$root/backups/$id/replace",
+            revision = replacing?.let { "\"${it.sha256}\"" }.orEmpty(),
+            metadata = ServerBackupCrypto.base64(meta.toString().toByteArray()), file = file, bodyHash = hash)
         return record(json(bytes)["record"].asJsonObject).also {
             require(it.id == id && it.label == label && it.bytes == size && it.sha256 == hash)
         }

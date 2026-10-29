@@ -12,11 +12,12 @@ class FunctionLibraryTest {
     private val apiGroups = FunctionCatalog.apiGroups()
     private val references = apiGroups.flatMap { it.entries }
 
-    @Test fun everyRealApiAppearsOnceAsReadOnlyGeneratedDocumentation() {
+    @Test fun everyCurrentApiAppearsOnceAsReadOnlyGeneratedDocumentation() {
         val docs = GeneratedFunctionDocumentation.all
         assertEquals(GeneratedApiContracts.all.map { it.name }.toSet(), docs.map { it.name }.toSet())
-        assertEquals(docs.size, references.size)
-        docs.forEach { doc ->
+        val currentDocs = docs.filterNot { it.name.startsWith("Legacy.") }
+        assertEquals(currentDocs.size, references.size)
+        currentDocs.forEach { doc ->
             val entry = references.single { it.apiName == doc.name }
             assertEquals(doc.summary, entry.detail)
             assertEquals(setOf(doc.capability), entry.requiredCapabilities)
@@ -32,11 +33,11 @@ class FunctionLibraryTest {
         }
     }
 
-    @Test fun allBlocksRemainAddressableOnceWithTheirActualMetadata() {
-        assertEquals(BlockCatalog.all.size, visual.size)
-        assertEquals(BlockCatalog.all.map { it.kind }.toSet(), visual.map { it.blockKind }.toSet())
+    @Test fun allCurrentBlocksRemainAddressableOnceWithTheirActualMetadata() {
+        assertEquals(BlockCatalog.insertable.size, visual.size)
+        assertEquals(BlockCatalog.insertable.map { it.kind }.toSet(), visual.map { it.blockKind }.toSet())
         assertEquals(visual.size, visual.map { it.blockKind }.distinct().size)
-        BlockCatalog.all.forEach { block ->
+        BlockCatalog.insertable.forEach { block ->
             val entry = visual.single { it.blockKind == block.kind }
             assertTrue(entry.canInsert)
             assertEquals(block.kind, FunctionCatalog.blockKindOf(entry.snippet))
@@ -49,7 +50,7 @@ class FunctionLibraryTest {
 
     @Test fun groupsArePurposeSpecificAndOrderedWithoutCatchAllBuckets() {
         val expected = mapOf("text." to "文本", "data." to "集合", "date." to "时间",
-            "audio." to "音频", "floating." to "浮窗", "legacy." to "旧版兼容",
+            "audio." to "音频", "floating." to "浮窗",
             "clipboard." to "系统", "app." to "系统", "input." to "按键", "files." to "文件")
         expected.forEach { (prefix, label) ->
             val kinds = BlockCatalog.all.filter { it.kind.startsWith(prefix) }.map { it.kind }.toSet()
@@ -69,7 +70,7 @@ class FunctionLibraryTest {
             "Input.tapScreen" to "input.tap", "Files.read" to "files.read",
             "Audio.play" to "audio.play", "UI.getValue" to "ui.get",
             "Screen.findImages" to "vision.findimage", "Screen.cache" to "screen.capture",
-            "Text.repeatText" to "text.repeat", "Legacy.duoDianZhaoSe" to "legacy.duodianzhaose",
+            "Text.repeatText" to "text.repeat",
             "Text.numberAt" to "text.numberat", "Ocr.latinText" to "ocr.alphanumeric"
         ).forEach { (api, kind) ->
             assertEquals(kind, FunctionCatalog.search(visualGroups, api).first().second.blockKind)
@@ -89,12 +90,22 @@ class FunctionLibraryTest {
         }
     }
 
-    @Test fun compatibilityBlocksArePreservedButIsolatedFromModernImageTools() {
-        val legacy = visualGroups.single { it.label == "旧版兼容" }.entries
-        assertEquals(BlockCatalog.all.filter { it.kind.startsWith("legacy.") }.map { it.kind }.toSet(),
-            legacy.map { it.blockKind }.toSet())
-        assertTrue(visualGroups.single { it.label == "图像" }.entries.none { it.blockKind!!.startsWith("legacy.") })
-        assertTrue(legacy.all { it.canInsert && it.requiredCapabilities.isNotEmpty() })
+    @Test fun legacyContractsRemainReadableButHaveNoLibraryOrInsertionEntries() {
+        val legacy = BlockCatalog.all.filter { it.kind.startsWith("legacy.") }
+        assertTrue(legacy.isNotEmpty())
+        assertTrue(visualGroups.none { it.label == "旧版兼容" })
+        assertTrue(visual.none { it.blockKind!!.startsWith("legacy.") })
+        assertTrue(references.none { it.apiName!!.startsWith("Legacy.") })
+        legacy.forEach { block ->
+            assertSame(block, BlockCatalog.find(block.kind))
+            assertTrue(FunctionApiReference.aliasesForKind(block.kind).isEmpty())
+            assertTrue(FunctionCatalog.search(visualGroups, block.kind).isEmpty())
+            assertTrue(BlockCatalog.search(block.kind, emptySet()).isEmpty())
+        }
+        GeneratedFunctionDocumentation.all.filter { it.name.startsWith("Legacy.") }.forEach { doc ->
+            assertTrue(FunctionCatalog.search(visualGroups, doc.name).isEmpty())
+            assertTrue(FunctionCatalog.search(apiGroups, doc.name).isEmpty())
+        }
     }
 
     @Test fun lowLevelApiContractsAreNotFictitiousInsertableBlocks() {

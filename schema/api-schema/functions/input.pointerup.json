@@ -9,8 +9,8 @@
   "sideEffect": "device_input",
   "timeoutMs": 3000,
   "resourceOwnership": "task_pointer_lease",
-  "summary": "释放当前任务持有的单指触点；其他任务不能代替持有者释放。",
+  "summary": "释放当前任务持有的单指触点；已弹起且清理已确认时不发送重复输入，直接成功。其他任务不能代替持有者释放。",
   "params": [],
-  "returns": { "type": "void", "nullable": false, "summary": "Root输入后端确认弹起时返回。" },
+  "returns": { "type": "void", "nullable": false, "summary": "后端确认弹起或触点已处于已释放状态时返回；停止、取消、过期及清理失败仍报错。" },
   "legacyAliases": []
 }

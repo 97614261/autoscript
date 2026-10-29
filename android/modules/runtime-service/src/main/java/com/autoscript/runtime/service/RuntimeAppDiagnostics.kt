@@ -11,7 +11,7 @@ internal enum class AppDiagnosticCode {
     ROOT_DAEMON_MISSING, ROOT_KEY_FAILED, ROOT_SU_START_FAILED, ROOT_START_TIMEOUT,
     ROOT_ATTACH_FAILED, ROOT_READY, ROOT_DISCONNECTED, ROOT_RETRIES_EXHAUSTED,
     ROOT_PROCESS_EXITED, ROOT_PROCESS_PERMISSION_DENIED, ROOT_PROCESS_LINK_FAILED,
-    ROOT_PROCESS_COMMAND_MISSING,
+    ROOT_PROCESS_COMMAND_MISSING, ROOT_IDLE_RELEASED,
     CAPTURE_REQUESTED, CAPTURE_SESSION_CHANGED, CAPTURE_ROOT_NOT_READY,
     CAPTURE_RUNTIME_BUSY, CAPTURE_NATIVE_UNAVAILABLE, CAPTURE_BACKEND_FAILED,
     CAPTURE_INVALID_FRAME, CAPTURE_READY,
@@ -27,6 +27,7 @@ internal fun capturePreviewFailureCode(error:Throwable?):AppDiagnosticCode =
     } ?: AppDiagnosticCode.CAPTURE_REQUEST_FAILED else AppDiagnosticCode.CAPTURE_BACKEND_FAILED
 
 internal fun rootProcessFailureCode(output: String): AppDiagnosticCode? = when {
+    output.contains("daemon connection idle timeout") -> AppDiagnosticCode.ROOT_IDLE_RELEASED
     output.contains("permission denied", true) || output.contains("access denied", true) ->
         AppDiagnosticCode.ROOT_PROCESS_PERMISSION_DENIED
     output.contains("cannot link executable", true) || output.contains("linker:", true) ->

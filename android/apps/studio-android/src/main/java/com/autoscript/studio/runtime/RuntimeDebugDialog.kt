@@ -3,12 +3,9 @@ package com.autoscript.studio
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,14 +50,14 @@ internal fun RuntimeDebugDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFFFFF2F2), RoundedCornerShape(10.dp))
-                        .padding(12.dp),
+                        .padding(8.dp),
                 )
                 Text(
                     "原始错误",
                     color = AutoScriptPalette.TextSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+                    modifier = Modifier.padding(top = 7.dp, bottom = 4.dp),
                 )
                 SelectionContainer {
                     Text(
@@ -71,10 +68,8 @@ internal fun RuntimeDebugDialog(
                         lineHeight = 17.sp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 320.dp)
                             .background(Color(0xFFF7F8FA), RoundedCornerShape(8.dp))
-                            .verticalScroll(rememberScrollState())
-                            .padding(10.dp),
+                            .padding(8.dp),
                     )
                 }
             }

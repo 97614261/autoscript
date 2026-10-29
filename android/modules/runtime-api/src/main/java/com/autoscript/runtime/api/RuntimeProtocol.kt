@@ -1,7 +1,7 @@
 package com.autoscript.runtime.api
 
 object RuntimeProtocol {
-    const val VERSION: Int = 27
+    const val VERSION: Int = 28
     /** Template v2 understands optional digest-bound source-map vision requirements. */
     const val RUNNER_TEMPLATE_COMPONENT_VERSION: Int = 2
     const val VISION_PREPARE_ACCEPTED = 0

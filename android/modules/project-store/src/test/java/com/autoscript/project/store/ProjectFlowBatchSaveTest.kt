@@ -91,8 +91,22 @@ class ProjectFlowBatchSaveTest {
     @Test fun numericExtractionAndSymbolOcrPromoteBothSavePaths() {
         for ((kind, args, required) in listOf(
             Triple("text.numberat", "{}", "1.8"),
+            Triple("vision.countcolor", "{\"limit\":0}", "1.8"),
+            Triple("vision.countcolor", "{\"limit\":1000000}", "1.8"),
+            Triple("vision.findallcolor", "{\"limit\":2048}", "1.8"),
+            Triple("vision.countcolor", "{\"limit\":256}", "1.7"),
+            Triple("vision.findcolor", "{\"additionalColors\":\"0000FF:8\"}", "1.8"),
+            Triple("vision.comparecolor", "{\"additionalColors\":\"0000FF:8\"}", "1.8"),
+            Triple("vision.countcolor", "{\"additionalColors\":\"0000FF:8\"}", "1.8"),
+            Triple("vision.findallcolor", "{\"additionalColors\":\"0000FF:8\"}", "1.8"),
+            Triple("vision.findcolor", "{\"additionalColors\":\"\"}", "1.7"),
             Triple("ocr.alphanumeric", "{\"includeSymbols\":true}", "1.8"),
             Triple("ocr.alphanumeric", "{\"includeSymbols\":false}", "1.7"),
+            Triple("input.tap", "{\"x\":1200,\"y\":300,\"screenPixels\":true}", "1.8"),
+            Triple("input.swipe", "{\"screenPixels\":true}", "1.8"),
+            Triple("input.pointerdown", "{\"screenPixels\":true}", "1.8"),
+            Triple("input.pointermove", "{\"screenPixels\":true}", "1.8"),
+            Triple("input.tap", "{\"x\":1200,\"y\":300,\"screenPixels\":false}", "1.7"),
         )) {
             for (batch in listOf(false, true)) {
                 val original = project()
@@ -128,7 +142,8 @@ class ProjectFlowBatchSaveTest {
     }
 
     @Test fun reopeningStoredTextToolsRepairsOnlyManifestAndPreservesExactSources() {
-        for ((kind, args) in listOf("text.numberat" to "{}", "ocr.alphanumeric" to "{\"includeSymbols\":true}")) {
+        for ((kind, args) in listOf("text.numberat" to "{}", "ocr.alphanumeric" to "{\"includeSymbols\":true}",
+            "legacy.getrectcolornum" to "{\"autoCapture\":true}")) {
             val original = storedTextTool(kind, args)
             val file = File(original.directory, "project.json")
             val before = file.readBytes()

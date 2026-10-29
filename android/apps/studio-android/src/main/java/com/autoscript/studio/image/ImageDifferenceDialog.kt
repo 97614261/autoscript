@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -35,8 +36,9 @@ internal fun ImageDifferenceDialog(bitmap:Bitmap,snapshot:ProjectSnapshot,config
     StudioPanelDialog("候选位置 · 差异分析",{clear();onDismiss()},fullScreen=full,onToggleFullScreen={full=!full},compactHeader=true,showFooter=false) {
         BoxWithConstraints(Modifier.fillMaxWidth().heightIn(max=if(full)1000.dp else 570.dp)) {
         val previewHeight=(maxHeight*.23f).coerceIn(40.dp,if(full)180.dp else 112.dp)
-        Column(Modifier.fillMaxSize()) {
-            Canvas(Modifier.fillMaxWidth().height(previewHeight)) {
+        val short = studioShortViewport(maxHeight.value)
+        val previewContent: @Composable () -> Unit = {
+            Canvas(Modifier.fillMaxWidth().height(previewHeight).clipToBounds()) {
                 val fit=minOf(size.width/bitmap.width,size.height/bitmap.height)
                 val left=(size.width-bitmap.width*fit)/2;val top=(size.height-bitmap.height*fit)/2
                 drawImage(bitmap.asImageBitmap(),dstOffset=IntOffset(left.toInt(),top.toInt()),dstSize=IntSize((bitmap.width*fit).toInt().coerceAtLeast(1),(bitmap.height*fit).toInt().coerceAtLeast(1)))
@@ -44,17 +46,19 @@ internal fun ImageDifferenceDialog(bitmap:Bitmap,snapshot:ProjectSnapshot,config
                 if(px!=null && py!=null && dimensions!=null) drawRect(Color(0xffff4670),Offset(left+px*fit,top+py*fit),Size(dimensions.first*fit,dimensions.second*fit),style=Stroke(2.dp.toPx()))
             }
             result?.let {ImageProcessingPreviewCanvas(it.first,previewHeight.value.toInt(),label="差异：红色不匹配，透明为模板忽略区")}
+        }
+        Column(Modifier.fillMaxSize()) {
+            if (!short) previewContent()
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(8.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-                Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                    ImageToolCompactInput("候选左X",x,!busy,Modifier.weight(1f),true) {change(it) {value->x=value}}
-                    ImageToolCompactInput("候选上Y",y,!busy,Modifier.weight(1f),true) {change(it) {value->y=value}}
-                    ImageToolCompactInput("RGB容差",tolerance,!busy,Modifier.weight(1f),true) {change(it) {value->tolerance=value}}
+                if (short) previewContent()
+                ImageToolNumberFields(listOf(Triple("x", "候选左X", x), Triple("y", "候选上Y", y), Triple("tolerance", "RGB容差", tolerance)), !busy) { key, value ->
+                    change(value) { next -> when (key) { "x" -> x = next; "y" -> y = next; else -> tolerance = next } }
                 }
                 if(configuration.operation==com.autoscript.runtime.api.RecognitionPreviewReply.SCALED_TEMPLATE)
                     ImageToolCompactInput("本次分析比例 ‰",scale,!busy,Modifier.fillMaxWidth(),true) {change(it) {value->scale=value}}
                 Text(message,fontSize=11.sp)
                 if(configuration.operation==com.autoscript.runtime.api.RecognitionPreviewReply.GRAY_TEMPLATE) Text("这里只比较灰度像素差，不等于OpenCV相关系数或最高分。",fontSize=10.sp)
-                Text("局部分析≤100万像素、5秒；没有自动搜索最近候选，不保存屏幕或把图像内容写入日志。位置属于当前图，不是自动点击坐标。",fontSize=10.sp)
+                ImageToolHelp("局部分析≤100万像素、5秒；没有自动搜索最近候选，不保存屏幕或把图像内容写入日志。位置属于当前图，不是自动点击坐标。")
             }
             HorizontalDivider()
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {

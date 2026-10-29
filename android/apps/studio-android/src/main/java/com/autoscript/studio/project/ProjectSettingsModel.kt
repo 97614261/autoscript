@@ -32,7 +32,7 @@ internal enum class ProjectSettingsPage(val title: String) {
 }
 
 internal fun defaultScriptCapabilities(): Set<String> =
-    BlockCatalog.all.flatMap { it.requiredCapabilities }.toSet()
+    BlockCatalog.insertable.flatMap { it.requiredCapabilities }.toSet()
 
 /** Keep manifest-only capabilities visible; opening settings must never silently drop them. */
 internal fun settingsCapabilityOptions(supported: List<String>, declared: List<String>): List<String> =
