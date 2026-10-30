@@ -316,6 +316,24 @@ internal class VisualEditorState private constructor(
             }
         }
     }
+
+    /** Replace only contiguous siblings, keeping the surrounding tree and a single undo boundary. */
+    fun replaceSelectionWith(clipboards: List<VisualSubtreeClipboard>): Boolean {
+        val roots = selectedRoots()
+        val selected = rows.filter { it.nodeId in roots }
+        if (selected.isEmpty() || selected.map { it.blockId }.distinct().size != 1) return false
+        val siblings = rows.filter { it.blockId == selected.first().blockId }
+        val indices = siblings.indices.filter { siblings[it].nodeId in roots }
+        if (indices.last() - indices.first() + 1 != roots.size) return false
+        return batchMutation {
+            selectOnly(roots.first())
+            if (clipboards.isNotEmpty() && !pasteSelection(clipboards, beforeSelection = true)) return@batchMutation false
+            val inserted = selectedNodeIds.toSet().takeIf { clipboards.isNotEmpty() }.orEmpty()
+            if (!deleteRoots(roots.toSet())) return@batchMutation false
+            if (inserted.isNotEmpty()) selectNodes(inserted)
+            true
+        }
+    }
     val isReadOnly: Boolean = forceReadOnly || parseDocument(migratedSource, rootBlockId) == null
     private val undoStack = mutableListOf<EditorHistoryEntry>()
     private val redoStack = mutableListOf<EditorHistoryEntry>()

@@ -205,7 +205,7 @@ internal object GlyphPaletteAcceptanceFixture {
                 val before=snapshot.resourcePaths();snapshot=store.importResource(id,ProjectResourceKind.IMAGE,"public-palette.png",bytes.inputStream(),before)
                 val imagePath=(snapshot.resourcePaths()-before).single()
                 val vars=listOf(ProjectVariable("paletteFrame",ProjectVariableScope.GLOBAL,type=ProjectVariableType.IMAGE))+
-                    listOf("paletteText","paletteDetails","paletteDetailsText").map {ProjectVariable(it,ProjectVariableScope.GLOBAL,type=ProjectVariableType.STRING)}+
+                    listOf("paletteText","paletteDetails","paletteDetailsText","paletteFoundText").map {ProjectVariable(it,ProjectVariableScope.GLOBAL,type=ProjectVariableType.STRING)}+
                     listOf("paletteScore","paletteCoverage").map {ProjectVariable(it,ProjectVariableScope.GLOBAL,type=ProjectVariableType.INTEGER)}
                 snapshot=store.updateVariables(id,snapshot.manifest.variables+vars,snapshot.manifest.variables)
                 snapshot=store.updateCapabilities(id,snapshot.manifest.capabilities.toSet()+setOf("ocr.glyph","vision.template"),snapshot.manifest.capabilities.toSet())
@@ -218,6 +218,7 @@ internal object GlyphPaletteAcceptanceFixture {
                 val flow=snapshot.manifest.flows.single()
                 val source=StudioWorkflowAcceptanceFixture.source(listOf(block("screen.loadimage",args("imagePath" to imagePath,"resultVariable" to "paletteFrame")),
                     block("ocr.glyph",ordinary),block("ocr.glyphdetails",detailed),
+                    block("ocr.findtext",args("detailsVariable" to "paletteDetails","text" to "1.1","resultVariable" to "paletteFoundText")),
                     block("vision.readresult",args("sourceVariable" to "paletteDetails","shape" to "GLYPH_SUMMARY","index" to 0,"field" to "text","resultVariable" to "paletteDetailsText")),
                     block("screen.release",args("frameVariable" to "paletteFrame")),block("task.sleep",args("milliseconds" to 60_000))),flow.rootBlockId)
                 snapshot=store.saveFlows(snapshot,mapOf(flow.flowId to source))
@@ -228,6 +229,7 @@ internal object GlyphPaletteAcceptanceFixture {
                 runBlocking {withTimeout(15_000) {client.executionPosition.first {it?.projectId==id && it.nodeId==org.json.JSONObject(source.lineSequence().last(String::isNotBlank)).getString("nodeId")}}}
                 val values=client.debugSnapshot(id).variables.associate {it.name to it.value}
                 check(values["paletteText"]=="1.1" && values["paletteDetailsText"]=="1.1" && values["paletteCoverage"]=="1000") {"GLYPH_PALETTE_RUNTIME_RESULT"}
+                check(org.json.JSONArray(values["paletteFoundText"].orEmpty()).length() == 1) { "GLYPH_PALETTE_FIND_TEXT" }
                 stopOwned()
             }
         } catch(failure:Throwable) {

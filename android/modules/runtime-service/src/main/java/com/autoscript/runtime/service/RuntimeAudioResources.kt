@@ -8,7 +8,9 @@ import java.util.UUID
 import com.autoscript.runtime.api.RuntimeBinarySignature
 
 /** Frozen, bounded copies. Paths are logical names, never script-provided filesystem roots. */
-internal class RuntimeAudioResources(private val directory: File) {
+internal class RuntimeAudioResources(cacheDirectory: File) {
+    // Android can alias the app cache through /data/user/0; keep final-directory symlink checks.
+    private val directory = File(requireNotNull(cacheDirectory.absoluteFile.parentFile).canonicalFile, cacheDirectory.name)
     private val gate = Any()
     private var epoch = 0L
     private val files = mutableMapOf<String, File>()

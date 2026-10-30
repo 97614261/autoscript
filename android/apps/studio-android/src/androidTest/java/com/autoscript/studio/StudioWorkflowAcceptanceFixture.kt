@@ -235,6 +235,35 @@ internal object StudioWorkflowAcceptanceFixture {
                 stop()
             }
             if (extended) {
+                case("workflow-generated-input-seven-actions-reach-real-view") {
+                    val modes = com.autoscript.runtime.api.InputPointAction.entries
+                    fun generated(action: com.autoscript.runtime.api.InputPointAction): List<VisualBlockTree> {
+                        val reply = com.autoscript.runtime.api.InputPointPickReply(1, 0, action.wire,
+                            size.x, size.y, x, y, x + 30, y + 20, 600)
+                        return prepareInputBlocks(inputPointSnippet(reply, snapshot.manifest.design.width,
+                            snapshot.manifest.design.height, snapshot.manifest.design.scaleMode), snapshot.manifest.capabilities.toSet())
+                            .map { (contract, arguments) -> VisualBlockTree(contract, arguments) }
+                    }
+                    for (action in modes.take(4)) {
+                        val before = taps.get()
+                        val moved = moves.get()
+                        val source = saveAndStart(generated(action))
+                        awaitHold(source)
+                        check(taps.get() == before + 1) { "QA_GENERATED_TOUCH_NOT_DELIVERED:${action.wire}" }
+                        if (action.needsEnd) check(moves.get() > moved) { "QA_GENERATED_MOVE_NOT_DELIVERED" }
+                        if (action == com.autoscript.runtime.api.InputPointAction.LONG_PRESS) check(longestTouchMs.get() >= 500)
+                        stop()
+                    }
+                    val before = taps.get()
+                    val source = saveAndStart(modes.drop(4).flatMap(::generated))
+                    awaitHold(source)
+                    check(taps.get() == before + 1) { "QA_GENERATED_POINTER_GROUP_NOT_DELIVERED" }
+                    stop()
+                    val idleUp = saveAndStart(generated(com.autoscript.runtime.api.InputPointAction.UP))
+                    awaitHold(idleUp)
+                    check(taps.get() == before + 1) { "QA_IDLE_POINTER_UP_CREATED_TOUCH" }
+                    stop()
+                }
                 case("workflow-root-tap-longhold-swipe-and-enter-key-on-owned-view") {
                     val before = taps.get(); val moved = moves.get(); val keys = enterKeys.get()
                     val source = saveAndStart(listOf(

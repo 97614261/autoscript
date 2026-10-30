@@ -63,7 +63,7 @@ internal object ImageEnhancementAcceptanceFixture {
         fun reveal(label:String) {
             for(forward in listOf(true,false)) repeat(6) {
                 if(exists(label)) return
-                if(!scrollOwnedQaForm(test,forward)) return
+                if(!scrollOwnedQaForm(test,forward)) return@repeat
             }
         }
         fun click(label:String) {
@@ -146,8 +146,10 @@ internal object ImageEnhancementAcceptanceFixture {
             }
             record("enhancement-mask-saves-transparent-original-pixels-without-overwriting-source") {
                 val before=store.openProject(id).manifest.resources.map {it["path"].asString}.toSet()
-                click("保存当前图");waitFor {exists("保存截图")};click("保存图片")
-                waitFor {store.openProject(id).manifest.resources.size==before.size+1 && exists("原资源未覆盖")}
+                click("保存当前图");waitFor {exists("图片名称")}
+                UsageTestUi(test).replaceFirst("public-mask-copy")
+                confirm("保存图片", "保存图片")
+                waitFor {store.openProject(id).manifest.resources.size==before.size+1 && exists("已保存：")}
                 val path=store.openProject(id).manifest.resources.single {it["path"].asString !in before}["path"].asString
                 val saved=requireNotNull(android.graphics.BitmapFactory.decodeFile(imageRecognitionFile(snapshot,path).path))
                 val original=requireNotNull(android.graphics.BitmapFactory.decodeFile(imageRecognitionFile(snapshot,sourcePath).path))
@@ -191,8 +193,9 @@ internal object ImageEnhancementAcceptanceFixture {
             }
             record("enhancement-recipe-save-copy-load-confirm-does-not-run-script") {
                 click("图像方案");waitFor {exists("图像识别方案")};fill("方案名","公开方案");click("保存当前")
-                waitFor {store.readImageRecipes(id).size==1};click("公开方案");click("复制所选")
-                waitFor {store.readImageRecipes(id).size==2};click("公开方案-2");fill("方案名","备用方案");click("重命名")
+                waitFor {store.readImageRecipes(id).size==1};click("复制所选")
+                waitFor {exists("同名内容已存在")};click("编号另存")
+                waitFor {store.readImageRecipes(id).size==2};fill("方案名","备用方案");click("重命名")
                 waitFor {store.readImageRecipes(id).any {it.name=="备用方案"}};fill("搜索","备用方案")
                 click("删除");waitFor {exists("删除图像方案？")};click("取消");waitFor {!exists("删除图像方案？")};check(store.readImageRecipes(id).size==2)
                 click("删除");waitFor {exists("删除图像方案？")};confirm("删除图像方案？","删除");waitFor {store.readImageRecipes(id).size==1 && !exists("删除图像方案？")}
@@ -223,7 +226,7 @@ internal object ImageEnhancementAcceptanceFixture {
                     onWorkflow={forest=it;open=false})}}}
                 click("区域变化 / 稳定等待");waitFor {exists("不需要模板、字库或识别输出")}
                 click("快速分配");waitFor {exists("确认使用声明变量？")};click("使用")
-                click("○ 两份图像变量均专用于本组合，允许覆盖和释放");click("选择位置并加入")
+                click("两份图像变量均专用于本组合，允许覆盖和释放");click("选择位置并加入")
                 waitFor {forest!=null};val all=requireNotNull(forest).flatMap {it.flattened()}
                 check(all.count {it.contract.kind=="screen.capture"}==2 && all.none {it.contract.kind=="vision.findimage"})
             }

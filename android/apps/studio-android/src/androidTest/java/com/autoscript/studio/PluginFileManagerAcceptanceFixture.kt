@@ -101,7 +101,14 @@ internal object PluginFileManagerAcceptanceFixture {
             check(input()?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
                 Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }) == true)
         }
-        fun disabled(label: String) = ancestor(node { matches(it, label) && ancestor(it) != null })?.isEnabled == false
+        fun disabled(label: String): Boolean {
+            var current = node { matches(it, label) }
+            while (current != null) {
+                if (!current.isEnabled) return true
+                current = current.parent
+            }
+            return false
+        }
         fun capture(name: String) {
             if (name == "failure") {
                 val fields = mutableListOf<String>()
@@ -262,7 +269,7 @@ internal object PluginFileManagerAcceptanceFixture {
             record("plugin-files-busy-state-freezes-selection-and-write-actions") {
                 test.runOnMainSync { busy = true }
                 waitFor { disabled("重命名") && disabled("删除") && disabled("取消选择") }
-                check(ancestor(node { matches(it, "选择插件 工具改名") })?.isEnabled == false)
+                check(disabled("选择插件 工具改名"))
                 test.runOnMainSync { busy = false }
             }
             check(message == null) { "PLUGIN_FILES_QA_STORE_OPERATION_FAILED" }

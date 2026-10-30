@@ -26,4 +26,16 @@ class RuntimeAudioResourcesTest {
         assertThrows(IllegalArgumentException::class.java) { store.register("assets/audio/a.wav", "plain text".byteInputStream()) { true } }
         assertTrue(directory.listFiles()!!.isEmpty())
     }
+
+    @Test fun aliasedCacheParentCanRegisterWithoutRelaxingFinalDirectoryChecks() {
+        val parent = temporary.newFolder("cache")
+        java.io.File(parent, "child").mkdir()
+        val aliased = java.io.File(parent, "child/../audio")
+        aliased.mkdirs()
+        val store = RuntimeAudioResources(aliased)
+        store.register("assets/audio/a.wav", wav.inputStream()) { true }
+        assertArrayEquals(wav, store.open("assets/audio/a.wav").use { it.readBytes() })
+        store.clear()
+        assertTrue(java.io.File(parent, "audio").listFiles()!!.isEmpty())
+    }
 }

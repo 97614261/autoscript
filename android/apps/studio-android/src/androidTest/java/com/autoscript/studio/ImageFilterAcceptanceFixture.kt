@@ -83,7 +83,7 @@ internal object ImageFilterAcceptanceFixture {
         }
         fun capture(tag:String) {
             val image=test.uiAutomation.takeScreenshot() ?: return
-            try { File(requireNotNull(activity.externalCacheDir),"qa-color-filter-$tag.png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)} }
+            try { File(test.targetContext.cacheDir,"qa-color-filter-$tag.png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)} }
             finally {image.recycle()}
         }
         fun tapPreview() {
@@ -106,7 +106,8 @@ internal object ImageFilterAcceptanceFixture {
         } } }
         try {
             record("filter-screenshot-direct-entry-opens-rule-workspace") {
-                click("滤色");waitFor {exists("滤色 · 规则与方案")}
+                val live = UsageTestUi(test)
+                live.click("工具");live.reveal("滤色");live.click("滤色");waitFor {exists("滤色 · 规则与方案")}
                 check(exists("滤色预览取色"));capture("open")
             }
             record("filter-picks-original-red-and-previews-binary-with-bounded-rules") {
@@ -132,11 +133,12 @@ internal object ImageFilterAcceptanceFixture {
                 waitFor {exists("前景 448/960px")}
             }
             record("filter-presets-save-copy-conflict-safe-and-confirm-delete") {
-                fill("方案名","红字");click("另存方案")
+                fill("方案名","红字");click("保存方案")
                 waitFor {store.readImageFilterPresets(initial.manifest.projectId).size==1 && exists("已保存方案 红字")}
                 val first=store.readImageFilterPresets(initial.manifest.projectId).single()
                 check(first.filter.rules.size==2 && first.filter.rules.first().rgb==0xff0000 && first.filter.rules.last().exclude)
-                click("另存方案");waitFor {store.readImageFilterPresets(initial.manifest.projectId).size==2 && exists("已保存方案 红字-2")}
+                click("保存方案");waitFor {exists("同名内容已存在")};click("编号另存")
+                waitFor {store.readImageFilterPresets(initial.manifest.projectId).size==2 && exists("已保存方案 红字-2")}
                 check(store.readImageFilterPresets(initial.manifest.projectId).first()==first)
                 click("红字-2");waitFor {exists("载入滤色方案？")};click("载入方案")
                 click("删除方案");waitFor {exists("删除滤色方案？")};click("取消")
@@ -167,7 +169,7 @@ internal object ImageFilterAcceptanceFixture {
             }
             record("filter-processed-frame-samples-fixed-glyphs-through-real-rust") {
                 click("制作字库",anchor="图片工作台预览");waitFor {exists("字库制作 · 固定字形")}
-                click("按空隙批量切分");reveal("依次填写3个字符",partial=true);waitFor {exists("依次填写3个字符")}
+                click("按空隙批量切分");reveal("已标0/3",partial=true);waitFor {exists("已标0/3")}
                 fill("顺序字符","1.1");click("追加并测试")
                 reveal("识别文本：1.1",partial=true);waitFor {exists("识别文本：1.1") && exists("覆盖率 1000‰")}
                 capture("glyph")

@@ -97,6 +97,9 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
     private var imageEnhancementOnly = false
     private var imageSelectionOnly = false
     private var pureUtilityOnly = false
+    private var variableUsageOnly = false
+    private var touchUsageOnly = false
+    private var controlUsageStage = ""
     private var capabilityExpansionOnly=false
     private var capabilityProductionIme=false
     private var soakMillis = 0L
@@ -144,6 +147,9 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
         imageEnhancementOnly = arguments?.getString("imageEnhancementOnly") == "true"
         imageSelectionOnly = arguments?.getString("imageSelectionOnly") == "true"
         pureUtilityOnly = arguments?.getString("pureUtilityOnly") == "true"
+        variableUsageOnly = arguments?.getString("variableUsageOnly") == "true"
+        touchUsageOnly = arguments?.getString("touchUsageOnly") == "true"
+        controlUsageStage = arguments?.getString("controlUsageStage").orEmpty()
         capabilityExpansionOnly=arguments?.getString("capabilityExpansionOnly")=="true"
         capabilityProductionIme=arguments?.getString("capabilityProductionIme")=="true"
         soakMillis = arguments?.getString("soakSeconds")?.toLongOrNull()?.takeIf { it in 60..1800 }?.times(1000) ?: 0L
@@ -170,7 +176,7 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
                 Bundle().apply { putString("stream", report.toString(2) + "\n") })
             return
         }
-        deadline = SystemClock.elapsedRealtime() + if (stabilityOnly) soakMillis + 180_000 else if (performanceOnly || runtimePerformanceOnly) 540_000 else if (finalClosure || landscapeOnly || boundariesOnly || imageEnhancementOnly || capabilityExpansionOnly || lifecycleOnly) 360_000 else 150_000
+        deadline = SystemClock.elapsedRealtime() + if (stabilityOnly) soakMillis + 180_000 else if (performanceOnly || runtimePerformanceOnly || variableUsageOnly || controlUsageStage.startsWith("library")) 540_000 else if (finalClosure || landscapeOnly || boundariesOnly || imageEnhancementOnly || capabilityExpansionOnly || lifecycleOnly) 360_000 else 150_000
         val report = JSONObject().put("scope", "real Studio overlay and own synthetic core.task project")
             .put("sdk", Build.VERSION.SDK_INT).put("cases", cases).put("qaInputDispatch", qaInputDispatch)
         try {
@@ -193,12 +199,14 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
             }
             // singleTop can reuse the existing Activity, leaving startActivitySync waiting
             // forever for a creation event. Start an explicitly new, owned QA task instead.
-            val activityMonitor = addMonitor(MainActivity::class.java.name, null, false)
-            try {
-                targetContext.startActivity(Intent(targetContext, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-                activity = activityMonitor.waitForActivityWithTimeout(8_000) ?: error("QA_ACTIVITY_START_TIMEOUT")
-            } finally { removeMonitor(activityMonitor) }
+            if (controlUsageStage != "libraryOcr") {
+                val activityMonitor = addMonitor(MainActivity::class.java.name, null, false)
+                try {
+                    targetContext.startActivity(Intent(targetContext, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                    activity = activityMonitor.waitForActivityWithTimeout(8_000) ?: error("QA_ACTIVITY_START_TIMEOUT")
+                } finally { removeMonitor(activityMonitor) }
+            }
             check(EditorOverlaySessions.status.value == null && ScriptLaunchSessions.status.value == null) { "USER_WINDOW_ACTIVE" }
             check(client.runtimeStates.value.engineState !in active) { "USER_RUN_ACTIVE" }
             store = ProjectStore(File(targetContext.filesDir, "projects"), idFactory = { "project-qa-${UUID.randomUUID()}" })
@@ -239,7 +247,53 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
             sendStatus(1, Bundle().apply { putString("stream", "QA_OWNED_PROJECT:${initial.manifest.projectId}\n") })
             val flow = initial.manifest.flows.single()
             owned = if (imageSelectionOnly) initial else store.saveFlows(initial, mapOf(flow.flowId to source(flow.rootBlockId)))
-            if (editorCloseoutOnly) {
+            if (variableUsageOnly) {
+                report.put("scope", "owned service-hosted variable management, saved declarations, real compiled Rust assignments and live variable observer")
+                owned = VariableUsageAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage in setOf("conditions", "loops")) {
+                report.put("scope", "owned real $controlUsageStage parameter forms and compiled Rust execution")
+                owned = ControlUsageAcceptanceFixture.run(controlUsageStage, this, requireNotNull(activity) as ComponentActivity,
+                    client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage in setOf("flow", "output", "ai")) {
+                report.put("scope", "owned real $controlUsageStage entry and compiled runtime where applicable")
+                owned = EntryUsageAcceptanceFixture.run(controlUsageStage, this, requireNotNull(activity) as ComponentActivity,
+                    client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "aiAssistant") {
+                report.put("scope", "owned AI dialog, isolated settings and public loopback model, real full draft validation; no external model or script run")
+                owned = AiAssistantAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryRecording") {
+                report.put("scope", "owned public ARM view, actual evdev recording, floating stop/cancel, compiled playback and timeout recovery")
+                owned = RecordingUsageAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryInput") {
+                report.put("scope", "owned production IME, paste, replay and app launch requests")
+                owned = LibraryInputUsageFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryOcr") {
+                report.put("scope", "owned public OCR image, saved visual project and real compiled Rust execution; no display rendering")
+                owned = OcrUsageAcceptanceFixture.run(this, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryVision") {
+                report.put("scope", "owned exact pixels, compiled Rust color/template/frame functions and actions on public QA View")
+                owned = LibraryVisionUsageFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryHost") {
+                report.put("scope", "owned actual layout/floating windows, public confirmation and bounded compiled tasks/timers/restart")
+                owned = LibraryHostUsageFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryDevice") {
+                report.put("scope", "own QA clipboard text, device clock and audio; original clipboard and volume restored")
+                owned = LibraryDeviceUsageFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "libraryFiles") {
+                report.put("scope", "owned private project data sandbox, real visual file functions and checked persisted payloads")
+                owned = LibraryFilesUsageFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage in setOf("libraryUI", "libraryPure")) {
+                report.put("scope", "owned actual library catalog or parameter forms and real compiled utility results")
+                owned = LibraryUsageAcceptanceFixture.run(controlUsageStage, this, requireNotNull(activity) as ComponentActivity,
+                    client, store, requireNotNull(owned), ::case)
+            } else if (touchUsageOnly) {
+                report.put("scope", "owned touch menu, production input generators and actual Root events on a public QA surface")
+                case("root-tap-and-fresh-capture-owned-surface") { rootSurface() }
+                TouchUsageAcceptanceFixture.menu(this, requireNotNull(activity) as ComponentActivity, client, ::case)
+                owned = StudioWorkflowAcceptanceFixture.run(this, requireNotNull(activity), client, store, requireNotNull(owned), { name, work ->
+                    if (name.startsWith("workflow-generated-input-") || name.startsWith("workflow-root-") ) case(name, work)
+                }, extended = true)
+            } else if (editorCloseoutOnly) {
                 report.put("scope", "owned public editor closeout panels, real draft compilation and image library; no script execution, IME or system changes")
                 owned = EditorFinalAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
                 imageLibraryOnly = true
@@ -1183,9 +1237,9 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
         val editorWindowId = requireNotNull(find("打开项目设置")).let { try { it.windowId } finally { it.recycle() } }
         repeat(3) { attempt ->
             case("editor-image-library-open-and-return-${attempt + 1}") {
-                click("图像"); waitNode("图像 · 识别工具")
+                click("图像"); waitNode("截图取材")
                 click("图片库"); waitNode("关闭图片库")
-                waitAbsent("图像 · 识别工具")
+                waitAbsent("识别测试")
                 waitNode("全部图片 · 包含子文件夹"); waitNode("qa-library-one.png"); waitNode("qa-library-two.png")
                 check(!exists("图片与标注") && !exists("截取当前屏幕") && !exists("截图工作区")) { "QA_LIBRARY_OPENED_RETIRED_SCREEN" }
                 val library = requireNotNull(find("关闭图片库"))
@@ -1205,7 +1259,7 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
                 } finally { library.recycle() }
                 if (attempt == 0) {
                     val image = requireNotNull(uiAutomation.takeScreenshot())
-                    try { File(requireNotNull(activity?.externalCacheDir), "qa-image-library.png").outputStream().use {
+                    try { File(targetContext.cacheDir, "qa-image-library.png").outputStream().use {
                         check(image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
                     } } finally { image.recycle() }
                     case("image-library-select-folder-and-return-to-all") {
@@ -1626,7 +1680,7 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
             check(store.openProject(snapshot.manifest.projectId).flowSources == snapshot.flowSources) { "QA_LOOP_CANCEL_INSERTED" }
         }
         case("editor-image-config-fullscreen-and-cancel") {
-            click("图像"); waitNode("图像 · 识别工具")
+            click("图像"); waitNode("截图取材")
             click("区域找图"); revealInspectorAction("截图取材", "区域找图", backward = true)
             click("最大化全屏"); waitNode("还原窗口")
             click("还原窗口"); click("取消"); waitNode("打开项目设置")
@@ -1749,9 +1803,9 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
                 waitAbsent("图片工作台")
             }
             if (imageLibraryOnly && exists("关闭图片库")) click("关闭图片库")
-            if (imageLibraryOnly && exists("图像 · 识别工具")) {
+            if (imageLibraryOnly && exists("识别测试")) {
                 check(uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
-                waitAbsent("图像 · 识别工具")
+                waitAbsent("识别测试")
             }
             main { targetContext.startService(Intent(targetContext, EditorOverlayService::class.java).setAction(EditorOverlayService.ACTION_CLOSE)) }
             runBlocking { withTimeout(8_000) { EditorOverlaySessions.status.first { it == null } } }
@@ -1777,6 +1831,7 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
         sendStatus(1, Bundle().apply { putString("stream", "QA_CASE:$name\n") })
         try { work(); record.put("pass", true) }
         catch (failure: Throwable) {
+            if (controlUsageStage.isNotEmpty()) record.put("ownedQaFailure", failure.message?.take(1800))
             if (landscapeOnly) captureLandscape("case-failure")
             record.put("failureAt", JSONArray(failure.stackTrace.filter {
                 it.fileName != null && it.lineNumber > 0 && (it.className.startsWith("com.autoscript.studio.") || it.className.startsWith("com.autoscript.script.ui.") || it.className.startsWith("com.autoscript.project.store."))

@@ -200,6 +200,7 @@ internal fun EditorDock(
     onOpenImageLibrary: (() -> Unit)? = null,
     onTestRecognition: (() -> Unit)? = null,
     onOpenDebugTool: ((EditorToolPanel) -> Unit)? = null,
+    onOpenAi: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val overlayHost = LocalEditorOverlay.current
@@ -525,7 +526,10 @@ internal fun EditorDock(
                 },
                 onTool = { entry ->
                     if (editingEnabled) {
-                        if (entry == EditorToolPanel.IMAGE && onCreateImageBlock != null) {
+                        if (entry == EditorToolPanel.AI && onOpenAi != null) {
+                            toolDialog = null
+                            onOpenAi()
+                        } else if (entry == EditorToolPanel.IMAGE && onCreateImageBlock != null) {
                             toolDialog = EditorToolPanel.IMAGE
                             functionLibrary = false
                         } else toolDialog = entry

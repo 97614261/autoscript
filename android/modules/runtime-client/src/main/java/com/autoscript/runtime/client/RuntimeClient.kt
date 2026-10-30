@@ -83,6 +83,9 @@ class RuntimeClient(context: Context) {
     @Volatile private var lastEngineState: RuntimeEngineState = RuntimeEngineState.UNKNOWN
     @Volatile private var lastRootState: RuntimeRootState = RuntimeRootState.UNKNOWN
     private val stateRevision = java.util.concurrent.atomic.AtomicLong(0)
+    private val executionEpoch = RuntimeExecutionEpoch()
+    /** Ordinary Root/diagnostic refreshes do not invalidate long-lived Studio proposals. */
+    val executionStateRevision: Long get() = executionEpoch.revision
     private val debugReadGate = RuntimeDebugReadGate()
     private val connectionStates = MutableStateFlow(RuntimeConnectionState())
     val runtimeStates = connectionStates.asStateFlow()
@@ -661,7 +664,9 @@ class RuntimeClient(context: Context) {
                 val resourceRequestId = requestIds[index + 1]
                 val registered = when (resource.kind) {
                     RuntimeProjectResourceKind.AUDIO -> ParcelFileDescriptor.open(resource.file, ParcelFileDescriptor.MODE_READ_ONLY).use {
-                        service?.registerAudio(requestIds[index + 1], generation, resource.path, it) == RuntimeProtocol.CONTROL_ACCEPTED
+                        val accepted = service.registerAudio(resourceRequestId, generation, resource.path, it) == RuntimeProtocol.CONTROL_ACCEPTED
+                        if (!accepted) publishOperationError("音频资源准备失败，请检查音频格式、文件大小和运行环境")
+                        accepted
                     }
                     RuntimeProjectResourceKind.IMAGE -> registerTemplate(
                         service, generation,
@@ -1454,6 +1459,7 @@ class RuntimeClient(context: Context) {
             message = message,
             stateRevision = stateRevision.incrementAndGet(),
         )
+        executionEpoch.observe(state)
         connectionStates.value = state
         if (Looper.myLooper() == Looper.getMainLooper()) {
             onStateChanged?.invoke(state)

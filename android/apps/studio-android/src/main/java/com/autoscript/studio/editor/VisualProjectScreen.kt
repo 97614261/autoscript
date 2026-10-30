@@ -101,6 +101,7 @@ internal fun VisualProjectScreen(
     val projectSearchSession = remember(projectId) { EditorSearchSession() }
     var projectSearchAnchor by remember(projectId) { mutableStateOf(selectedFlowId) }
     var replacementFlows by remember(projectId) { mutableStateOf<List<EditorSearchFlow>?>(null) }
+    var aiContext by remember(projectId) { mutableStateOf<AiEditorContext?>(null) }
     var replacementBaseline by remember(projectId) { mutableStateOf<ProjectSnapshot?>(null) }
     var replacementAnchor by remember(projectId) { mutableStateOf(selectedFlowId) }
     val projectEdits = remember(projectId) { EditorProjectEdits() }
@@ -1082,6 +1083,12 @@ internal fun VisualProjectScreen(
         })
     }
 
+    AiEditorHost(aiContext, projectIds, currentInputSnapshot, editors, selectedFlowId, selectedBranch,
+        runtimeClient, store, projectEdits,
+        canMutate = { overlayHost?.isClosed != true && editorCanMutate(action != null || sourceBusy || imageInsertionBusy,
+            editor.isReadOnly, runtimeClient.runtimeStates.value.engineState) },
+        onChanged = { editorRevision++; error = null; notice = "AI 修改已应用到草稿，可撤销；尚未保存或运行" },
+        onDismiss = { aiContext = null })
     replacementFlows?.let { frozen ->
         key(frozen) {
             val baseline = remember { replacementBaseline }
@@ -1771,6 +1778,13 @@ internal fun VisualProjectScreen(
 
     Box(modifier.fillMaxSize()) {
         if (!recordingActive) EditorDock(
+            onOpenAi = {
+                if (!editorCanMutate(runtimeBusy || sourceBusy, editor.isReadOnly, runtimeClient.runtimeStates.value.engineState))
+                    error = "请停止运行并完成当前操作后再打开 AI"
+                else aiContext = AiEditorContext(selectedFlowId, flowNames[selectedFlowId] ?: selectedFlowId,
+                    snapshot.manifest.flows.single { it.flowId == selectedFlowId }.rootBlockId, editor.currentSource,
+                    editor.selectedNodeIds.toSet(), editor.selectedNodeId, selectedBranch?.slot, snapshot.manifest, diagnosticMessage)
+            },
             onOpenProjectSearch = { projectSearchAnchor = selectedFlowId; projectSearchFlows = frozenSearchFlows() },
             programLocateRequest = locateRequest,
             onBatchParameters = {

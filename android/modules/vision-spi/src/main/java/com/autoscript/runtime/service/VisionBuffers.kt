@@ -45,17 +45,28 @@ fun decodeLatinText(steps: Array<FloatArray>, dictionary: List<String>, threshol
 }
 
 private fun decodeFixedAlphanumeric(steps:Array<FloatArray>,dictionary:List<String>,threshold:Int,includeSymbols:Boolean=false):Pair<String,Int> {
-    val text=StringBuilder(); var previous=-1; var score=0.0; var count=0
+    val text=StringBuilder(); var previous=-1; var confidence=0f; var score=0.0; var count=0
+    fun acceptRun() {
+        if (previous <= 0) return
+        val symbol = dictionary[previous]
+        if (confidence * 1000 >= threshold && symbol.length == 1 && symbol[0].let {
+            if (includeSymbols) it in ' '..'~' else it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9'
+        }) {
+            text.append(symbol); score += confidence; count++
+        }
+    }
     for(step in steps) {
         require(step.size==dictionary.size && step.all { it.isFinite() && it in 0f..1f })
         val index=step.indices.maxByOrNull { step[it] } ?: 0
-        val symbol=dictionary[index]
-        if(index!=0 && index!=previous && step[index]*1000>=threshold && symbol.length==1 && symbol[0].let {
-            if (includeSymbols) it in ' '..'~' else it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9'
-        }) {
-            text.append(symbol); score+=step[index]; count++
+        // A CTC run can begin weakly and become confident in later timesteps.
+        if (index != previous) {
+            acceptRun()
+            previous = index
+            confidence = step[index]
+        } else {
+            confidence = maxOf(confidence, step[index])
         }
-        previous=index
     }
+    acceptRun()
     return text.toString() to if(count==0) 0 else (score/count*1000).toInt().coerceIn(0,1000)
 }

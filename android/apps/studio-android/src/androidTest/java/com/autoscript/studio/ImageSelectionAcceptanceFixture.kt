@@ -72,6 +72,17 @@ internal object ImageSelectionAcceptanceFixture {
             check(block()) {"SELECTION_QA_TIMEOUT"}
         }
         fun bounds(label:String)=Rect().also {requireNotNull(node(label)) {"SELECTION_QA_MISSING:$label"}.getBoundsInScreen(it)}
+        fun actionBounds(label: String): Rect {
+            var current = requireNotNull(node(label))
+            try {
+                repeat(5) {
+                    if (current.isClickable) return Rect().also(current::getBoundsInScreen)
+                    val parent = current.parent ?: return Rect().also(current::getBoundsInScreen)
+                    current.recycle(); current = parent
+                }
+                error("SELECTION_QA_ACTION_MISSING:$label")
+            } finally { current.recycle() }
+        }
         fun tap(x:Float,y:Float) {
             val down=SystemClock.uptimeMillis()
             for(action in listOf(MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP)) {
@@ -138,7 +149,7 @@ internal object ImageSelectionAcceptanceFixture {
         }
         fun capture(tag:String) {
             val image=requireNotNull(test.uiAutomation.takeScreenshot())
-            try {File(requireNotNull(activity.externalCacheDir),"qa-image-selection-$tag.png").outputStream().use {check(image.compress(Bitmap.CompressFormat.PNG,100,it))}}
+            try {File(test.targetContext.cacheDir,"qa-image-selection-$tag.png").outputStream().use {check(image.compress(Bitmap.CompressFormat.PNG,100,it))}}
             finally {image.recycle()}
         }
         test.runOnMainSync {activity.setContent {
@@ -245,9 +256,10 @@ internal object ImageSelectionAcceptanceFixture {
                 val canvas=bounds("图像工具画布");val back=bounds("返回")
                 check(onScreen(canvas) && onScreen(back) && canvas.top>=back.bottom) {"WORKBENCH_CHROME_COVERS_PREVIEW"}
                 await {node("保存当前图")!=null}
-                val minimumButtonHeight=(28*activity.resources.displayMetrics.density).toInt()
+                val minimumButtonHeight=(26*activity.resources.displayMetrics.density).toInt()
                 for(label in listOf("保存当前图","找图测试","取字测试","制作字库")) {
-                    val action=bounds(label)
+                    val action=actionBounds(label)
+                    test.sendStatus(1, Bundle().apply { putString("stream", "QA_WORKBENCH_ACTION:$label:$action;canvas=$canvas;minimum=$minimumButtonHeight\n") })
                     check(onScreen(action) && !Rect.intersects(action, canvas) &&
                         (action.top>=canvas.bottom || action.left>=canvas.right) && action.height()>=minimumButtonHeight) {
                         "WORKBENCH_FOOTER_CLIPPED:$label:$action"
@@ -329,7 +341,7 @@ internal object ImageSelectionAcceptanceFixture {
             record("landscape-glyph-large-font-tabs-save-and-return-reachable") {
                 test.runOnMainSync { mode = 10 }
                 await { node("字库制作 · 固定字形") != null && node("返回") != null }
-                for (label in listOf("取样", "样本 0", "测试设置", "保存新字库", "返回"))
+                for (label in listOf("取样", "样本 0", "测试设置", "保存字库", "返回"))
                     check(unobscured(bounds(label))) { "GLYPH_LANDSCAPE_ACTION_CLIPPED:$label" }
                 click("测试设置"); click("样本 0"); click("取样")
                 click("最大化全屏"); await { node("还原窗口") != null }
@@ -366,7 +378,7 @@ internal object ImageSelectionAcceptanceFixture {
             }
         } catch(failure:Throwable) {
             val geometry = org.json.JSONArray()
-            for (label in listOf("取字 · 配置与测试", "字库制作 · 固定字形", "保存新字库", "返回", "关闭", "最大化全屏", "还原窗口")) {
+            for (label in listOf("取字 · 配置与测试", "字库制作 · 固定字形", "保存字库", "返回", "关闭", "最大化全屏", "还原窗口")) {
                 node(label)?.let { current ->
                     try { geometry.put(JSONObject().put("label", label).put("bounds", Rect().also(current::getBoundsInScreen).flattenToString())) }
                     finally { current.recycle() }

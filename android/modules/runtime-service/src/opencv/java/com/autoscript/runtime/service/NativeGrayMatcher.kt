@@ -174,7 +174,13 @@ class NativeGrayMatcher : NativeVisionBackend {
                 }
                 top+=tileRows
             }
-            val score=((1-best).coerceIn(0.0,1.0)*1000).toInt()
+            var score=((1-best).coerceIn(0.0,1.0)*1000).toInt()
+            // SQDIFF can leave a tiny residual for identical pixels; keep strict 1000 exact.
+            if (threshold == 1000 && score == 999) {
+                val candidate = src.submat(Rect(bx, by, tpl.cols(), tpl.rows()))
+                try { if (Core.norm(candidate, tpl, Core.NORM_INF) == 0.0) score = 1000 }
+                finally { candidate.release() }
+            }
             if(!best.isFinite() || score<threshold) return byteArrayOf()
             return ByteBuffer.allocate(10).order(ByteOrder.LITTLE_ENDIAN).putInt(bx+roi.x).putInt(by+roi.y).putShort(score.toShort()).array()
         } finally { releaseNativeVisionResources({ clipped.release() }, { src.release() }, { result.release() }) }

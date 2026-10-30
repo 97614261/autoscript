@@ -8,6 +8,7 @@ const guideItems = [
   { text: '介绍与准备', link: '/guide/' },
   { text: '第一个自动化项目', link: '/guide/quick-start' },
   { text: '插件、分支与连续编辑', link: '/guide/editor-workflow' },
+  { text: 'AI 助手', link: '/guide/ai-assistant' },
   { text: '安装、升级与备份', link: '/guide/install-upgrade' },
   { text: '个人服务器项目备份', link: '/guide/server-backup' },
   { text: 'App 内更新', link: '/guide/app-update' },

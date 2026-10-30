@@ -103,8 +103,8 @@ android {
         applicationId = "com.zhigou.kaifaban"
         minSdk = 24
         targetSdk = 36
-        versionCode = 33
-        versionName = "0.1.32"
+        versionCode = 35
+        versionName = "0.1.34"
         testApplicationId = "com.zhigou.kaifaban.acceptance"
         testInstrumentationRunner = when (providers.gradleProperty("autoscript.acceptanceSuite").getOrElse("full")) {
             "full" -> "com.autoscript.studio.StudioAcceptanceInstrumentation"

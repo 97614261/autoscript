@@ -44,6 +44,7 @@ internal object GlyphMakerAcceptanceFixture {
                 if (rows[y / scale][x / scale] == '#') -1 else 0xff000000.toInt())
         }
         fun node(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+            test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo
             fun walk(current: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (current == null) return null
                 // Compose may keep a node identity while its text/enabled state changes.
@@ -64,7 +65,15 @@ internal object GlyphMakerAcceptanceFixture {
         fun waitFor(predicate: () -> Boolean) {
             val end = SystemClock.elapsedRealtime() + 12_000
             while (!predicate() && SystemClock.elapsedRealtime() < end) SystemClock.sleep(60)
-            check(predicate()) { "GLYPH_QA_TIMEOUT" }
+            if (!predicate()) {
+                val publicLabels = mutableListOf<String>()
+                node {
+                    if (publicLabels.size < 80) (it.text ?: it.contentDescription)?.toString()?.let { label -> publicLabels += label.take(100) }
+                    false
+                }
+                test.sendStatus(1, Bundle().apply { putString("stream", "QA_GLYPH_OWNED_FORM:${org.json.JSONArray(publicLabels)}\n") })
+                error("GLYPH_QA_TIMEOUT")
+            }
         }
         fun exists(label: String) = node { it.text?.toString()?.contains(label) == true || it.contentDescription?.toString() == label } != null
         fun input(label: String): AccessibilityNodeInfo? {
@@ -74,13 +83,20 @@ internal object GlyphMakerAcceptanceFixture {
             return current
         }
         fun revealControl(label: String, editable: Boolean = false) {
-            fun found() = if (editable) input(label) != null else
+            fun found() = if (editable) input(label)?.let { current ->
+                val bounds = Rect().also(current::getBoundsInScreen)
+                current.isVisibleToUser && bounds.height() >= (20 * activity.resources.displayMetrics.density).toInt()
+            } == true else
                 node { it.text?.toString() == label || it.contentDescription?.toString() == label } != null
             if (editable && !found()) {
                 for (forward in listOf(false, true)) {
-                    repeat(12) {
+                    for (attempt in 0 until 12) {
                         if (found()) return
-                        if (!scrollOwnedQaForm(test, forward, ::found)) return
+                        val scroller = node { it.className?.toString() == "android.widget.ScrollView" && it.isScrollable &&
+                            Rect().also(it::getBoundsInScreen).height() >= 80 }
+                        val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                        if (scroller?.performAction(action) != true) break
+                        SystemClock.sleep(100)
                     }
                 }
                 return
@@ -91,7 +107,7 @@ internal object GlyphMakerAcceptanceFixture {
                     AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
                     repeat(8) {
                         if (!found()) {
-                            node { it.className?.toString() == "android.widget.ScrollView" && it.isScrollable }
+                            node { it.className?.toString()?.endsWith("ScrollView") == true && it.isScrollable }
                                 ?.performAction(direction)
                             SystemClock.sleep(90)
                         }
@@ -140,6 +156,10 @@ internal object GlyphMakerAcceptanceFixture {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }) == true) { "GLYPH_QA_FIELD:$label" }
             waitFor { input(label)?.text?.toString() == text }
+            if (test.uiAutomation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }) {
+                test.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                test.waitForIdleSync()
+            }
         }
         fun stroke(label: String, startX: Float, startY: Float, endX: Float, endY: Float, cancel: Boolean = false,
             whilePressed: () -> Unit = {}) {
@@ -329,14 +349,14 @@ internal object GlyphMakerAcceptanceFixture {
                 click("查看黑白字形")
                 waitFor { exists("白色为保留笔画") }
                 click("像素微调")
-                fill("选区X", "1"); fill("选区Y", "1"); fill("选区宽", "38"); fill("选区高", "22")
+                fill("X", "1"); fill("Y", "1"); fill("宽", "38"); fill("高", "22")
                 click("应用选区")
                 waitFor { exists("X1 Y1 · 38×22px") }
                 click("左1px")
                 waitFor { exists("X0 Y1 · 38×22px") }
                 click("右边"); click("边缘＋1px")
                 waitFor { exists("X0 Y1 · 39×22px") }
-                fill("选区宽", "9999")
+                fill("宽", "9999")
                 waitFor { exists("范围需在原图内") }
                 check(exists("X0 Y1 · 39×22px"))
                 click("重选"); click("整框")
@@ -357,6 +377,7 @@ internal object GlyphMakerAcceptanceFixture {
                 click("按空隙批量切分")
                 waitFor { exists("重新切分？") }
                 click("保留当前")
+                revealControl("顺序字符", editable = true)
                 waitFor { exists("整行1/3字") && !exists("重新切分？") }
             }
             record("glyph-maker-labels-and-deduplicates-identical-samples") {
@@ -494,10 +515,16 @@ internal object GlyphMakerAcceptanceFixture {
             record("glyph-maker-landscape-keyboard-keeps-fields-and-save-accessible") {
                 test.runOnMainSync { activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
                 waitFor { activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+                test.sendStatus(1, Bundle().apply { putString("stream", "QA_GLYPH_IME_READY\n") })
+                SystemClock.sleep(1500)
                 revealControl("预期文字", editable = true)
                 val field = requireNotNull(input("预期文字"))
                 field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
-                field.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                test.waitForIdleSync()
+                val visibleField = requireNotNull(input("预期文字"))
+                visibleField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                visibleField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                UsageTestUi(test).tap(Rect().also(visibleField::getBoundsInScreen))
                 fun keyboard(): Rect? = test.uiAutomation.windows.firstOrNull { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
                     ?.let { Rect().also(it::getBoundsInScreen).takeUnless(Rect::isEmpty) }
                 waitFor { keyboard() != null }
@@ -554,6 +581,7 @@ internal object GlyphMakerAcceptanceFixture {
             }
             record("glyph-maker-screenshot-shortcut-opens-without-saving-or-processing") {
                 test.runOnMainSync { showCapture = true }
+                click("工具")
                 click("制字")
                 waitFor { exists("字库制作 · 固定字形") && exists("原图40×24") }
                 click("返回")

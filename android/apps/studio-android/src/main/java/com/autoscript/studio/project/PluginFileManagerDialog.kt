@@ -248,6 +248,7 @@ internal fun PluginFileManagerDialog(
                         }
                     }
                 }
+                }
                 if (selectionMode) {
                     Row(Modifier.fillMaxWidth().background(AutoScriptPalette.AccentSoft).padding(start = 10.dp),
                         verticalAlignment = Alignment.CenterVertically) {
@@ -257,7 +258,6 @@ internal fun PluginFileManagerDialog(
                         }, !busy && visibleKeys.isNotEmpty())
                         PluginFileAction("取消选择", { selectedKeys = emptyList() }, !busy)
                     }
-                }
                 }
                 HorizontalDivider(color = AutoScriptPalette.Border)
                 LazyColumn(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Top) {
@@ -290,16 +290,6 @@ internal fun PluginFileManagerDialog(
                 HorizontalDivider(color = AutoScriptPalette.Border)
                 if (selectionMode) {
                     Column(Modifier.fillMaxWidth().heightIn(max = footerLimit).verticalScroll(rememberScrollState()).padding(horizontal = 3.dp)) {
-                        selection.singleFile?.let { file ->
-                            Row(Modifier.fillMaxWidth().padding(start = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(file.name + " · 局部变量 " + file.localVariableCount, fontSize = 10.sp,
-                                    color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                if (file.isEntry) Text("当前主插件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(7.dp))
-                                else PluginFileAction("设为主插件", { entryTarget = file.flowId }, !busy)
-                            }
-                        }
-                        if (selection.files.any { it.isEntry }) Text("主插件不可删除；其他操作仍可用", fontSize = 10.sp,
-                            color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(start = 7.dp, top = 2.dp))
                         FlowRow(Modifier.fillMaxWidth()) {
                             val file = selection.singleFile
                             PluginFileAction("打开", { file?.let { dispatch(SourceManagerAction.Open(it.flowId)) } }, file != null && !busy)
@@ -311,6 +301,16 @@ internal fun PluginFileManagerDialog(
                             PluginFileAction("移出分组", { dispatch(SourceManagerAction.RemoveFromGroup(selection.groupedFlowIds)) }, selection.groupedFlowIds.isNotEmpty() && !busy)
                             PluginFileAction("删除", { deleteKeys = selectedKeys.toList() }, selection.canDelete && !busy, danger = true)
                         }
+                        selection.singleFile?.let { file ->
+                            Row(Modifier.fillMaxWidth().padding(start = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(file.name + " · 局部变量 " + file.localVariableCount, fontSize = 10.sp,
+                                    color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                if (file.isEntry) Text("当前主插件", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(7.dp))
+                                else PluginFileAction("设为主插件", { entryTarget = file.flowId }, !busy)
+                            }
+                        }
+                        if (selection.files.any { it.isEntry }) Text("主插件不可删除；其他操作仍可用", fontSize = 10.sp,
+                            color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(start = 7.dp, top = 2.dp))
                     }
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

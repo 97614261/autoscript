@@ -168,8 +168,8 @@ internal fun EditorEntryDialog(
             debugSettings, onSaveDebugSettings,
             expressionVariables = calculationVariables(projectVariables, currentFlowId, projectFlows)
                 .filter { it.type != ProjectVariableType.IMAGE })
-        EditorToolPanel.AI -> StudioPanelDialog("AI · 尚未开放", onDismiss, compactHeader = true) {
-            Text("AI 功能已延期，当前不提供发送、附件、账号或服务配置；不会生成或插入模拟结果。",
+        EditorToolPanel.AI -> StudioPanelDialog("AI 助手", onDismiss, compactHeader = true) {
+            Text("请从项目的可视化编辑器打开 AI 助手。",
                 fontSize = 12.sp, color = EntryMuted, modifier = Modifier.padding(12.dp))
         }
         else -> Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
