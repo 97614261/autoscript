@@ -2194,6 +2194,12 @@
           "type": "string",
           "required": false,
           "summary": "可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -2271,6 +2277,12 @@
           "type": "integer",
           "required": false,
           "summary": "API 1.7新增：0左上、1右上、2左下、3右下、4中心向外；省略为0。与旧版多点找色枚举独立。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -2442,6 +2454,12 @@
           "type": "integer",
           "required": true,
           "summary": "ROI下边界，不包含。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -2519,6 +2537,12 @@
           "type": "string",
           "required": false,
           "summary": "可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -2596,6 +2620,12 @@
           "type": "string",
           "required": false,
           "summary": "可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -2673,6 +2703,12 @@
           "type": "integer",
           "required": false,
           "summary": "0左上、1右上、2左下、3右下、4中心向外，默认0。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -2736,6 +2772,12 @@
           "type": "integer",
           "required": true,
           "summary": "下边界，不含。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；整个目标矩形须在选区内。空值沿用矩形，需Screen.polygonRegionVersion=1及支持多边形的OpenCV组件。"
         }
       ],
       "returns": {
@@ -2799,6 +2841,12 @@
           "type": "integer",
           "required": true,
           "summary": "bottom"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；整个目标矩形须在选区内。空值沿用矩形，需Screen.polygonRegionVersion=1及支持多边形的OpenCV组件。"
         }
       ],
       "returns": {
@@ -3092,6 +3140,12 @@
           "type": "integer",
           "required": true,
           "summary": "最大保留数量1–64。"
+        },
+        {
+          "name": "polygon",
+          "type": "string",
+          "required": false,
+          "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"
         }
       ],
       "returns": {
@@ -3280,7 +3334,7 @@
           "name": "options",
           "type": "string",
           "required": true,
-          "summary": "严格JSON最多1024字节：region半开LTRB对象、tolerance0–255、similarityPermille0–1000、direction0–4、range={minPermille,maxPermille,stepPermille}。范围250–4000‰、正步长≤1000、末端须整除、最多16档，最近邻取整。单档模板≤262144像素、累计重采样≤4194304像素、所有档合计1亿像素比较；无效/超预算明确拒绝，透明像素忽略，零有效模板拒绝。"
+          "summary": "严格JSON最多16384字节：region半开LTRB对象、tolerance0–255、similarityPermille0–1000、direction0–4、range={minPermille,maxPermille,stepPermille}。范围250–4000‰、正步长≤1000、末端须整除、最多16档，最近邻取整。可选polygon为顶点JSON文本 [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；各档缩放模板须完整落在选区内，需Screen.polygonRegionVersion=1。单档模板≤262144像素、累计重采样≤4194304像素、所有档合计1亿像素比较；无效/超预算明确拒绝，透明像素忽略，零有效模板拒绝。"
         }
       ],
       "returns": {

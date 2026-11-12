@@ -30,15 +30,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
-import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectResourceKind
 import com.autoscript.project.store.ProjectSnapshot
 import com.autoscript.project.store.ProjectStore
@@ -98,7 +95,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
     var replacePending by remember { mutableStateOf<Boolean?>(null) }
     var fullScreen by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(ImageToolSelection(box = initialRoi)) }
-    var viewport by remember { mutableStateOf<ImageToolViewport?>(null) }
+    var viewport by rememberImageWorkspaceViewport(initialBitmap)
     var mode by remember { mutableStateOf(ImageToolMode.CROP) }
     var zoom by remember { mutableStateOf(false) }
     var blackWhite by remember { mutableStateOf(false) }
@@ -115,7 +112,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
     var requestId by remember { mutableLongStateOf(0) }
     var operationTicket by remember { mutableLongStateOf(0) }
     var message by remember { mutableStateOf("框选 → 取色 → 切分标注；可连续补样，或追加后直接测试。") }
-    var help by remember { mutableStateOf(false) }
+    StudioSystemLogEffect("制作字库", message, skipInitial = true)
     var lastSaved by remember { mutableStateOf<Triple<Long, String, String>?>(null) }
     var lastSavedResourceRevision by remember { mutableStateOf<String?>(null) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -154,8 +151,9 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
         job?.cancel(); job = null; busy = false
     }
     DisposableEffect(client) { onDispose { cancel() } }
+    val workspace = LocalImageWorkspace.current
     fun close() {
-        if (saving) { message = "正在提交项目资源，请等待完成"; return }
+        if (saving) { workspace?.cancelNavigation?.invoke(); message = "正在提交项目资源，请等待完成"; return }
         cancel()
         if (dirty) discard = true else onDismiss()
     }
@@ -373,30 +371,18 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
     }
 
     ProvideTextStyle(LocalTextStyle.current.copy(lineHeight = 14.sp)) {
-    StudioPanelDialog("字库制作 · 固定字形", ::close, fullScreen = fullScreen, showFooter = false,
+    ImageWorkspacePanel("字库制作", { close() }, fullScreen = fullScreen, showFooter = false,
         compactHeader = true, onToggleFullScreen = { fullScreen = !fullScreen }) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
         val compactFooter = studioShortViewport(maxHeight.value)
-        val footerMaxHeight = maxHeight * .4f
         Column(Modifier.fillMaxWidth().heightIn(max = if (fullScreen) 1200.dp else 620.dp)) {
-            Row(Modifier.fillMaxWidth().background(AutoScriptPalette.PageBackground).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf("取样", "样本 ${samples.size}", "测试设置").forEachIndexed { index, text ->
-                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-                        TextButton(onClick = { page = index }, modifier = Modifier.weight(1f).heightIn(min = 28.dp),
-                            colors = ButtonDefaults.textButtonColors(containerColor = if (page == index) Color.White else Color.Transparent),
-                            shape = RoundedCornerShape(5.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)) {
-                            Text(text, fontSize = 12.sp, fontWeight = if (page == index) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (page == index) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
-                        }
-                    }
-                }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                ImageToolChoice("步骤", page.toString(), listOf("0" to "取样", "1" to "样本 ${samples.size}", "2" to "测试"), true) { page = it.toInt() }
             }
-            Column(Modifier.weight(1f).background(AutoScriptPalette.PageBackground).verticalScroll(bodyScroll).padding(horizontal = 8.dp, vertical = 6.dp),
+            Column(Modifier.weight(1f).verticalScroll(bodyScroll).padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 if (compactFooter) {
-                    ImageToolCompactInput("字库名称", name, !busy, Modifier.fillMaxWidth()) { name = it.take(72) }
-                    SelectionContainer { Text(message, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary) }
+                    ImageWorkspaceHint(message)
                 }
                 when (page) {
                     0 -> {
@@ -405,10 +391,13 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                             GlyphAction("项目图片", !busy && pending.isEmpty()) { chooser = "image" }
                             GlyphAction("选择图片", !busy && pending.isEmpty()) { picker.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/bmp")) }
                             GlyphAction("打开字库", !busy && !dirty) { chooser = "dictionary" }
-                            GlyphAction(if (help) "收起说明" else "取样说明", true) { help = !help }
                         }
                         if (image != null) {
-                            BoxWithConstraints(Modifier.fillMaxWidth().height(144.dp).background(Color(0xff171923))
+                            ImageWorkspaceDraftClear(if (!busy && selection.box != null) ({
+                                selection = ImageToolSelection(); mode = ImageToolMode.CROP; zoom = false
+                            }) else null)
+                            ImageWorkspaceCanvasSlot(Modifier.fillMaxWidth().height(144.dp)) { canvasBounds ->
+                            BoxWithConstraints(canvasBounds.background(Color(0xff171923))
                                 .semantics { contentDescription = "字库取样预览" }) {
                                 val w = constraints.maxWidth.toFloat(); val h = constraints.maxHeight.toFloat()
                                 LaunchedEffect(image, w, h) {
@@ -428,6 +417,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                                         }
                                     }, onCrosshair = {}, onSlide = { _, _ -> }, displayBitmap = foregroundPreview.bitmap)
                             }
+                            }
                             GlyphMakerPreviewToolbar(mode, zoom, !busy,
                                 onMode = { mode = it; zoom = false }, onMove = { zoom = true },
                                 onReset = { selection = selection.copy(box = null); mode = ImageToolMode.CROP; zoom = false },
@@ -436,10 +426,8 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                                 onZoom = { factor -> viewport = viewport?.let { glyphMakerZoom(it, factor) } },
                                 onActualSize = { viewport = viewport?.actualSize() })
                             roi?.let { Text("原图${image.width}×${image.height} · X${it.left} Y${it.top} · ${it.width}×${it.height}px · 显示${((viewport?.scale ?: 1f) * 100).roundToInt()}%", fontSize = 10.sp) }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                GlyphAction(if (blackWhite) "查看原图" else "查看黑白字形", !busy) { blackWhite = !blackWhite }
-                                if (blackWhite) Text(foregroundPreview.message, fontSize = 10.sp, modifier = Modifier.weight(1f))
-                            }
+                            ImageToolToggle("预览黑白字形", blackWhite, !busy) { blackWhite = it }
+                            if (blackWhite) ImageWorkspaceHint(foregroundPreview.message)
                             roi?.let { region -> GlyphMakerSelectionEditor(region, image.width, image.height, !busy) {
                                 selection = selection.copy(box = it); mode = ImageToolMode.CROP; zoom = false
                             } }
@@ -451,19 +439,14 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                             GlyphAction("提取单个", !busy && image != null && rgb != null && tol != null) { extract(false) }
                             GlyphMakerPrimaryAction("按空隙批量切分", !busy && image != null && rgb != null && tol != null) { extract(true) }
                         }
-                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("采样目标", fontSize = 10.sp)
-                            GlyphMakerCharacterSet.entries.forEach { group ->
-                                GlyphAction(if (characterSet == group) "✓ ${group.title}" else group.title, !busy) {
-                                    characterSet = group; nextSampleLabel = ""
-                                }
-                            }
+                        ImageToolChoice("采样目标", characterSet.name, GlyphMakerCharacterSet.entries.map { it.name to it.title }, !busy) {
+                            characterSet = GlyphMakerCharacterSet.valueOf(it); nextSampleLabel = ""
                         }
                         if (characterSet == GlyphMakerCharacterSet.CUSTOM)
                             ImageToolCompactInput("目标字符", customCharacters, !busy, Modifier.fillMaxWidth()) {
                                 customCharacters = it.take(256); nextSampleLabel = ""
                             }
-                        if (targetCharacters == null) Text("目标需为1–128个字符，不能含空白；不影响已有样本。", fontSize = 10.sp, color = AutoScriptPalette.Danger)
+                        if (targetCharacters == null) ImageWorkspaceHint("目标需为1–128个字符，不能含空白；已有样本保留。", error = true)
                         else FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             val total = glyphMakerLabelUnits(targetCharacters).size
                             val missing = glyphMakerLabelUnits(targetMissing.orEmpty())
@@ -477,7 +460,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                             Text("待补：$nextSampleLabel · 仅单字取样预填", fontSize = 10.sp)
                             GlyphAction("取消预填", !busy) { nextSampleLabel = "" }
                         }
-                        if (help) Text("取色首次替换当前色，随后连续追加；点色块后可修改该色，再取一次会替换它。每色容差独立；多色取并集。批量按行列空隙分字，粘连需重框。单独保存字库只存字形；保存并识字携带色组。显示放大不改变保存像素。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                        ImageToolHelp("取色首次替换当前色，随后连续追加；点色块后可修改该色，再取一次会替换它。每色容差独立，多色取并集。批量按行列空隙分字，粘连需重框。单独保存字库只存字形；保存并识字携带色组。显示放大不改变保存像素。")
                         }
                         pendingBatch?.let { batch ->
                             Column(Modifier.fillMaxWidth().bringIntoViewRequester(pendingIntoView), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -499,7 +482,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                         targetMissing?.let { missing ->
                             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(if (missing.isEmpty()) "当前采样目标已齐，可继续补同字变体" else "当前目标缺：$missing",
-                                    fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                                    fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -516,8 +499,8 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                             horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             items(visibleIndices.size, key = { visibleIndices[it] }) { item ->
                                 val index = visibleIndices[item]; val glyph = samples[index]
-                                Column(Modifier.background(if (selected == index) AutoScriptPalette.AccentSoft else Color.White, RoundedCornerShape(4.dp))
-                                    .border(1.dp, if (selected == index) AutoScriptPalette.Accent else AutoScriptPalette.Border, RoundedCornerShape(4.dp))
+                                Column(Modifier.background(if (selected == index) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                                    .border(1.dp, if (selected == index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
                                     .semantics { contentDescription = "样本${index + 1}：${glyph.label}" }.clickable(enabled = !busy) {
                                         if (labelDirty) message = "请先应用或恢复当前标注，再切换样本"
                                         else { selected = index; label = glyph.label; message = "已选择样本${selected + 1}" }
@@ -560,7 +543,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                                             message = if (revision != previous) "一笔修点已应用，可撤销" else "字形未变化"
                                         } catch (invalid: IllegalArgumentException) { message = invalid.message.orEmpty() }
                                     } }
-                                    Text("最多12步撤销/重做 · 历史位图8MiB · 不改变字形尺寸", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                                    ImageToolHelp("最多12步撤销/重做，历史位图8MiB；修点不改变字形尺寸。")
                                 }
                         }
                     }
@@ -570,19 +553,19 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                             ImageToolCompactInput("相似度 ‰", threshold, !busy, Modifier.weight(1f), numeric = true) { threshold = it.take(4) }
                             ImageToolCompactInput("空格列数", gap, !busy, Modifier.weight(1f), numeric = true) { gap = it.take(5) }
                         }
-                        Text("前景${palette.colors.size}色 · ${roi?.let { "X${it.left} Y${it.top} / ${it.width}×${it.height}px" } ?: "尚未选择取材图片"}", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                        ImageWorkspaceHint("前景${palette.colors.size}色 · ${roi?.let { "X${it.left} Y${it.top} / ${it.width}×${it.height}px" } ?: "尚未选择取材图片"}")
                         GlyphColorPaletteEditor(palette, !busy) { palette = it }
                         ImageToolCompactInput("预期文字", expectedText, !busy) { expectedText = it.take(512) }
-                        Text("选填，用于核对本次结果；不参与识别或保存到字库。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+                        ImageToolHelp("预期文字选填，只用于核对本次结果，不参与识别或保存到字库。")
                         GlyphMakerPrimaryAction("测试当前原图选区", !busy && image != null && samples.isNotEmpty() && rgb != null && tol != null) { test() }
                         }
                     }
                 }
                 testResult?.takeIf { testedInputs == previewInputs() }?.let { result ->
                     GlyphMakerSection("测试结果", "当前参数") {
-                    SelectionContainer { Text(result, fontSize = 12.sp, color = AutoScriptPalette.Accent) }
+                    SelectionContainer { Text(result, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
                     if (expectedText.isNotEmpty()) Text(glyphMakerExpectedFeedback(expectedText, recognizedText, samples),
-                        fontSize = 11.sp, color = if (recognizedText == expectedText) AutoScriptPalette.Mint else AutoScriptPalette.Danger)
+                        fontSize = 11.sp, color = if (recognizedText == expectedText) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                     testDetails?.let { details -> if (image != null) {
                         Text("未识别${details.glyphs.count { !it.recognized }}项 · 低分${details.glyphs.count { it.recognized && it.score < 980 }}项（低于980‰，仅提示）", fontSize = 10.sp)
                         OcrDetailPreview(image, details, compact = compactFooter, lowScoreBelow = 980, onResample = { glyph ->
@@ -595,23 +578,20 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                     }
                 }
                 if (testResult != null && testedInputs != previewInputs()) {
-                    Text("样本或识别参数已变更，测试结果已失效，请重新测试。", fontSize = 10.sp, color = AutoScriptPalette.Warning)
+                    ImageWorkspaceHint("样本或识别参数已变更，请重新测试。")
                 }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
             HorizontalDivider()
             if (!compactFooter) {
-            SelectionContainer(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
-                Text(message, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) { ImageWorkspaceHint(message) }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                ImageToolCompactInput("字库名称", name, !busy, Modifier.weight(1f)) { name = it.take(72) }
+                ImageToolCompactInput("名称", name, !busy, Modifier.weight(1f), dense = true) { name = it.take(72) }
                 GlyphMakerPrimaryAction(if (saving) "保存中…" else "保存字库", !busy && samples.isNotEmpty()) { save() }
-            }
             }
             val footerActions: @Composable () -> Unit = {
                 GlyphAction(if (busy && !saving) "取消任务" else "返回", !saving) { if (busy) { cancel(); message = "任务已取消，样本保留" } else close() }
-                if (compactFooter) GlyphMakerPrimaryAction(if (saving) "保存中…" else "保存字库", !busy && samples.isNotEmpty()) { save() }
                 GlyphAction("撤销", !busy && history.canUndo) {
                     if (labelDirty) message = "请先应用或恢复当前标注"
                     else { showVersion(history.undo(selected)); message = "已撤销样本操作" }
@@ -623,21 +603,22 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                 GlyphAction("快速测试", !busy && image != null && samples.isNotEmpty() && rgb != null && tol != null) { page = 2; test() }
                 if (onUseSaved != null) GlyphAction("保存并识字", !busy && samples.isNotEmpty()) { save(true) }
             }
-            FlowRow(Modifier.fillMaxWidth().heightIn(max = footerMaxHeight).verticalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.SpaceEvenly, verticalArrangement = Arrangement.spacedBy(2.dp)) { footerActions() }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) { footerActions() }
         }
         }
     }
     }
     if (discard) EditorPromptDialog("关闭字库制作？", "未保存的样本、修点、待标注内容及未使用的色组将丢弃；字库文件只保存字形，已保存文件不受影响。",
-        { discard = false }, { discard = false; onDismiss() }, "继续制作", "放弃")
+        { discard = false; workspace?.cancelNavigation?.invoke() }, { discard = false; onDismiss() }, "继续制作", "放弃")
     replacePending?.let { batch -> EditorPromptDialog("重新切分？", "当前待加入的字形和标注会替换，已加入的样本保留。",
         { replacePending = null }, { replacePending = null; extract(batch, confirmed = true) }, "保留当前", "重新切分") }
     chooser?.let { kind ->
         val paths = snapshot.manifest.resources.filter { if (kind == "image") it.get("kind")?.asString == "image" else isGlyphDictionaryResource(it) }
             .mapNotNull { it.get("path")?.asString }.sorted()
-        StudioPanelDialog(if (kind == "image") "选择项目图片" else "打开项目字库", { chooser = null }, showFooter = false, compactHeader = true) {
-            Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(10.dp)) {
+        CompositionLocalProvider(LocalImageWorkspace provides null) {
+        ImageWorkspacePanel(if (kind == "image") "选择项目图片" else "打开项目字库", { chooser = null }) {
+            Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(8.dp)) {
                 if (paths.isEmpty()) Text("暂无资源；可先导入或制作。", fontSize = 12.sp)
                 paths.forEach { path -> TextButton(onClick = {
                     chooser = null
@@ -665,6 +646,7 @@ private fun GlyphMakerContent(snapshot: ProjectSnapshot, store: ProjectStore, cl
                     }
                 }) { Text(path, fontSize = 12.sp) } }
             }
+        }
         }
     }
 }

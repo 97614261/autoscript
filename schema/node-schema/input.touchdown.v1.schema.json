@@ -28,21 +28,15 @@
         "pointerId": {
           "type": "integer"
         },
-        "pointerIdVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "pointerIdVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "x": {
           "type": "integer"
         },
-        "xVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "xVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "y": {
           "type": "integer"
         },
-        "yVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "yVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

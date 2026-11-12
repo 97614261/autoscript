@@ -34,14 +34,18 @@ internal fun recognitionSelectSingleTemplate(inputs: Map<String, String>, path: 
     inputs + mapOf("imagePath" to path, "imagePaths" to "", "imageDirectory" to "")
 
 /** A saved capture is a deliberate template selection, not a reset of the recognition draft. */
-internal fun recognitionCapturedTemplate(inputs: Map<String, String>, kind: String, path: String): Map<String, String> = when {
-    kind == "vision.findallimages" || recognitionTemplateSource(inputs) == RecognitionTemplateSource.LIST -> {
-        val selected = recognitionTemplatePaths(inputs["imagePaths"].orEmpty())
-        require(path in selected || selected.size < 64) { "已选64张模板，请先移除一张再添加截图" }
-        recognitionSelectTemplates(inputs, if (path in selected) selected else selected + path)
+internal fun recognitionCapturedTemplate(inputs: Map<String, String>, kind: String, path: String): Map<String, String> {
+    val selected = when {
+        kind == "vision.findallimages" || recognitionTemplateSource(inputs) == RecognitionTemplateSource.LIST -> {
+            val paths = recognitionTemplatePaths(inputs["imagePaths"].orEmpty())
+            require(path in paths || paths.size < 64) { "已选64张模板，请先移除一张再添加截图" }
+            recognitionSelectTemplates(inputs, if (path in paths) paths else paths + path)
+        }
+        "imagePath" in inputs -> recognitionSelectSingleTemplate(inputs, path)
+        else -> inputs
     }
-    "imagePath" in inputs -> recognitionSelectSingleTemplate(inputs, path)
-    else -> inputs
+    // The crop polygon is already encoded in PNG alpha; it is not a search-area constraint.
+    return if ("region" in selected) recognitionFixedRegionInputs(selected, selected.getValue("region")) else selected
 }
 
 internal fun recognitionScreenPickMode(kind: String): ImageToolMode = when (kind) {
@@ -85,16 +89,18 @@ internal fun recognitionImageEntryBlocks(contract: BlockContract, arguments: Jso
 }
 
 internal fun recognitionFixedRegionInputs(inputs: Map<String, String>, region: String): Map<String, String> =
-    (inputs + ("region" to region)).mapValues { (name, value) ->
+    (inputs + ("region" to region) + if("polygon" in inputs) mapOf("polygon" to "") else emptyMap()).mapValues { (name, value) ->
         if (name in setOf("leftVariable", "topVariable", "rightVariable", "bottomVariable")) "" else value
     }
 
 internal fun recognitionAlgorithmHelp(kind: String): String = when (kind) {
     "vision.findcolor", "vision.comparecolor", "vision.countcolor", "vision.findallcolor" -> "色组最多16色，每色独立容差，任意一色命中；同一像素不重复计数。计数上限0统计全部，1–6400万达到即停止；计数是像素数量，不是物体数量。全部找色保留1–2048个坐标，按行返回。总比较预算1亿次，多色大范围请缩小区域。"
 
-    "vision.findimage" -> "像素匹配按模板顺序返回首个命中，不是最高分。频次N表示首次及之后每N次访问识别，跳过轮次不截图或执行动作。裁剪图像覆盖时释放，插件结束清理；动作偏移使用原始屏幕像素。"
+    "vision.findimage" -> "像素匹配按模板顺序返回首个命中，不是最高分。频次N表示首次及之后每N次访问识别，跳过轮次不截图或执行动作。" + recognitionActionHelp
     "vision.findgray" -> "灰度最高分匹配，不缩放、不旋转；模板≤256K像素，范围≤400万像素，超出计算预算明确报错。是否找到为1/0。"
-    "vision.findallimages" -> "按模板顺序及方向保留结果（包括重叠），最多64项；truncated表示存在未保留项。结果集合需声明为字变量。动作默认作用首项，开启全结果才逐项执行；按住仅限首项。等待可取消，动作前释放临时帧，成功/失败分支互斥。"
+    "vision.findallimages" -> "按模板顺序及方向保留结果（包括重叠），最多64项；truncated表示存在未保留项。结果集合需声明为字变量。动作默认作用首项，开启全结果才逐项执行；按住仅限首项。等待可取消，动作前释放临时帧，成功/失败分支互斥。" + recognitionActionHelp
     "ocr.alphanumeric" -> "识别指定单行英文、数字，宽高比≤20；开启保留符号后可输出括号、加减号、小数点、百分号、空格等ASCII字符（内置ONNX/V3组件）。结果写入文本变量，可交给通用文本工具提取、拆分或替换。置信度为已接受字符平均值，不代表正确率；不做中文或文字检测。"
     else -> "坐标使用原始屏幕像素，范围右/下边界不包含。已有帧由脚本管理；图像输出不与参考软件未知格式混用。"
 }
+
+private const val recognitionActionHelp = "动作可选图片中心或左上角，再加原屏像素偏移；随机可跟随原设置、关闭或指定X/Y正负偏移，指定后不再叠加项目随机。图片范围内模式在命中模板的屏内矩形范围随机，忽略位置及固定偏移，不保证落在不透明像素内。输出X/Y仍为原始命中左上角，不随点击变化。"

@@ -1,9 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$DeviceSerial,
-    [Parameter(Mandatory)][ValidateSet('variables', 'touch', 'conditions', 'loops', 'flow', 'output', 'ai', 'aiAssistant', 'libraryUI', 'libraryPure', 'libraryFiles', 'libraryDevice', 'libraryHost', 'libraryVision', 'libraryOcr', 'libraryInput', 'libraryRecording', 'imageLibrary', 'imageSelection', 'imageFilter', 'imageEnhancement', 'glyphMaker', 'glyphPalette', 'templateCapture', 'pluginFiles', 'promptReuse', 'promptLayers', 'pureUtility', 'capabilityExpansion')][string]$Stage,
+    [Parameter(Mandatory)][ValidateSet('variables', 'touch', 'conditions', 'loops', 'flow', 'output', 'ai', 'aiAssistant', 'cloud', 'cloudLayout', 'cloudCloseout', 'cloudRegister', 'cloudBackupLayout', 'cloudConvenience', 'libraryUI', 'libraryPure', 'libraryFiles', 'libraryDevice', 'libraryHost', 'libraryVision', 'libraryOcr', 'libraryInput', 'libraryRecording', 'imageLibrary', 'imageSelection', 'imageFilter', 'imageEnhancement', 'imageCompact', 'imageToolbar', 'imagePanel', 'imageWorkspace', 'glyphMaker', 'glyphPalette', 'templateCapture', 'pluginFiles', 'promptReuse', 'promptLayers', 'pureUtility', 'capabilityExpansion')][string]$Stage,
     [string]$AdbPath = 'C:/Work/AndroidSDK/platform-tools/adb.exe',
-    [switch]$ConfirmTargetRestart
+    [string]$StudioCloudOrigin = 'http://127.0.0.1:18080',
+    [string[]]$RetiredQaProjects = @(),
+    [switch]$ConfirmTargetRestart,
+    [switch]$ImageWorkspaceRemaining,
+    [switch]$ImageWorkspaceInsertion,
+    [switch]$ImageCompactRemaining
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -22,6 +27,12 @@ $flag = switch ($Stage) {
     'output' { 'controlUsageStage' }
     'ai' { 'controlUsageStage' }
     'aiAssistant' { 'controlUsageStage' }
+    'cloud' { 'controlUsageStage' }
+    'cloudLayout' { 'controlUsageStage' }
+    'cloudCloseout' { 'controlUsageStage' }
+    'cloudRegister' { 'controlUsageStage' }
+    'cloudBackupLayout' { 'controlUsageStage' }
+    'cloudConvenience' { 'controlUsageStage' }
     'libraryUI' { 'controlUsageStage' }
     'libraryPure' { 'controlUsageStage' }
     'libraryFiles' { 'controlUsageStage' }
@@ -34,8 +45,30 @@ $flag = switch ($Stage) {
     default { $Stage + 'Only' }
 }
 $value = if ($flag -eq 'controlUsageStage') { $Stage } else { 'true' }
+if ($ImageCompactRemaining) {
+    if ($Stage -ne 'imageCompact') { throw 'Image compact follow-up requires its own stage' }
+    $flag = 'imageCompactRemainingOnly'
+}
+if ($ImageWorkspaceRemaining) {
+    if ($Stage -ne 'imageWorkspace') { throw 'Image workspace follow-up requires its own stage' }
+    $flag = 'imageWorkspaceRemainingOnly'
+}
+if ($ImageWorkspaceInsertion) {
+    if ($Stage -ne 'imageWorkspace') { throw 'Image workspace insertion follow-up requires its own stage' }
+    $flag = 'imageWorkspaceInsertionOnly'
+}
 $arguments = @('-s', $DeviceSerial, 'shell', 'am', 'instrument', '-w', '-r', '-e', $flag, $value,
     'com.zhigou.kaifaban.acceptance/com.autoscript.studio.StudioAcceptanceInstrumentation')
+if ($Stage -in @('cloud', 'cloudLayout', 'cloudCloseout', 'cloudRegister', 'cloudBackupLayout', 'cloudConvenience')) {
+    if ($StudioCloudOrigin -notmatch '^http://127\.0\.0\.1:[0-9]{2,5}$') { throw 'Cloud QA requires an explicit loopback origin' }
+    $arguments = $arguments[0..($arguments.Count-2)] + @('-e', 'studioCloudOrigin', $StudioCloudOrigin, $arguments[-1])
+}
+if ($RetiredQaProjects.Count -gt 0) {
+    if ($RetiredQaProjects.Count -gt 16 -or @($RetiredQaProjects | Where-Object {
+        $_ -notmatch '^project-qa-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+    }).Count -gt 0) { throw 'Invalid owned QA project identities' }
+    $arguments = $arguments[0..($arguments.Count-2)] + @('-e', 'retiredQaProjects', ($RetiredQaProjects -join ','), $arguments[-1])
+}
 $directory = Join-Path (Split-Path $PSScriptRoot -Parent) 'build'
 [IO.Directory]::CreateDirectory($directory) | Out-Null
 $log = Join-Path $directory ("function-usage-$Stage-" + (Get-Date -Format 'yyyyMMddTHHmmss') + '.log')

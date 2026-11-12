@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1, "kind": "vision.findallcolor", "nodeVersion": 1,
   "nodeSchemaId": "https://autoscript.local/schema/node/vision.findallcolor/1/vision.findallcolor.schema.json",
-  "title": "查找全部颜色", "category": "vision", "summary": "按行优先返回半开矩形内最多2048个匹配坐标；已声明字符变量接收JSON，可用结果读取逐项取坐标。范围超出实际截图时返回空列表并记录警告。",
+  "title": "查找全部颜色", "category": "vision", "summary": "按行优先返回半开矩形内最多2048个匹配坐标；已声明字符变量接收JSON，可用结果读取逐项取坐标。范围超出实际截图时返回空列表并记录警告。 可选多边形范围；找色只检查内部像素，多点整组、找图整个模板需位于选区内。",
   "searchTerms": ["多色", "色组", "任意颜色", "findallcolor", "全部找色", "坐标列表", "区域"],
   "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
   "properties": [
@@ -12,6 +12,7 @@
     { "path": "additionalColors", "label": "备选颜色（任意命中）", "editor": "string", "required": false, "defaultValue": "" },
     { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
     { "path": "limit", "label": "结果上限(1-2048)", "editor": "integer", "required": true, "defaultValue": "256" },
-    { "path": "resultVariable", "label": "坐标列表变量", "editor": "string", "required": true, "defaultValue": "colorPoints" }
+    { "path": "resultVariable", "label": "坐标列表变量", "editor": "string", "required": true, "defaultValue": "colorPoints" },
+    {"path": "polygon", "label": "多边形选区", "editor": "string", "required": false, "defaultValue": ""}
   ], "migrations": []
 }

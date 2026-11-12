@@ -112,6 +112,7 @@ private fun SoftwarePermissionsDialog(runtimeClient: RuntimeClient, startupPromp
     var declared by remember { mutableStateOf(emptyList<SoftwarePermissionStatus>()) }
     var showDeclared by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("权限设置", message)
     var notificationRequested by remember { mutableStateOf(false) }
     val overlayHost = LocalEditorOverlay.current
     val settingsRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { revision++ }

@@ -20,6 +20,7 @@
   ],
   "childBlocks": [],
   "properties": [
+ {"path":"polygon","label":"多边形选区","editor":"string","required":false,"defaultValue":""},
     {
       "path": "frameVariable",
       "label": "来源图像变量",

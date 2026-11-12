@@ -57,7 +57,7 @@ pub(crate) fn parse(kind: &str, value: &Value) -> Result<Operation, &'static str
     if optional
         && args["textVariable"]
             .as_str()
-            .is_none_or(|v| v.is_empty() || v.len() > 64)
+            .is_none_or(|v| !crate::value_source::valid(v))
     {
         return Err("clipboard source variable invalid");
     }

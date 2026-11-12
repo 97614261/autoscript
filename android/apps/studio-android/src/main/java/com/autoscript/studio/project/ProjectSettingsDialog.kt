@@ -113,7 +113,9 @@ private fun ProjectSettingsContent(snapshot: ProjectSnapshot, store: ProjectStor
     var deletePath by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("项目设置", error, failure = true)
     var notice by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("项目设置", notice)
     var glyphMakerVisible by remember { mutableStateOf(false) }
     var runnerUiEditorVisible by remember { mutableStateOf(false) }
     var runnerUiDraft by remember { mutableStateOf("") }

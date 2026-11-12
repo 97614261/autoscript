@@ -91,9 +91,12 @@ class RuntimeClient(context: Context) {
     val runtimeStates = connectionStates.asStateFlow()
     private val executionPositions = MutableStateFlow<com.autoscript.runtime.api.RuntimeExecutionPosition?>(null)
     val executionPosition = executionPositions.asStateFlow()
+    private val executionFeedbacks = MutableStateFlow<com.autoscript.runtime.api.RuntimeExecutionFeedback?>(null)
+    val executionFeedback = executionFeedbacks.asStateFlow()
     private var endedPositionRevision = 0L
     private fun clearExecutionPositionDelivery() = synchronized(positionInbox) {
         executionPositions.value = null
+        executionFeedbacks.value = null
         endedPositionRevision = 0
         positionInbox.set(null)
         mainHandler.removeCallbacks(deliverPosition)
@@ -144,6 +147,13 @@ class RuntimeClient(context: Context) {
     }
 
     private fun newStateListener(): IRuntimeStateListener = object : IRuntimeStateListener.Stub() {
+        override fun onExecutionFeedback(sessionGeneration: Long, runRevision: Long, projectId: String, payload: String) {
+            val report = com.autoscript.runtime.api.RuntimeExecutionFeedback.decode(sessionGeneration, runRevision, projectId, payload) ?: return
+            mainHandler.post {
+                if (remote == null || stateListener !== this || lastSessionGeneration != sessionGeneration) return@post
+                if (acceptsExecutionFeedback(report, connectionStates.value, executionFeedbacks.value)) executionFeedbacks.value = report
+            }
+        }
         override fun onExecutionPosition(sessionGeneration: Long, runRevision: Long, projectId: String, flowId: String, nodeId: String,
             sampleSequence: Long, recentFlows: Array<out String>?, recentNodes: Array<out String>?) {
             val position = runCatching {
@@ -169,7 +179,7 @@ class RuntimeClient(context: Context) {
             mainHandler.post {
                 // A callback already in flight can outlive unregister/rebind on the same service.
                 if (remote == null || stateListener !== this) return@post
-                if (lastSessionGeneration != sessionGeneration) endedPositionRevision = 0
+                if (lastSessionGeneration != sessionGeneration) { endedPositionRevision = 0; executionFeedbacks.value = null }
                 if (stateCode != RuntimeProtocol.STATE_RUNNING) {
                     if (stateCode != RuntimeProtocol.STATE_PAUSED) endedPositionRevision = maxOf(endedPositionRevision, executionPositions.value?.runRevision ?: 0)
                     executionPositions.value = null
@@ -904,9 +914,10 @@ class RuntimeClient(context: Context) {
     fun recentRuntimeLogs(maximumEntries: Int = 50): List<String> {
         val service = remote
         val generation = lastSessionGeneration
-        if (service == null || generation == null || maximumEntries !in 1..100) return emptyList()
+        val requestSize = runtimeLogRequestSize(maximumEntries) ?: return emptyList()
+        if (service == null || generation == null) return emptyList()
         return runCatching {
-            service.getRecentRuntimeLogs(generation, maximumEntries).toList()
+            service.getRecentRuntimeLogs(generation, requestSize).toList()
         }.getOrDefault(emptyList())
     }
 

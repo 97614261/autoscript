@@ -5,6 +5,41 @@ use serde_json::{json, Value};
 fn args() -> Value {
     json!({"frameVariable":"frame","autoCapture":true,"imagePaths":["assets/images/a.png"],"tolerance":0,"similarityPermille":1000,"region":{"left":0,"top":0,"right":2,"bottom":2},"direction":0,"limit":2,"resultVariable":"matches"})
 }
+
+#[test]
+fn inline_match_actions_use_each_real_template_size_and_validate_random_budgets() {
+    let caps = json!([
+        "vision.template",
+        "screen.capture",
+        "core.task",
+        "input.basic"
+    ]);
+    let mut a = args();
+    a["successAction"] = json!("tap");
+    a["allMatches"] = json!(true);
+    a["actionAnchor"] = json!("center");
+    a["actionRandom"] = json!("disabled");
+    assert!(compile_caps(a.clone(), None, "1.7", "string", caps.clone()).is_err());
+    let bundle = compile_caps(a.clone(), None, "1.8", "string", caps.clone()).unwrap();
+    let lua = mlua::Lua::new();
+    lua.load("Prompt={toast=function()end};clicks={};Screen={capture=function()return 1 end,cache=function(f)return f end,release=function()end,findAllImages=function()return '{}'end,matchValue=function(r,i,p)if p=='count'then return '2'end;if p=='x'then return tostring(i*10)end;if p=='y'then return '20'end;if p=='width'then return tostring(i*4)end;if p=='height'then return '6'end end};Input={tapScreen=function(x,y)table.insert(clicks,{x,y})end};Log={info=function()end}").exec().unwrap();
+    lua.load(bundle.main_lua)
+        .eval::<mlua::Function>()
+        .unwrap()
+        .call::<()>(())
+        .unwrap();
+    lua.load("assert(#clicks==2 and clicks[1][1]==12 and clicks[2][1]==24 and clicks[1][2]==23 and clicks[2][2]==23)").exec().unwrap();
+    for (key, value) in [
+        ("actionRandomX", json!(4097)),
+        ("actionRandomY", json!(-1)),
+        ("actionRandom", json!("unknown")),
+        ("actionAnchor", json!("unknown")),
+    ] {
+        let mut invalid = a.clone();
+        invalid[key] = value;
+        assert!(compile_caps(invalid, None, "1.8", "string", caps.clone()).is_err());
+    }
+}
 fn compile(
     a: Value,
     property: Option<Value>,

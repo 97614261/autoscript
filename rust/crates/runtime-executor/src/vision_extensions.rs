@@ -14,6 +14,8 @@ pub(crate) struct ScaledSearch {
     pub similarity_permille: u16,
     pub direction: u8,
     pub range: pixel_vision::scaled_search::ScaleRange,
+    #[serde(default)]
+    pub polygon: String,
 }
 pub(crate) fn scaled_search(
     current: &FrameView,
@@ -52,7 +54,20 @@ pub(crate) fn scaled_search(
         minimum_match_permille: spec.similarity_permille,
         ignore_transparent_template_pixels: true,
     };
-    let found = pixel_vision::scaled_search::find_scaled(
+    let polygon = if spec.polygon.is_empty() {
+        None
+    } else {
+        if spec.polygon.len() > 8192 {
+            return Err("POLYGON_REGION_INVALID".into());
+        }
+        let points: Vec<[u32; 2]> =
+            serde_json::from_str(&spec.polygon).map_err(|_| "POLYGON_REGION_INVALID")?;
+        Some(
+            pixel_vision::polygon::PolygonRegion::prepare(&points)
+                .map_err(|_| "POLYGON_REGION_INVALID")?,
+        )
+    };
+    let found = pixel_vision::scaled_search::find_scaled_in_region(
         current.image_view().map_err(|_| "invalid source frame")?,
         template
             .image_view()
@@ -60,6 +75,7 @@ pub(crate) fn scaled_search(
         spec.range,
         options,
         cancelled,
+        polygon.as_ref(),
     )
     .map_err(|error| format!("SCALED_SEARCH_{error:?}"))?;
     Ok(json!(found.map(|v|json!({"x":v.matched.origin.x,"y":v.matched.origin.y,"width":v.width,"height":v.height,

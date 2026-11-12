@@ -52,7 +52,8 @@
       "type": "integer",
       "required": true,
       "summary": "bottom"
-    }
+    },
+    {"name": "polygon", "type": "string", "required": false, "summary": "可选多边形顶点JSON [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；整个目标矩形须在选区内。空值沿用矩形，需Screen.polygonRegionVersion=1及支持多边形的OpenCV组件。"}
   ],
   "returns": {
     "type": "string",

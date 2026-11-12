@@ -29,17 +29,13 @@
           "minLength": 0,
           "maxLength": 65536
         },
-        "jsonVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "jsonVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "separator": {
           "type": "string",
           "minLength": 0,
           "maxLength": 4096
         },
-        "separatorVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "separatorVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

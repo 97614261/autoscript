@@ -36,6 +36,7 @@ internal fun SelectedNodeSourceEditorDialog(
     var scopeDraft by remember { mutableStateOf<SelectedNodeSource?>(null) }
     var draft by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("积木源码编辑", error, failure = true)
     var busy by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }

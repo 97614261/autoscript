@@ -29,6 +29,7 @@
         "resultVariable"
       ],
       "properties": {
+ "polygon":{"type":"string","maxLength":8192},
         "frameVariable": {
           "$ref": "#/$defs/variable"
         },

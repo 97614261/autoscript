@@ -199,5 +199,7 @@ private fun libraryChoiceLabel(path: String, value: String): String = when (path
     "unit", "durationUnit" -> mapOf("milliseconds" to "毫秒", "seconds" to "秒", "minutes" to "分钟")[value] ?: value
     "metric" -> mapOf("count" to "次数", "elapsed" to "耗时")[value] ?: value
     "successAction" -> mapOf("none" to "不执行动作", "tap" to "点击", "hold" to "按下不弹起", "tapWait" to "点击后等待", "pressRelease" to "按下后定时弹起")[value] ?: value
+    "actionAnchor" -> programEnumLabel(path, value)
+    "actionRandom" -> programEnumLabel(path, value)
     else -> value
 }

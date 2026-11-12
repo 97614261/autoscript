@@ -223,8 +223,17 @@ pub(crate) fn parse(kind: &str, value: &Value) -> Result<Operation, &'static str
         && args
             .keys()
             .all(|key| keys.contains(&key.as_str()) || key == "additionalColors");
+    let polygon_shape = matches!(kind, "vision.findscaled" | "vision.findfeatures")
+        && args.len() == keys.len() + 1
+        && args.get("polygon").is_some_and(Value::is_string)
+        && args
+            .keys()
+            .all(|key| keys.contains(&key.as_str()) || key == "polygon");
     if (kind == "screen.transform" && !transform_shape)
-        || (kind != "screen.transform" && !glyph_shape && args.len() != keys.len())
+        || (kind != "screen.transform"
+            && !glyph_shape
+            && !polygon_shape
+            && args.len() != keys.len())
         || keys.iter().any(|k| !args.contains_key(*k))
     {
         return Err("unexpected or missing vision options");
@@ -397,6 +406,7 @@ impl Operation {
         manifest: &ProjectManifest,
         flow: &str,
     ) -> Result<(), &'static str> {
+        crate::analyze::validate_polygon_arguments(&Value::Object(self.args.clone()), manifest)?;
         let source = if matches!(
             self.kind.as_str(),
             "vision.readresult" | "vision.resultaction"
@@ -499,7 +509,12 @@ impl Operation {
         let right = args["right"].as_i64().unwrap();
         let bottom = args["bottom"].as_i64().unwrap();
         Ok(if self.kind == "vision.findfeatures" {
-            format!("do local __template=Screen.loadImage({});local __ok,__matches=pcall(Screen.findFeatures,__vars[{source}],__template,{score},{left},{top},{right},{bottom});Screen.release(__template);if not __ok then error(__matches) end;__vars[{output}]=__matches end",get("imagePath")?)
+            let polygon = crate::render::polygon_suffix(
+                args.get("polygon")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )?;
+            format!("do local __template=Screen.loadImage({});local __ok,__matches=pcall(Screen.findFeatures,__vars[{source}],__template,{score},{left},{top},{right},{bottom}{polygon});Screen.release(__template);if not __ok then error(__matches) end;__vars[{output}]=__matches end",get("imagePath")?)
         } else {
             format!("__vars[{output}]=Ocr.alphanumericV5(__vars[{source}],{left},{top},{right},{bottom},{score})")
         })
@@ -618,13 +633,37 @@ impl Operation {
         let a = &self.args;
         let get = |key: &str| quote(a[key].as_str().unwrap_or_default());
         Ok(Some(match self.kind.as_str() {
-            "vision.findscaled"=>format!("do local __template=Screen.loadImage({});local __ok,__matches=pcall(Screen.findScaled,__vars[{source}],__template,{});Screen.release(__template);if not __ok then error(__matches) end;__vars[{output}]=__matches end",get("imagePath")?,quote(&options.to_string())?),
-            "screen.compareframes"=>format!("__vars[{output}]=Screen.compareFrames(__vars[{source}],__vars[{}],{})",get("previousFrameVariable")?,quote(&options.to_string())?),
-            "screen.mappoint"=>{
-                let coordinate=|fixed:&str,variable:&str|->Result<String,CompileError> {if a[variable].as_str()==Some("") {Ok(a[fixed].to_string())} else {Ok(format!("__vars[{}]",get(variable)?))}};
-                format!("__vars[{output}]=Screen.mapPoint(__vars[{source}],{},{})",coordinate("x","xVariable")?,coordinate("y","yVariable")?)
+            "vision.findscaled" => {
+                let mut options = options.clone();
+                let polygon = a.get("polygon").and_then(Value::as_str).unwrap_or_default();
+                let guard = if polygon.is_empty() {
+                    ""
+                } else {
+                    options["polygon"] = json!(polygon);
+                    "if Screen.polygonRegionVersion~=1 then error('POLYGON_REGION_UNSUPPORTED') end;"
+                };
+                format!("do {guard}local __template=Screen.loadImage({});local __ok,__matches=pcall(Screen.findScaled,__vars[{source}],__template,{});Screen.release(__template);if not __ok then error(__matches) end;__vars[{output}]=__matches end",get("imagePath")?,quote(&options.to_string())?)
             }
-            _=>return Ok(None),
+            "screen.compareframes" => format!(
+                "__vars[{output}]=Screen.compareFrames(__vars[{source}],__vars[{}],{})",
+                get("previousFrameVariable")?,
+                quote(&options.to_string())?
+            ),
+            "screen.mappoint" => {
+                let coordinate = |fixed: &str, variable: &str| -> Result<String, CompileError> {
+                    if a[variable].as_str() == Some("") {
+                        Ok(a[fixed].to_string())
+                    } else {
+                        Ok(format!("__vars[{}]", get(variable)?))
+                    }
+                };
+                format!(
+                    "__vars[{output}]=Screen.mapPoint(__vars[{source}],{},{})",
+                    coordinate("x", "xVariable")?,
+                    coordinate("y", "yVariable")?
+                )
+            }
+            _ => return Ok(None),
         }))
     }
 }

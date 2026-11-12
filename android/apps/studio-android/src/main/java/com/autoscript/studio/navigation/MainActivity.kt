@@ -77,6 +77,7 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
     var navigation by remember { mutableStateOf(StudioNavigationState()) }
     var runtimeEnvironmentVisible by remember { mutableStateOf(false) }
     var aboutVisible by remember { mutableStateOf(false) }
+    var accountVisible by remember { mutableStateOf(false) }
     var functionDocsVisible by remember { mutableStateOf(false) }
     var workspaceFullScreen by remember { mutableStateOf(false) }
     var workspaceRequest by remember { mutableStateOf<WorkspaceEntryRequest?>(null) }
@@ -84,8 +85,16 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
     var runtimeState by remember { mutableStateOf(RuntimeConnectionState()) }
     var runtimeDebugMessage by remember { mutableStateOf<String?>(null) }
     var runtimeFailureObserved by remember { mutableStateOf(false) }
+    val logFiles = LocalContext.current.applicationContext.filesDir
+    val connectionLog = remember {
+        RuntimeConsoleLog(onStateDelta = { line ->
+            if (EditorOverlaySessions.status.value == null)
+                com.autoscript.runtime.api.RuntimeSystemLog.notice(logFiles, "运行连接", line)
+        })
+    }
     val runtimeClient = rememberRuntimeClient {
         runtimeState = it
+        connectionLog.record(it)
     }
     val openSoftwarePermissions = rememberSoftwarePermissionsLauncher(runtimeClient, promptOnFirstLaunch = true)
     var environmentInputFeatures by remember { mutableStateOf<Int?>(null) }
@@ -105,6 +114,7 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
         runtimeEnvironmentVisible = false
         visionComponentsVisible = false
         aboutVisible = false
+        accountVisible = false
         workspaceRequest = action?.let { WorkspaceEntryRequest(++requestToken, it, projectId) }
         navigation = navigation.navigateTo(StudioDestination.WORKSPACE)
     }
@@ -139,12 +149,13 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val configuration = LocalConfiguration.current
-        val navigationVisible = !runtimeEnvironmentVisible && !workspaceFullScreen && !aboutVisible
+        val navigationVisible = !runtimeEnvironmentVisible && !workspaceFullScreen && !aboutVisible && !accountVisible
         val navigationRail = configuration.screenWidthDp > configuration.screenHeightDp &&
             studioWideShortLayout(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
         val selectDestination: (StudioDestination) -> Unit = { destination ->
             navigation = navigation.navigateTo(destination)
             aboutVisible = false
+            accountVisible = false
             workspaceRequest = null
         }
         Scaffold(modifier = Modifier.fillMaxSize().onGloballyPositioned { firstContentLaidOut = true }, containerColor = StudioPaper, bottomBar = {
@@ -179,9 +190,14 @@ private fun StudioApp(captureHandoff: StudioCaptureHandoff?, onCaptureHandoffCon
                             entryRequest = workspaceRequest, onEntryRequestConsumed = { workspaceRequest = null },
                             modifier = Modifier.fillMaxSize(),
                         )
-                        StudioDestination.PROFILE -> if (aboutVisible) {
+                        StudioDestination.PROFILE -> if (accountVisible) {
+                            StudioAccountScreen(projectStore, blocked = {
+                                EditorOverlaySessions.status.value != null || ScriptLaunchSessions.status.value != null ||
+                                    runtimeState.engineState in setOf(RuntimeEngineState.RUNNING, RuntimeEngineState.PAUSED, RuntimeEngineState.STOPPING)
+                            }, onBack = { accountVisible = false }, modifier = Modifier.fillMaxSize())
+                        } else if (aboutVisible) {
                             StudioAboutScreen(onBack = { aboutVisible = false }, modifier = Modifier.fillMaxSize())
-                        } else StudioProfilePage(runtimeState, ::openEntry, Modifier.fillMaxSize())
+                        } else StudioProfilePage(runtimeState, ::openEntry, Modifier.fillMaxSize(), onAccount = { accountVisible = true })
                     }
                 }
             }

@@ -2,6 +2,27 @@ package com.autoscript.studio
 
 import com.autoscript.studio.generated.BlockContract
 import com.google.gson.JsonObject
+import androidx.compose.runtime.*
+
+internal data class CalculationInsertRequest(val context: EditorPasteRequest, val branch: String?,
+    val commit: (EditorInsertPosition, String?) -> Unit)
+
+@Composable
+internal fun CalculationInsertPositionDialog(request: CalculationInsertRequest, editor: VisualEditorState,
+    nodes: List<EditorTreeNode>, onDismiss: () -> Unit) {
+    var choosingBranch by remember(request) { mutableStateOf(false) }
+    val slots = request.context.primary?.let(editor::childBlockNames).orEmpty()
+    if (!choosingBranch) EditorInsertPositionDialog(request.context.primary != null, slots.isNotEmpty(), onDismiss,
+        onConfirm = { position ->
+            if (position == EditorInsertPosition.INSIDE && slots.size > 1 && request.branch !in slots) choosingBranch = true
+            else request.commit(position, if (position == EditorInsertPosition.INSIDE) request.branch?.takeIf { it in slots } ?: slots.singleOrNull() else null)
+        }, allowReplace = false, initialPosition = if (request.branch != null) EditorInsertPosition.INSIDE
+            else if (request.context.primary != null) EditorInsertPosition.BELOW else EditorInsertPosition.LIST_BOTTOM,
+        previewNodes = nodes, previewAnchorId = request.context.primary, previewChildSlot = request.branch)
+    else EditorOptionDialog("选择加入分支", slots.map { it to childBlockLabel(it) }, onDismiss,
+        preview = { slot -> EditorInsertionPreview(nodes, request.context.primary, EditorInsertPosition.INSIDE, slot) },
+        onConfirm = { slot -> request.commit(EditorInsertPosition.INSIDE, slot) })
+}
 
 internal fun editorInsertionContext(projectId: String, flowId: String, editor: VisualEditorState) =
     EditorPasteRequest(projectId, flowId, editor.currentSource, editor.selectedNodeId, editor.selectedNodeIds.toSet())

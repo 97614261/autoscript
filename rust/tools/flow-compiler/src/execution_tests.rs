@@ -3,6 +3,10 @@ use crate::{
 };
 use flow_ir::{load_jsonl, parse_project_manifest, LoadOptions, ProjectManifest};
 use serde_json::{json, Value};
+include!("quick_calculation_execution_tests.rs");
+include!("value_source_execution_tests.rs");
+include!("recognition_action_execution_tests.rs");
+include!("branch_feedback_execution_tests.rs");
 
 fn manifest(variables: Value, params: Value) -> ProjectManifest {
     let mut manifest = json!({

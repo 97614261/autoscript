@@ -1178,7 +1178,7 @@ pub(crate) fn parse(kind: &str, args: &Value) -> Result<UtilityOperation, &'stat
                 .get(&format!("{}Variable", field.name))
                 .map(|v| {
                     v.as_str()
-                        .filter(|n| crate::analyze::valid_variable_name(n))
+                        .filter(|n| crate::value_source::valid(n))
                         .map(str::to_owned)
                         .ok_or("invalid utility source variable")
                 })

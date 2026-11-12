@@ -77,7 +77,10 @@ internal fun rewriteFlowVariableReferences(source: String, names: Map<String, St
                                 (key == "name" && kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.loopmetric")) ||
                                 (key == "sourceName" && kind == "variable.copy")
                             if (reference && child.isJsonPrimitive && child.asJsonPrimitive.isString) {
-                                names[child.asString]?.let { obj.addProperty(key, it); changed = true }
+                                if (child.asString.startsWith("=")) {
+                                    val rewritten = "=" + rewriteCalculationNames(child.asString.drop(1), names)
+                                    if (rewritten != child.asString) { obj.addProperty(key, rewritten); changed = true }
+                                } else names[child.asString]?.let { obj.addProperty(key, it); changed = true }
                             } else if (key == "expression" && kind in setOf("variable.calculate", "task.message") && child.isJsonPrimitive && child.asJsonPrimitive.isString) {
                                 val rewritten = rewriteCalculationNames(child.asString, names)
                                 if (rewritten != child.asString) { obj.addProperty(key, rewritten); changed = true }

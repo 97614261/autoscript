@@ -7,19 +7,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -27,8 +26,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
-import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectResourceKind
 import com.autoscript.project.store.ProjectResourceInUseException
 import com.autoscript.project.store.ProjectResourceUsageReport
@@ -67,11 +64,13 @@ internal fun ImageLibraryDialog(snapshot: ProjectSnapshot, store: ProjectStore, 
     var pendingImport by remember(projectId) { mutableStateOf<ImageLibraryImport?>(null) }
     var busy by remember(projectId) { mutableStateOf(false) }
     var message by remember(projectId) { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("图片库", message)
     var preview by remember(projectId) { mutableStateOf<ImageLibraryPreview?>(null) }
     var workbenchOpen by remember(projectId) { mutableStateOf(false) }
     var pendingDelete by remember(projectId) { mutableStateOf<Pair<String, Set<String>>?>(null) }
     var usageReport by remember(projectId) { mutableStateOf<Pair<ProjectResourceUsageReport, Boolean>?>(null) }
     var failurePrompt by remember(projectId) { mutableStateOf<Pair<String, String>?>(null) }
+    StudioSystemLogEffect("图片库", failurePrompt?.let { "${it.first}：${it.second}" }, failure = true)
     val latestPreview by rememberUpdatedState(preview)
     val images = remember(snapshot.manifest.resources) { projectImageLibraryPaths(snapshot.manifest.resources) }
     val visible = remember(images, folder, search) { imageLibraryPaths(images, folder, search) }
@@ -143,58 +142,46 @@ internal fun ImageLibraryDialog(snapshot: ProjectSnapshot, store: ProjectStore, 
     }
     val enabled = !busy && pendingImport == null && pendingDelete == null && usageReport == null && failurePrompt == null
     fun requestClose() { if (enabled) onDismiss() }
-    StudioDialog(onDismissRequest = ::requestClose, properties = DialogProperties(usePlatformDefaultWidth = false,
-        dismissOnClickOutside = false, dismissOnBackPress = enabled)) {
-        Column(Modifier.fillMaxSize().background(Color.White).imePadding()) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 38.dp).padding(start = 12.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Text("图片库", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = AutoScriptPalette.Accent,
-                    modifier = Modifier.weight(1f))
-                Text("${visible.size} / ${images.size} 张", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                Box(Modifier.size(32.dp).clickable(enabled = enabled, onClick = ::requestClose), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Close, contentDescription = "关闭图片库", tint = AutoScriptPalette.TextSecondary, modifier = Modifier.size(18.dp))
-                }
-            }
-            HorizontalDivider(color = AutoScriptPalette.Divider)
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
-                item(key = "library-controls") {
-                    Column {
-                        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            PluginFileAction("截图取材", { if (enabled) { onDismiss(); onCapture() } }, enabled)
-                            PluginFileAction("导入图片", { folderPicker = "import" }, enabled)
-                            PluginFileAction("选择文件夹", { folderPicker = "browse" }, enabled)
-                            PluginFileAction("刷新", {
-                                busy = true
-                                scope.launch {
-                                    try { latestChanged(withContext(Dispatchers.IO) { store.openProject(projectId) }); message = null }
-                                    catch (cancelled: CancellationException) { throw cancelled }
-                                    catch (_: Exception) { message = "图片列表读取失败，当前列表保留" }
-                                    finally { busy = false }
-                                }
-                            }, enabled)
+    ImageWorkspaceTheme {
+    ImageWorkspacePanel("图片库", { requestClose() }, showFooter = false, confirmEnabled = enabled, closeEnabled = enabled,
+        landscapeWidthDp = 560, headerTitle = { Text("图片库 · ${visible.size}/${images.size} 张") }) {
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    ImageToolCompactAction("截图取材", enabled) { onDismiss(); onCapture() }
+                    ImageToolCompactAction("导入图片", enabled) { folderPicker = "import" }
+                    ImageToolCompactAction("选择目录", enabled) { folderPicker = "browse" }
+                    ImageToolCompactAction("刷新", enabled) {
+                        busy = true
+                        scope.launch {
+                            try { latestChanged(withContext(Dispatchers.IO) { store.openProject(projectId) }); message = null }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { message = "图片列表读取失败，当前列表保留" }
+                            finally { busy = false }
                         }
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            PluginFileInput(search, { search = it }, "图片库搜索", "搜索图片名或文件夹", enabled, Modifier.weight(1f))
-                            if (search.isNotEmpty()) PluginFileAction("清空", { search = "" }, enabled)
-                        }
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(folder?.let { "目录：${it.ifEmpty { "图片根目录" }}" } ?: "全部图片 · 包含子文件夹",
-                                fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f))
-                            if (folder != null) PluginFileAction("全部图片", { folder = null }, enabled)
-                        }
-                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = AutoScriptPalette.Accent)
-                        message?.let { Text(it, fontSize = 10.sp, color = AutoScriptPalette.Accent, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-                        HorizontalDivider(color = AutoScriptPalette.Divider)
                     }
                 }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ImageToolCompactInput("搜索", search, enabled, Modifier.weight(1f), dense = true) { search = it }
+                    if (search.isNotEmpty()) ImageToolCompactAction("清空", enabled) { search = "" }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(folder?.let { "目录：${it.ifEmpty { "图片根目录" }}" } ?: "全部图片 · 包含子目录",
+                        fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (folder != null) ImageToolCompactAction("全部", enabled) { folder = null }
+                }
+                message?.let { ImageWorkspaceHint(it) }
+            }
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                 if (visible.isEmpty()) item {
                     Text(when { images.isEmpty() -> "暂无项目图片，点「导入图片」或「截图取材」。"
                         search.isNotBlank() -> "没有匹配的图片，可清空搜索或切换到全部图片。"
                         else -> "此文件夹没有图片，点「全部图片」查看其他目录。" },
-                        fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(vertical = 20.dp))
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 20.dp))
                 }
                 items(visible, key = { it }) { path ->
                     Row(Modifier.fillMaxWidth().heightIn(min = 58.dp).clickable(enabled = enabled) { openImage(path) }
@@ -202,25 +189,24 @@ internal fun ImageLibraryDialog(snapshot: ProjectSnapshot, store: ProjectStore, 
                         ImageLibraryThumbnail(snapshot, path)
                         Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
                             Text(path.substringAfterLast('/'), fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis, color = AutoScriptPalette.TextPrimary)
+                                overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
                             Text(path.removePrefix("assets/images/").substringBeforeLast('/', "图片根目录"), fontSize = 10.sp,
-                                color = AutoScriptPalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Text("处理 ›", fontSize = 11.sp, color = AutoScriptPalette.Accent,
+                                Text("处理 ›", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.heightIn(min = 28.dp).clickable(enabled = enabled) { openImage(path) }.wrapContentHeight())
-                                Text("使用位置", fontSize = 11.sp, color = AutoScriptPalette.Accent,
+                                Text("使用位置", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.heightIn(min = 28.dp).clickable(enabled = enabled) { findUsages(path) }.wrapContentHeight())
-                                Text("删除", fontSize = 11.sp, color = AutoScriptPalette.Danger,
+                                Text("删除", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.heightIn(min = 28.dp).clickable(enabled = enabled) {
                                         pendingDelete = path to latestSnapshot.resourcePaths()
                                     }.wrapContentHeight())
                             }
                         }
                     }
-                    HorizontalDivider(color = AutoScriptPalette.Divider)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
-
         }
     }
     pendingDelete?.let { (path, expected) ->
@@ -274,10 +260,11 @@ internal fun ImageLibraryDialog(snapshot: ProjectSnapshot, store: ProjectStore, 
         ImageProcessingWorkbench(image.bitmap, snapshot, store, runtimeClient, onSnapshotChanged,
             onDismiss = { workbenchOpen = false }, originalImagePath = image.path, insertionTarget = insertionTarget)
     }
+    }
 }
 
 @Composable
-private fun ImageLibraryThumbnail(snapshot: ProjectSnapshot, path: String) {
+internal fun ImageLibraryThumbnail(snapshot: ProjectSnapshot, path: String) {
     // Only visible LazyColumn rows decode thumbnails, capped at 128×128; never resample the resource.
     val bitmap by produceState<Bitmap?>(null, snapshot.directory, path, snapshot.manifest.resources, snapshot.resourceRevision) {
         var decoded: Bitmap? = null
@@ -299,8 +286,8 @@ private fun ImageLibraryThumbnail(snapshot: ProjectSnapshot, path: String) {
         catch (_: Exception) { value = null }
         finally { value = null; decoded?.recycle() }
     }
-    Box(Modifier.size(46.dp).background(AutoScriptPalette.PageBackground), contentAlignment = Alignment.Center) {
-        if (bitmap == null) Text("图片", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+    Box(Modifier.size(46.dp).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+        if (bitmap == null) Text("图片", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         else Image(requireNotNull(bitmap).asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
     }
 }

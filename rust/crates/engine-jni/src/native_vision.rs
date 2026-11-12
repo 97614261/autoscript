@@ -300,16 +300,20 @@ fn invoke_vision_adapter(
                 .unwrap_or_default(),
         )?;
         let r = input.region;
-        let options = int_array(
-            &mut env,
-            &[
-                i32::try_from(r.left).map_err(|_| "VISION_REQUEST_INVALID")?,
-                i32::try_from(r.top).map_err(|_| "VISION_REQUEST_INVALID")?,
-                i32::try_from(r.right).map_err(|_| "VISION_REQUEST_INVALID")?,
-                i32::try_from(r.bottom).map_err(|_| "VISION_REQUEST_INVALID")?,
-                i32::from(input.minimum_score),
-            ],
-        )?;
+        let mut options = vec![
+            i32::try_from(r.left).map_err(|_| "VISION_REQUEST_INVALID")?,
+            i32::try_from(r.top).map_err(|_| "VISION_REQUEST_INVALID")?,
+            i32::try_from(r.right).map_err(|_| "VISION_REQUEST_INVALID")?,
+            i32::try_from(r.bottom).map_err(|_| "VISION_REQUEST_INVALID")?,
+            i32::from(input.minimum_score),
+        ];
+        if let Some(points) = &input.polygon {
+            options.extend([-203, points.len() as i32]);
+            for point in points {
+                options.extend([point[0] as i32, point[1] as i32]);
+            }
+        }
+        let options = int_array(&mut env, &options)?;
         let null = JObject::null();
         let value = env.call_method(
             callback.listener.as_obj(),

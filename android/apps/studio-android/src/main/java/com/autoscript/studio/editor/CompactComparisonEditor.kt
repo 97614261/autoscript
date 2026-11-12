@@ -35,16 +35,16 @@ internal fun CompactComparisonEditor(
     var rightPicker by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        ConditionFormRow("左侧变量") { ConditionVariableInput(variable, variables, onVariable) }
+        ConditionFormRow("左侧取值") { ConditionVariableInput(variable, variables, onVariable) }
         ConditionFormRow("比较方式") { ConditionSelect(operator, comparisonChoices, "比较方式", onOperator) }
-        ConditionFormRow(if (variableRight) "右侧变量" else "比较值") {
+        ConditionFormRow(if (variableRight) "右侧取值" else "比较值") {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 Box(Modifier.weight(1f)) {
                     if (variableRight) ConditionVariableInput(valueVariable, variables, onValueVariable, showButton = false,
                         onPick = { rightPicker = true })
                     else ImageToolCompactInput("", value, true, Modifier.fillMaxWidth(), dense = true, onChange = onValue)
                 }
-                ConditionSmallButton(if (variableRight) "固定" else "变量") {
+                ConditionSmallButton(if (variableRight) "固定" else "取值") {
                     focus.clearFocus()
                     if (variableRight) { useVariable = false; onValueVariable("") }
                     else if (variables.isEmpty()) useVariable = true
@@ -53,12 +53,12 @@ internal fun CompactComparisonEditor(
             }
         }
     }
-    if (rightPicker) ConditionChoiceDialog("选择右侧变量", valueVariable, variables.map { it to it }, true,
-        onDismiss = { rightPicker = false }) { selected ->
+    if (rightPicker) ScalarValueSourcePicker("选择右侧取值", valueVariable, LocalVariablePickerMetadata.current,
+        onDismiss = { rightPicker = false }, onSelect = { selected ->
         useVariable = true
         onValueVariable(selected)
         rightPicker = false
-    }
+    })
 }
 
 @Composable
@@ -102,17 +102,17 @@ internal fun ConditionVariableInput(value: String, variables: List<String>, onCh
     var picker by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        ImageToolCompactInput("", value, true, Modifier.weight(1f), dense = true, trailing = {
+        ImageToolCompactInput("", value.removePrefix("="), true, Modifier.weight(1f), dense = true, trailing = {
             if (!showButton) Box(Modifier.size(24.dp).clickable {
                 focus.clearFocus(); if (onPick != null) onPick() else picker = true
             }, contentAlignment = Alignment.Center) {
                 Text("▾", fontSize = 11.sp, color = AutoScriptPalette.Accent)
             }
-        }, onChange = onChange)
-        if (showButton) ConditionSmallButton("变量") { focus.clearFocus(); picker = true }
+        }, onChange = { onChange(if (value.startsWith("=")) "=$it" else it) })
+        if (showButton) ConditionSmallButton("取值") { focus.clearFocus(); picker = true }
     }
-    if (picker) ConditionChoiceDialog("选择变量", value, listOf("" to "清空") + variables.map { it to it }, true,
-        { picker = false }) { onChange(it); picker = false }
+    if (picker) ScalarValueSourcePicker("选择取值", value, LocalVariablePickerMetadata.current,
+        onDismiss = { picker = false }, onSelect = { onChange(it); picker = false })
 }
 
 @Composable

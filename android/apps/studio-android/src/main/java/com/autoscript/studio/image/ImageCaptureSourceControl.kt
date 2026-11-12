@@ -37,6 +37,15 @@ internal fun ImageCaptureSourceControl(
     showDescription: Boolean = true,
     onSelect: ((ImageCaptureSource) -> Unit)? = null,
 ) {
+    if (LocalImageWorkspaceStyling.current) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            ImageToolChoice(label, source.name, ImageCaptureSource.entries.map { it.name to it.title }, onSelect != null) {
+                onSelect?.invoke(ImageCaptureSource.valueOf(it))
+            }
+            if (showDescription) ImageToolHelp(source.description)
+        }
+        return
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {

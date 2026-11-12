@@ -46,6 +46,15 @@ internal fun visualVariableWarnings(nodes: List<VisualVariableCheckNode>, snapsh
                         (key in setOf("sourceName", "name") && row.kind == "variable.copy")) && value.isJsonPrimitive && value.asJsonPrimitive.isString
                 ) {
                     val name = value.asString
+                    if (name.startsWith("=")) {
+                        calculationReferencedNames(name.drop(1)).forEach { reference ->
+                            if (warnings.size < 128) {
+                                if (reference !in declared) warnings += "${row.nodeId} · $reference：计算来源未声明"
+                                else if (reference !in assigned) warnings += "${row.nodeId} · $reference：计算前可能未赋值（保守检查）"
+                            }
+                        }
+                        return@forEach
+                    }
                     val output = key in writes || (key == "name" && row.kind in setOf("variable.set", "variable.copy", "variable.calculate", "control.loopmetric"))
                     if (name.isNotBlank() && name !in declared) warnings += "${row.nodeId} · $name：未维护到变量表（${if (output) "输出" else "引用/赋值"}）"
                     if (output) {

@@ -117,6 +117,10 @@
           "type": "string",
           "pattern": "^[A-Za-z_\\u3400-\\u4DBF\\u4E00-\\u9FFF][A-Za-z0-9_\\u3400-\\u4DBF\\u4E00-\\u9FFF]{0,63}$"
         },
+        "actionAnchor": {"enum": ["topLeft", "center"], "default": "topLeft"},
+        "actionRandom": {"enum": ["follow", "disabled", "offset", "inside"], "default": "follow"},
+        "actionRandomX": {"type": "integer", "minimum": 0, "maximum": 4096, "default": 0},
+        "actionRandomY": {"type": "integer", "minimum": 0, "maximum": 4096, "default": 0},
         "successAction": {
           "enum": [
             "none",
@@ -153,7 +157,8 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 60000
-        }
+        },
+        "polygon": {"type": "string", "maxLength": 8192, "description": "可选顶点JSON [[x,y],...]；3–128个不重合、不自交顶点，坐标0–4096，完全位于region内。空字符串使用矩形。"}
       },
       "allOf": [
         {

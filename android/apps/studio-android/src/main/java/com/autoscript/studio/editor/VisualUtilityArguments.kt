@@ -383,7 +383,8 @@ internal fun utilityArgumentError(contract: BlockContract, inputs: Map<String,St
     for(field in fields) {
         val source=inputs[field.path+"Variable"].orEmpty()
         if(source.isNotEmpty()) {
-            val valid=utilitySourceMatches(field.editor,type(source))
+            val valid=if (source.startsWith("=")) scalarSourceError(source, variables, scalarValueTypes) == null
+                else utilitySourceMatches(field.editor,type(source))
             if(!valid) return "来源变量类型不匹配：${field.label}"
         }
         val text=inputs[field.path].orEmpty()
@@ -466,10 +467,15 @@ internal fun VisualUtilityArguments(contract: BlockContract, arguments: JsonObje
                     } else if(field.path=="mode") {
                         val options=if(contract.kind=="math.randstr") listOf("1" to "小写","2" to "大写","3" to "大小写","4" to "大小写+数字","5" to "小写+数字") else listOf("1" to "上下翻转","2" to "左右翻转")
                         DesignerChoice(field.label,options.find { it.first==inputs[field.path] }?.second ?: "请选择",options,true) { update(field.path,it) }
-                    } else DesignerInput(field.label,inputs[field.path].orEmpty(),true,Modifier.fillMaxWidth(),numeric=field.editor!=BlockPropertyEditor.STRING) { update(field.path,it) }
+                    } else if (field.path == "rgb") StudioColorInput(field.label, inputs[field.path].orEmpty(), true,
+                        Modifier.fillMaxWidth(), StudioColorFormat.RGB_DECIMAL) { update(field.path, it) }
+                    else DesignerInput(field.label,inputs[field.path].orEmpty(),true,Modifier.fillMaxWidth(),numeric=field.editor!=BlockPropertyEditor.STRING) { update(field.path,it) }
                 }
                 CompactVariableChoice(if(source.isEmpty()) "来源" else field.label,source,
-                    listOf("" to "固定值")+choices.map { it.name to it.name },true,variables) { update(path,it) }
+                    listOf("" to "固定值")+choices.map { it.name to it.name },true,variables,
+                    inputTypes = when(field.editor) { BlockPropertyEditor.INTEGER -> setOf(ProjectVariableType.INTEGER)
+                        BlockPropertyEditor.NUMBER -> setOf(ProjectVariableType.INTEGER, ProjectVariableType.NUMBER)
+                        else -> setOf(ProjectVariableType.STRING) }) { update(path,it) }
             }
             val expected=utilityResultType(contract.kind)
             val choices=variables.filter { it.type==expected }.map { it.name to it.name }

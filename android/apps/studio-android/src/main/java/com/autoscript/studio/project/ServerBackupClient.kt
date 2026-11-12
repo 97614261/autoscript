@@ -1,6 +1,5 @@
 package com.autoscript.studio
 
-import java.io.Closeable
 import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -17,14 +16,14 @@ import java.io.StringReader
 internal data class ServerBackupRecord(val id: String, val label: String, val bytes: Long, val sha256: String, val createdAt: Long)
 
 /** Separate personal key and endpoint; never uses the APK publisher's credentials. */
-internal class ServerBackupClient(origin: String, private val key: String) : Closeable {
+internal class ServerBackupClient(origin: String, private val key: String) : BackupTransport {
     private val site = StudioUpdateSite.parse(origin)
     private val cancelled = AtomicBoolean()
     private val deadline = System.nanoTime() + 300_000_000_000L
     @Volatile private var connection: HttpURLConnection? = null
     private val root = "/api/project-backup/v1"
     private val emptyHash = ServerBackupCrypto.sha(byteArrayOf())
-    var supportsReplacement: Boolean = false
+    override var supportsReplacement: Boolean = false
         private set
     companion object {
         private val watchdog = ScheduledThreadPoolExecutor(1) { task -> Thread(task, "project-backup-timeout").apply { isDaemon = true } }
@@ -32,13 +31,13 @@ internal class ServerBackupClient(origin: String, private val key: String) : Clo
     }
 
     init { require(ServerBackupCrypto.validKey(key)) { "BACKUP_CONFIG_INVALID" } }
-    fun check() {
+    override fun check() {
         if (cancelled.get() || Thread.currentThread().isInterrupted) throw CancellationException()
         require(System.nanoTime() < deadline) { "BACKUP_TIMEOUT" }
     }
     override fun close() { cancelled.set(true); connection?.disconnect() }
 
-    fun list(): List<ServerBackupRecord> {
+    override fun list(): List<ServerBackupRecord> {
         supportsReplacement = false
         val value = json(request("GET", "$root/backups"))
         require(value["protocol"]?.asInt == 1)
@@ -50,7 +49,7 @@ internal class ServerBackupClient(origin: String, private val key: String) : Clo
             supportsReplacement = value.getAsJsonArray("capabilities")?.any { it.isJsonPrimitive && it.asString == "replace" } == true
         }
     }
-    fun upload(file: File, id: String, label: String, replacing: ServerBackupRecord? = null): ServerBackupRecord {
+    override fun upload(file: File, id: String, label: String, replacing: ServerBackupRecord?): ServerBackupRecord {
         check()
         require(replacing == null || replacing.id == id) { "BACKUP_REPLACE_TARGET_INVALID" }
         check(replacing == null || supportsReplacement) { "BACKUP_REPLACE_UNSUPPORTED" }
@@ -65,10 +64,10 @@ internal class ServerBackupClient(origin: String, private val key: String) : Clo
             require(it.id == id && it.label == label && it.bytes == size && it.sha256 == hash)
         }
     }
-    fun download(record: ServerBackupRecord, file: File) {
+    override fun download(record: ServerBackupRecord, file: File) {
         request("GET", "$root/backups/${record.id}", revision = "\"${record.sha256}\"", destination = file, expected = record)
     }
-    fun delete(record: ServerBackupRecord) {
+    override fun delete(record: ServerBackupRecord) {
         val result = json(request("POST", "$root/backups/${record.id}/delete", revision = "\"${record.sha256}\""))
         require(result["ok"]?.asBoolean == true && result["id"]?.asString == record.id)
     }

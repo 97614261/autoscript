@@ -122,6 +122,8 @@ internal fun ProjectPackageScreen(
     val packageName = DevicePackagingController.APPLICATION_ID
     val outputPath = result?.file?.name ?: "生成后选择导出位置"
     var notice by remember(projectId) { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("项目打包", notice)
+    StudioSystemLogEffect("项目打包", dependencyError, failure = true)
     var logs by remember(projectId) { mutableStateOf<List<String>>(emptyList()) }
     val tabs = listOf("打包", "日志输出")
     val timestamp = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -162,6 +164,7 @@ internal fun ProjectPackageScreen(
     fun appendLog(vararg lines: String) {
         val stamp = timestamp.format(Date())
         logs = (logs + lines.map { "[$stamp] $it" }).takeLast(100)
+        lines.forEach { com.autoscript.runtime.api.RuntimeSystemLog.notice(context.filesDir, "项目打包", it) }
     }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")) { uri ->

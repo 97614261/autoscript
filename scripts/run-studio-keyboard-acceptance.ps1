@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$DeviceSerial,
-    [ValidateSet('keyboard', 'full', 'shared-ui', 'landscape', 'glyph-maker', 'glyph-palette')][string]$Suite = 'keyboard',
+    [ValidateSet('keyboard', 'full', 'shared-ui', 'landscape', 'glyph-maker', 'glyph-palette', 'image-workspace')][string]$Suite = 'keyboard',
     [switch]$ConfirmTemporaryImeSwitch,
     [switch]$ConfirmTargetRestart,
     [string]$AdbPath = 'C:\Work\AndroidSDK\platform-tools\adb.exe'
@@ -34,7 +34,7 @@ try {
     if ($Suite -eq 'shared-ui') {
         $arguments += @('-e', 'scriptUiOnly', 'true', 'com.autoscript.vision.acceptance/com.autoscript.runtime.service.VisionAcceptanceInstrumentation')
     } else {
-        $arguments += @('-e', $(if ($Suite -eq 'full') { 'finalClosure' } elseif ($Suite -eq 'landscape') { 'landscapeOnly' } elseif ($Suite -eq 'glyph-maker') { 'glyphMakerOnly' } elseif ($Suite -eq 'glyph-palette') { 'glyphPaletteOnly' } else { 'keyboardOnly' }), 'true',
+        $arguments += @('-e', $(if ($Suite -eq 'full') { 'finalClosure' } elseif ($Suite -eq 'landscape') { 'landscapeOnly' } elseif ($Suite -eq 'glyph-maker') { 'glyphMakerOnly' } elseif ($Suite -eq 'glyph-palette') { 'glyphPaletteOnly' } elseif ($Suite -eq 'image-workspace') { 'imageWorkspaceRemainingOnly' } else { 'keyboardOnly' }), 'true',
             'com.zhigou.kaifaban.acceptance/com.autoscript.studio.StudioAcceptanceInstrumentation')
     }
     try {

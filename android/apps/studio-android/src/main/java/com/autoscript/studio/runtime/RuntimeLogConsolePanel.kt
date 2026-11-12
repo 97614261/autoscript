@@ -31,7 +31,8 @@ private data class LogConsoleFilter(val lines: List<String>, val query: String, 
 
 @Composable
 internal fun LogConsolePanel(lines: List<String>, history: Boolean = false,
-    initialChannel: RuntimeConsoleChannel = RuntimeConsoleChannel.ESSENTIAL, clockOffsetMs: Long? = null) {
+    initialChannel: RuntimeConsoleChannel = RuntimeConsoleChannel.ACTIVITY, clockOffsetMs: Long? = null,
+    onLocate: ((RuntimeLogLocation) -> String?)? = null) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
@@ -73,8 +74,7 @@ internal fun LogConsolePanel(lines: List<String>, history: Boolean = false,
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         val options = listOf(initialChannel.name to "全部") +
-                            (if (initialChannel == RuntimeConsoleChannel.ESSENTIAL) listOf(RuntimeConsoleChannel.SCRIPT.name to "输出") else emptyList()) +
-                            listOf("errors" to "错误")
+                            (if (initialChannel == RuntimeConsoleChannel.SYSTEM) listOf("errors" to "仅错误") else emptyList())
                         options.forEach { (key, title) ->
                             LogAction(title, { filterKey = key }, selected = filterKey == key)
                         }
@@ -90,7 +90,9 @@ internal fun LogConsolePanel(lines: List<String>, history: Boolean = false,
                         scope.launch {
                             copying = true; copyMessage = null
                             try {
-                                val result = runtimeLogAttempt { withContext(Dispatchers.IO) { runtimeLogCopyText(selection) } }
+                                val result = runtimeLogAttempt { withContext(Dispatchers.IO) { runtimeLogCopyText(selection.map { raw ->
+                                    runtimeLogLinePresentation(raw, displayClockOffset).let { "${it.time}  ${it.message}" }
+                                }) } }
                                 copyMessage = result.fold({ content -> runtimeLogClipboardStatus(content,
                                     { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)) }, { clipboard.getText()?.text })
                                     .replace("完整报告", "完整日志") }, { "日志超过复制容量，请筛选后复制或导出。" })
@@ -106,7 +108,7 @@ internal fun LogConsolePanel(lines: List<String>, history: Boolean = false,
                 LogText(when {
                     filtered == null -> "正在读取…"
                     lines.isEmpty() || channel == RuntimeConsoleChannel.ESSENTIAL && query.isEmpty() ->
-                        "运行后显示执行记录、脚本输出和错误"
+                        if (initialChannel == RuntimeConsoleChannel.SYSTEM) "暂无系统运行、报错或闪退记录" else "运行后按顺序显示动作、范围和结果"
                     else -> "没有符合条件的日志"
                 }, color = Color.Gray, align = androidx.compose.ui.text.style.TextAlign.Center)
             } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(vertical = 3.dp)) {
@@ -118,9 +120,7 @@ internal fun LogConsolePanel(lines: List<String>, history: Boolean = false,
                             .clickable { detail = line }.padding(horizontal = 3.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             if (item.time.isNotEmpty()) LogText(item.time, Modifier.width(48.dp), color = Color.Gray, size = 10, maxLines = 1)
-                            LogText(item.label, Modifier.width(25.dp), color = if (item.failure || item.warning) tint else LogBlue,
-                                size = 10, maxLines = 1)
-                            LogText(item.message, Modifier.weight(1f), size = 12, maxLines = if (item.failure) 3 else 2, color = tint)
+                            LogText(item.message, Modifier.weight(1f), size = 12, maxLines = 3, color = tint)
                         }
                     }
                 }
@@ -129,7 +129,7 @@ internal fun LogConsolePanel(lines: List<String>, history: Boolean = false,
                 color = Color.Gray, modifier = Modifier.padding(vertical = 3.dp))
         }
     }
-    detail?.let { selectedLine -> LogLineDetailDialog(selectedLine, onDismiss = { detail = null }) }
+    detail?.let { selectedLine -> LogLineDetailDialog(selectedLine, displayClockOffset, onLocate, onDismiss = { detail = null }) }
 }
 
 @Composable
@@ -141,17 +141,20 @@ private fun LogConsoleIcon(icon: Int, description: String, selected: Boolean = f
 }
 
 @Composable
-private fun LogLineDetailDialog(line: String, onDismiss: () -> Unit) {
+private fun LogLineDetailDialog(line: String, clockOffsetMs: Long?, onLocate: ((RuntimeLogLocation) -> String?)?, onDismiss: () -> Unit) {
     var fullScreen by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
+    val readable = remember(line, clockOffsetMs) { runtimeLogLinePresentation(line, clockOffsetMs).let { "${it.time}  ${it.message}" } }
+    val location = remember(line) { RuntimeLogLocation.fromLine(line) }
     StudioPanelDialog("日志详情", onDismiss, fullScreen = fullScreen, compactHeader = true,
         onToggleFullScreen = { fullScreen = !fullScreen }, showFooter = false) {
         Column(Modifier.fillMaxWidth().then(if (fullScreen) Modifier.fillMaxHeight() else Modifier.heightIn(max = 420.dp)).padding(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                LogText("选中记录 · 原文", Modifier.weight(1f), size = 10, color = Color.Gray)
+                LogText("记录详情", Modifier.weight(1f), size = 10, color = Color.Gray)
+                if (location != null && onLocate != null) LogAction("定位积木", { status = onLocate(location) })
                 LogAction("复制", {
-                    status = runCatching { runtimeLogCopyText(listOf(line)) }.fold({ content ->
+                    status = runCatching { runtimeLogCopyText(listOf(readable)) }.fold({ content ->
                         runtimeLogClipboardStatus(content, { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)) },
                             { clipboard.getText()?.text }).replace("完整报告", "日志原文")
                     }, { "此条日志超过复制容量，请导出原日志。" })
@@ -165,7 +168,7 @@ private fun LogLineDetailDialog(line: String, onDismiss: () -> Unit) {
                         LogText(advice.summary, size = 12, color = Color(0xFFC33F46), modifier = Modifier.padding(vertical = 4.dp))
                         LogText(advice.suggestion, size = 11, color = Color.Gray, modifier = Modifier.padding(bottom = 6.dp))
                     }
-                    item { LogText(line, Modifier.fillMaxWidth().padding(vertical = 4.dp), size = 11) }
+                    item { LogText(readable, Modifier.fillMaxWidth().padding(vertical = 4.dp), size = 11) }
                 }
             }
         }

@@ -9,7 +9,7 @@ pub(crate) fn valid(value: &Value) -> bool {
 fn name(value: Option<&Value>) -> bool {
     value
         .and_then(Value::as_str)
-        .is_some_and(flow_ir::valid_user_name)
+        .is_some_and(crate::value_source::valid)
 }
 fn walk(v: &Value, depth: usize, count: &mut usize) -> bool {
     *count += 1;

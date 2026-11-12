@@ -4,6 +4,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
+import com.autoscript.project.store.ProjectFlow
 
 /** Typed editor-only hints. Existing pipe-separated jump hints remain readable. */
 internal object JumpPanelCode {
@@ -29,9 +30,21 @@ internal object JumpPanelCode {
         return value
     }
 
-    fun callSnippet(targetFlowId: String, branches: Boolean = false): String? = targetFlowId.takeIf(String::isNotBlank)?.let {
-        hint(if (branches) "flow.call.branch" else "flow.call", JsonObject().apply { addProperty("targetFlowId", it) })
+    fun callSnippet(targetFlowId: String, branches: Boolean = false, arguments: JsonObject? = null): String? = targetFlowId.takeIf(String::isNotBlank)?.let {
+        hint(if (branches) "flow.call.branch" else "flow.call", JsonObject().apply {
+            addProperty("targetFlowId", it)
+            arguments?.let { values -> add("arguments", values.deepCopy()) }
+        })
     }
+
+    fun configuredCallSnippet(target: ProjectFlow?, inputs: Map<String, String>, branches: Boolean): Pair<String?, String?> {
+        if (target == null) return null to "请先创建并选择目标插件"
+        val (arguments, error) = parseFlowCallArguments(target, inputs)
+        return if (error != null) null to error else callSnippet(target.flowId, branches, requireNotNull(arguments)) to null
+    }
+
+    fun callNeedsConfiguration(kind: String, snippet: String): Boolean =
+        kind in setOf("flow.call", "flow.call.branch") && callTargetId(snippet).isNullOrBlank()
 
     fun callTargetId(snippet: String): String? {
         if (listOf("flow.call", "flow.call.branch").none { snippet.startsWith(FunctionCatalog.BLOCK_HINT_PREFIX + it + "\n") }) return null

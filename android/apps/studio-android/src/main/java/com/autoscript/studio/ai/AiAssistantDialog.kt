@@ -57,6 +57,9 @@ internal fun AiAssistantDialog(context: AiEditorContext, identities: VisualProje
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("AI 助手", status)
+    // Model or validation errors may contain source/prompt snippets; keep the operation failure only.
+    StudioSystemLogEffect("AI 助手", error?.let { "操作失败，请查看 AI 面板中的详情" }, failure = true)
     var job by remember { mutableStateOf<Job?>(null) }
     var engine by remember { mutableStateOf<AiAssistantEngine?>(null) }
     var testCall by remember { mutableStateOf<AiHttpCall?>(null) }
@@ -228,7 +231,10 @@ internal fun AiAssistantDialog(context: AiEditorContext, identities: VisualProje
                             job = scope.launch {
                                 try {
                                     error = liveApply(prepared)
-                                    if (error == null) { candidate = null; proposal = null; question = ""; onDismiss() }
+                                    if (error == null) {
+                                        com.autoscript.runtime.api.RuntimeSystemLog.notice(app.filesDir, "AI 助手", "修改已应用到草稿，可撤销")
+                                        candidate = null; proposal = null; question = ""; onDismiss()
+                                    }
                                 } catch (cancelled: CancellationException) { throw cancelled }
                                 catch (_: Exception) { error = "应用失败，未确认写入；请检查当前编辑内容" }
                                 finally { busy = false }

@@ -101,7 +101,7 @@ class EditorTreeGroupingTest {
         val grouping = editorTreeGrouping(rows)
         val deepest = grouping.rows.first { it.row.nodeId == "depth-40" }
         assertEquals(32, deepest.visibleGroups.size)
-        assertEquals((0..31).toList(), deepest.visibleGroups.map { it.depth })
+        assertEquals((8..39).toList(), deepest.visibleGroups.map { it.depth })
         assertEquals(rows, grouping.rows.map { it.row })
         assertTrue(grouping.rows.last().groups.isEmpty())
         assertTrue(editorTreeGrouping(emptyList()).rows.isEmpty())

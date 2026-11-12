@@ -30,6 +30,9 @@ import com.autoscript.script.ui.MAX_SCRIPT_UI_CONTROLS
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 
 @Composable
 internal fun RunnerUiDesignerScreen(snapshot: ProjectSnapshot, store: ProjectStore, onSnapshotChanged: (ProjectSnapshot) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -58,6 +61,7 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
     var undo by remember { mutableStateOf(emptyList<RunnerUiDesignerDraft>()) }
     var redo by remember { mutableStateOf(emptyList<RunnerUiDesignerDraft>()) }
     var selection by remember { mutableStateOf(emptySet<String>()) }
+    var styleClipboard by remember { mutableStateOf<DesignerStyleClipboard?>(null) }
     var pageId by remember { mutableStateOf(draft.pages.first().id) }
     var multi by remember { mutableStateOf(false) }
     var boxSelect by remember { mutableStateOf(false) }
@@ -76,9 +80,22 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
     var recoveryPending by remember(snapshot.manifest.projectId) { mutableStateOf(true) }
     var recoveryRequest by remember(snapshot.manifest.projectId) { mutableIntStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("界面设计", message)
     var messageRequest by remember { mutableIntStateOf(0) }
     val feedback = remember { SnackbarHostState() }
     var validationIssue by remember { mutableStateOf<DesignerValidationIssue?>(null) }
+    var noticeDraft by remember { mutableStateOf<RunnerUiDesignerDraft?>(null) }
+    var measuredNotices by remember { mutableStateOf(emptyList<DesignerLayoutNotice>()) }
+    val notices = if (noticeDraft == draft) measuredNotices else emptyList()
+    LaunchedEffect(draft) {
+        delay(250)
+        val submitted = draft
+        val result = withContext(Dispatchers.Default) {
+            val taskContext = currentCoroutineContext()
+            submitted.layoutNotices { taskContext.ensureActive(); DesignerTextMetrics(it) }
+        }
+        measuredNotices = result; noticeDraft = submitted
+    }
     val scope = rememberCoroutineScope()
     val propertyInputs = remember { DesignerPropertyInputs() }
     val journal = remember(snapshot.manifest.projectId) { UiDesignerDraftJournal(context.filesDir, snapshot.manifest.projectId) }
@@ -171,7 +188,7 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
     }
     fun newPage() {
         if (busy) return
-        val new = UiPage(id = "page_${nextUiNumericId("page", draft.pages.map { it.id })}", title = "新页面")
+        val new = designerPage(id = "page_${nextUiNumericId("page", draft.pages.map { it.id })}", title = "新页面")
         runCatching { draft.addPage(new) }.onSuccess { commit(it); selectPage(new.id) }.onFailure { showMessage(it.message) }
     }
     fun locateIssue() {
@@ -180,6 +197,12 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
         pageId = issue.pageId.takeIf { id -> draft.pages.any { it.id == id } } ?: draft.pages.first().id
         selection = issue.controlId?.let { setOf(it) }.orEmpty()
         inspectorTab = issue.tab; inspectorVisible = true; focusedCanvas = false; zoom = 1f
+        if (narrowScreen) toolsVisible = false
+    }
+    fun locateNotice(notice: DesignerLayoutNotice) {
+        if (busy || draft.fields.none { it.id == notice.controlId }) return
+        pageId = notice.pageId; selection = setOf(notice.controlId); inspectorTab = "布局"
+        inspectorVisible = true; focusedCanvas = false; zoom = 1f
         if (narrowScreen) toolsVisible = false
     }
     LaunchedEffect(message, messageRequest) {
@@ -218,7 +241,16 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
                 val layout = designerWorkspaceLayout(maxWidth.value, toolsVisible, inspectorVisible)
                 Row(Modifier.fillMaxSize().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (layout.showTools) DesignerToolbox(draft, page, selection, busy, Modifier.width(layout.toolboxWidth.dp).fillMaxHeight(), onSelect = ::select,
-                        onAdd = { kind -> runCatching { draft.add(kind, page.id) }.onSuccess { commit(it); selection = setOf(it.fields.last().id); if (!narrowScreen) inspectorVisible = true }.onFailure { showMessage(it.message) } },
+                        onAdd = { kind -> runCatching { draft.add(kind, page.id) }.onSuccess {
+                            commit(it); selection = setOf(it.fields.last().id)
+                            if (kind == RunnerUiControlKind.BUTTON) { inspectorTab = "交互"; inspectorVisible = true }
+                            else if (!narrowScreen) inspectorVisible = true
+                        }.onFailure { showMessage(it.message) } },
+                        onAddCombination = { combination -> if (!busy) runCatching { draft.addCombination(combination, page.id) }.onSuccess { next ->
+                            val added = next.fields.drop(draft.fields.size).map { it.id }.toSet()
+                            commit(next); selection = added; multi = true; inspectorTab = "布局"
+                            if (!narrowScreen) inspectorVisible = true
+                        }.onFailure { showMessage(it.message) } },
                     )
                     Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 24.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -230,14 +262,29 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
                             DesignerAction("+", enabled = zoom < 4f) { zoom = (zoom + .25f).coerceAtMost(4f) }
                             DesignerAction("吸附", selected = snap) { snap = !snap }
                             DesignerAction("框选", selected = boxSelect, enabled = !busy) { boxSelect = !boxSelect; if (boxSelect) multi = true }
+                            if (notices.isNotEmpty()) DesignerMenu("提醒 ${notices.size}", notices.map { notice ->
+                                val name = draft.fields.firstOrNull { it.id == notice.controlId }?.label ?: "控件"
+                                DesignerMenuAction("$name · ${notice.message}", !busy) { locateNotice(notice) }
+                            })
                         }
                         DesignerCanvas(draft, page, selection, zoom, snap, !busy, Modifier.weight(1f).fillMaxWidth(), onSelect = ::select, onClear = { selection = emptySet() },
                             onGestureStart = { id -> if (!busy && id !in selection) selection = setOf(id) }, onGestureChange = { next -> if (!busy) draft = next },
                             onGestureEnd = { before -> if (!busy && draft != before) { undo = (undo + before).takeLast(100); redo = emptyList() } }, directory = snapshot.directory,
                             boxSelect = boxSelect, onBoxSelect = { ids -> if (!busy) { selection = ids; multi = true } },
+                            noticeIds = notices.filter { it.kind != DesignerNoticeKind.SCROLL }.map { it.controlId }.toSet(),
+                            onNotice = { id -> notices.firstOrNull { it.controlId == id }?.let(::locateNotice) },
                         )
                         DesignerCanvasActions(multi, selectedFields.size, !busy, canPosition, canAlign,
                             onMulti = { multi = !multi }, onCopy = ::duplicate, onDelete = ::deleteSelection,
+                            canPasteStyle = styleClipboard != null,
+                            onCopyStyle = { if (!busy && selectedFields.size == 1) {
+                                val source = selectedFields.single()
+                                if (propertyInputs.hasUnfinishedStyle(source.id)) showMessage("请先完成当前控件的样式输入再复制样式")
+                                else { styleClipboard = DesignerStyleClipboard.from(source.ui); showMessage("已复制样式") }
+                            } },
+                            onPasteStyle = { if (!busy && selection.isNotEmpty()) styleClipboard?.let { style ->
+                                commit(draft.pasteStyle(selection, style)); propertyInputs.clearPastedStyle(selection)
+                            } },
                             onPosition = { attempt { draft.position(selection, it) } }, onAlign = { commit(draft.align(selection, it)) },
                             onDistribute = { commit(draft.distribute(selection, it)) },
                             organize = listOf(1 to "一", 2 to "二", 3 to "三").map { (columns, label) ->
@@ -258,12 +305,19 @@ private fun RunnerUiDesignerContent(snapshot: ProjectSnapshot, store: ProjectSto
                         LocalDesignerInputOwner provides DesignerInputOwner(field?.ui?.pageId ?: page.id, field?.id, inspectorTab)) {
                     DesignerInspector(draft, page, field, selectedFields.size, inspectorTab, !busy, canAlign, snapshot, Modifier.width(layout.inspectorWidth.dp).fillMaxHeight(),
                         onTab = { inspectorTab = it }, onField = ::change,
+                        notices = notices.filter { it.controlId == field?.id },
                         smartSize = field?.id !in fixedSizeIds,
                         onSmartSize = { smart -> field?.let { fixedSizeIds = if (smart) fixedSizeIds - it.id else fixedSizeIds + it.id } },
                         onFitContent = { field?.let { fit(draft, it) } },
                         sizePreset = DesignerSizePreset.entries.firstOrNull { preset -> selectedFields.isNotEmpty() && selectedFields.all { preset.matches(it.ui) } },
                         onSizePreset = { preset -> if (!busy) attempt {
                             draft.withSizePreset(selection, preset).also { propertyInputs.clearSizes(selection) }
+                        } },
+                        onAppearance = { appearance -> if (!busy) {
+                            commit(draft.copy(fields = draft.fields.map { item ->
+                                if (item.id in selection) item.copy(ui = item.ui.withDesignerAppearance(item.kind, appearance)) else item
+                            }))
+                            propertyInputs.clearAppearance(selection)
                         } },
                         onPage = { next -> commit(draft.copy(pages = draft.pages.map { if (it.id == next.id) next else it })) },
                         onDescription = { commit(draft.copy(description = it)) },

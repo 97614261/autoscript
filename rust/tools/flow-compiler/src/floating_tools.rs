@@ -45,7 +45,7 @@ pub(crate) fn parse(kind: &str, args: &Map<String, Value>) -> Result<(), &'stati
     }
     for key in ["resultVariable", "textVariable"] {
         if let Some(v) = args.get(key) {
-            if v.as_str().is_none_or(|v| v.is_empty() || v.len() > 64) {
+            if v.as_str().is_none_or(|v| if key == "textVariable" { !crate::value_source::valid(v) } else { !flow_ir::valid_user_name(v) }) {
                 return Err("floating variable invalid");
             }
         }

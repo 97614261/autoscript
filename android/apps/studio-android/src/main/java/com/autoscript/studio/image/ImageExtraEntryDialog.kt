@@ -13,7 +13,7 @@ internal fun ImageExtraEntryDialog(contract: BlockContract, arguments: JsonObjec
     visible: Boolean, onManageVariables: () -> Unit, onDismiss: () -> Unit,
     onConfirm: (List<Pair<BlockContract, JsonObject>>) -> Unit,
     captureSelection: ImageToolCodeGen.VisualSelection? = null, onPickFromScreen: ((ImageToolMode) -> Unit)? = null,
-    projectStore: ProjectStore? = null,onWorkflow:((List<VisualBlockTree>)->Unit)?=null) {
+    projectStore: ProjectStore? = null,onWorkflow:((List<VisualBlockTree>)->Unit)?=null,onPickPolygon:((String)->Unit)?=null) {
     if (contract.kind == "vision.readresult") RecognitionResultReaderDialog(project,flowId,visible,onManageVariables,onDismiss,onConfirm,arguments)
     else if(contract.kind == "vision.resultaction") RecognitionResultActionDialog(project,flowId,visible,onManageVariables,onDismiss,onConfirm,arguments)
     else if (contract.kind in frameResourceKinds) VisualFrameResourceDialog(contract, arguments, project, flowId,
@@ -21,5 +21,5 @@ internal fun ImageExtraEntryDialog(contract: BlockContract, arguments: JsonObjec
     else VisualVisionExtensionDialog(contract, arguments, project, flowId, onManageVariables, onDismiss,
         { onConfirm(listOf(contract to it)) }, "选择加入位置", visible, allowCaptureSource = true,
         onConfirmSource = { configured, capture -> onConfirm(recognitionImageEntryBlocks(contract, configured, capture)) },
-        captureSelection = captureSelection, onPickFromScreen = onPickFromScreen,projectStore=projectStore,onWorkflow=onWorkflow)
+        captureSelection = captureSelection, onPickFromScreen = onPickFromScreen,projectStore=projectStore,onWorkflow=onWorkflow,onPickPolygon=onPickPolygon)
 }

@@ -836,7 +836,25 @@ class ProjectStore(
         }.getOrDefault(0)
     } ?: 0
 
-    private fun usesApi18ExtendedTool(node: JsonObject): Boolean =
+    private fun containsInputExpression(value: com.google.gson.JsonElement?): Boolean = when {
+        value == null -> false
+        value.isJsonObject -> value.asJsonObject.entrySet().any { (key, child) ->
+            ((key == "variable" || key == "sourceName" || key.endsWith("Variable")) && child.isJsonPrimitive &&
+                child.asJsonPrimitive.isString && child.asString.startsWith("=")) ||
+                ((child.isJsonObject || child.isJsonArray) && containsInputExpression(child))
+        }
+        value.isJsonArray -> value.asJsonArray.any(::containsInputExpression)
+        else -> false
+    }
+
+    private fun usesApi18ExtendedTool(node: JsonObject): Boolean = containsInputExpression(node.get("args")) ||
+        node.get("kind")?.asString in setOf("vision.findimage", "vision.findallimages") &&
+            (node.getAsJsonObject("args")?.get("actionAnchor")?.asString == "center" ||
+                node.getAsJsonObject("args")?.get("actionRandom")?.asString?.let { it != "follow" } == true) ||
+        node.get("kind")?.asString in setOf("variable.calculate", "task.message") &&
+            Regex("\\b(?:listLen|itemText|itemInt|itemFloat|itemJson)\\s*\\(").containsMatchIn(
+                Regex("\"(?:[^\"\\\\]|\\\\.)*\"").replace(node.getAsJsonObject("args")?.get("expression")?.asString.orEmpty(), " ")) ||
+        node.getAsJsonObject("args")?.get("polygon")?.takeIf {it.isJsonPrimitive && it.asJsonPrimitive.isString}?.asString?.isNotEmpty() == true ||
         node.get("kind")?.asString == "text.numberat" ||
             node.get("kind")?.asString == "legacy.getrectcolornum" &&
             node.getAsJsonObject("args")?.get("autoCapture")?.asBoolean == true ||

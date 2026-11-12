@@ -26,6 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.autoscript.core.model.RuntimeConnectionState
 import com.autoscript.brand.ui.R as BrandR
 
@@ -40,8 +42,15 @@ internal fun StudioHomePage(
 }
 
 @Composable
-internal fun StudioProfilePage(runtime: RuntimeConnectionState, onEntry: (StudioEntry) -> Unit, modifier: Modifier = Modifier) {
+internal fun StudioProfilePage(runtime: RuntimeConnectionState, onEntry: (StudioEntry) -> Unit, modifier: Modifier = Modifier, onAccount: () -> Unit = {}) {
     val context = LocalContext.current
+    val accountStore = remember(context) { StudioAccountStore(context) }
+    val accountRevision by StudioAccountStore.revision.collectAsState()
+    var account by remember { mutableStateOf<StudioAccountSession?>(null) }
+    LaunchedEffect(accountRevision) {
+        account = withContext(Dispatchers.IO) { runCatching { accountStore.read() }.getOrNull() }
+            ?.takeIf { it.expiresAt > System.currentTimeMillis() }
+    }
     val version = remember(context) { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "版本未知" }
     val labels = studioRuntimeLabels(runtime)
     StudioPageBackdrop(modifier.fillMaxSize()) {
@@ -61,19 +70,20 @@ internal fun StudioProfilePage(runtime: RuntimeConnectionState, onEntry: (Studio
                     drawOval(Color.White.copy(alpha = .35f), Offset(size.width * .55f, -size.height * .6f),
                         androidx.compose.ui.geometry.Size(size.width * .68f, size.height * 1.6f))
                 }
-                Row(Modifier.fillMaxWidth().padding(if (compact) 10.dp else 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onAccount).padding(if (compact) 10.dp else 11.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(44.dp).background(Color.White, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
                         Image(painterResource(BrandR.drawable.zhigou_brand_mark), "智构 Logo", Modifier.size(40.dp))
                     }
                     Column(Modifier.weight(1f).padding(horizontal = 9.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("智构", color = StudioInk, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold)
-                        Text("本地自动化工作空间", color = StudioMuted, fontSize = 11.sp, lineHeight = 15.sp)
+                        Text(account?.userName ?: "登录 / 注册", color = StudioInk, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (account == null) "可选登录 · 云备份与恢复" else "账号管理 · 云备份", color = StudioMuted, fontSize = 11.sp, lineHeight = 15.sp)
                     }
                     Column(Modifier.widthIn(max = 80.dp).background(Color.White.copy(alpha = .6f), RoundedCornerShape(10.dp))
                         .padding(horizontal = 9.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(version, color = ProfileAccent, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("本地版", color = StudioMuted, fontSize = 10.sp, lineHeight = 13.sp)
+                        Text(if (account == null) "本机使用" else "已登录", color = StudioMuted, fontSize = 10.sp, lineHeight = 13.sp)
                     }
                 }
               }
@@ -93,7 +103,7 @@ internal fun StudioProfilePage(runtime: RuntimeConnectionState, onEntry: (Studio
             }
         }
         item {
-            Text("数据仅保存在本机 · 卸载前请导出备份", color = StudioMuted, fontSize = 10.sp,
+            Text("本机编辑与运行免登录 · 云备份需主动上传", color = StudioMuted, fontSize = 10.sp,
                 lineHeight = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = if (compact) 8.dp else 12.dp))
         }

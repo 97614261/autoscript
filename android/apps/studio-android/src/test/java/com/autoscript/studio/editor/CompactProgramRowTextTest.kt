@@ -67,7 +67,7 @@ class CompactProgramRowTextTest {
         assertEquals(3, EDITOR_PROGRAM_ROW_PADDING_DP)
         assertTrue(EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP >= 16 + 2 * EDITOR_PROGRAM_ROW_PADDING_DP)
         val source = editorDockTestSources()
-        assertEquals(5, Regex("heightIn\\(min = EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp\\)").findAll(source).count())
+        assertEquals(3, Regex("heightIn\\(min = EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp\\)").findAll(source).count())
         assertTrue(source.contains("fontSize = 12.sp, lineHeight = 16.sp, maxLines = if (expandedSummary) Int.MAX_VALUE else 1"))
         assertFalse(source.contains("height(EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp)"))
     }

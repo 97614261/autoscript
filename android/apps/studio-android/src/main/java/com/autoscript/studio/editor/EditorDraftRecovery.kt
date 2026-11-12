@@ -30,6 +30,7 @@ internal fun EditorDraftRecovery(
     var readFailed by remember(projectId) { mutableStateOf(false) }
     var busy by remember(projectId) { mutableStateOf(false) }
     var problem by remember(projectId) { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("编辑草稿恢复", problem, failure = true)
     var checkpointRevision by remember(projectId) { mutableIntStateOf(0) }
     var promptVisible by remember(projectId) { mutableStateOf(true) }
     val scope = rememberCoroutineScope()

@@ -1,10 +1,14 @@
 {
   "schemaVersion": 1, "kind": "vision.findimage", "nodeVersion": 3,
   "nodeSchemaId": "https://autoscript.local/schema/node/vision.findimage/3/vision.findimage.schema.json",
-  "title": "区域找图", "category": "vision", "summary": "区域模板匹配；找到走成功分支，未找到走失败分支，错误、取消或频次跳过不走分支。",
+  "title": "区域找图", "category": "vision", "summary": "区域模板匹配；找到走成功分支，未找到走失败分支，错误、取消或频次跳过不走分支。 可选多边形范围；找色只检查内部像素，多点整组、找图整个模板需位于选区内。",
   "searchTerms": ["findimage", "template", "找图", "模板"],
   "requiredCapabilities": ["vision.template", "screen.capture"], "childBlocks": ["success", "failure"],
   "properties": [
+    {"path": "actionAnchor", "label": "点击位置", "editor": "enum", "required": false, "defaultValue": "topLeft", "choices": ["topLeft", "center"]},
+    {"path": "actionRandom", "label": "点击随机", "editor": "enum", "required": false, "defaultValue": "follow", "choices": ["follow", "disabled", "offset", "inside"]},
+    {"path": "actionRandomX", "label": "随机X±px", "editor": "integer", "required": false, "defaultValue": "0"},
+    {"path": "actionRandomY", "label": "随机Y±px", "editor": "integer", "required": false, "defaultValue": "0"},
     { "path": "frameVariable", "label": "帧变量", "editor": "string", "required": true, "defaultValue": "frame" },
     { "path": "imagePath", "label": "模板图片", "editor": "resource", "resourceKind": "image", "required": true },
     { "path": "imageDirectory", "label": "多模板文件夹", "editor": "string", "required": false },
@@ -17,7 +21,7 @@
     { "path": "offsetX", "label": "点击X偏移(px)", "editor": "integer", "required": false, "defaultValue": "0" },
     { "path": "offsetY", "label": "点击Y偏移(px)", "editor": "integer", "required": false, "defaultValue": "0" },
     { "path": "actionDurationMs", "label": "动作时长(ms)", "editor": "integer", "required": false, "defaultValue": "100" },
-    { "path": "tolerance", "label": "像素容差", "editor": "integer", "required": true, "defaultValue": "0" },
+    { "path": "tolerance", "label": "像素容差", "editor": "integer", "required": true, "defaultValue": "3" },
     { "path": "similarityPermille", "label": "最低相似度(‰)", "editor": "integer", "required": true, "defaultValue": "900" },
     { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
     { "path": "direction", "label": "搜索方向", "editor": "integer_enum", "required": false, "defaultValue": "0", "choices": ["0", "1", "2", "3", "4"] },
@@ -27,6 +31,7 @@
     { "path": "bottomVariable", "label": "下边界变量", "editor": "string", "required": false },
     { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "found" },
     { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "foundX" },
-    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "foundY" }
+    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "foundY" },
+    {"path": "polygon", "label": "多边形选区", "editor": "string", "required": false, "defaultValue": ""}
   ], "migrations": [{"fromVersion":1,"toVersion":2,"renameArguments":{}},{"fromVersion":2,"toVersion":3,"renameArguments":{}}]
 }

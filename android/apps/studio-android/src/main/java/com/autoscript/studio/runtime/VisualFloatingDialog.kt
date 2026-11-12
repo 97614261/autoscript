@@ -25,11 +25,12 @@ internal fun VisualFloatingDialog(contract:BlockContract,args:JsonObject,project
     var error by remember {mutableStateOf<String?>(null)}
     var discard by remember {mutableStateOf(false)}
     var fullScreen by remember {mutableStateOf(false)}
-    val variables=calculationVariables(project.manifest.variables,flow,project.manifest.flows).filter {it.type==ProjectVariableType.STRING}
+    val sourceVariables=calculationVariables(project.manifest.variables,flow,project.manifest.flows)
+    val variables=sourceVariables.filter {it.type==ProjectVariableType.STRING}
     fun dismiss() {if(inputs!=initial) discard=true else onDismiss()}
     fun set(key:String,value:String) {inputs=inputs+(key to value); error=null}
     StudioPanelDialog(contract.title,::dismiss,confirmLabel,onConfirm={
-        error=floatingArgumentError(contract.kind,inputs,project.manifest.resources,variables.map {it.name}.toSet())
+        error=floatingArgumentError(contract.kind,inputs,project.manifest.resources,variables.map {it.name}.toSet(), sourceVariables)
         if(error==null) {
             val parsed=parseBlockArguments(contract,inputs,null,emptyMap(),project.manifest.resources)
             error=parsed.second; parsed.first?.let(onConfirm)
@@ -46,11 +47,13 @@ internal fun VisualFloatingDialog(contract:BlockContract,args:JsonObject,project
                     TextButton(onClick={set("x","-1");set("y","-1")}) {Text("居中",fontSize=10.sp)}
                 }
                 DesignerInput("文字",inputs["text"].orEmpty(),true,Modifier.fillMaxWidth()) {set("text",it)}
-                CompactVariableChoice("文字来源",inputs["textVariable"].orEmpty(),listOf("" to "固定文字")+variables.map {it.name to it.name},true,variables) {set("textVariable",it)}
+                CompactVariableChoice("文字来源",inputs["textVariable"].orEmpty(),listOf("" to "固定文字")+variables.map {it.name to it.name},true,sourceVariables,
+                    inputTypes=setOf(ProjectVariableType.STRING)) {set("textVariable",it)}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                     DesignerInput("字号px",inputs["fontPx"].orEmpty(),true,Modifier.weight(0.7f),numeric=true) {set("fontPx",it)}
-                    DesignerInput("文字颜色",inputs["textColor"].orEmpty(),true,Modifier.weight(1f)) {set("textColor",it)}
-                    DesignerInput("背景",inputs["background"].orEmpty(),true,Modifier.weight(1f)) {set("background",it)}
+                }
+                StudioCompactGrid(listOf("textColor" to "文字", "background" to "背景"), cellDp = 160, maximum = 2) { (key, label), cell ->
+                    StudioColorInput(label, inputs[key].orEmpty(), true, cell, StudioColorFormat.RGB_OR_ARGB) { set(key, it) }
                 }
                 DesignerChoice("项目图片",inputs["imagePath"].orEmpty().ifEmpty {"不显示图片"},listOf("" to "不显示图片")+project.manifest.resources.filter {it.get("kind")?.asString=="image"}.map {val p=it.get("path").asString;p to p.substringAfterLast('/')},true) {set("imagePath",it)}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(2.dp)) {
@@ -65,6 +68,17 @@ internal fun VisualFloatingDialog(contract:BlockContract,args:JsonObject,project
                     TextButton(onClick={set("shapesJson","[]")}) {Text("清空",fontSize=10.sp)}
                 }
                 DesignerInput("绘图JSON · 相对窗内像素",inputs["shapesJson"].orEmpty(),true,Modifier.fillMaxWidth()) {set("shapesJson",it)}
+                val shapesText = inputs["shapesJson"].orEmpty()
+                val shapes = remember(shapesText) { runCatching { parseFloatingShapes(shapesText).takeIf { it.size() <= 32 } }.getOrNull() }
+                shapes?.forEachIndexed { index, item ->
+                    if (item.isJsonObject) {
+                        val color = item.asJsonObject["color"]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                        StudioColorInput("图形${index + 1}", color, true, Modifier.fillMaxWidth(), StudioColorFormat.RGB_OR_ARGB, identity = shapesText to index) {
+                            runCatching { updateFloatingShapeColor(shapesText, index, it) }
+                                .onSuccess { updated -> set("shapesJson", updated) }.onFailure { error = "绘图颜色未写入，请检查图形或数据长度" }
+                        }
+                    }
+                }
                 Text("触摸穿透 · 最多8窗 · 图片contain显示；浮窗会进入截图，识图前可隐藏。",fontSize=10.sp)
             }
             if(contract.kind=="floating.bounds") CompactVariableChoice("结果字符变量",inputs["resultVariable"].orEmpty(),variables.map {it.name to it.name},true,variables) {set("resultVariable",it)}
@@ -75,13 +89,15 @@ internal fun VisualFloatingDialog(contract:BlockContract,args:JsonObject,project
     if(discard) StudioConfirmDialog(onDismissRequest={discard=false},title={Text("放弃未保存参数？")},text={Text("不会创建、显示或修改运行浮窗。")},actions=listOf(StudioConfirmAction("继续编辑",{discard=false}),StudioConfirmAction("放弃",{discard=false;onDismiss()},destructive=true)))
 }
 
-internal fun floatingArgumentError(kind:String,inputs:Map<String,String>,resources:List<JsonObject>,variables:Set<String>):String? = try {
+internal fun floatingArgumentError(kind:String,inputs:Map<String,String>,resources:List<JsonObject>,variables:Set<String>,
+    expressionVariables:List<CalculationVariable> = emptyList()):String? = try {
     require(Regex("[A-Za-z_][A-Za-z0-9_]{0,31}").matches(inputs["name"].orEmpty())) {"名称使用字母/数字/下划线，最多32字"}
     if(kind=="floating.bounds") require(inputs["resultVariable"] in variables) {"请选择字符结果变量"}
     if(kind=="floating.show") {
         for((key,min,max) in listOf(Triple("x",-1,8192),Triple("y",-1,8192),Triple("width",1,2048),Triple("height",1,2048),Triple("fontPx",8,96))) require(inputs[key]?.toIntOrNull() in min..max) {"位置、尺寸或字号超出范围"}
         require(inputs["text"].orEmpty().toByteArray(Charsets.UTF_8).size<=4096) {"文字最多4096字节"}
-        val source=inputs["textVariable"].orEmpty(); require(source.isEmpty() || source in variables) {"请选择字符来源变量"}
+        val source=inputs["textVariable"].orEmpty()
+        require(source.isEmpty() || if(source.startsWith("=")) scalarSourceError(source,expressionVariables,setOf(ProjectVariableType.STRING))==null else source in variables) {"请选择字符变量，或使用当前插件可用的文本表达式"}
         for(key in listOf("textColor","background")) require(Regex("#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?").matches(inputs[key].orEmpty())) {"颜色使用#RRGGBB或#AARRGGBB"}
         val image=inputs["imagePath"].orEmpty(); require(image.isEmpty() || resources.any {it.get("kind")?.asString=="image" && it.get("path")?.asString==image}) {"请选择已声明项目图片"}
         val text=inputs["shapesJson"].orEmpty(); require(text.toByteArray(Charsets.UTF_8).size<=8192) {"绘图数据最多8192字节"}
@@ -107,4 +123,13 @@ private fun parseFloatingShapes(text:String):com.google.gson.JsonArray {
         else if(c==']' || c=='}') {depth--; require(depth>=0)}
     }
     return JsonParser.parseString(text).asJsonArray
+}
+
+internal fun updateFloatingShapeColor(text: String, index: Int, color: String): String {
+    val rows = parseFloatingShapes(text).deepCopy()
+    require(rows.size() <= 32 && index in 0 until rows.size() && rows[index].isJsonObject)
+    rows[index].asJsonObject.addProperty("color", color)
+    val result = rows.toString()
+    require(result.toByteArray(Charsets.UTF_8).size <= 8192)
+    return result
 }

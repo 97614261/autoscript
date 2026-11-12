@@ -6,15 +6,18 @@ internal const val EDITOR_TREE_LEADING_DP = 2
 internal const val EDITOR_TREE_INDENT_STEP_DP = 12
 internal const val EDITOR_TREE_EXPAND_WIDTH_DP = 16
 internal const val EDITOR_TREE_CHECK_WIDTH_DP = 20
+// Each conditional adds a heading level; even an empty depth-32 block still has headings.
+internal const val EDITOR_TREE_MAX_DISPLAY_DEPTH = 32 * 2 + 1
 
-internal fun editorTreeRowIndent(depth: Int): Int = EDITOR_TREE_LEADING_DP + depth.coerceIn(0, 32) * EDITOR_TREE_INDENT_STEP_DP
-internal fun editorTreeGuideOffset(level: Int): Int = EDITOR_TREE_LEADING_DP + EDITOR_TREE_EXPAND_WIDTH_DP / 2 +
-    level.coerceIn(0, 31) * EDITOR_TREE_INDENT_STEP_DP
+internal fun editorTreeRowIndent(depth: Int): Int = EDITOR_TREE_LEADING_DP +
+    depth.coerceIn(0, EDITOR_TREE_MAX_DISPLAY_DEPTH) * EDITOR_TREE_INDENT_STEP_DP
+internal fun editorTreeGuideOffset(level: Int, leadingDp: Int = 0): Int = leadingDp.coerceAtLeast(0) +
+    editorTreeRowIndent(level) + EDITOR_TREE_EXPAND_WIDTH_DP / 2
 
 /** Reserve readable label space for the deepest row without a fixed 960dp empty canvas. */
 internal fun editorTreeContentWidth(viewportDp: Float, deepestDepth: Int): Float =
     maxOf(viewportDp.takeIf { it.isFinite() && it >= 0f } ?: 0f,
-        220f + deepestDepth.coerceIn(0, 32) * EDITOR_TREE_INDENT_STEP_DP)
+        220f + deepestDepth.coerceIn(0, EDITOR_TREE_MAX_DISPLAY_DEPTH) * EDITOR_TREE_INDENT_STEP_DP)
 
 internal fun editorCanMutate(busy: Boolean, readOnly: Boolean, state: RuntimeEngineState): Boolean =
     !busy && !readOnly && state !in setOf(

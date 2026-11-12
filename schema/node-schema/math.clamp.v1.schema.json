@@ -30,25 +30,19 @@
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "valueVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "valueVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "min": {
           "type": "number",
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "minVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "minVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "max": {
           "type": "number",
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "maxVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "maxVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

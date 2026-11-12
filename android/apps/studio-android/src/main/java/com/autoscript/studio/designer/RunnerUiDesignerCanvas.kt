@@ -1,8 +1,12 @@
 package com.autoscript.studio
 
+import com.autoscript.script.ui.*
+
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.GenericShape
@@ -12,13 +16,21 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -44,6 +56,7 @@ internal fun DesignerCanvas(draft: RunnerUiDesignerDraft, page: UiPage, selectio
     onSelect: (String) -> Unit, onClear: () -> Unit, onGestureStart: (String) -> Unit, onGestureChange: (RunnerUiDesignerDraft) -> Unit,
     onGestureEnd: (RunnerUiDesignerDraft) -> Unit, directory: File? = null,
     boxSelect: Boolean = false, onBoxSelect: (Set<String>) -> Unit = {},
+    noticeIds: Set<String> = emptySet(), onNotice: (String) -> Unit = {},
 ) {
     val currentDraft by rememberUpdatedState(draft)
     val currentSelection by rememberUpdatedState(selection)
@@ -82,8 +95,12 @@ internal fun DesignerCanvas(draft: RunnerUiDesignerDraft, page: UiPage, selectio
                         val previewWidth = (f.ui.width * scale).coerceAtLeast(1f)
                         val previewHeight = (f.ui.height * scale).coerceAtLeast(1f)
                         val contentClip = draft.previewClip(f)
+                        val roundedClips = draft.previewRoundedClips(f)
+                        val previewState = draft.previewState(f)
+                        val interaction = remember { MutableInteractionSource() }
+                        val pressed by interaction.collectIsPressedAsState()
                         Box(Modifier.offset((x * scale).dp, (y * scale).dp).requiredSize(previewWidth.dp, previewHeight.dp)
-                            .clickable(enabled) { focus.requestFocus(); onSelect(f.id) }
+                            .clickable(interactionSource = interaction, indication = null, enabled = enabled) { focus.requestFocus(); onSelect(f.id) }
                             .pointerInput(f.id, scale, enabled, snap) {
                                 var before: RunnerUiDesignerDraft? = null
                                 var ids = emptySet<String>(); var dx = 0f; var dy = 0f
@@ -96,10 +113,23 @@ internal fun DesignerCanvas(draft: RunnerUiDesignerDraft, page: UiPage, selectio
                                 }
                             }) {
                             Box(Modifier.fillMaxSize().clip(GenericShape { size, _ ->
-                                addRect(Rect(contentClip.left * size.width / f.ui.width, contentClip.top * size.height / f.ui.height,
-                                    contentClip.right * size.width / f.ui.width, contentClip.bottom * size.height / f.ui.height))
-                            })) { DesignerControlPreview(f, scale, directory) }
+                                val sx = size.width / f.ui.width; val sy = size.height / f.ui.height
+                                var clipped = Path().apply { addRect(Rect(contentClip.left * sx, contentClip.top * sy,
+                                    contentClip.right * sx, contentClip.bottom * sy)) }
+                                roundedClips.forEach { ancestor ->
+                                    val outline = Path().apply { addRoundRect(RoundRect(Rect(ancestor.left * sx, ancestor.top * sy,
+                                        ancestor.right * sx, ancestor.bottom * sy), CornerRadius(ancestor.radius * sx, ancestor.radius * sy))) }
+                                    clipped = Path.combine(PathOperation.Intersect, clipped, outline)
+                                }
+                                addPath(clipped)
+                            }).alpha(if (previewState.enabled && previewState.visible) 1f else ScriptUiControlVisuals.DISABLED_ALPHA)) {
+                                DesignerControlPreview(f, scale, directory, pressed && previewState.enabled && previewState.visible)
+                            }
                             if (active) Box(Modifier.matchParentSize().border(1.dp, DesignerColors.Accent))
+                            if (f.id in noticeIds) Box(Modifier.align(Alignment.TopStart).size(16.dp)
+                                .background(Color(0xFFFFF1D7), RoundedCornerShape(3.dp)).clickable(enabled = enabled) { onNotice(f.id) }, contentAlignment = Alignment.Center) {
+                                Text("!", color = Color(0xFFB26A1B), fontSize = 10.sp)
+                            }
                             if (!f.ui.visible) Text("隐", Modifier.align(Alignment.TopEnd).background(Color.White), color = DesignerColors.Muted, fontSize = 8.sp)
                             if (active && enabled) Box(Modifier.align(Alignment.BottomEnd).offset(5.dp,5.dp).size(20.dp)
                                 .pointerInput(f.id, scale, snap) {
@@ -154,9 +184,18 @@ internal fun DesignerCanvas(draft: RunnerUiDesignerDraft, page: UiPage, selectio
 }
 
 @Composable
-private fun DesignerControlPreview(field: RunnerUiFieldDraft, scale: Float, directory: File?) {
+private fun DesignerControlPreview(field: RunnerUiFieldDraft, scale: Float, directory: File?, pressed: Boolean) {
     val p = field.ui
-    val textColor = designerColor(p.textColor, DesignerColors.Ink).let { if (p.enabled && p.visible) it else it.copy(alpha = .45f) }
+    val borderWidth = p.visibleBorderWidthPx
+    val textInset = if (field.kind in setOf(RunnerUiControlKind.IMAGE, RunnerUiControlKind.CONTAINER,
+        RunnerUiControlKind.SLIDER, RunnerUiControlKind.PROGRESS, RunnerUiControlKind.LIST, RunnerUiControlKind.MULTISELECT)) 0 else borderWidth
+    val textColor = designerColor(p.textColor, DesignerColors.Ink)
+    val accent = Color(ScriptUiControlVisuals.ACCENT)
+    val line = Color(ScriptUiControlVisuals.LINE)
+    val display = ScriptUiControlVisuals.text(field.kind.control, field.initialText, field.label)
+    val displayColor = if (display.placeholder) textColor.copy(alpha = textColor.alpha * ScriptUiControlVisuals.HINT_ALPHA) else textColor
+    val density = LocalDensity.current.density
+    val overlay = remember(p, scale, density) { ScriptUiOverlayDrawable(p, scale * density) }
     // Geometry is in design pixels: do not inherit theme line height or enlarge with system font scale.
     val font = with(LocalDensity.current) { (p.fontPx * scale).dp.toSp() }
     val alignment = when (p.alignment) { "left" -> Alignment.CenterStart; "right" -> Alignment.CenterEnd; else -> Alignment.Center }
@@ -172,41 +211,49 @@ private fun DesignerControlPreview(field: RunnerUiFieldDraft, scale: Float, dire
         textDecoration = if (p.textUnderline) androidx.compose.ui.text.style.TextDecoration.Underline else androidx.compose.ui.text.style.TextDecoration.None,
         platformStyle = PlatformTextStyle(includeFontPadding = false))) {
         Box(Modifier.fillMaxSize().clip(shape).background(designerColor(p.background))
-            .then(if (p.borderWidthPx > 0) Modifier.border((p.borderWidthPx * scale).dp, designerColor(p.borderColor), shape) else Modifier)
-            .padding(horizontal = (if (field.kind in setOf(RunnerUiControlKind.SLIDER, RunnerUiControlKind.LIST, RunnerUiControlKind.MULTISELECT)) 0 else ScriptUiControlMetrics.INSET).times(scale).dp), contentAlignment = alignment) {
+            .drawWithContent {
+                drawContent()
+                overlay.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
+                overlay.state = if (pressed) intArrayOf(android.R.attr.state_enabled, android.R.attr.state_pressed) else intArrayOf(android.R.attr.state_enabled)
+                drawIntoCanvas { overlay.draw(it.nativeCanvas) }
+            }
+            .padding(horizontal = ((if (field.kind in setOf(RunnerUiControlKind.IMAGE, RunnerUiControlKind.CONTAINER,
+                RunnerUiControlKind.SLIDER, RunnerUiControlKind.PROGRESS, RunnerUiControlKind.LIST, RunnerUiControlKind.MULTISELECT)) 0 else ScriptUiControlMetrics.INSET) + textInset).times(scale).dp,
+                vertical = (textInset * scale).dp), contentAlignment = alignment) {
             when (field.kind) {
-                RunnerUiControlKind.CONTAINER -> Box(Modifier.fillMaxSize().border(.5.dp, DesignerColors.Muted.copy(alpha = .45f))) {
-                    Text(field.label, fontSize = 8.sp, color = DesignerColors.Muted, modifier = Modifier.align(Alignment.TopStart))
-                }
+                RunnerUiControlKind.CONTAINER -> Unit
                 RunnerUiControlKind.SWITCH -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(field.label, Modifier.weight(1f), fontSize = font, color = textColor, textAlign = textAlign)
                     Spacer(Modifier.width((ScriptUiControlMetrics.INSET * scale).dp))
-                    Box(Modifier.width((ScriptUiControlMetrics.SWITCH_WIDTH * scale).dp).height((ScriptUiControlMetrics.SWITCH_HEIGHT * scale).dp).background(if (field.initialText == "true") DesignerColors.Accent else DesignerColors.Line, RoundedCornerShape(50))) {
+                    Box(Modifier.width((ScriptUiControlMetrics.SWITCH_WIDTH * scale).dp).height((ScriptUiControlMetrics.SWITCH_HEIGHT * scale).dp).background(if (field.initialText == "true") accent else line, RoundedCornerShape(50))) {
                         Box(Modifier.size((ScriptUiControlMetrics.SWITCH_THUMB * scale).dp).align(if (field.initialText == "true") Alignment.CenterEnd else Alignment.CenterStart).background(Color.White, RoundedCornerShape(50)))
                     }
                 }
                 RunnerUiControlKind.BOOLEAN -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size((ScriptUiControlMetrics.INDICATOR * scale).dp).background(if (field.initialText == "true") DesignerColors.Accent else Color.Transparent, RoundedCornerShape(2.dp)).border(.6.dp, DesignerColors.Accent, RoundedCornerShape(2.dp)), contentAlignment = Alignment.Center) { if (field.initialText == "true") Text("✓", fontSize = font, color = Color.White) }
+                    DesignerIndicator(scale, circle = false, checked = field.initialText == "true")
                     Spacer(Modifier.width((4 * scale).dp)); Text(field.label, Modifier.weight(1f), fontSize = font, color = textColor, textAlign = textAlign)
                 }
                 RunnerUiControlKind.CHOICE -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(field.initialText.ifEmpty { field.label }, Modifier.weight(1f), fontSize = font, color = textColor, textAlign = textAlign, maxLines = 1)
-                    Text("⌄", fontSize = font, color = DesignerColors.Accent)
+                    Text(display.text, Modifier.weight(1f), fontSize = font, color = displayColor, textAlign = textAlign, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.width(((ScriptUiControlMetrics.CHOICE_RESERVED - ScriptUiControlMetrics.INSET) * scale).dp))
                 }
                 RunnerUiControlKind.RADIO -> if (horizontalRadio) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    options.forEachIndexed { i, option -> Text((if (option == field.initialText) "● " else "○ ") + option, Modifier.width(((widths[i] + 26) * scale).dp), fontSize = font, color = textColor, maxLines = 1, textAlign = textAlign) }
+                    options.forEachIndexed { i, option -> Row(Modifier.width(((widths[i] + 30) * scale).dp), verticalAlignment = Alignment.CenterVertically) {
+                        DesignerIndicator(scale, circle = true, checked = option == field.initialText)
+                        Spacer(Modifier.width((4 * scale).dp)); Text(option, fontSize = font, color = textColor, maxLines = 1, textAlign = textAlign)
+                    } }
                 } else Column(Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true)) {
-                    options.forEachIndexed { i, option -> Text((if (option == field.initialText) "● " else "○ ") + option, fontSize = font, color = textColor,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = (rows[i] * scale).dp).padding(vertical = (4 * scale).dp), textAlign = textAlign) }
+                    options.forEachIndexed { i, option -> Row(Modifier.fillMaxWidth().heightIn(min = (rows[i] * scale).dp).padding((4 * scale).dp), verticalAlignment = Alignment.CenterVertically) {
+                        DesignerIndicator(scale, circle = true, checked = option == field.initialText)
+                        Spacer(Modifier.width((4 * scale).dp)); Text(option, fontSize = font, color = textColor, textAlign = textAlign)
+                    } }
                 }
                 RunnerUiControlKind.LIST, RunnerUiControlKind.MULTISELECT -> Column(Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true)) {
                     val selected = if (field.kind == RunnerUiControlKind.MULTISELECT) runCatching { com.autoscript.script.ui.uiSelections(field.initialText, options) }.getOrDefault(emptyList()) else listOf(field.initialText)
                     options.forEachIndexed { i, option -> Row(Modifier.fillMaxWidth().heightIn(min = (rows[i] * scale).dp).padding((ScriptUiControlMetrics.INSET * scale).dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(option, Modifier.weight(1f), fontSize = font, color = textColor, textAlign = textAlign)
                         Spacer(Modifier.width((ScriptUiControlMetrics.INSET * scale).dp))
-                        val indicatorShape = if (field.kind == RunnerUiControlKind.MULTISELECT) RoundedCornerShape((3 * scale).dp) else RoundedCornerShape(50)
-                        Box(Modifier.size((ScriptUiControlMetrics.INDICATOR * scale).dp).background(if (option in selected) DesignerColors.Accent else Color.Transparent, indicatorShape)
-                            .border((1 * scale).dp, DesignerColors.Accent, indicatorShape))
+                        DesignerIndicator(scale, circle = field.kind != RunnerUiControlKind.MULTISELECT, checked = option in selected)
                     } }
                 }
                 RunnerUiControlKind.SLIDER, RunnerUiControlKind.PROGRESS -> BoxWithConstraints(Modifier.fillMaxWidth().height(((if (field.kind == RunnerUiControlKind.SLIDER) ScriptUiControlMetrics.SLIDER_THUMB else ScriptUiControlMetrics.TRACK_HEIGHT) * scale).dp)) {
@@ -214,16 +261,16 @@ private fun DesignerControlPreview(field: RunnerUiFieldDraft, scale: Float, dire
                     val percent = (((field.initialText.toFloatOrNull() ?: low) - low) / (high - low).coerceAtLeast(1f)).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
                     val slider = field.kind == RunnerUiControlKind.SLIDER
                     Box(Modifier.fillMaxWidth().align(Alignment.Center).padding(horizontal = (if (slider) ScriptUiControlMetrics.SLIDER_THUMB * scale / 2 else 0f).dp)
-                        .height((ScriptUiControlMetrics.TRACK_HEIGHT * scale).dp).background(DesignerColors.Line, RoundedCornerShape(50))) {
-                        if (percent > 0f) Box(Modifier.fillMaxHeight().fillMaxWidth(percent).background(DesignerColors.Accent, RoundedCornerShape(50)))
+                        .height((ScriptUiControlMetrics.TRACK_HEIGHT * scale).dp).background(line, RoundedCornerShape(50))) {
+                        if (percent > 0f) Box(Modifier.fillMaxHeight().fillMaxWidth(percent).background(accent, RoundedCornerShape(50)))
                     }
                     if (slider) {
                         val size = (ScriptUiControlMetrics.SLIDER_THUMB * scale).dp
-                        Box(Modifier.offset(x = (maxWidth - size).coerceAtLeast(0.dp) * percent).size(size).align(Alignment.CenterStart).background(DesignerColors.Accent, RoundedCornerShape(50)))
+                        Box(Modifier.offset(x = (maxWidth - size).coerceAtLeast(0.dp) * percent).size(size).align(Alignment.CenterStart).background(accent, RoundedCornerShape(50)))
                     }
                 }
                 RunnerUiControlKind.IMAGE -> DesignerImage(directory, field.initialText, field.label, font, textColor)
-                else -> Text(if (field.kind == RunnerUiControlKind.PASSWORD) "•".repeat(field.initialText.length.coerceAtMost(16)).ifEmpty { field.label } else field.initialText.ifEmpty { field.label }, Modifier.fillMaxWidth(), fontSize = font, color = textColor, textAlign = textAlign, maxLines = if (field.kind in setOf(RunnerUiControlKind.TEXTAREA, RunnerUiControlKind.LABEL, RunnerUiControlKind.BUTTON, RunnerUiControlKind.NAVIGATION)) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
+                else -> Text(display.text, Modifier.fillMaxWidth(), fontSize = font, color = displayColor, textAlign = textAlign, maxLines = if (field.kind in setOf(RunnerUiControlKind.TEXTAREA, RunnerUiControlKind.LABEL, RunnerUiControlKind.BUTTON, RunnerUiControlKind.NAVIGATION)) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
             }
             if (field.kind in setOf(RunnerUiControlKind.RADIO, RunnerUiControlKind.LIST, RunnerUiControlKind.MULTISELECT) && !horizontalRadio && rows.sum() > p.height) {
                 Box(Modifier.align(Alignment.CenterEnd).width((3 * scale).dp).fillMaxHeight().background(DesignerColors.Line)) {
@@ -231,6 +278,17 @@ private fun DesignerControlPreview(field: RunnerUiFieldDraft, scale: Float, dire
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DesignerIndicator(scale: Float, circle: Boolean, checked: Boolean) {
+    val density = LocalDensity.current.density
+    val indicator = remember(scale, density, circle) { ScriptUiIndicatorDrawable(scale * density, circle) }
+    Canvas(Modifier.size((ScriptUiControlMetrics.INDICATOR * scale).dp)) {
+        indicator.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
+        indicator.state = if (checked) intArrayOf(android.R.attr.state_checked) else intArrayOf()
+        drawIntoCanvas { indicator.draw(it.nativeCanvas) }
     }
 }
 

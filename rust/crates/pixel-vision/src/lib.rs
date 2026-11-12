@@ -5,6 +5,7 @@ pub mod color_palette;
 pub mod image_processing;
 mod legacy;
 mod legacy_compat;
+pub mod polygon;
 pub mod scaled_search;
 mod search_metrics;
 mod template_prefilter;
@@ -967,7 +968,21 @@ pub fn find_prepared_template_observed(
     options: TemplateOptions,
     remaining: &mut u64,
     cancelled: &mut dyn FnMut() -> bool,
+    metrics: Option<&mut TemplateSearchMetrics>,
+) -> Result<Option<TemplateMatch>, VisionError> {
+    find_prepared_template_in_region_observed(
+        image, template, options, remaining, cancelled, metrics, None,
+    )
+}
+
+pub fn find_prepared_template_in_region_observed(
+    image: ImageView<'_>,
+    template: &PreparedTemplate,
+    options: TemplateOptions,
+    remaining: &mut u64,
+    cancelled: &mut dyn FnMut() -> bool,
     mut metrics: Option<&mut TemplateSearchMetrics>,
+    polygon: Option<&polygon::PolygonRegion>,
 ) -> Result<Option<TemplateMatch>, VisionError> {
     let initial = (*remaining).min(options.search.max_pixel_comparisons);
     let mut budget = ComparisonBudget {
@@ -983,6 +998,7 @@ pub fn find_prepared_template_observed(
         options,
         &mut budget,
         metrics.as_deref_mut(),
+        polygon,
     );
     if let (Some(m), Some(started)) = (metrics, started) {
         m.search_us += search_metrics::elapsed_us(started)
@@ -1017,7 +1033,22 @@ pub fn find_prepared_templates_observed(
     limit: usize,
     remaining: &mut u64,
     cancelled: &mut dyn FnMut() -> bool,
+    metrics: Option<&mut TemplateSearchMetrics>,
+) -> Result<Vec<TemplateMatch>, VisionError> {
+    find_prepared_templates_in_region_observed(
+        image, template, options, limit, remaining, cancelled, metrics, None,
+    )
+}
+
+pub fn find_prepared_templates_in_region_observed(
+    image: ImageView<'_>,
+    template: &PreparedTemplate,
+    options: TemplateOptions,
+    limit: usize,
+    remaining: &mut u64,
+    cancelled: &mut dyn FnMut() -> bool,
     mut metrics: Option<&mut TemplateSearchMetrics>,
+    polygon: Option<&polygon::PolygonRegion>,
 ) -> Result<Vec<TemplateMatch>, VisionError> {
     let initial = (*remaining).min(options.search.max_pixel_comparisons);
     let mut budget = ComparisonBudget {
@@ -1032,6 +1063,9 @@ pub fn find_prepared_templates_observed(
             return Err(VisionError::InvalidResultLimit);
         }
         validate_search(image, options.search)?;
+        if polygon.is_some_and(|r| !r.fits(options.search.roi)) {
+            return Err(VisionError::InvalidRoi);
+        }
         if template.width == 0 || template.height == 0 {
             return Err(VisionError::EmptyTemplate);
         }
@@ -1043,6 +1077,11 @@ pub fn find_prepared_templates_observed(
         {
             return Err(VisionError::TemplateOutsideRoi);
         }
+        let origins = polygon
+            .map(|region| {
+                region.template_origins(template.width, template.height, &mut |n| budget.consume(n))
+            })
+            .transpose()?;
         let candidates = SearchOptions {
             roi: PixelRect {
                 right: options.search.roi.right - template.width + 1,
@@ -1054,9 +1093,13 @@ pub fn find_prepared_templates_observed(
         let comparison = TemplateComparison::new(image, template, options);
         let mut matches = Vec::new();
         let mut prefilter = None;
-        for (index, origin) in SearchPoints::new(candidates).enumerate() {
+        let mut probes = 0;
+        for origin in SearchPoints::new(candidates) {
+            if !budget.permits_template(origin, origins.as_ref())? {
+                continue;
+            }
             // Probe the first full candidate before paying setup; never compare it twice.
-            if index == 1 {
+            if probes == 1 {
                 prefilter = observed_prefilter(
                     image,
                     template,
@@ -1065,6 +1108,7 @@ pub fn find_prepared_templates_observed(
                     metrics.as_deref_mut(),
                 )?;
             }
+            probes += 1;
             if let Some(m) = metrics.as_deref_mut() {
                 m.candidates_visited += 1;
             }
@@ -1112,8 +1156,12 @@ fn search_prepared_template(
     options: TemplateOptions,
     budget: &mut ComparisonBudget<'_>,
     mut metrics: Option<&mut TemplateSearchMetrics>,
+    polygon: Option<&polygon::PolygonRegion>,
 ) -> Result<Option<TemplateMatch>, VisionError> {
     validate_search(image, options.search)?;
+    if polygon.is_some_and(|r| !r.fits(options.search.roi)) {
+        return Err(VisionError::InvalidRoi);
+    }
     if template.width == 0 || template.height == 0 {
         return Err(VisionError::EmptyTemplate);
     }
@@ -1124,6 +1172,11 @@ fn search_prepared_template(
     {
         return Err(VisionError::TemplateOutsideRoi);
     }
+    let origins = polygon
+        .map(|region| {
+            region.template_origins(template.width, template.height, &mut |n| budget.consume(n))
+        })
+        .transpose()?;
     let last_x = options.search.roi.right - template.width + 1;
     let last_y = options.search.roi.bottom - template.height + 1;
     let candidate_options = SearchOptions {
@@ -1137,11 +1190,16 @@ fn search_prepared_template(
     };
     let comparison = TemplateComparison::new(image, template, options);
     let mut prefilter = None;
-    for (index, origin) in SearchPoints::new(candidate_options).enumerate() {
-        if index == 1 {
+    let mut probes = 0;
+    for origin in SearchPoints::new(candidate_options) {
+        if !budget.permits_template(origin, origins.as_ref())? {
+            continue;
+        }
+        if probes == 1 {
             prefilter =
                 observed_prefilter(image, template, options, budget, metrics.as_deref_mut())?;
         }
+        probes += 1;
         if let Some(m) = metrics.as_deref_mut() {
             m.candidates_visited += 1;
         }
@@ -1843,6 +1901,19 @@ impl ComparisonBudget<'_> {
             remaining: maximum,
             checkpoint: None,
             next_check: maximum,
+        }
+    }
+
+    fn permits_template(
+        &mut self,
+        origin: PixelPoint,
+        polygon: Option<&polygon::PolygonRegion>,
+    ) -> Result<bool, VisionError> {
+        if let Some(region) = polygon {
+            self.consume(1)?;
+            Ok(region.contains(origin.x, origin.y))
+        } else {
+            Ok(true)
         }
     }
 

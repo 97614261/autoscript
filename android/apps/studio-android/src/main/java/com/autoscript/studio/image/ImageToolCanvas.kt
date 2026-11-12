@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -153,6 +154,7 @@ internal fun ImageToolCanvas(
         val v = latestViewport
         when {
             zoomMode -> Unit
+            mode.usesDragBox && latestSelection.polygon.isNotEmpty() -> Unit
             mode.usesDragBox -> {
                 val box = latestSelection.box
                 val edge = box?.let { selectionDragTarget(it, v, start.x, start.y) }
@@ -254,7 +256,14 @@ internal fun ImageToolCanvas(
                         // Compose delivers Android ACTION_CANCEL as consumed releases, not a coroutine cancellation.
                         if (event.changes.any { it.isConsumed }) return@awaitEachGesture
                         val pressed = event.changes.filter { it.pressed }
-                        if (pressed.isEmpty()) break
+                        if (pressed.isEmpty()) {
+                            // ACTION_UP may contain a final position without a preceding MOVE.
+                            if (!pinching) event.changes.firstOrNull { it.id == first.id }?.let { release ->
+                                val delta = release.position - lastSingle
+                                if (delta != Offset.Zero) moveSingle(release.position, delta, Size(size.width.toFloat(), size.height.toFloat()))
+                            }
+                            break
+                        }
                         if (pressed.size >= 2) {
                             val a = pressed[0].position
                             val b = pressed[1].position
@@ -305,7 +314,16 @@ internal fun ImageToolCanvas(
                 dstSize = IntSize(max(1, v.scaledWidth.roundToInt()), max(1, v.scaledHeight.roundToInt())),
                 filterQuality = if (v.scale >= 1f) FilterQuality.None else FilterQuality.Low,
             )
-            drawSelectionBox(latestSelection.box, v, zoomMode)
+            if(latestSelection.polygon.isEmpty()) drawSelectionBox(latestSelection.box, v, zoomMode)
+            else if(!zoomMode) {
+                val shape=Path().apply {
+                    latestSelection.polygon.forEachIndexed {i,p -> val (x,y)=v.toView(p.x,p.y)
+                        if(i==0) moveTo(x,y) else lineTo(x,y)
+                    };close()
+                }
+                drawPath(shape,Color(0x3356cfff));drawPath(shape,Color(0xff56cfff),style=Stroke(2f))
+                latestSelection.polygon.forEach {p ->val (x,y)=v.toView(p.x,p.y);drawCircle(Color.White,4f,Offset(x,y))}
+            }
             drawLiveBox(dragFrom, dragTo)
             drawPickedPoints(latestSelection.points, v)
             if (mode.usesSlideMarkers) drawSlide(slideStart, slideEnd, v)

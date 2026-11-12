@@ -67,7 +67,7 @@ pub(crate) fn parse(kind: &str, args: &Value) -> Result<DataOperation, &'static 
                 .map(|value| {
                     value
                         .as_str()
-                        .filter(|name| variable_name(name))
+                        .filter(|name| crate::value_source::valid(name))
                         .map(str::to_owned)
                         .ok_or("invalid data source variable")
                 })

@@ -120,6 +120,10 @@ internal fun EditorDock(
     programFollowExecution: Boolean? = null,
     onProgramFollowExecution: ((Boolean) -> Unit)? = null,
     executionRecent: Boolean = false,
+    programExecutionEmphasis: EditorExecutionEmphasis? = null,
+    programBranchOutcomes: List<com.autoscript.runtime.api.RuntimeBranchOutcome> = emptyList(),
+    programCurrentBranchSlot: String? = null,
+    programExecutionIncomplete: Boolean = false,
     executionStatus: String? = null,
     onProgramNodeSelected: (String) -> Unit = {},
     programSelectedBranch: EditorBranchSelection? = null,
@@ -226,6 +230,7 @@ internal fun EditorDock(
         mutableStateOf<List<String>>(emptyList())
     }
     var localFollowExecution by remember(projectName, running) { mutableStateOf(true) }
+    var executionLocateRevision by remember(projectName) { mutableStateOf(0) }
     val followExecution = programFollowExecution ?: localFollowExecution
     fun setFollowExecution(value: Boolean) {
         if (onProgramFollowExecution != null) onProgramFollowExecution(value) else localFollowExecution = value
@@ -244,8 +249,7 @@ internal fun EditorDock(
     var reflectionNodeId by remember { mutableStateOf<String?>(null) }
     var reflectionSource by remember { mutableStateOf<String?>(null) }
     var reflectionBranchVisible by remember { mutableStateOf(false) }
-    var deleteRequest by remember { mutableStateOf<Pair<List<EditorTreeNode>, Set<String>>?>(null) }
-    var deleteSource by remember { mutableStateOf<String?>(null) }
+    var deleteRequest by remember(projectName, sourceName, currentFlowId) { mutableStateOf<EditorDeleteRequest?>(null) }
     var moreAnchor by remember { mutableStateOf<Rect?>(null) }
     var dockOrigin by remember { mutableStateOf(Offset.Zero) }
     var pendingInsertSnippet by remember(projectName, sourceName) { mutableStateOf<EditorPendingSnippet?>(null) }
@@ -260,6 +264,15 @@ internal fun EditorDock(
     val displayedTreeNodes = remember(programNodes, collapsedProgramNodeIds) {
         programNodes.toEditorTreeNodes(collapsedProgramNodeIds)
     }
+    val branchExecutions = remember(displayedTreeNodes, programBranchOutcomes) {
+        editorBranchExecutions(displayedTreeNodes, programBranchOutcomes)
+    }
+    val branchCursor = branchExecutions.lastOrNull()?.takeIf {
+        it.ownerId == programCurrentNodeId && it.slot == programCurrentBranchSlot
+    }
+    val executionFollowTracker = remember(projectName, sourceName) { EditorExecutionFollowTracker() }
+    val executionTarget = executionFollowTracker.update(programCurrentNodeId, branchExecutions, branchCursor,
+        executionLocateRevision, failed = programExecutionEmphasis == EditorExecutionEmphasis.FAILED)
     val effectiveFocusId = focusedNodeId?.takeIf { id -> displayedTreeNodes.any { it.id == id && it.container } }
     val focusPath = remember(displayedTreeNodes, effectiveFocusId) { editorFocusPath(displayedTreeNodes, effectiveFocusId) }
     fun setFocus(id: String?) {
@@ -315,17 +328,19 @@ internal fun EditorDock(
             }
         } else collapsedProgramBranchKeys = collapsedProgramBranchKeys - key
     }
-    LaunchedEffect(programSelectedNodeId, programCurrentNodeId, sourceName, followExecution, effectiveFocusId) {
-        if (followExecution && programCurrentNodeId != null && effectiveFocusId != null &&
-            editorFocusedTreeNodes(displayedTreeNodes, effectiveFocusId).none { it.id == programCurrentNodeId }) focusedNodeId = null
+    LaunchedEffect(programSelectedNodeId, executionTarget, sourceName, followExecution, effectiveFocusId, executionLocateRevision) {
+        if (followExecution && executionTarget != null && effectiveFocusId != null &&
+            editorFocusedTreeNodes(displayedTreeNodes, effectiveFocusId).none { it.id == executionTarget.nodeId }) focusedNodeId = null
         if (collapsedProgramNodeIds.isNotEmpty()) {
-            val target = if (programCurrentNodeId != null) programCurrentNodeId.takeIf { followExecution } else programSelectedNodeId
-            val ancestors = editorCollapsedAncestorIds(displayedTreeNodes, target).toSet()
+            val target = if (programCurrentNodeId != null) executionTarget?.nodeId?.takeIf { followExecution } else programSelectedNodeId
+            val ancestors = editorCollapsedAncestorIds(displayedTreeNodes, target).toSet() +
+                setOfNotNull(executionTarget?.takeIf { followExecution && it.slot != null }?.nodeId)
             collapsedProgramNodeIds = collapsedProgramNodeIds.filterNot { it in ancestors }
         }
         if (collapsedProgramBranchKeys.isNotEmpty()) {
-            val target = if (programCurrentNodeId != null) programCurrentNodeId.takeIf { followExecution } else programSelectedNodeId
-            collapsedProgramBranchKeys = collapsedProgramBranchKeys - editorBranchAncestorKeys(displayedTreeNodes, target)
+            val target = if (programCurrentNodeId != null) executionTarget?.nodeId?.takeIf { followExecution } else programSelectedNodeId
+            collapsedProgramBranchKeys = collapsedProgramBranchKeys - editorBranchAncestorKeys(displayedTreeNodes, target) -
+                setOfNotNull(executionTarget?.takeIf { followExecution && it.slot != null }?.key)
         }
     }
     val effectiveSelection = if (selectedBranch != null) emptySet()
@@ -344,8 +359,9 @@ internal fun EditorDock(
             reflectionVisible = true
         } else editSelectedParameters()
     }
-    fun requestDelete() {
-        if (editingEnabled && effectiveSelection.isNotEmpty()) { deleteSource = programSource; deleteRequest = displayedTreeNodes to effectiveSelection }
+    // A capturing lambda keeps Compose callbacks distinct when the selection changes.
+    val requestDelete = editorDeleteAction(editingEnabled, programSource, currentFlowId, displayedTreeNodes, effectiveSelection) {
+        deleteRequest = it
     }
     LaunchedEffect(editingEnabled, running) {
         if (running) {
@@ -357,9 +373,9 @@ internal fun EditorDock(
             reflectionVisible = false; reflectionBranchVisible = false
         }
     }
-    deleteRequest?.let { (originalNodes, originalSelection) ->
-        val valid = editingEnabled && displayedTreeNodes == originalNodes && effectiveSelection == originalSelection && programSource == deleteSource
-        val count = editorSelectionImpact(originalNodes, originalSelection).affected
+    deleteRequest?.let { request ->
+        val valid = editingEnabled && request.matches(programSource, currentFlowId, effectiveSelection)
+        val count = request.affected
         StudioConfirmDialog(onDismissRequest = { deleteRequest = null }, title = { Text("删除积木") },
             text = { Text(if (valid) "删除选中积木及其包含的子积木，共 $count 项？删除后可以撤销。" else "程序或选择已变化，请取消后重新选择。") },
             dismissButton = { TextButton(onClick = { deleteRequest = null }) { Text("取消") } },
@@ -476,7 +492,7 @@ internal fun EditorDock(
                 currentNodeId = programCurrentNodeId,
                 followExecution = followExecution,
                 onFollowExecution = { value ->
-                    if (value) focusedNodeId = null
+                    if (value) { focusedNodeId = null; executionLocateRevision++ }
                     setFollowExecution(value)
                 },
                 executionAvailable = programExecutionAvailable,
@@ -484,6 +500,10 @@ internal fun EditorDock(
                 focusPath = focusPath,
                 onFocus = ::setFocus,
                 executionRecent = executionRecent,
+                executionOverride = programExecutionEmphasis,
+                executionTarget = executionTarget,
+                executionIncomplete = programExecutionIncomplete,
+                executionLocateRevision = executionLocateRevision,
                 executionStatus = editorDockStatusText(statusText, statusDismissed),
                 onDismissExecutionStatus = { statusDismissed = true },
                 editingEnabled = editingEnabled,
@@ -542,7 +562,7 @@ internal fun EditorDock(
                 collapsedBranchKeys = collapsedProgramBranchKeys,
                 onToggleBranchExpansion = ::toggleBranchExpansion,
                 onEditSelection = { nodeEditorVisible = true },
-                onDeleteSelection = ::requestDelete,
+                onDeleteSelection = requestDelete,
                 onNodeActions = { nodeId ->
                     if (editingEnabled) {
                         if (nodeId !in effectiveSelection) {
@@ -730,12 +750,12 @@ internal fun EditorDock(
                     }
                 }
             } else null,
-            onDeleteSelected = ::requestDelete,
+            onDeleteSelected = requestDelete,
             disabledSelection = programSelectionDisabled ?: (programNodes.filter { it.nodeId in effectiveSelection }.let { it.isNotEmpty() && it.all { node -> node.disabled } } == true),
             onCommand = onProgramCommand,
             canUndo = canUndoProgram,
             canRedo = canRedoProgram,
-            canPaste = hasProgramClipboard && selectedBranch == null,
+            canPaste = hasProgramClipboard,
             onEditSource = onApplyProgramSource?.let { { sourceEditorVisible = true } },
             onEditSelectedSource = if (onApplyProgramSource != null && programSource != null) {
                 {
@@ -771,8 +791,7 @@ internal fun EditorDock(
     }
 
     if (consoleVisible) RuntimeLogDialog(consoleLines, logProjectId,
-        debugSettings = debugSettings, settingsEditable = editingEnabled,
-        onSaveDebugSettings = { settings -> onSaveDebugSettings(settings) {} }, onLocate = onLocateRuntimeLog?.let { locate ->
+        onLocate = onLocateRuntimeLog?.let { locate ->
         { target -> locate(target).also { if (it == null) {
             collapsedProgramNodeIds = emptyList()
             collapsedProgramBranchKeys = emptyList()

@@ -13,17 +13,17 @@ internal fun EditorImageBlockDialog(contract:BlockContract, arguments:JsonObject
     flowId:String, editor:VisualEditorState, store:ProjectStore, runtimeClient:RuntimeClient,
     visible:Boolean, captureSelection:ImageToolCodeGen.VisualSelection?, captureTemplatePath:String?,
     onManageVariables:()->Unit, onWorkflow:(List<VisualBlockTree>)->Unit,
-    onInsert:(List<Pair<BlockContract,JsonObject>>)->Unit, onCapture:(ImageToolMode)->Unit, onDismiss:()->Unit) {
+    onInsert:(List<Pair<BlockContract,JsonObject>>)->Unit, onCapture:(ImageToolMode)->Unit, onDismiss:()->Unit, onPickPolygon:((String)->Unit)? = null) {
     if(contract.kind in extraImageEntryKinds) ImageExtraEntryDialog(contract,arguments,snapshot,flowId,
         projectStore=store, onWorkflow=onWorkflow, visible=visible, onManageVariables=onManageVariables,
-        onDismiss=onDismiss, onConfirm=onInsert, captureSelection=captureSelection, onPickFromScreen=onCapture)
+        onDismiss=onDismiss, onConfirm=onInsert, captureSelection=captureSelection, onPickFromScreen=onCapture,onPickPolygon=onPickPolygon)
     else VisualImageRecognitionDialog(contract=contract, arguments=arguments, resources=snapshot.manifest.resources,
         knownVariables=visualKnownVariables(editor,snapshot.manifest.variables,flowId), snapshot=snapshot,
         confirmLabel="加入", automaticCapture=true, currentFlowId=flowId, onManageVariables=onManageVariables,
         runtimeClient=runtimeClient, onConfirmSource={ selected,configured,capture ->
             onInsert(recognitionImageEntryBlocks(selected,configured,capture))
         }, onWorkflow=onWorkflow, allowKindChange=true, visible=visible, captureSelection=captureSelection,
-        captureTemplatePath=captureTemplatePath, onPickFromScreen=onCapture, onDismiss=onDismiss,
+        captureTemplatePath=captureTemplatePath, onPickFromScreen=onCapture, onPickPolygon=onPickPolygon, onDismiss=onDismiss,
         applyInitialTemplateRegion=true,
         onConfirm={ selected,configured -> onInsert(recognitionImageEntryBlocks(selected,configured)) })
 }

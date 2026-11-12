@@ -102,6 +102,7 @@ internal object ImageToolCodeGen {
         val frameWidth: Int,
         val frameHeight: Int,
         val ocr: ImageToolOcrConfig? = null,
+        val polygon: List<com.autoscript.project.store.ProjectMaskPoint> = emptyList(),
     )
 
     data class FlowBlockInsertion(val kind: String, val arguments: Map<String, Int> = emptyMap(), val exactTiming: Boolean = false,
@@ -246,13 +247,14 @@ internal object ImageToolCodeGen {
     }
 
     /** 选范围：只产出 ROI 四个数，供找色/找图类调用填参。 */
-    fun region(roi: Roi, mapping: DesignMapping): Snippet {
+    fun region(roi: Roi, mapping: DesignMapping, polygon: List<com.autoscript.project.store.ProjectMaskPoint> = emptyList()): Snippet {
         val d = roi
         val code = buildString {
             appendLine("local left, top, right, bottom = ${d.left}, ${d.top}, ${d.right}, ${d.bottom}")
+            if (polygon.isNotEmpty()) appendLine("local polygon = ${luaString(ImageSearchPolygon.encode(polygon))}")
             append("-- 半开区间 [left, right) x [top, bottom)，${d.width}x${d.height}")
         }
-        return gate(code, "范围 (${d.left}, ${d.top}) - (${d.right}, ${d.bottom})，${d.width}x${d.height}")
+        return gate(code, if (polygon.isNotEmpty()) "多边形 ${polygon.size}点 · ${d.width}x${d.height}" else "范围 (${d.left}, ${d.top}) - (${d.right}, ${d.bottom})，${d.width}x${d.height}")
     }
 
     /**
@@ -272,6 +274,7 @@ internal object ImageToolCodeGen {
         tolerance: Int,
         roi: Roi?,
         mapping: DesignMapping,
+        polygon: List<com.autoscript.project.store.ProjectMaskPoint> = emptyList(),
     ): Snippet {
         require(tolerance in 0..255) { "容差必须在 0..255：$tolerance" }
         require(samples.size <= MAX_MULTI_COLOR_SAMPLES) {
@@ -286,6 +289,7 @@ internal object ImageToolCodeGen {
             "  { x = ${sx - ax}, y = ${sy - ay}, rgb = ${formatRgb(sample.rgb)}, tolerance = $tolerance },"
         }
         val code = buildString {
+            if (polygon.isNotEmpty()) appendLine("if Screen.polygonRegionVersion ~= 1 then error(\"POLYGON_REGION_UNSUPPORTED\") end")
             appendLine("local samples = {")
             sampleLines.forEach { appendLine(it) }
             appendLine("}")
@@ -293,7 +297,7 @@ internal object ImageToolCodeGen {
             appendLine("local frame = Screen.cache(captureId)")
             appendLine(
                 "local point = Screen.findMultiColor(frame, ${formatRgb(anchor.rgb)}, $tolerance, samples, " +
-                    "${searchRoi.left}, ${searchRoi.top}, ${searchRoi.right}, ${searchRoi.bottom})",
+                    "${searchRoi.left}, ${searchRoi.top}, ${searchRoi.right}, ${searchRoi.bottom}${if (polygon.isEmpty()) "" else ", ${luaString(ImageSearchPolygon.encode(polygon))}"})",
             )
             append("Screen.release(frame)")
         }

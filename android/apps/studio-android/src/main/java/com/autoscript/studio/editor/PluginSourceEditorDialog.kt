@@ -99,6 +99,7 @@ internal fun PluginSourceEditorDialog(
     var tab by remember { mutableStateOf("源码") }
     var query by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("插件源码编辑", error, failure = true)
     var busy by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
     var validationJob by remember { mutableStateOf<Job?>(null) }

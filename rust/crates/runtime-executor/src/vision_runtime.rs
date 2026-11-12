@@ -13,7 +13,13 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         opcode: u32,
         args: &[LuaScalar],
     ) -> Result<(), ExecutorError> {
+        let observation = self.start_observation(task, opcode, args, None);
         let result = self.extended_vision(task, opcode, args);
+        self.finish_observation_result(
+            observation,
+            super::run_observation::result_status(&result),
+            result.as_ref().ok(),
+        );
         self.resume_inputs.insert(
             task,
             result
@@ -43,7 +49,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             else {
                 return Err("requires current/previous/options".into());
             };
-            if options.len() > 1024 {
+            if options.len() > if opcode == 5123 { 16384 } else { 1024 } {
                 return Err("comparison options exceed budget".into());
             }
             let current = self.frame_view(task, *handle)?;

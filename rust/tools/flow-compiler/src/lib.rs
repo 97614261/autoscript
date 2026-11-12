@@ -8,6 +8,8 @@ mod data_operations;
 mod digest;
 #[cfg(test)]
 mod execution_tests;
+#[cfg(test)]
+mod polygon_tests;
 
 mod codec_utility_specs;
 #[cfg(test)]
@@ -38,7 +40,10 @@ mod ui_dialog;
 #[cfg(test)]
 mod utility_operation_tests;
 mod utility_operations;
+mod value_source;
 mod variable_expression;
+pub use value_source::input_expressions;
+pub use variable_expression::calculation_uses_collections;
 #[cfg(test)]
 mod vision_completion_tests;
 mod vision_extensions;
@@ -56,7 +61,16 @@ pub use model::{
 };
 pub use store::{commit_generation, mark_generation_stale};
 
-pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v15");
+pub const GENERATOR_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-plugin-v17");
+
+pub fn recognition_action_requires_api18(kind: &str, args: &serde_json::Value) -> bool {
+    matches!(kind, "vision.findimage" | "vision.findallimages")
+        && (args.get("actionAnchor").and_then(serde_json::Value::as_str) == Some("center")
+            || args
+                .get("actionRandom")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|mode| mode != "follow"))
+}
 pub const SUPPORTED_NODE_VERSIONS: &[SupportedNodeVersion<'static>] = &[
     SupportedNodeVersion {
         kind: "text.numberat",

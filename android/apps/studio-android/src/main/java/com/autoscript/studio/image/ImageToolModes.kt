@@ -119,13 +119,27 @@ internal enum class ImageToolMode(
 internal fun imageToolMenuAvailable(mode: ImageToolMode, recorderAvailable: Boolean): Boolean =
     mode.enabled || (mode == ImageToolMode.RECORD && recorderAvailable)
 
+internal val touchToolModes = listOf(ImageToolMode.TAP, ImageToolMode.LONG_PRESS,
+    ImageToolMode.SWIPE, ImageToolMode.DRAG, ImageToolMode.POINTER_DOWN,
+    ImageToolMode.POINTER_MOVE, ImageToolMode.POINTER_UP, ImageToolMode.RECORD)
+
+internal fun imageToolSlideDefaults(width: Int, height: Int): Pair<Pair<Int, Int>, Pair<Int, Int>> {
+    require(width > 0 && height > 0)
+    return (width / 4 to height / 2) to ((width.toLong() * 3 / 4).toInt() to height / 2)
+}
+
 /** 工具当前的选取状态。所有坐标都是**截图像素**，到生成代码时才换算成设计坐标。 */
 internal data class ImageToolSelection(
     val box: ImageToolCodeGen.Roi? = null,
     val points: List<ImageToolCodeGen.PickedPoint> = emptyList(),
+    val polygon: List<com.autoscript.project.store.ProjectMaskPoint> = emptyList(),
 ) {
     fun clearedFor(mode: ImageToolMode): ImageToolSelection =
-        if (mode.usesDragBox) copy(points = emptyList()) else copy(box = null)
+        when(mode) {
+            ImageToolMode.CROP, ImageToolMode.REGION -> copy(points=emptyList())
+            ImageToolMode.COLOR, ImageToolMode.MULTI_COLOR -> this
+            else -> if(mode.usesDragBox) copy(points=emptyList(),polygon=emptyList()) else copy(box=null,polygon=emptyList())
+        }
 
     /** 单击/取色只留最后一个点；滑动留两个；多点不限（上限在生成时校验）。 */
     fun withPoint(mode: ImageToolMode, point: ImageToolCodeGen.PickedPoint): ImageToolSelection = when (mode) {

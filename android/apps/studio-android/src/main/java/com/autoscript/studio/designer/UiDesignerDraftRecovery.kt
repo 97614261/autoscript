@@ -43,6 +43,7 @@ internal fun UiDesignerDraftRecovery(
     var failed by remember(journal) { mutableStateOf(false) }
     var working by remember(journal) { mutableStateOf<UiDesignerRecoveryAction?>(null) }
     var problem by remember(journal) { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("界面草稿恢复", problem, failure = true)
     var promptVisible by remember(journal) { mutableStateOf(true) }
     val currentDraft by rememberUpdatedState(draft)
     val currentSaved by rememberUpdatedState(saved)

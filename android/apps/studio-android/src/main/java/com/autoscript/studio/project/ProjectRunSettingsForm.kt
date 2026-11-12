@@ -116,8 +116,8 @@ internal fun ProjectRunSettingsForm(
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        RunField("背景 #AARRGGBB", draft.settings.popupStyle.backgroundColor, enabled, Modifier.weight(1f)) { settings(draft.settings.copy(popupStyle = draft.settings.popupStyle.copy(backgroundColor = it))) }
-        RunField("文字 #AARRGGBB", draft.settings.popupStyle.textColor, enabled, Modifier.weight(1f)) { settings(draft.settings.copy(popupStyle = draft.settings.popupStyle.copy(textColor = it))) }
+        StudioColorInput("背景", draft.settings.popupStyle.backgroundColor, enabled, Modifier.weight(1f), StudioColorFormat.ARGB_HEX) { settings(draft.settings.copy(popupStyle = draft.settings.popupStyle.copy(backgroundColor = it))) }
+        StudioColorInput("文字", draft.settings.popupStyle.textColor, enabled, Modifier.weight(1f), StudioColorFormat.ARGB_HEX) { settings(draft.settings.copy(popupStyle = draft.settings.popupStyle.copy(textColor = it))) }
     }
     RunChoices("文字", draft.settings.popupStyle.textAlign, listOf("left" to "居左", "center" to "居中", "right" to "居右"), enabled) { settings(draft.settings.copy(popupStyle = draft.settings.popupStyle.copy(textAlign = it))) }
     RunHint("宽1～2160、高1～1200、字号10～160、圆角0～200px；坐标-1～10000；短时弹窗500～30000ms。停止时关闭提示。")

@@ -1,4 +1,4 @@
-//! Structural telemetry: no script text, template paths, or pixels.
+//! Bounded action records and structural telemetry, without script source or pixels.
 use super::{
     Clock, ExecutorError, HostBackend, Instant, LuaInput, LuaScalar, NativeVisionRequest,
     RuntimeExecutor, TaskState, TaskToken, MAX_TEMPLATE_PIXEL_COMPARISONS, OP_SCREEN_CAPTURE,
@@ -44,6 +44,7 @@ impl RunContext {
 pub(super) struct Observation {
     started: Instant,
     pub(super) fields: Value,
+    action: Option<Value>,
 }
 
 impl Observation {
@@ -57,9 +58,19 @@ impl Observation {
                 .bytes()
                 .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
         {
-            self.fields["failureCode"] = json!(code);
+            if !self.fields.is_null() {
+                self.fields["failureCode"] = json!(code);
+            }
+            if let Some(action) = &mut self.action {
+                action["failureCode"] = json!(code);
+            }
         } else {
-            self.fields["failureCode"] = json!("HOST_FAILURE");
+            if !self.fields.is_null() {
+                self.fields["failureCode"] = json!("HOST_FAILURE");
+            }
+            if let Some(action) = &mut self.action {
+                action["failureCode"] = json!("HOST_FAILURE");
+            }
         }
     }
 
@@ -82,6 +93,65 @@ impl Observation {
 }
 
 impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
+    pub(super) fn apply_branch_result(
+        &mut self,
+        task: TaskToken,
+        values: &[LuaScalar],
+    ) -> Result<(), ExecutorError> {
+        let [_, LuaScalar::Bytes(flow), LuaScalar::Bytes(node), LuaScalar::Bytes(slot)] = values
+        else {
+            return Err(ExecutorError::InvalidYield("invalid branch result".into()));
+        };
+        let text = |bytes: &[u8]| -> Result<String, ExecutorError> {
+            let value = std::str::from_utf8(bytes)
+                .map_err(|_| ExecutorError::InvalidYield("invalid branch identity".into()))?;
+            if bytes.is_empty() || bytes.len() > 128 || value.chars().any(char::is_control) {
+                return Err(ExecutorError::InvalidYield(
+                    "invalid branch identity".into(),
+                ));
+            }
+            Ok(value.to_owned())
+        };
+        let (flow, node, slot) = (text(flow)?, text(node)?, text(slot)?);
+        let else_if = slot.strip_prefix("elseIf").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.len() <= 3 && suffix.bytes().all(|v| v.is_ascii_digit())
+        });
+        if !matches!(slot.as_str(), "success" | "failure" | "then" | "else") && !else_if {
+            return Err(ExecutorError::InvalidYield("invalid branch slot".into()));
+        }
+        self.record_run_event(
+            &json!({"version":1,"kind":"branch","flowId":flow,"nodeId":node,"slot":slot}),
+        );
+        self.scheduler.yield_budget(task)?;
+        Ok(())
+    }
+
+    pub(super) fn start_action_observation(
+        &self,
+        task: TaskToken,
+        opcode: u32,
+        args: &[LuaScalar],
+    ) -> Option<Observation> {
+        let mut action = super::run_action::fields(opcode, args, None)?;
+        if let Some(context) = self.run_contexts.get(&task) {
+            action["flowId"] = json!(context.flow);
+            action["nodeId"] = json!(context.node);
+            context.attach_log_location(&mut action);
+        }
+        Some(Observation {
+            started: Instant::now(),
+            fields: Value::Null,
+            action: Some(action),
+        })
+    }
+
+    pub(super) fn record_action_waiting(&mut self, observation: &Observation) {
+        if let Some(mut event) = observation.action.clone() {
+            event["status"] = json!("waiting");
+            self.record_run_event(&event);
+        }
+    }
+
     pub(super) fn message_with_run_context(&self, task: TaskToken, error: &str) -> String {
         self.run_contexts.get(&task).map_or_else(
             || error.to_owned(),
@@ -241,6 +311,10 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             let mut event = json!({"version":1,"kind":"trace","flowId":context.flow,"nodeId":context.node,"phase":"enter"});
             context.attach_log_location(&mut event);
             self.record_run_event(&event);
+        } else if context.location.is_some() {
+            let mut event = json!({"version":1,"kind":"step","flowId":context.flow,"nodeId":context.node,"phase":"enter"});
+            context.attach_log_location(&mut event);
+            self.record_run_event(&event);
         }
         self.run_contexts.insert(task, context);
         self.scheduler.yield_budget(task)?;
@@ -298,6 +372,34 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         events
     }
     pub(super) fn start_observation(
+        &self,
+        task: TaskToken,
+        opcode: u32,
+        args: &[LuaScalar],
+        native: Option<&NativeVisionRequest>,
+    ) -> Option<Observation> {
+        let action = super::run_action::fields(opcode, args, native).map(|mut action| {
+            if let Some(context) = self.run_contexts.get(&task) {
+                action["flowId"] = json!(context.flow);
+                action["nodeId"] = json!(context.node);
+                context.attach_log_location(&mut action);
+            }
+            action
+        });
+        let mut metric = self.start_metric_observation(task, opcode, args, native);
+        if let Some(metric) = &mut metric {
+            metric.action = action;
+        } else if let Some(action) = action {
+            return Some(Observation {
+                started: Instant::now(),
+                fields: Value::Null,
+                action: Some(action),
+            });
+        }
+        metric
+    }
+
+    fn start_metric_observation(
         &self,
         task: TaskToken,
         opcode: u32,
@@ -394,10 +496,26 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         Some(Observation {
             started: Instant::now(),
             fields,
+            action: None,
         })
     }
     pub(super) fn finish_observation(&mut self, observation: Option<Observation>, status: &str) {
+        self.finish_observation_result(observation, status, None);
+    }
+    pub(super) fn finish_observation_result(
+        &mut self,
+        observation: Option<Observation>,
+        status: &str,
+        input: Option<&LuaInput>,
+    ) {
         if let Some(mut observation) = observation {
+            if let Some(mut action) = observation.action.take() {
+                super::run_action::complete(&mut action, status, input);
+                self.record_run_event(&action);
+            }
+            if observation.fields.is_null() {
+                return;
+            }
             observation.fields["elapsedUs"] =
                 json!(u64::try_from(observation.started.elapsed().as_micros()).unwrap_or(u64::MAX));
             observation.fields["status"] = json!(status);
@@ -449,6 +567,71 @@ mod tests {
     use runtime_scheduler::{ManualClock, MonoTime, SchedulerConfig, TaskState};
     use serde_json::Value;
     use std::time::Duration;
+
+    #[test]
+    fn branch_feedback_records_empty_outcomes_without_overwriting_failure_context() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        let task = runtime
+            .start_entry_chunk(
+                br"return function()
+            coroutine.yield('__AUTOSCRIPT_RUN_CONTEXT_V1','main','node-1',false,false)
+            coroutine.yield('__AUTOSCRIPT_BRANCH_RESULT_V1','main','node-1','failure')
+            error('expected') end",
+                "branch-feedback",
+            )
+            .unwrap();
+        for _ in 0..10 {
+            runtime.drive().unwrap();
+            if runtime.task_state(task) == Some(TaskState::Failed) {
+                break;
+            }
+        }
+        assert_eq!(runtime.task_state(task), Some(TaskState::Failed));
+        let events: Vec<Value> = runtime
+            .drain_run_events()
+            .iter()
+            .map(|v| serde_json::from_str(v).unwrap())
+            .collect();
+        assert!(events
+            .iter()
+            .any(|v| v["kind"] == "branch" && v["slot"] == "failure"));
+        assert!(events
+            .iter()
+            .any(|v| v["kind"] == "task" && v["nodeId"] == "node-1" && v["status"] == "failed"));
+    }
+
+    #[test]
+    fn branch_feedback_remains_bounded_and_rejects_invalid_slots() {
+        let clock = ManualClock::new(MonoTime::ZERO);
+        let mut runtime = runtime(&clock, VirtualHost::new(720, 1280));
+        let task = runtime
+            .start_entry_chunk(
+                br"return function() for i=1,400 do
+            coroutine.yield('__AUTOSCRIPT_BRANCH_RESULT_V1','main','node-1','success') end end",
+                "branch-budget",
+            )
+            .unwrap();
+        for _ in 0..100 {
+            runtime.drive().unwrap();
+            if runtime.task_state(task) == Some(TaskState::Completed) {
+                break;
+            }
+        }
+        assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
+        let events = runtime.drain_run_events();
+        assert_eq!(events.len(), 257);
+        assert!(events.last().unwrap().contains("dropped"));
+        let _invalid = runtime.start_entry_chunk(br"return function() coroutine.yield('__AUTOSCRIPT_BRANCH_RESULT_V1','main','node-1','unknown') end", "invalid-branch").unwrap();
+        assert!(matches!(
+            runtime.drive(),
+            Err(crate::ExecutorError::InvalidYield(_))
+        ));
+        assert!(!runtime
+            .drain_run_events()
+            .iter()
+            .any(|event| event.contains("unknown")));
+    }
 
     fn runtime<H: HostBackend>(clock: &ManualClock, host: H) -> RuntimeExecutor<ManualClock, H> {
         RuntimeExecutor::new(
@@ -575,8 +758,14 @@ mod tests {
         assert_eq!(runtime.task_state(failed), Some(TaskState::Failed));
         assert_eq!(runtime.task_state(other), Some(TaskState::Running));
         let events = runtime.drain_run_events();
-        assert_eq!(events.len(), 1);
-        let event: Value = serde_json::from_str(&events[0]).unwrap();
+        let events: Vec<Value> = events
+            .iter()
+            .map(|v| serde_json::from_str(v).unwrap())
+            .collect();
+        assert_eq!(events.iter().filter(|v| v["kind"] == "step").count(), 2);
+        let failures: Vec<_> = events.iter().filter(|v| v["kind"] == "task").collect();
+        assert_eq!(failures.len(), 1);
+        let event = failures[0];
         assert_eq!(
             event["visualLocation"],
             serde_json::json!({"line":9,"flowName":"技能","blockTitle":"找色"})
@@ -681,8 +870,20 @@ mod tests {
             );
             let events = runtime.drain_run_events();
             assert!(!events.join("\n").contains("private-template"));
+            let records: Vec<Value> = events
+                .iter()
+                .map(|v| serde_json::from_str(v).unwrap())
+                .collect();
+            assert_eq!(
+                records
+                    .iter()
+                    .filter(|v| v["kind"] == "action"
+                        && matches!(v["opcode"].as_u64(), Some(5000 | 5101 | 5107 | 5114)))
+                    .count(),
+                4
+            );
             if !enabled {
-                assert!(events.is_empty());
+                assert!(records.iter().all(|v| v["kind"] == "action"));
                 continue;
             }
             let matches: Vec<Value> = events
@@ -765,7 +966,14 @@ mod tests {
                 .unwrap();
             runtime.drive().unwrap();
             assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
-            let event: Value = serde_json::from_str(&runtime.drain_run_events()[0]).unwrap();
+            let events: Vec<Value> = runtime
+                .drain_run_events()
+                .iter()
+                .map(|v| serde_json::from_str(v).unwrap())
+                .collect();
+            let metric: Vec<_> = events.iter().filter(|v| v["kind"] == "vision").collect();
+            assert_eq!(metric.len(), 1);
+            let event = metric[0];
             assert_eq!(event["captureStagesUs"]["acquisition"], 30);
             if stages.is_some() {
                 assert_eq!(event["captureTransferUs"]["verify"], 10);
@@ -801,8 +1009,14 @@ mod tests {
         executor.drive().unwrap();
         assert_eq!(executor.task_state(task), Some(TaskState::Completed));
         let events = executor.drain_run_events();
-        assert_eq!(events.len(), 1);
-        let event: Value = serde_json::from_str(&events[0]).unwrap();
+        let events: Vec<Value> = events
+            .iter()
+            .map(|v| serde_json::from_str(v).unwrap())
+            .collect();
+        assert_eq!(events.iter().filter(|v| v["kind"] == "action").count(), 1);
+        let metrics: Vec<_> = events.iter().filter(|v| v["kind"] == "vision").collect();
+        assert_eq!(metrics.len(), 1);
+        let event = metrics[0];
         assert_eq!(event["opcode"], 5014);
         assert_eq!(event["algorithm"], "capture-region-host-roundtrip");
         assert_eq!(
@@ -824,10 +1038,17 @@ mod tests {
             runtime.task_failure(task)
         );
         let events = runtime.drain_run_events();
-        assert_eq!(events.len(), 2);
+        let records: Vec<Value> = events
+            .iter()
+            .map(|v| serde_json::from_str(v).unwrap())
+            .collect();
+        assert_eq!(records.iter().filter(|v| v["kind"] == "action").count(), 2);
+        assert_eq!(records.iter().filter(|v| v["kind"] == "trace").count(), 1);
+        let metrics: Vec<_> = records.iter().filter(|v| v["kind"] == "vision").collect();
+        assert_eq!(metrics.len(), 1);
         assert!(!events.join("\n").contains("private-output"));
         assert!(!events.join("\n").contains("visualLocation"));
-        let metric: Value = serde_json::from_str(&events[1]).unwrap();
+        let metric = metrics[0];
         assert_eq!(metric["nodeId"], "node-1");
         assert_eq!(metric["status"], "completed");
         assert_eq!(runtime.drain_script_logs().len(), 1);

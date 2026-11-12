@@ -30,10 +30,13 @@ pub(crate) fn invalid_node(node: &flow_ir::FlowNode) -> Option<&'static str> {
 pub(crate) fn enabled(project: &super::analyze::PreparedProject<'_>) -> bool {
     project.manifest.randomization.active()
         || project.flows.iter().any(|flow| {
-            flow.document
-                .nodes
-                .iter()
-                .any(|node| node.envelope.randomization.is_some())
+            flow.document.nodes.iter().any(|node| {
+                node.envelope.randomization.is_some()
+                    || crate::recognition_action_requires_api18(
+                        &node.envelope.kind,
+                        &node.envelope.args,
+                    )
+            })
         })
 }
 pub(crate) fn policy(
@@ -162,6 +165,7 @@ end
 local function __random_set(x,y,wait,minimum,maximum,unit)
   __random_state().policy={x=x,y=y,wait=wait,min=minimum,max=maximum,unit=unit}
   __random_state().bounds=nil
+  __random_state().action_bounds=nil
 end
 local function __random_bounds(x1,y1,x2,y2,raw) __random_state().bounds={x1,y1,x2,y2,raw==true} end
 local function __random_range(a,b)
@@ -172,8 +176,25 @@ end
 local function __random_offsets(p,q,policy)
   q=q or p
   if p.snapshotId~=q.snapshotId then error('RANDOMIZATION_COORDINATES_CHANGED',0) end
-  return __random_range(math.max(-policy.x,-math.min(p.x,q.x)),math.min(policy.x,p.width-1-math.max(p.x,q.x))),
-         __random_range(math.max(-policy.y,-math.min(p.y,q.y)),math.min(policy.y,p.height-1-math.max(p.y,q.y)))
+  local left,top,right,bottom=0,0,p.width-1,p.height-1
+  local bounds=__random_state().action_bounds
+  if bounds then left=math.max(left,bounds[1]);top=math.max(top,bounds[2]);right=math.min(right,bounds[3]);bottom=math.min(bottom,bounds[4]) end
+  return __random_range(math.max(-policy.x,left-math.min(p.x,q.x)),math.min(policy.x,right-math.max(p.x,q.x))),
+         __random_range(math.max(-policy.y,top-math.min(p.y,q.y)),math.min(policy.y,bottom-math.max(p.y,q.y)))
+end
+local function __recognition_action_point(x,y,width,height,center,mode,rx,ry,ox,oy)
+  local state=__random_state()
+  local policy=state.policy or {x=0,y=0}
+  state.action_bounds=nil
+  if mode=='inside' then
+    state.action_bounds={x,y,x+width-1,y+height-1}
+    state.policy={x=width-1,y=height-1,wait=policy.wait,min=policy.min,max=policy.max,unit=policy.unit}
+    return x,y
+  end
+  if mode~='follow' then
+    state.policy={x=mode=='offset' and rx or 0,y=mode=='offset' and ry or 0,wait=policy.wait,min=policy.min,max=policy.max,unit=policy.unit}
+  end
+  return x+(center and math.floor(width/2) or 0)+ox,y+(center and math.floor(height/2) or 0)+oy
 end
 local function __random_point(x,y,raw)
   return __raw_input.resolvePoint(x,y,raw)
@@ -270,6 +291,18 @@ mod tests {
     #[test]
     fn recognition_offset_does_not_mutate_result() {
         run("local found={x=5,y=6};__random_set(3,3,false,0,0,'milliseconds');Input.tapScreen(found.x,found.y);assert(found.x==5 and found.y==6)");
+    }
+    #[test]
+    fn recognition_center_and_inline_offsets_override_without_adding_project_jitter() {
+        run("__random_set(100,100,false,0,0,'milliseconds');local x,y=__recognition_action_point(2,3,7,5,true,'disabled',0,0,1,-1);Input.tapScreen(x,y);assert(moves[1][1]==6 and moves[1][2]==4);for i=1,100 do __random_set(100,100,false,0,0,'milliseconds');x,y=__recognition_action_point(2,3,7,5,true,'offset',1,2,0,0);Input.tapScreen(x,y);local p=moves[#moves];assert(p[1]>=4 and p[1]<=6 and p[2]>=3 and p[2]<=7) end");
+    }
+    #[test]
+    fn recognition_inside_intersects_screen_and_ignores_hidden_anchor_offsets() {
+        run("for i=1,100 do __random_set(100,100,false,0,0,'milliseconds');local x,y=__recognition_action_point(18,17,8,7,true,'inside',4096,4096,100,-100);Input.tapScreen(x,y);local p=moves[#moves];assert(p[1]>=18 and p[1]<=19 and p[2]>=17 and p[2]<=19) end; __random_set(100,100,false,0,0,'milliseconds');local x,y=__recognition_action_point(5,6,1,1,false,'inside',0,0,0,0);Input.tapScreen(x,y);assert(moves[#moves][1]==5 and moves[#moves][2]==6)");
+    }
+    #[test]
+    fn recognition_range_clears_on_next_node_and_hold_keeps_one_point() {
+        run("__random_set(1,1,true,100,100,'milliseconds');local x,y=__recognition_action_point(10,10,3,3,false,'inside',0,0,0,0);Input.pointerDownScreen(x,y);__random_sleep(12,false);Input.pointerUp();assert(waits[1]==12);__random_set(0,0,false,0,0,'milliseconds');Input.tapScreen(1,2);assert(moves[#moves][1]==1 and moves[#moves][2]==2)");
     }
     #[test]
     fn unknown_gesture_paths_fail_without_clamping_or_drawing_a_second_offset() {

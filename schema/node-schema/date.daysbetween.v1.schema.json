@@ -29,17 +29,13 @@
           "minimum": 0,
           "maximum": 253402300799999
         },
-        "startMsVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "startMsVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "endMs": {
           "type": "integer",
           "minimum": 0,
           "maximum": 253402300799999
         },
-        "endMsVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "endMsVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

@@ -30,25 +30,19 @@
           "minimum": 0,
           "maximum": 253402300799999
         },
-        "timestampMsVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "timestampMsVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "offsetMinutes": {
           "type": "integer",
           "minimum": -840,
           "maximum": 840
         },
-        "offsetMinutesVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "offsetMinutesVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "format": {
           "type": "string",
           "minLength": 1,
           "maxLength": 16
         },
-        "formatVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "formatVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

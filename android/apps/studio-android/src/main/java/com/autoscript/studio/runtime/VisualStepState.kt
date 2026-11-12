@@ -57,6 +57,8 @@ internal class VisualStepState {
         private set
     var position by mutableStateOf<VisualDebugPosition?>(null)
         private set
+    var displayPosition by mutableStateOf<VisualDebugPosition?>(null)
+        private set
     var pending by mutableStateOf(false)
         private set
     var loading by mutableStateOf(false)
@@ -84,13 +86,13 @@ internal class VisualStepState {
     fun fetchFinished(ticket: Long) {
         if (loading && readRevision == ticket) paused(null as VisualDebugPosition?)
     }
-    fun paused(position: VisualDebugPosition?) { ++requestTicket; this.position = position; snapshot = null; loading = false; pending = false }
+    fun paused(position: VisualDebugPosition?) { ++requestTicket; this.position = position; displayPosition = position; snapshot = null; loading = false; pending = false }
     fun paused(reply: RuntimeDebugReply) {
         paused(debugPosition(reply))
         if (position != null) snapshot = reply
     }
-    fun running() { ++readRevision; position = null; snapshot = null; loading = false; if (continuing) pending = false }
-    fun reset() { ++readRevision; ++requestTicket; position = null; snapshot = null; loading = false; pending = false; continuing = false }
+    fun running() { ++readRevision; position = null; snapshot = null; loading = false; if (continuing) pending = false; if (!pending) displayPosition = null }
+    fun reset() { ++readRevision; ++requestTicket; position = null; displayPosition = null; snapshot = null; loading = false; pending = false; continuing = false }
 }
 
 /** Event-driven one-shot snapshot, never a periodic poll; the Runner validates project/session identity. */

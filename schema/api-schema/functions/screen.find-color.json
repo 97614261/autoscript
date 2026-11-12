@@ -58,7 +58,8 @@
       "type": "string",
       "required": false,
       "summary": "可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。"
-    }
+    },
+    {"name": "polygon", "type": "string", "required": false, "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"}
   ],
   "returns": {
     "type": "Point",

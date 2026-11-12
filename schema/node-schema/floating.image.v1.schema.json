@@ -32,45 +32,31 @@
         "name": {
           "type": "string"
         },
-        "nameVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "nameVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "imagePath": {
           "type": "string"
         },
-        "imagePathVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "imagePathVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "x": {
           "type": "integer"
         },
-        "xVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "xVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "y": {
           "type": "integer"
         },
-        "yVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "yVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "width": {
           "type": "integer"
         },
-        "widthVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "widthVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "height": {
           "type": "integer"
         },
-        "heightVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "heightVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "draggable": {
           "type": "integer"
         },
-        "draggableVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "draggableVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

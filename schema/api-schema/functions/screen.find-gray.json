@@ -8,6 +8,8 @@
  {"name":"left","type":"integer","required":true,"summary":"左边界。"},
  {"name":"top","type":"integer","required":true,"summary":"上边界。"},
  {"name":"right","type":"integer","required":true,"summary":"右边界，不含。"},
- {"name":"bottom","type":"integer","required":true,"summary":"下边界，不含。"}],
+ {"name":"bottom","type":"integer","required":true,"summary":"下边界，不含。"},
+    {"name": "polygon", "type": "string", "required": false, "summary": "可选多边形顶点JSON [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；整个目标矩形须在选区内。空值沿用矩形，需Screen.polygonRegionVersion=1及支持多边形的OpenCV组件。"}
+  ],
  "returns":{"type":"GrayMatchResult","nullable":true,"summary":"x/y和scorePermille；无匹配nil。"},"legacyAliases":[]
 }

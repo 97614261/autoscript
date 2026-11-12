@@ -18,7 +18,8 @@
     { "name": "left", "type": "integer", "required": true, "summary": "ROI左边界，包含。" },
     { "name": "top", "type": "integer", "required": true, "summary": "ROI上边界，包含。" },
     { "name": "right", "type": "integer", "required": true, "summary": "ROI右边界，不包含。" },
-    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" }
+    { "name": "bottom", "type": "integer", "required": true, "summary": "ROI下边界，不包含。" },
+    {"name": "polygon", "type": "string", "required": false, "summary": "可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。"}
   ],
   "returns": { "type": "Point", "nullable": true, "summary": "首个匹配锚点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。" },
   "legacyAliases": ["FindMultiColor"]

@@ -69,10 +69,13 @@ internal fun VisionSampleEditor(value: String, onChange: (String) -> Unit) {
                         Text(if (index == 0) "色点1 · 锚点" else "色点${index + 1}", Modifier.weight(1f), fontSize = 10.sp)
                         ImageToolCompactAction("删除", true) { onChange(rows.deepCopy().apply { remove(index) }.toString()) }
                     }
-                    StudioCompactGrid(listOf("dx" to "ΔX", "dy" to "ΔY", "rgb" to "RGB/#HEX", "tolerance" to "容差"),
+                    StudioCompactGrid(listOf("dx" to "ΔX", "dy" to "ΔY", "rgb" to "RGB", "tolerance" to "容差"),
                         cellDp = 132, maximum = 2, modifier = Modifier.fillMaxWidth()) { (key, label), cell ->
-                        ImageToolCompactInput(label, item.asJsonObject[key]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(), true,
-                            cell, numeric = key != "rgb") { change(updateVisionSample(value, index, key, it)) }
+                        if (key == "rgb") {
+                            StudioColorInput(label, item.asJsonObject[key]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(), true,
+                                cell, StudioColorFormat.RGB_DECIMAL, identity = value to index) { change(updateVisionSample(value, index, key, it)) }
+                        } else ImageToolCompactInput(label, item.asJsonObject[key]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(), true,
+                            cell, numeric = true) { change(updateVisionSample(value, index, key, it)) }
                     }
                 }
             }

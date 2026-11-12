@@ -41,49 +41,37 @@
             "HEAD"
           ]
         },
-        "methodVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "methodVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "url": {
           "type": "string",
           "minLength": 1,
           "maxLength": 2048
         },
-        "urlVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "urlVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "headersJson": {
           "type": "string",
           "minLength": 2,
           "maxLength": 4096
         },
-        "headersJsonVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "headersJsonVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "body": {
           "type": "string",
           "minLength": 0,
           "maxLength": 8192
         },
-        "bodyVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "bodyVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "timeoutMs": {
           "type": "integer",
           "minimum": 100,
           "maximum": 30000
         },
-        "timeoutMsVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "timeoutMsVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "maxResponseBytes": {
           "type": "integer",
           "minimum": 1,
           "maximum": 16384
         },
-        "maxResponseBytesVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "maxResponseBytesVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

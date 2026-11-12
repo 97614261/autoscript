@@ -145,6 +145,8 @@ internal fun ProjectPage(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("项目管理", error, failure = true)
+    StudioSystemLogEffect("项目管理", notice)
     var expandedProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showCreate by remember { mutableStateOf(false) }
     var showHistoricalProjects by remember { mutableStateOf(false) }
@@ -156,6 +158,7 @@ internal fun ProjectPage(
     var backupSlots by remember { mutableStateOf<List<BackupSlot>>(emptyList()) }
     var backupProgress by remember { mutableStateOf<String?>(null) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("本地备份", backupMessage)
     var backups by remember { mutableStateOf<List<BackupProjectSummary>>(emptyList()) }
     var backupsRevision by remember { mutableStateOf(0) }
     var busyProjectId by remember { mutableStateOf<String?>(null) }
@@ -455,7 +458,7 @@ internal fun ProjectPage(
             return
         }
         WorkspacePanel.SERVER_BACKUPS -> {
-            ServerProjectBackupsScreen(
+            CloudProjectBackupsScreen(
                 store = store,
                 projects = projects,
                 blocked = {

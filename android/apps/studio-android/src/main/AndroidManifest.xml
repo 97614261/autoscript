@@ -4,6 +4,7 @@
         <package android:name="com.zhigou.yunxingban" />
     </queries>
     <application
+        android:name=".StudioApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/private_data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
@@ -39,6 +40,7 @@
             android:name=".MainActivity"
             android:theme="@style/StudioAppTheme"
             android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>

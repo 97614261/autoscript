@@ -46,6 +46,7 @@ internal fun cropAndImportTemplate(
     imageName: String = "template-${System.currentTimeMillis()}.png",
     rememberScreenRegion: Boolean = false,
     mode: ResourceImportMode = ResourceImportMode.Numbered,
+    screenRegion: ScreenshotTemplateRegion? = null,
 ): Pair<ProjectSnapshot, String> {
     val (width, height) = templateCropDimensions(source.width, source.height, roi)
     val cropped = Bitmap.createBitmap(source, roi.left, roi.top, width, height)
@@ -54,8 +55,8 @@ internal fun cropAndImportTemplate(
         val outputFile = File.createTempFile("template-", ".png", context.cacheDir)
         temporary = outputFile
         FileOutputStream(outputFile).use { output ->
-            val encoded = if (rememberScreenRegion) ScreenshotTemplatePng.withRegion(output,
-                ScreenshotTemplateRegion(source.width, source.height, roi)) else output
+            val origin = screenRegion ?: if (rememberScreenRegion) ScreenshotTemplateRegion(source.width, source.height, roi) else null
+            val encoded = if (origin != null) ScreenshotTemplatePng.withRegion(output, origin) else output
             require(cropped.compress(Bitmap.CompressFormat.PNG, 100, encoded)) { "模板图片编码失败" }
             output.flush()
             output.fd.sync()

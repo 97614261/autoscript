@@ -12,13 +12,13 @@ internal fun RunnerUiFieldDraft.supportsContentFit() = kind in setOf(RunnerUiCon
     RunnerUiControlKind.CHOICE, RunnerUiControlKind.LABEL, RunnerUiControlKind.BUTTON, RunnerUiControlKind.NAVIGATION,
     RunnerUiControlKind.BOOLEAN, RunnerUiControlKind.SWITCH, RunnerUiControlKind.TEXTAREA)
 
-internal class DesignerTextMetrics(field: RunnerUiFieldDraft) {
+internal class DesignerTextMetrics(field: RunnerUiFieldDraft) : DesignerTextMeasure {
     private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = field.ui.fontPx.toFloat()
         typeface = Typeface.create(Typeface.DEFAULT, if (field.ui.fontBold) Typeface.BOLD else Typeface.NORMAL)
     }
-    fun width(text: String) = paint.measureText(text.take(2048))
-    fun rowHeight(text: String, width: Int, reserved: Int) = StaticLayout.Builder.obtain(text, 0, text.length, paint, (width - reserved).coerceAtLeast(1))
+    override fun width(text: String) = paint.measureText(text.take(2048))
+    override fun rowHeight(text: String, width: Int, reserved: Int) = StaticLayout.Builder.obtain(text, 0, text.length, paint, (width - reserved).coerceAtLeast(1))
         .setIncludePad(false).build().height + 8
 }
 

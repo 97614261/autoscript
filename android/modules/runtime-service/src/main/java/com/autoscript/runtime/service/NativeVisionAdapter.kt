@@ -42,21 +42,25 @@ internal class NativeVisionAdapter(private val source: NativeVisionBackendSource
             if (lifecycle.isClosed()) work.cancel()
             synchronized(cancelled) { if (cancelled.remove(id)) work.cancel() }
             work.checkActive()
-            require(operation in setOf(5108,5109,6101,6104,6105) && options.size == 5)
+            require(operation in setOf(5108,5109,6101,6104,6105) && options.size >= 5)
+            val polygon = if (operation in setOf(5108,5109)) VisionSearchPolygon.fromOptions(options, work::checkActive)
+                else { require(options.size == 5); null }
             validateVisionBuffer(pixels.capacity(), pixels.remaining(), pixels.isDirect, metadata)
-            checkedVisionRect(metadata[0], metadata[1], options)
+            checkedVisionRect(metadata[0], metadata[1], options.copyOf(5))
             require(options[4] in 0..1000)
             if (operation in setOf(5108,5109)) {
                 require(templatePixels != null)
                 validateVisionBuffer(templatePixels.capacity(), templatePixels.remaining(), templatePixels.isDirect, templateMetadata)
             }
             val backend = source.resolve(operation, work)
-            val selectedOptions=when(operation) {5109->options+intArrayOf(1);6104->options+intArrayOf(2);6105->options+intArrayOf(3);else->options}
+            if (polygon != null && (backend as? NativePolygonSearchBackend)?.supportsPolygonSearch() != true) throw NativePolygonSearchUnsupported()
+            val selectedOptions=when(operation) {5109->options.copyOf(5)+intArrayOf(1)+options.drop(5);6104->options+intArrayOf(2);6105->options+intArrayOf(3);else->options}
             val payload = backend.execute(work, pixels, metadata, templatePixels, templateMetadata, selectedOptions)
             work.checkActive()
             byteArrayOf(0) + payload
         } catch (error: VisionResolutionFailure) {
             failure(if (work.isCancelled()) "VISION_CANCELLED_OR_TIMEOUT" else "VISION_COMPONENT_${error.state.name}")
+        } catch (_: NativePolygonSearchUnsupported) { failure("POLYGON_REGION_UNSUPPORTED")
         } catch (_: NativeVisionComponentMissing) { failure("VISION_COMPONENT_NOT_INSTALLED")
         } catch (_: NativeVisionInitializationFailure) { failure("VISION_INITIALIZATION_FAILED")
         } catch (_: NativeVisionCleanupFailure) { failure("VISION_CLEANUP_FAILED")

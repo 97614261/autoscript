@@ -13,6 +13,13 @@ internal data class RuntimeLogLocation(val flowId: String, val nodeId: String) {
             return if (identity.matches(flow) && identity.matches(node)) RuntimeLogLocation(flow, node) else null
         }
 
+        fun fromLine(line: String): RuntimeLogLocation? {
+            val body = line.replaceFirst(runtimeConsoleTimestamp, "")
+            if (!Regex("^(?:脚本动作/(?:INFO|WARN|ERROR)|脚本执行/(?:TRACE|ERROR)): ").containsMatchIn(body)) return null
+            val found = Regex("\\[定位:([A-Za-z0-9_.-]{1,128})/([A-Za-z0-9_.-]{1,128})](?: · 执行失败)?$").find(body) ?: return null
+            return from(mapOf("flowId" to found.groupValues[1], "nodeId" to found.groupValues[2]))
+        }
+
         /** Conditions may precede samples; a malformed record must not give a false location. */
         fun failures(events: String): List<RuntimeLogLocation> {
             val decoder = RuntimeLogEventCodec.Decoder()
@@ -21,7 +28,7 @@ internal data class RuntimeLogLocation(val flowId: String, val nodeId: String) {
                 runCatching {
                     val expanded = decoder.expand(line) ?: return@runCatching
                     val record = JsonParser.parseString(expanded).asJsonObject
-                    if (record.get("version")?.asInt != 1 || record.get("kind")?.asString !in setOf("task", "vision") ||
+                    if (record.get("version")?.asInt != 1 || record.get("kind")?.asString !in setOf("task", "vision", "action") ||
                         record.get("status")?.asString !in setOf("failed", "error", "timeout", "budget_exceeded")) return@runCatching
                     val fields = listOf("flowId", "nodeId").associateWith { key ->
                         val value = record.get(key)?.asJsonPrimitive ?: return@runCatching

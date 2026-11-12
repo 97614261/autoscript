@@ -95,11 +95,19 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
     private var imageLibraryOnly = false
     private var editorCloseoutOnly = false
     private var imageEnhancementOnly = false
+    private var imageWorkspaceOnly = false
+    private var imageCompactOnly = false
+    private var imageToolbarOnly = false
+    private var imagePanelOnly = false
+    private var imageCompactRemainingOnly = false
+    private var imageWorkspaceRemainingOnly = false
+    private var imageWorkspaceInsertionOnly = false
     private var imageSelectionOnly = false
     private var pureUtilityOnly = false
     private var variableUsageOnly = false
     private var touchUsageOnly = false
     private var controlUsageStage = ""
+    private var studioCloudOrigin = ""
     private var capabilityExpansionOnly=false
     private var capabilityProductionIme=false
     private var soakMillis = 0L
@@ -145,11 +153,19 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
         imageLibraryOnly = arguments?.getString("imageLibraryOnly") == "true"
         editorCloseoutOnly = arguments?.getString("editorCloseoutOnly") == "true"
         imageEnhancementOnly = arguments?.getString("imageEnhancementOnly") == "true"
+        imageWorkspaceRemainingOnly = arguments?.getString("imageWorkspaceRemainingOnly") == "true"
+        imageWorkspaceInsertionOnly = arguments?.getString("imageWorkspaceInsertionOnly") == "true"
+        imageWorkspaceOnly = arguments?.getString("imageWorkspaceOnly") == "true" || imageWorkspaceRemainingOnly || imageWorkspaceInsertionOnly
+        imageCompactRemainingOnly = arguments?.getString("imageCompactRemainingOnly") == "true"
+        imageToolbarOnly = arguments?.getString("imageToolbarOnly") == "true"
+        imagePanelOnly = arguments?.getString("imagePanelOnly") == "true"
+        imageCompactOnly = arguments?.getString("imageCompactOnly") == "true" || imageCompactRemainingOnly
         imageSelectionOnly = arguments?.getString("imageSelectionOnly") == "true"
         pureUtilityOnly = arguments?.getString("pureUtilityOnly") == "true"
         variableUsageOnly = arguments?.getString("variableUsageOnly") == "true"
         touchUsageOnly = arguments?.getString("touchUsageOnly") == "true"
         controlUsageStage = arguments?.getString("controlUsageStage").orEmpty()
+        studioCloudOrigin = arguments?.getString("studioCloudOrigin").orEmpty()
         capabilityExpansionOnly=arguments?.getString("capabilityExpansionOnly")=="true"
         capabilityProductionIme=arguments?.getString("capabilityProductionIme")=="true"
         soakMillis = arguments?.getString("soakSeconds")?.toLongOrNull()?.takeIf { it in 60..1800 }?.times(1000) ?: 0L
@@ -176,7 +192,7 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
                 Bundle().apply { putString("stream", report.toString(2) + "\n") })
             return
         }
-        deadline = SystemClock.elapsedRealtime() + if (stabilityOnly) soakMillis + 180_000 else if (performanceOnly || runtimePerformanceOnly || variableUsageOnly || controlUsageStage.startsWith("library")) 540_000 else if (finalClosure || landscapeOnly || boundariesOnly || imageEnhancementOnly || capabilityExpansionOnly || lifecycleOnly) 360_000 else 150_000
+        deadline = SystemClock.elapsedRealtime() + if (stabilityOnly) soakMillis + 180_000 else if (performanceOnly || runtimePerformanceOnly || variableUsageOnly || controlUsageStage.startsWith("library")) 540_000 else if (finalClosure || landscapeOnly || boundariesOnly || imageEnhancementOnly || imageWorkspaceOnly || capabilityExpansionOnly || lifecycleOnly) 360_000 else 150_000
         val report = JSONObject().put("scope", "real Studio overlay and own synthetic core.task project")
             .put("sdk", Build.VERSION.SDK_INT).put("cases", cases).put("qaInputDispatch", qaInputDispatch)
         try {
@@ -261,6 +277,18 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
             } else if (controlUsageStage == "aiAssistant") {
                 report.put("scope", "owned AI dialog, isolated settings and public loopback model, real full draft validation; no external model or script run")
                 owned = AiAssistantAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
+            } else if (controlUsageStage == "cloudConvenience") {
+                report.put("scope", "owned remembered account, password visibility, optional guest runtime and project/backup search against local Go service")
+                owned = AccountConvenienceAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity,
+                    client, store, requireNotNull(owned), studioCloudOrigin, ::case)
+            } else if (controlUsageStage in setOf("cloudCloseout", "cloudRegister", "cloudBackupLayout")) {
+                report.put("scope", "owned new account controls, local Go service, landscape and approved real QA keyboard; no scripts")
+                AccountCloseoutAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, studioCloudOrigin, ::case,
+                    registerOnly = controlUsageStage == "cloudRegister", backupsOnly = controlUsageStage == "cloudBackupLayout")
+            } else if (controlUsageStage in setOf("cloud", "cloudLayout")) {
+                report.put("scope", "owned actual cloud backup UI against loopback Go service with local MySQL and Redis; no script execution")
+                CloudBackupAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, studioCloudOrigin,
+                    layoutOnly = controlUsageStage == "cloudLayout", record = ::case)
             } else if (controlUsageStage == "libraryRecording") {
                 report.put("scope", "owned public ARM view, actual evdev recording, floating stop/cancel, compiled playback and timeout recovery")
                 owned = RecordingUsageAcceptanceFixture.run(this, requireNotNull(activity) as ComponentActivity, client, store, requireNotNull(owned), ::case)
@@ -329,6 +357,18 @@ class StudioAcceptanceInstrumentation : Instrumentation() {
             } else if(imageSelectionOnly) {
                 report.put("scope","owned public image selection, narrow toolbar and actual Activity landscape; restore orientation, no private scripts")
                 ImageSelectionAcceptanceFixture.run(this,requireNotNull(activity) as ComponentActivity,client,store,requireNotNull(owned),::case)
+            } else if(imagePanelOnly) {
+                report.put("scope", "owned image panel title drag and orientation; synthetic pixels, no Root or private scripts")
+                owned=ImagePanelDragAcceptanceFixture.run(this,requireNotNull(activity) as ComponentActivity,client,store,requireNotNull(owned),::case)
+            } else if(imageToolbarOnly) {
+                report.put("scope", "owned toolbar selection and polygon PNG save, synthetic pixels; no Root capture or private scripts")
+                owned=ImageToolbarAcceptanceFixture.run(this,requireNotNull(activity) as ComponentActivity,client,store,requireNotNull(owned),::case)
+            } else if(imageCompactOnly) {
+                report.put("scope", "owned compact recognition form and polygon template saves; synthetic pixels, no Root capture or private scripts")
+                owned=ImageRecognitionCompactAcceptanceFixture.run(this,requireNotNull(activity) as ComponentActivity,client,store,requireNotNull(owned),::case,imageCompactRemainingOnly)
+            } else if(imageWorkspaceOnly) {
+                report.put("scope","owned image workspace, landscape/portrait, parameter retention, preview and save/insert; no private scripts")
+                owned=ImageWorkspaceAcceptanceFixture.run(this,requireNotNull(activity) as ComponentActivity,client,store,requireNotNull(owned),::case,imageWorkspaceRemainingOnly,imageWorkspaceInsertionOnly)
             } else if(imageEnhancementOnly) {
                 report.put("scope","real Studio workbench dialogs and owned synthetic image/runtime project")
                 owned=ImageEnhancementAcceptanceFixture.run(this,requireNotNull(activity) as ComponentActivity,client,store,requireNotNull(owned),::case)

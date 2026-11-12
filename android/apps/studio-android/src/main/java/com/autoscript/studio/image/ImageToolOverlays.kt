@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +43,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -156,25 +162,6 @@ internal fun BoxScope.ImageToolHintBanner(text: String) {
     )
 }
 
-/** 缩放模式控制条，对应参考 `#controls` 的「退出缩放 / 原图」。 */
-@Composable
-internal fun ImageToolZoomControls(
-    scale: Float,
-    onReset: () -> Unit,
-    onExit: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier.background(Color(0xCC000000), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("缩放 ${(scale * 100).roundToInt()}%", color = Color(0xE6FFFFFF), fontSize = 11.sp)
-        ImageToolButton("原图", ButtonBlue, enabled = true, onClick = onReset)
-        ImageToolButton("退出缩放", ButtonGrey, enabled = true, onClick = onExit)
-    }
-}
-
 /** 底部状态条：坐标 + 颜色 + 选框尺寸，对应参考 `#tool-tooltip` 的实时信息。 */
 @Composable
 internal fun BoxScope.ImageToolStatusStrip(
@@ -183,10 +170,15 @@ internal fun BoxScope.ImageToolStatusStrip(
     viewport: ImageToolViewport?,
     selection: ImageToolSelection,
     crosshair: Offset,
+    polygonEditing: Boolean = false,
+    polygonProblem: String? = null,
 ) {
     if (viewport == null) return
     val text = when {
-        zoomMode -> "缩放模式：单指拖动，双指捏合；完成后点「退出缩放」"
+        zoomMode -> "单指拖图，双指缩放；在“缩放”中结束拖图"
+        polygonEditing || selection.polygon.isNotEmpty() -> if(selection.polygon.isEmpty()) "点图加顶点，至少3点；拖点修形" else "多边形 ${selection.polygon.size}点 · " +
+            (polygonProblem
+                ?: selection.box?.let {"${it.width}×${it.height}px · 可直接存图"}.orEmpty())
         mode.usesDragBox -> selection.box?.let { box ->
             "像素 X: ${box.left}, Y: ${box.top}, 宽: ${box.width}, 高: ${box.height}"
         } ?: mode.hint
@@ -240,15 +232,18 @@ internal fun BoxScope.ImageToolBar(
     onCropToTemplate: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
-    onProcessing: (() -> Unit)? = null,
-    onMakeGlyph: (() -> Unit)? = null,
-    onFilter: (() -> Unit)? = null,
-    onPolygon: (() -> Unit)? = null,
+    onSelectionShape: (() -> Unit)? = null,
     onAdjust: (() -> Unit)? = null,
     onDragEnd: () -> Unit = {},
+    workspace: ImageWorkspaceActions? = null,
+    saveReady: Boolean = false,
+    menu: ImageToolbarMenu? = null,
+    secondaryContent: (@Composable () -> Unit)? = null,
+    touchTools: Boolean = false,
 ) {
-    var toolsOpen by remember { mutableStateOf(false) }
     val actionsScroll = rememberScrollState()
+    var mainWidth by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
     LaunchedEffect(mode) { actionsScroll.scrollTo(0) }
     val latestOnDrag by rememberUpdatedState(onDrag)
     val latestOnToggleMenu by rememberUpdatedState(onToggleMenu)
@@ -261,21 +256,28 @@ internal fun BoxScope.ImageToolBar(
         color = ToolChrome,
         shadowElevation = 10.dp,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
+        Row(Modifier.onSizeChanged {mainWidth=it.width},verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.width(30.dp).heightIn(min = 34.dp)
                         .background(ButtonBlue)
+                        .semantics(mergeDescendants = true) {
+                            role = Role.Button
+                            onClick("切换操作类型") { latestOnToggleMenu(); true }
+                        }
                         .pointerInput(Unit) {
                             // 和易编精灵的悬浮条一致：点击/拖动由一套手势状态机判定。
                             // 否则 clickable 与 detectDragGestures 会抢事件，工具条会拖不稳或误开菜单。
                             awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val down = awaitFirstDown()
+                                down.consume()
                                 val touchSlop = viewConfiguration.touchSlop
                                 var dragging = false
                                 var previous = down.position
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (change.isConsumed || event.changes.any { it.pressed && it.id != down.id }) break
                                     val displacement = change.position - down.position
                                     val distanceSquared = displacement.x * displacement.x + displacement.y * displacement.y
                                     if (!dragging && distanceSquared > touchSlop * touchSlop) dragging = true
@@ -286,6 +288,7 @@ internal fun BoxScope.ImageToolBar(
                                         change.consume()
                                     }
                                     if (!change.pressed) {
+                                        change.consume()
                                         if (dragging) latestOnDragEnd() else latestOnToggleMenu()
                                         break
                                     }
@@ -300,13 +303,24 @@ internal fun BoxScope.ImageToolBar(
                             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
                     }
                 }
+                Box(Modifier.padding(start = 4.dp)) {
+                    ImageToolButton(if (touchTools) "重置" else "清除", ButtonGrey, workspace?.busy != true &&
+                        (if (workspace?.panelOpen == true) workspace.surface.clearDraft != null
+                        else touchTools || selection.box != null || selection.points.isNotEmpty() || selection.polygon.isNotEmpty() || mode.usesSlideMarkers), onClear)
+                }
                 Row(Modifier.weight(1f, fill = false).horizontalScroll(actionsScroll).padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ImageToolButton(if (capturing) "截图中" else "截图", ButtonBlue, !capturing, onCapture)
-                    if (hasImage && !zoomMode) ImageToolButton("缩放", ButtonGrey, true, onZoom)
-                    onAdjust?.let { ImageToolButton("微调", ButtonGrey, hasImage && !capturing && !zoomMode, it) }
-                    ImageToolButton(if (toolsOpen) "收起" else "工具", ButtonGrey, true) { toolsOpen = !toolsOpen }
-                    if (toolsOpen || mode in setOf(ImageToolMode.MULTI_COLOR, ImageToolMode.SWIPE, ImageToolMode.LONG_PRESS, ImageToolMode.DRAG)) {
+                    ImageToolButton(if (capturing) "截图中" else "截图", ButtonBlue, !capturing && workspace?.captureAvailable != false && workspace?.busy != true, onCapture)
+                    if (!touchTools) onSelectionShape?.let { ImageToolButton("选区", if(menu==ImageToolbarMenu.SELECTION) ButtonBlue else ButtonGrey, hasImage && workspace?.busy != true, it) }
+                    workspace?.takeIf { it.onUndo != null || it.onRedo != null }?.let { actions ->
+                        ImageToolButton("撤销", ButtonGrey, actions.onUndo != null) { actions.onUndo?.invoke() }
+                        ImageToolButton("重做", ButtonGrey, actions.onRedo != null) { actions.onRedo?.invoke() }
+                    }
+                    if (hasImage && workspace?.panelOpen != true) ImageToolButton("缩放", if(menu==ImageToolbarMenu.VIEW) ButtonBlue else ButtonGrey, true, onZoom)
+                    onAdjust?.let { ImageToolButton("微调", ButtonGrey, hasImage && !capturing && !zoomMode && workspace?.panelOpen != true, it) }
+                    workspace?.let { ImageToolButton("测试", if(menu==ImageToolbarMenu.TEST) ButtonBlue else ButtonGrey, !it.busy, it.onTest) }
+                    workspace?.let { ImageToolButton("工具", if(menu==ImageToolbarMenu.PROCESS) ButtonBlue else ButtonGrey, !it.busy, it.onProcessing) }
+                    if (mode in setOf(ImageToolMode.MULTI_COLOR, ImageToolMode.SWIPE, ImageToolMode.LONG_PRESS, ImageToolMode.DRAG)) {
                         when (mode) {
                             ImageToolMode.MULTI_COLOR -> ImageToolStepper("容差 $tolerance") { onTolerance((tolerance + it).coerceIn(0, 255).toFloat()) }
                             ImageToolMode.SWIPE -> ImageToolStepper("${swipeDuration}ms") { onSwipeDuration((swipeDuration + it * 100).coerceIn(100, 5000).toFloat()) }
@@ -315,81 +329,19 @@ internal fun BoxScope.ImageToolBar(
                             }
                             else -> Unit
                         }
-                        if (selection.box != null || selection.points.isNotEmpty() || mode.usesSlideMarkers) ImageToolButton("清除", ButtonGrey, true, onClear)
-                        if (toolsOpen) {
-                            onFilter?.let { ImageToolButton("滤色", ButtonBlue, hasImage && !capturing, it) }
-                            onProcessing?.let { ImageToolButton("处理", ButtonBlue, hasImage && !capturing, it) }
-                            onPolygon?.let { ImageToolButton("多边形", ButtonBlue, hasImage && !capturing, it) }
-                            onMakeGlyph?.let { ImageToolButton("制字", ButtonBlue, hasImage && !capturing, it) }
-                        }
                     }
                 }
-                ImageToolButton(if (mode == ImageToolMode.CROP) "存模板" else if (mode == ImageToolMode.OCR) "取字" else "确定",
-                    ButtonGreen, ready, if (mode == ImageToolMode.CROP) onCropToTemplate else onConfirm)
+                if (!touchTools) Box(Modifier.padding(end=4.dp)) {
+                    ImageToolButton("存图", if(mode==ImageToolMode.CROP) ButtonGreen else ButtonBlue, saveReady, onCropToTemplate)
+                }
+                if (mode != ImageToolMode.CROP) ImageToolButton(if (mode == ImageToolMode.OCR) "取字" else "确定",
+                    ButtonGreen, ready, onConfirm)
                 Box(Modifier.size(28.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
-                    Icon(painterResource(R.drawable.editor_close_24), "关闭图像工具", tint = Color(0xFFB9C2D0), modifier = Modifier.size(16.dp))
+                    Icon(painterResource(R.drawable.editor_close_24), if (touchTools) "关闭触控取点" else "关闭图像工具", tint = Color(0xFFB9C2D0), modifier = Modifier.size(16.dp))
                 }
             }
-    }
-}
-
-/** Compact mode icons retain short labels so actions sharing an icon remain distinguishable. */
-@Composable
-internal fun BoxScope.ImageToolMenu(
-    current: ImageToolMode,
-    onPick: (ImageToolMode) -> Unit,
-    modifier: Modifier = Modifier,
-    recorderAvailable: Boolean = false,
-) {
-    Surface(modifier, shape = RoundedCornerShape(8.dp), color = ToolChrome, shadowElevation = 12.dp) {
-        BoxWithConstraints(Modifier.padding(6.dp)) {
-            val columns = studioCompactGridColumns(maxWidth.value, LocalDensity.current.fontScale, cellDp = 36, maximum = 4)
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                ImageToolMode.menuOrder.chunked(columns).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        row.forEach { entry -> ImageToolMenuItem(entry, entry == current,
-                            imageToolMenuAvailable(entry, recorderAvailable), onPick, Modifier.weight(1f)) }
-                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
+        if(menu!=null && mainWidth>0) Box(Modifier.width(with(density) {mainWidth.toDp()})) {secondaryContent?.invoke()}
         }
-    }
-}
-
-@Composable
-private fun ImageToolMenuItem(mode: ImageToolMode, selected: Boolean, available: Boolean, onPick: (ImageToolMode) -> Unit,
-    modifier: Modifier) {
-    val tint = when {
-        !available -> Color(0xFF5A6373)
-        selected -> Color.White
-        else -> Color(0xFFD5DCE8)
-    }
-    Column(
-        modifier.heightIn(min = 36.dp)
-            .background(
-                when {
-                    !available -> Color(0xFF262C38)
-                    selected -> ButtonBlue
-                    else -> Color(0xFF323A49)
-                },
-                RoundedCornerShape(6.dp),
-            )
-            .clickable { onPick(mode) }
-            .padding(vertical = 3.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
-    ) {
-        Icon(painterResource(mode.icon), if (available) null else "${mode.label}暂不可用", tint = tint, modifier = Modifier.size(16.dp))
-        Text(
-            mode.label,
-            color = tint,
-            fontSize = 8.sp,
-            lineHeight = 10.sp,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 

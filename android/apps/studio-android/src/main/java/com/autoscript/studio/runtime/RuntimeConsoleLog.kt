@@ -22,6 +22,7 @@ internal class RuntimeConsoleLog(
     private val now: () -> String = {
         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     },
+    private val onStateDelta: (String) -> Unit = {},
 ) {
     val lines: SnapshotStateList<String> = mutableStateListOf()
     private var previous: RuntimeConnectionState? = null
@@ -32,7 +33,7 @@ internal class RuntimeConsoleLog(
         previous = state
         if (delta.isEmpty()) return
         val stamp = now()
-        delta.forEach { lines.add("[$stamp] $it") }
+        delta.forEach { lines.add("[$stamp] $it"); onStateDelta(it) }
         while (lines.size > MAX_CONSOLE_LINES) lines.removeAt(0)
     }
 

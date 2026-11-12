@@ -28,21 +28,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.autoscript.core.designsystem.AutoScriptPalette
 import kotlin.math.floor
 import kotlin.math.max
 
 @Composable
 internal fun GlyphMakerSection(title: String, detail: String = "", content: @Composable ColumnScope.() -> Unit) {
-    Surface(Modifier.fillMaxWidth(), color = AutoScriptPalette.Card, shape = RoundedCornerShape(7.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AutoScriptPalette.Border)) {
-        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = AutoScriptPalette.TextPrimary)
-                if (detail.isNotEmpty()) Text(detail, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-            }
-            content()
-        }
+    ImageWorkspaceSection(title) {
+        if (detail.isNotEmpty()) Text(detail, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        content()
     }
 }
 
@@ -69,7 +62,7 @@ internal fun GlyphMakerPreviewToolbar(mode: ImageToolMode, moving: Boolean, enab
 
 @Composable
 private fun GlyphMakerToolDivider() {
-    Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(12.dp).background(AutoScriptPalette.Divider))
+    Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(12.dp).background(MaterialTheme.colorScheme.outlineVariant))
 }
 
 @Composable
@@ -79,7 +72,8 @@ private fun GlyphMakerPreviewAction(text: String, enabled: Boolean, active: Bool
         TextButton(onClick, Modifier.defaultMinSize(minWidth = 26.dp).heightIn(min = 28.dp)
             .semantics { contentDescription = description; selected = active }, enabled = enabled,
             shape = RoundedCornerShape(4.dp), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-            colors = ButtonDefaults.textButtonColors(containerColor = if (active) AutoScriptPalette.Accent.copy(alpha = .10f) else Color.Transparent)) {
+            colors = ButtonDefaults.textButtonColors(containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                contentColor = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)) {
             Text(text, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, softWrap = false,
                 fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
         }
@@ -91,7 +85,7 @@ internal fun GlyphMakerPrimaryAction(text: String, enabled: Boolean, modifier: M
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         Button(onClick, modifier.heightIn(min = 28.dp), enabled = enabled, shape = RoundedCornerShape(5.dp),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 3.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AutoScriptPalette.Accent)) {
+            colors = ButtonDefaults.buttonColors()) {
             Text(text, fontSize = 11.sp)
         }
     }
@@ -121,11 +115,11 @@ internal fun GlyphMakerPixelEditor(glyph: MakerGlyph, enabled: Boolean, modifier
     }
     DisposableEffect(bitmap) { restore(); onDispose { bitmap?.recycle() } }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            listOf(GlyphMakerBrush.AUTO to "修点", GlyphMakerBrush.INK to "画笔", GlyphMakerBrush.ERASE to "橡皮",
-                GlyphMakerBrush.MOVE to "移动").forEach { (value, title) ->
-                ImageToolCompactAction(if (brush == value) "✓ $title" else title, enabled && !painting) { brush = value }
-            }
+        ImageToolChoice("工具", brush.name, listOf(GlyphMakerBrush.AUTO.name to "修点", GlyphMakerBrush.INK.name to "画笔",
+            GlyphMakerBrush.ERASE.name to "橡皮", GlyphMakerBrush.MOVE.name to "移动"), enabled && !painting) {
+            brush = GlyphMakerBrush.valueOf(it)
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             ImageToolCompactAction("−", enabled && !painting && magnification > 1f,
                 Modifier.semantics { contentDescription = "缩小字形" }) { magnification /= 2 }
             ImageToolCompactAction("＋", enabled && !painting && magnification < 8f,
@@ -197,6 +191,6 @@ internal fun GlyphMakerPixelEditor(glyph: MakerGlyph, enabled: Boolean, modifier
             }
         }
         Text("${glyph.width}×${glyph.height}px · 放大${magnification.toInt()}倍 · 拖动修点，一笔一次撤销", fontSize = 10.sp,
-            color = AutoScriptPalette.TextSecondary)
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

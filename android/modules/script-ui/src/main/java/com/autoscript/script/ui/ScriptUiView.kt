@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.StateListDrawable
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.TypedValue
@@ -198,10 +197,18 @@ class ScriptUiView(
             val widget = if (reuse) widgets.getValue(f.id) else widget(f).also { widgets[f.id] = it }
             widget.visibility = if (visibilityOverrides[f.id] ?: p.visible) View.VISIBLE else View.INVISIBLE
             widget.isEnabled = enabled(f)
+            // Dim a disabled subtree once, rather than multiplying alpha at every container.
+            val parentEnabled = p.parentId?.let { id -> fields.find { it.id == id }?.let(::enabled) } ?: true
+            widget.alpha = if (!widget.isEnabled && parentEnabled) ScriptUiControlVisuals.DISABLED_ALPHA else 1f
             widget.background = backgrounds.drawable(f.id,resources,GradientDrawable().apply {
                 setColor(Color.parseColor(p.background)); cornerRadius = p.cornerPx * scale
-                if (p.borderWidthPx > 0) setStroke((p.borderWidthPx * scale).roundToInt().coerceAtLeast(1), Color.parseColor(p.borderColor))
             })
+            widget.applyScriptUiFrame(p, scale)
+            if (widget is Spinner) {
+                val inset = (p.visibleBorderWidthPx * scale).roundToInt()
+                widget.setPadding(inset, inset, inset + (ScriptUiControlMetrics.CHOICE_RESERVED * scale).roundToInt(), inset)
+            }
+            if (widget is Button) { widget.stateListAnimator = null; widget.elevation = 0f }
             if (widget is TextView) {
                 styleText(widget, f)
             }
@@ -336,6 +343,7 @@ class ScriptUiView(
             id = index + 1; text = option; isChecked = option == value; styleText(this, field)
             if (p != null) {
                 buttonDrawable = compactIndicator(renderScale, true)
+                buttonTintList = null
                 setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null; breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
                 minHeight = (maxOf(20f, p.fontPx * 1.8f) * renderScale).roundToInt().coerceAtLeast(1)
                 val inset = (4 * renderScale).roundToInt(); setPadding(inset, inset, inset, inset)
@@ -381,17 +389,21 @@ class ScriptUiView(
         val style = commandState.presentation(field) ?: return
         val scale = renderScale
         view.setTextColor(Color.parseColor(style.textColor))
+        if (view is EditText) view.setHintTextColor(ScriptUiControlVisuals.hintColor(Color.parseColor(style.textColor)))
         view.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.fontPx * scale)
         view.setTypeface(android.graphics.Typeface.DEFAULT, if (style.fontBold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
         view.paintFlags = if (style.textUnderline) view.paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG else view.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG.inv()
         view.gravity = Gravity.CENTER_VERTICAL or when (style.alignment) { "left" -> Gravity.START; "right" -> Gravity.END; else -> Gravity.CENTER_HORIZONTAL }
         view.minWidth = 0; view.minHeight = 0; view.minimumWidth = 0; view.minimumHeight = 0
-        view.setPadding((4 * scale).toInt(), 0, (4 * scale).toInt(), 0)
+        val border = if (widgets[field.id] === view) style.visibleBorderWidthPx else 0
+        val inset = ((ScriptUiControlMetrics.INSET + border) * scale).roundToInt()
+        val verticalInset = (border * scale).roundToInt()
+        view.setPadding(inset, verticalInset, inset, verticalInset)
         view.includeFontPadding = false
         if (view is Button) view.setAllCaps(false)
         if (view is Switch) view.useCompactSwitch(scale)
-        if (view is CheckBox) view.buttonDrawable = compactIndicator(scale, circle = false)
-        if (view is CheckedTextView) view.checkMarkDrawable = compactIndicator(scale, circle = field.control != UiControl.MULTISELECT)
+        if (view is CheckBox) { view.buttonTintList = null; view.buttonDrawable = compactIndicator(scale, circle = false) }
+        if (view is CheckedTextView) { view.checkMarkTintList = null; view.checkMarkDrawable = compactIndicator(scale, circle = field.control != UiControl.MULTISELECT) }
         if (field.control in setOf(UiControl.LABEL, UiControl.BUTTON, UiControl.NAVIGATION, UiControl.CHECKBOX, UiControl.SWITCH)) {
             view.setSingleLine(false); view.maxLines = Int.MAX_VALUE; view.ellipsize = null; view.breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
         }
@@ -401,19 +413,7 @@ class ScriptUiView(
         text = label; textSize = 12f; minWidth = 0; minHeight = 0; minimumWidth = 0; minimumHeight = 0
         includeFontPadding = false; gravity = Gravity.CENTER; setPadding(4.dp(), 0, 4.dp(), 0)
     }
-    private fun compactIndicator(scale: Float, circle: Boolean): StateListDrawable {
-        val size = ScriptUiControlMetrics.pixels(ScriptUiControlMetrics.INDICATOR, scale)
-        fun shape(checked: Boolean) = GradientDrawable().apply {
-            setSize(size, size)
-            shape = if (circle) GradientDrawable.OVAL else GradientDrawable.RECTANGLE
-            cornerRadius = 3 * scale
-            setColor(if (checked) Color.rgb(56, 106, 255) else Color.TRANSPARENT)
-            setStroke(scale.roundToInt().coerceAtLeast(1), Color.rgb(56, 106, 255))
-        }
-        return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_checked), shape(true)); addState(intArrayOf(), shape(false))
-        }
-    }
+    private fun compactIndicator(scale: Float, circle: Boolean) = ScriptUiIndicatorDrawable(scale, circle)
     private fun choicesAdapter(field: UiField, layout: Int, choices: List<String>, emptyChoice: Boolean = false) = object : ArrayAdapter<String>(context, layout, choices) {
         override fun areAllItemsEnabled() = !emptyChoice
         override fun isEnabled(position: Int) = !emptyChoice || position != 0
@@ -424,12 +424,14 @@ class ScriptUiView(
                     val scale = renderScale
                     val height = ((style.fontPx * 1.8f).coerceAtLeast(20f) * scale).roundToInt().coerceAtLeast(1)
                     val selected = field.control == UiControl.SELECT && !popup
+                    if (selected && text.text == "未选择" && values[field.id].isNullOrEmpty())
+                        text.setTextColor(ScriptUiControlVisuals.hintColor(Color.parseColor(style.textColor)))
                     text.setSingleLine(false); text.breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
                     text.maxLines = if (selected) ((style.height - 8) / (style.fontPx * 1.2f)).toInt().coerceAtLeast(1) else Int.MAX_VALUE
                     text.ellipsize = if (selected) android.text.TextUtils.TruncateAt.END else null
                     text.minHeight = if (popup) height.coerceAtLeast(24.dp()) else height
                     val inset = (4 * scale).roundToInt(); text.setPadding(inset, inset, inset, inset)
-                    text.layoutParams?.height = if (selected) (style.height * scale).roundToInt().coerceAtLeast(1) else LayoutParams.WRAP_CONTENT
+                    text.layoutParams?.height = if (selected) ((style.height - style.visibleBorderWidthPx * 2) * scale).roundToInt().coerceAtLeast(1) else LayoutParams.WRAP_CONTENT
                 }
             }
         }

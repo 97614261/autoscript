@@ -15,7 +15,10 @@ internal class ProgramLabelArguments(private val args: JsonObject, val compact: 
     fun objectSize(key: String): Int? = args.get(key)?.takeIf { it.isJsonObject }?.asJsonObject?.size()
     fun additionalColorCount(): Int? = args.get("additionalColors")?.takeIf { it.isJsonPrimitive }?.asString
         ?.takeIf { it.isNotBlank() && it.length <= 164 }?.let { value -> 1 + value.count { it == ';' } }
-    fun variable(key: String): String? = text(key)?.let { if (compact) "\$$it" else "变量 $it" }
+    fun variable(key: String): String? = text(key)?.let {
+        if (it.startsWith("=")) if (compact) it.drop(1) else "表达式 ${it.drop(1)}"
+        else if (compact) "\$$it" else "变量 $it"
+    }
     fun scalar(key: String): String = args.get(key)?.let(::scalarValue) ?: "?"
     fun input(key: String, quoted: Boolean = false): String = variable("${key}Variable")
         ?: if (quoted) scalar(key) else text(key) ?: "?"
@@ -62,9 +65,13 @@ internal class ProgramLabelArguments(private val args: JsonObject, val compact: 
         return simpleComparison()
     }
 
-    private fun simpleComparison(): String = "${text("variable") ?: "?"} ${enum("operator") ?: "?"} ${input("value", quoted = true)}"
+    private fun simpleComparison(): String = "${text("variable")?.removePrefix("=") ?: "?"} ${enum("operator") ?: "?"} ${input("value", quoted = true)}"
 
     fun region(useEdgeVariables: Boolean = false): String? {
+        text("polygon")?.takeIf {it.isNotEmpty()}?.let {raw ->
+            val count=runCatching {com.google.gson.JsonParser.parseString(raw).asJsonArray.size()}.getOrNull()
+            return if(count==null) "多边形待调整" else "多边形·${count}点"
+        }
         val region = args.get("region")
         if (region != null) {
             if (!region.isJsonObject) return "区域未完成"

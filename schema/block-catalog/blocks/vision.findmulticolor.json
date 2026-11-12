@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1, "kind": "vision.findmulticolor", "nodeVersion": 1,
   "nodeSchemaId": "https://autoscript.local/schema/node/vision.findmulticolor/1/vision.findmulticolor.schema.json",
-  "title": "多点找色", "category": "vision", "summary": "在半开矩形内查找锚点色及最多64个相对偏移色。范围超出实际截图时按未找到处理并记录警告。",
+  "title": "多点找色", "category": "vision", "summary": "在半开矩形内查找锚点色及最多64个相对偏移色。范围超出实际截图时按未找到处理并记录警告。 可选多边形范围；找色只检查内部像素，多点整组、找图整个模板需位于选区内。",
   "searchTerms": ["findmulticolor", "多点找色", "偏移色", "组合色"],
   "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
   "properties": [
@@ -13,6 +13,7 @@
     { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
     { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "multiFound" },
     { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "multiX" },
-    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "multiY" }
+    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "multiY" },
+    {"path": "polygon", "label": "多边形选区", "editor": "string", "required": false, "defaultValue": ""}
   ], "migrations": []
 }

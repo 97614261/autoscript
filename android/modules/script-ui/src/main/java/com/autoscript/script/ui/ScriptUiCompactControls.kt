@@ -10,8 +10,8 @@ import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.Switch
 
-private val compactAccent = Color.rgb(56, 106, 255)
-private val compactLine = Color.rgb(226, 231, 240)
+private const val compactAccent = ScriptUiControlVisuals.ACCENT
+private const val compactLine = ScriptUiControlVisuals.LINE
 
 private fun roundedControl(width: Int, height: Int, color: Int) = GradientDrawable().apply {
     setSize(width, height)

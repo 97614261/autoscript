@@ -4,14 +4,15 @@ internal fun ProgramLabelArguments.visionDetails(kind: String): String? = when (
     "vision.findimage", "vision.findallimages", "vision.findgray", "vision.findfeatures", "vision.findscaled" -> parts(
         fileInput("imageDirectory")?.let { "目录 $it" } ?: arraySize("imagePaths")?.takeIf { it > 0 }?.let { "$it 张模板" }
             ?: fileInput("imagePath"),
-        if (compact) null else region(useEdgeVariables = kind == "vision.findimage"),
+        if (compact && text("polygon").isNullOrEmpty()) null else region(useEdgeVariables = kind == "vision.findimage"),
         score(if (kind == "vision.findfeatures") "minimumScorePermille" else "similarityPermille")?.let {
             if (kind == "vision.findfeatures") "${if (compact) "内点≥" else "最低内点比 "}$it"
             else "${if (compact) "≥" else "相似度≥"}$it"
         },
         if (kind == "vision.findscaled") score("minScalePermille")?.let { "缩放 $it 至 ${score("maxScalePermille") ?: "?"}" } else null,
         if (text("successAction") != null && text("successAction") != "none") enum("successAction")?.let {
-            (if (kind == "vision.findallimages" && boolean("allMatches") == true) "逐项" else if (compact) "" else "找到后") + it
+            (if (kind == "vision.findallimages" && boolean("allMatches") == true) "逐项" else if (compact) "" else "找到后") +
+                (if (text("actionRandom") == "inside") "图内随机" else if (text("actionAnchor") == "center") "中心" else "") + it
         } else null,
         output() ?: matchOutputs())
     "vision.findcolor", "vision.findallcolor", "vision.countcolor", "vision.components" -> parts(

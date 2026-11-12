@@ -184,6 +184,21 @@ impl Parser<'_> {
                         | "byteSub"
                         | "idiv"
                         | "irem"
+                        | "abs"
+                        | "floor"
+                        | "ceil"
+                        | "round"
+                        | "min"
+                        | "max"
+                        | "intOr"
+                        | "floatOr"
+                        | "split"
+                        | "splitAny"
+                        | "listLen"
+                        | "itemText"
+                        | "itemInt"
+                        | "itemFloat"
+                        | "itemJson"
                 ) {
                     return Err("仅允许白名单转换或字符函数");
                 }
@@ -191,7 +206,7 @@ impl Parser<'_> {
                 let mut values = vec![value];
                 while self.take(",") {
                     if values.len() >= 3 {
-                        return Err("字符函数最多三个参数");
+                        return Err("计算函数最多三个参数");
                     }
                     values.push(self.expression(0, depth + 1)?);
                 }
@@ -290,6 +305,9 @@ impl Expr {
                     .iter()
                     .map(|v| v.kind(lookup))
                     .collect::<Result<Vec<_>, _>>()?;
+                if let Some(result) = quick_function_kind(name, &kinds) {
+                    return result;
+                }
                 let expected: &[Kind] = match name.as_str() {
                     "sub" | "byteSub" => &[Kind::String, Kind::Integer, Kind::Integer],
                     "find" => &[Kind::String, Kind::String],
@@ -355,7 +373,9 @@ impl Expr {
             Self::Convert(name, value) => format!("__calc_convert('{}',{})", name, value.lua()),
             Self::Call(name, values) => format!(
                 "{}('{}',{})",
-                if matches!(name.as_str(), "idiv" | "irem") {
+                if is_quick_function(name) {
+                    "__calc_quick"
+                } else if matches!(name.as_str(), "idiv" | "irem") {
                     "__calc_integer"
                 } else {
                     "__calc_string"
@@ -367,12 +387,98 @@ impl Expr {
     }
 }
 
-fn quote_lua(value: &str) -> String {
+fn is_quick_function(name: &str) -> bool {
+    matches!(
+        name,
+        "abs"
+            | "floor"
+            | "ceil"
+            | "round"
+            | "min"
+            | "max"
+            | "intOr"
+            | "floatOr"
+            | "split"
+            | "splitAny"
+            | "listLen"
+            | "itemText"
+            | "itemInt"
+            | "itemFloat"
+            | "itemJson"
+    )
+}
+
+fn quick_function_kind(name: &str, kinds: &[Kind]) -> Option<Result<Kind, &'static str>> {
+    use Kind::{Integer, Number, String};
+    let numeric = |kind: &Kind| matches!(kind, Integer | Number);
+    let result = match name {
+        "abs" if kinds.len() == 1 && numeric(&kinds[0]) => Ok(kinds[0]),
+        "floor" | "ceil" | "round" if kinds.len() == 1 && numeric(&kinds[0]) => Ok(Integer),
+        "min" | "max" if kinds.len() == 2 && kinds.iter().all(numeric) => {
+            Ok(if kinds.contains(&Number) {
+                Number
+            } else {
+                Integer
+            })
+        }
+        "intOr" if kinds.len() == 2 && kinds[1] == Integer => Ok(Integer),
+        "floatOr" if kinds.len() == 2 && numeric(&kinds[1]) => Ok(Number),
+        "split" | "splitAny" if kinds == [String, String] || kinds == [String, String, Integer] => {
+            Ok(String)
+        }
+        "listLen" if kinds == [String] => Ok(Integer),
+        "itemText" | "itemInt" | "itemFloat" | "itemJson"
+            if (2..=3).contains(&kinds.len())
+                && kinds[0] == String
+                && matches!(kinds[1], Integer | String) =>
+        {
+            let output = match name {
+                "itemInt" => Integer,
+                "itemFloat" => Number,
+                _ => String,
+            };
+            if kinds.len() == 3 && kinds[2] != output && !(output == Number && kinds[2] == Integer)
+            {
+                Err("取值默认值与结果类型不一致")
+            } else {
+                Ok(output)
+            }
+        }
+        _ if is_quick_function(name) => Err("快捷计算函数参数数量或类型不匹配"),
+        _ => return None,
+    };
+    Some(result)
+}
+
+/// Collection helpers call the bounded data APIs; old scalar-only calculations stay compatible.
+pub fn calculation_uses_collections(source: &str) -> bool {
+    fn visit(expr: &Expr) -> bool {
+        match expr {
+            Expr::Call(name, values) => {
+                matches!(
+                    name.as_str(),
+                    "listLen" | "itemText" | "itemInt" | "itemFloat" | "itemJson"
+                ) || values.iter().any(visit)
+            }
+            Expr::Unary(_, value) | Expr::Convert(_, value) => visit(value),
+            Expr::Binary(_, a, b) => visit(a) || visit(b),
+            _ => false,
+        }
+    }
+    parse(source).is_ok_and(|expr| visit(&expr))
+}
+
+pub(crate) fn quote_lua(value: &str) -> String {
     let mut result = String::from("\"");
     for ch in value.chars() {
         match ch {
             '"' => result.push_str("\\\""),
             '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\u{8}' => result.push_str("\\b"),
+            '\u{c}' => result.push_str("\\f"),
             '\u{0}'..='\u{1f}' | '\u{7f}' => {
                 let _ = write!(result, "\\{:03}", u32::from(ch));
             }
@@ -381,6 +487,14 @@ fn quote_lua(value: &str) -> String {
     }
     result.push('"');
     result
+}
+
+pub(crate) fn infer(source: &str, lookup: impl Fn(&str) -> Option<ProjectVariableType>) -> Result<ProjectVariableType, &'static str> {
+    Ok(match parse(source)?.kind(&lookup)? {
+        Kind::Integer => ProjectVariableType::Integer,
+        Kind::Number => ProjectVariableType::Number,
+        Kind::String => ProjectVariableType::String,
+    })
 }
 
 pub(crate) fn validate(
@@ -401,7 +515,8 @@ pub(crate) fn render(source: &str) -> Result<String, &'static str> {
     Ok(parse(source)?.lua())
 }
 
-pub(crate) const LUA_HELPERS: &str = r"local function __calc_number(value)
+pub(crate) const LUA_HELPERS: &str = concat!(
+    r"local function __calc_number(value)
   if type(value) ~= 'number' or value ~= value or value == math.huge or value == -math.huge then error('计算需要有限数值',0) end
   return value
 end
@@ -511,7 +626,10 @@ local function __calc_binary(op,a,b)
     if op == '*' and b ~= 0 and r//b ~= a then error('整数计算溢出',0) end
   end
   return __calc_number(r)
-end";
+end",
+    "\n",
+    include_str!("variable_calculation_helpers.lua")
+);
 
 #[cfg(test)]
 mod tests {
@@ -672,5 +790,37 @@ mod tests {
         assert!(render("byteLen(\"中文\")")
             .unwrap()
             .starts_with("__calc_string('byteLen',"));
+    }
+
+    #[test]
+    fn quick_calculations_keep_strict_types_and_do_not_execute_source() {
+        for (source, target) in [
+            ("intOr(label,0)", Kind::Integer),
+            ("floatOr(label,0)", Kind::Number),
+            ("itemInt(label,count,0)", Kind::Integer),
+            ("itemText(label,\"字段\",\"\")", Kind::String),
+            ("listLen(splitAny(label,\",，; \\n\",3))", Kind::Integer),
+            ("abs(ratio)", Kind::Number),
+            ("round(ratio)", Kind::Integer),
+            ("min(count,ratio)", Kind::Number),
+        ] {
+            assert_eq!(parse(source).unwrap().kind(&lookup), Ok(target), "{source}");
+        }
+        for source in [
+            "split(count,\",\")",
+            "split(label,\",\",ratio)",
+            "itemInt(label,ratio)",
+            "itemInt(label,1,\"0\")",
+            "listLen(count)",
+            "floor(label)",
+            "intOr(label,ratio)",
+            "min(count)",
+        ] {
+            assert!(parse(source).unwrap().kind(&lookup).is_err(), "{source}");
+        }
+        assert!(calculation_uses_collections("int(itemText(label,count))"));
+        assert!(!calculation_uses_collections("\"itemInt(label,1)\""));
+        assert!(!calculation_uses_collections("split(label,\",\")"));
+        assert!(!calculation_uses_collections("os.execute(label)"));
     }
 }

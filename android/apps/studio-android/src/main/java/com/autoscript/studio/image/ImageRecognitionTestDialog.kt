@@ -3,12 +3,9 @@ package com.autoscript.studio
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -68,7 +65,7 @@ internal fun ImageRecognitionTestDialog(
     }
     var source by remember { mutableStateOf(paths.firstOrNull().orEmpty()) }
     var template by remember { mutableStateOf(paths.lastOrNull().orEmpty()) }
-    var tolerance by remember { mutableStateOf("0") }
+    var tolerance by remember { mutableStateOf("3") }
     var similarity by remember { mutableStateOf("900") }
     var direction by remember { mutableIntStateOf(0) }
     var bounds by remember(source) { mutableStateOf<List<String>?>(null) }
@@ -78,6 +75,7 @@ internal fun ImageRecognitionTestDialog(
     var operation by remember { mutableIntStateOf(Reply.TEMPLATE) }
     var showOcr by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("选取已保存的截屏和模板。坐标是原图像素，从左上角计算。") }
+    StudioSystemLogEffect("识别测试", message, skipInitial = true)
     var requestId by remember { mutableLongStateOf(0L) }
     var recognitionJob by remember { mutableStateOf<Job?>(null) }
     val busy = requestId != 0L
@@ -238,21 +236,10 @@ internal fun ImageRecognitionTestDialog(
             showOcr = false; onInsertRecognition?.invoke(config.kind, config.arguments(roi))
         },onConfigureResultReader=onConfigureResultReader)
     pickSource?.takeIf { visible }?.let { choosingSource ->
-        var query by remember(choosingSource) { mutableStateOf("") }
-        StudioPanelDialog(if (choosingSource) "选择截屏图像" else "选择模板", { pickSource = null }) {
-            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                RecognitionInput(query, { query = it }, Modifier.fillMaxWidth())
-                if (paths.isEmpty()) Text("暂无图片，请先截图并保存", fontSize = 11.sp)
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 230.dp)) {
-                    items(paths.filter { it.contains(query, true) }, key = { it }) { path ->
-                        Text(path, Modifier.fillMaxWidth().clickable {
-                            if (choosingSource) source = path else template = path
-                            invalidate()
-                            pickSource = null
-                        }.padding(vertical = 8.dp), fontSize = 11.sp)
-                    }
-                }
-            }
-        }
+        ProjectImagePickerDialog(snapshot, paths, if (choosingSource) source else template,
+            { pickSource = null }, { path ->
+                if (choosingSource) source = path else template = path
+                invalidate(); pickSource = null
+            }, title = if (choosingSource) "选择截屏图像" else "选择模板")
     }
 }

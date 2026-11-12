@@ -42,126 +42,170 @@ internal fun polygonSelectionOperations(width:Int,height:Int,points:List<Project
     return operations
 }
 
-/** A polygon authors an explicit mask/crop, never a polygon-shaped search ROI. */
+/** Shared vertex editor; search regions and destructive mask/crop operations remain separate. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-internal fun ImagePolygonDialog(bitmap:Bitmap,onDismiss:()->Unit,onApply:(List<ImagePixelOperation>)->Unit) {
+internal fun ImagePolygonDialog(bitmap:Bitmap,onDismiss:()->Unit,onApply:(List<ImagePixelOperation>)->Unit = {},
+    initialPoints:List<ProjectMaskPoint> = emptyList(),onSelect:((List<ProjectMaskPoint>)->Unit)? = null) {
     var full by remember {mutableStateOf(false)}
-    var history by remember(bitmap) {mutableStateOf(listOf(emptyList<ProjectMaskPoint>()))}
+    var history by remember(bitmap) {mutableStateOf(listOf(initialPoints.toList()))}
     var index by remember(bitmap) {mutableIntStateOf(0)}
     val points=history[index]
-    var draft by remember(bitmap) {mutableStateOf<List<ProjectMaskPoint>?>(null)}
     var selected by remember(bitmap) {mutableIntStateOf(-1)}
     var pan by remember {mutableStateOf(false)}
+    var moveShape by remember {mutableStateOf(false)}
     var crop by remember {mutableStateOf(true)}
     var keep by remember {mutableStateOf(true)}
     var discard by remember {mutableStateOf(false)}
     var message by remember {mutableStateOf("点图加顶点，拖顶点修形；双指缩放，移动模式拖图。")}
-    var viewport by remember(bitmap) {mutableStateOf<ImageToolViewport?>(null)}
-    val shown=draft ?: points
-    val image=remember(bitmap) {bitmap.asImageBitmap()}
-    val validation=remember(points,crop,keep) {runCatching {polygonSelectionOperations(bitmap.width,bitmap.height,points,crop,keep)}}
-    val candidate=validation.getOrNull()
-    fun close() {if(points.isNotEmpty()) discard=true else onDismiss()}
+    StudioSystemLogEffect("多边形选区", message, skipInitial = true)
+    var viewport by rememberImageWorkspaceViewport(bitmap)
+    val workspace = LocalImageWorkspace.current
+    val candidate=remember(points,crop,keep,onSelect==null) {
+        if(onSelect==null) runCatching {polygonSelectionOperations(bitmap.width,bitmap.height,points,crop,keep)}.getOrNull() else null
+    }
+    val pointsFit = points.all { it.x <= bitmap.width && it.y <= bitmap.height }
+    val searchValid=remember(points,pointsFit) {pointsFit && runCatching {ImageSearchPolygon.validate(points)}.isSuccess}
+    fun close() {if(points!=initialPoints) discard=true else onDismiss()}
     fun publish(next:List<ProjectMaskPoint>) {
         if(next==points) return
         if(next.size>128 || next.distinct().size!=next.size) {message="顶点最多128个，不能重合";return}
         history=(history.take(index+1)+listOf(next.toList())).takeLast(33);index=history.lastIndex
         selected=selected.coerceAtMost(next.lastIndex)
     }
-    val latestPoints by rememberUpdatedState(points)
-    val latestViewport by rememberUpdatedState(viewport)
-    val latestPublish by rememberUpdatedState<(List<ProjectMaskPoint>)->Unit>(::publish)
-    StudioPanelDialog("多边形选区",::close,fullScreen=full,onToggleFullScreen={full=!full},compactHeader=true,showFooter=false) {
+    ImageWorkspaceDraftClear(if (points.isNotEmpty()) ({ publish(emptyList()); selected = -1 }) else null)
+    val polygonCanvas: @Composable (Modifier) -> Unit = { bounds ->
+        ImageWorkspaceCanvasSlot(bounds) { canvasBounds ->
+            ImagePolygonCanvas(bitmap, viewport, points, selected, pan, moveShape, canvasBounds,
+                onViewport={viewport=it},onSelected={selected=it},onPublish={publish(it)})
+        }
+    }
+    ImageWorkspacePanel(if(onSelect!=null) "多边形范围" else "多边形选区",{ close() },fullScreen=full,onToggleFullScreen={full=!full},compactHeader=true,showFooter=false) {
         BoxWithConstraints(Modifier.fillMaxWidth().heightIn(max=if(full)1000.dp else 600.dp)) {
-            val controlsHeight=maxHeight*.30f
-            val optionsHeight=maxHeight*.28f
+            val previewHeight=(maxHeight*.40f).coerceIn(100.dp,240.dp)
             Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().heightIn(max=controlsHeight).verticalScroll(rememberScrollState()).padding(4.dp)) {
-                    FlowRow(horizontalArrangement=Arrangement.spacedBy(3.dp)) {
-                        ImageToolCompactAction(if(pan) "加点/修形" else "移动图片",true) {pan=!pan}
-                        ImageToolCompactAction("−",true) {viewport=viewport?.let {it.scaledBy(.5f,it.viewWidth/2,it.viewHeight/2)}}
-                        ImageToolCompactAction("＋",true) {viewport=viewport?.let {it.scaledBy(2f,it.viewWidth/2,it.viewHeight/2)}}
-                        ImageToolCompactAction("适应",true) {viewport=viewport?.reset()}
-                        ImageToolCompactAction("撤销",index>0) {index--;selected=-1}
-                        ImageToolCompactAction("重做",index<history.lastIndex) {index++;selected=-1}
-                        ImageToolCompactAction("删选中点",selected in points.indices) {publish(points.filterIndexed {i,_->i!=selected});selected=-1}
-                        ImageToolCompactAction("清空",points.isNotEmpty()) {publish(emptyList())}
-                    }
-                }
-                Canvas(Modifier.fillMaxWidth().weight(1f).clipToBounds().background(Color(0xff252c38)).semantics {contentDescription="多边形选区画布"}
-                    .onSizeChanged {size -> if(size.width>0 && size.height>0) viewport=viewport?.resized(size.width.toFloat(),size.height.toFloat())
-                        ?: ImageToolViewport.fit(bitmap.width,bitmap.height,size.width.toFloat(),size.height.toFloat())}
-                    .pointerInput(bitmap,pan) {
-                        awaitEachGesture {
-                            val down=awaitFirstDown(requireUnconsumed=false)
-                            val view=latestViewport ?: return@awaitEachGesture
-                            val before=latestPoints
-                            fun point(p:Offset)=ProjectMaskPoint(((p.x-view.translateX)/view.scale).roundToInt().coerceIn(0,bitmap.width),
-                                ((p.y-view.translateY)/view.scale).roundToInt().coerceIn(0,bitmap.height))
-                            val hit=before.indices.minByOrNull {i -> val p=before[i];val xy=view.toView(p.x,p.y);hypot(xy.first-down.position.x,xy.second-down.position.y)}
-                                ?.takeIf {i -> val xy=view.toView(before[i].x,before[i].y);hypot(xy.first-down.position.x,xy.second-down.position.y)<=24.dp.toPx()}
-                            var next=before;var accepted=false;var pinching=false
-                            var centroid:Offset?=null;var distance=0f;var current=view
-                            selected=hit ?: -1
-                            down.consume()
-                            try {
-                                while(true) {
-                                    val event=awaitPointerEvent()
-                                    val pressed=event.changes.filter {it.pressed}
-                                    if(pressed.size>=2) {
-                                        draft=null;pinching=true
-                                        val a=pressed[0].position;val b=pressed[1].position
-                                        val centre=(a+b)/2f;val span=(a-b).getDistance()
-                                        centroid?.let {old -> current=current.scaledBy(if(distance>0)span/distance else 1f,centre.x,centre.y).panned(centre.x-old.x,centre.y-old.y);viewport=current}
-                                        centroid=centre;distance=span
-                                        pressed.forEach {it.consume()};continue
-                                    }
-                                    if(pinching) {if(pressed.isEmpty())break else continue}
-                                    val change=event.changes.firstOrNull {it.id==down.id} ?: break
-                                    if(change.isConsumed)break
-                                    if(pan) {val delta=change.position-change.previousPosition;current=current.panned(delta.x,delta.y);viewport=current}
-                                    else if(hit!=null) {next=before.toMutableList().also {it[hit]=point(change.position)};draft=next}
-                                    change.consume()
-                                    if(!change.pressed) {
-                                        if(!pan && hit==null) {
-                                            // An outside-image tap is not silently clamped into a new edge vertex.
-                                            val p=change.position
-                                            if(p.x in view.translateX..(view.translateX+view.scaledWidth) && p.y in view.translateY..(view.translateY+view.scaledHeight)) next=before+point(p)
-                                        }
-                                        accepted=true;break
-                                    }
-                                }
-                                if(accepted && !pan && !pinching) latestPublish(next)
-                            } finally {draft=null}
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    ImageWorkspaceSection("绘制与调整") {
+                        val editMode=if(pan) "pan" else if(moveShape) "shape" else "edit"
+                        ImageToolChoice("操作",editMode,listOf("edit" to "加点修形")+
+                            (if(onSelect!=null) listOf("shape" to "拖选区") else emptyList())+listOf("pan" to "移图片"),true) { value ->
+                            if(value=="shape" && (points.isEmpty() || !pointsFit)) message="先添加有效顶点，再拖动整个选区"
+                            else {pan=value=="pan";moveShape=value=="shape"}
                         }
-                    }) {
-                    viewport?.let {v ->
-                        drawImage(image,dstOffset=IntOffset(v.translateX.roundToInt(),v.translateY.roundToInt()),
-                            dstSize=IntSize(v.scaledWidth.roundToInt().coerceAtLeast(1),v.scaledHeight.roundToInt().coerceAtLeast(1)),filterQuality=FilterQuality.None)
-                        val path=Path().apply {fillType=PathFillType.EvenOdd}
-                        shown.forEachIndexed {i,p ->val xy=v.toView(p.x,p.y);if(i==0)path.moveTo(xy.first,xy.second) else path.lineTo(xy.first,xy.second)}
-                        if(shown.size>=3) {path.close();drawPath(path,Color(0x3356cfff))}
-                        drawPath(path,Color(0xff56cfff),style=Stroke(2.dp.toPx()))
-                        shown.forEachIndexed {i,p ->val xy=v.toView(p.x,p.y);drawCircle(if(i==selected)Color.Yellow else Color.White,5.dp.toPx(),Offset(xy.first,xy.second))}
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(2.dp)) {
+                            ImageToolCompactAction("缩小",true) {viewport=viewport?.let {it.scaledBy(.5f,it.viewWidth/2,it.viewHeight/2)}}
+                            ImageToolCompactAction("放大",true) {viewport=viewport?.let {it.scaledBy(2f,it.viewWidth/2,it.viewHeight/2)}}
+                            ImageToolCompactAction("适应",true) {viewport=viewport?.reset()}
+                            ImageToolCompactAction("撤销",index>0) {index--;selected=-1}
+                            ImageToolCompactAction("重做",index<history.lastIndex) {index++;selected=-1}
+                        }
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(2.dp)) {
+                            ImageToolCompactAction("删除顶点",selected in points.indices) {publish(points.filterIndexed {i,_->i!=selected});selected=-1}
+                            ImageToolCompactAction("清空",points.isNotEmpty()) {publish(emptyList())}
+                            Text("${points.size}/128点"+if(selected in points.indices) " · 选中第${selected+1}点" else "",fontSize=10.sp,
+                                color=androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=6.dp))
+                        }
                     }
-                }
-                Column(Modifier.fillMaxWidth().heightIn(max=optionsHeight).verticalScroll(rememberScrollState()).padding(5.dp)) {
-                    Text("${points.size}/128点 · ${if(keep)"选区外透明" else "忽略选区内"} · 原像素，不改变搜索ROI",fontSize=10.sp)
-                    Text(message,fontSize=10.sp)
-                    if(candidate==null) Text(if(points.size<3) "至少添加3个不同顶点" else "选区无效：请检查重合顶点、面积或图像预算",fontSize=10.sp,color=Color(0xffaa3f45))
-                    FlowRow(horizontalArrangement=Arrangement.spacedBy(3.dp)) {
-                        ImageToolCompactAction(if(keep)"✓ 保留选区" else "保留选区",true) {keep=true}
-                        ImageToolCompactAction(if(!keep)"✓ 忽略选区" else "忽略选区",true) {keep=false}
-                        ImageToolCompactAction(if(crop)"✓ 裁到外接框" else "保留原尺寸",keep) {crop=!crop}
+                    polygonCanvas(if(workspace==null) Modifier.fillMaxWidth().height(previewHeight) else Modifier.fillMaxWidth())
+                    if(onSelect==null) ImageWorkspaceSection("应用方式") {
+                        ImageToolChoice("选区",if(keep) "keep" else "ignore",listOf("keep" to "保留内部","ignore" to "忽略内部"),true) {keep=it=="keep"}
+                        ImageToolToggle("裁到外接框",crop,keep) {crop=it}
                     }
+                    if(onSelect!=null && !pointsFit) ImageWorkspaceHint("原选区超出当前截图，请清空后重新选取。",error=true)
+                    if(if(onSelect!=null) !searchValid else candidate==null) ImageWorkspaceHint(
+                        if(points.size<3) "至少添加3个不同顶点" else "选区无效：请检查重合顶点、面积或图像预算",error=true)
+                    ImageWorkspaceHint(message)
+                    ImageToolHelp(if(onSelect!=null) "点图加顶点，拖顶点修形；双指缩放。拖选区可移动整个多边形，移图片只调整视图。搜索只在选区内部进行，保留截图原坐标。"
+                        else "点图加顶点，拖顶点修形；双指缩放。保留内部时选区外透明，忽略内部时选区内透明；处理使用原像素，不改变搜索ROI。")
                 }
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {
+                androidx.compose.material3.HorizontalDivider()
+                Row(Modifier.fillMaxWidth().padding(4.dp),horizontalArrangement=Arrangement.End) {
                     ImageToolCompactAction("取消",true,onClick=::close)
-                    GlyphMakerPrimaryAction("应用选区",candidate!=null) {onApply(requireNotNull(candidate))}
+                    GlyphMakerPrimaryAction(if(onSelect!=null) "使用范围" else "应用选区",if(onSelect!=null) searchValid else candidate!=null) {
+                        if(onSelect!=null) onSelect(points.toList()) else onApply(requireNotNull(candidate))
+                    }
                 }
             }
         }
     }
-    if(discard) EditorPromptDialog("放弃多边形选区？","不会改变原图或资源。",{discard=false},{discard=false;onDismiss()},"继续编辑","放弃")
+    if(discard) EditorPromptDialog("放弃多边形选区？","不会改变原图或资源。",{discard=false;workspace?.cancelNavigation?.invoke()},{discard=false;onDismiss()},"继续编辑","放弃")
+}
+
+/** The same original-pixel editor works directly under the toolbar and in standalone callers. */
+@Composable
+internal fun ImagePolygonCanvas(bitmap: Bitmap, viewport: ImageToolViewport?, points: List<ProjectMaskPoint>,
+    selected: Int, pan: Boolean, moveShape: Boolean, canvasBounds: Modifier = Modifier.fillMaxSize(),
+    onViewport: (ImageToolViewport) -> Unit, onSelected: (Int) -> Unit,
+    onPublish: (List<ProjectMaskPoint>) -> Unit) {
+    var draft by remember(bitmap, pan, moveShape) {mutableStateOf<List<ProjectMaskPoint>?>(null)}
+    val shown=draft ?: points
+    val image=remember(bitmap) {bitmap.asImageBitmap()}
+    val latestPoints by rememberUpdatedState(points)
+    val latestViewport by rememberUpdatedState(viewport)
+    val latestPublish by rememberUpdatedState(onPublish)
+    val latestOnViewport by rememberUpdatedState(onViewport)
+    val latestOnSelected by rememberUpdatedState(onSelected)
+    Canvas(canvasBounds.clipToBounds().background(Color(0xff252c38)).semantics {contentDescription="多边形选区画布"}
+        .onSizeChanged {size -> if(size.width>0 && size.height>0) latestOnViewport(viewport?.resized(size.width.toFloat(),size.height.toFloat())
+            ?: ImageToolViewport.fit(bitmap.width,bitmap.height,size.width.toFloat(),size.height.toFloat()))}
+        .pointerInput(bitmap,pan,moveShape) {
+            awaitEachGesture {
+                val down=awaitFirstDown(requireUnconsumed=false)
+                val view=latestViewport ?: return@awaitEachGesture
+                val before=latestPoints
+                val pointsFit=before.all {it.x in 0..bitmap.width && it.y in 0..bitmap.height}
+                fun point(p:Offset)=ProjectMaskPoint(((p.x-view.translateX)/view.scale).roundToInt().coerceIn(0,bitmap.width),
+                    ((p.y-view.translateY)/view.scale).roundToInt().coerceIn(0,bitmap.height))
+                val hit=before.indices.minByOrNull {i -> val p=before[i];val xy=view.toView(p.x,p.y);hypot(xy.first-down.position.x,xy.second-down.position.y)}
+                    ?.takeIf {i -> val xy=view.toView(before[i].x,before[i].y);hypot(xy.first-down.position.x,xy.second-down.position.y)<=24.dp.toPx()}
+                var next=before;var accepted=false;var pinching=false
+                var centroid:Offset?=null;var distance=0f;var current=view
+                latestOnSelected(hit ?: -1)
+                down.consume()
+                try {
+                    while(true) {
+                        val event=awaitPointerEvent()
+                        val pressed=event.changes.filter {it.pressed}
+                        if(pressed.size>=2) {
+                            draft=null;pinching=true
+                            val a=pressed[0].position;val b=pressed[1].position
+                            val centre=(a+b)/2f;val span=(a-b).getDistance()
+                            centroid?.let {old -> current=current.scaledBy(if(distance>0)span/distance else 1f,centre.x,centre.y).panned(centre.x-old.x,centre.y-old.y);latestOnViewport(current)}
+                            centroid=centre;distance=span
+                            pressed.forEach {it.consume()};continue
+                        }
+                        if(pinching) {if(pressed.isEmpty())break else continue}
+                        val change=event.changes.firstOrNull {it.id==down.id} ?: break
+                        if(change.isConsumed)break
+                        if(pan) {val delta=change.position-change.previousPosition;current=current.panned(delta.x,delta.y);latestOnViewport(current)}
+                        else if(moveShape && before.isNotEmpty() && pointsFit) {
+                            val dx=((change.position.x-down.position.x)/view.scale).roundToInt().coerceIn(-before.minOf {it.x},bitmap.width-before.maxOf {it.x})
+                            val dy=((change.position.y-down.position.y)/view.scale).roundToInt().coerceIn(-before.minOf {it.y},bitmap.height-before.maxOf {it.y})
+                            next=before.map {ProjectMaskPoint(it.x+dx,it.y+dy)};draft=next
+                        }
+                        else if(hit!=null) {next=before.toMutableList().also {it[hit]=point(change.position)};draft=next}
+                        change.consume()
+                        if(!change.pressed) {
+                            if(!pan && !moveShape && hit==null) {
+                                // An outside-image tap is not silently clamped into a new edge vertex.
+                                val p=change.position
+                                if(p.x in view.translateX..(view.translateX+view.scaledWidth) && p.y in view.translateY..(view.translateY+view.scaledHeight)) next=before+point(p)
+                            }
+                            accepted=true;break
+                        }
+                    }
+                    if(accepted && !pan && !pinching) latestPublish(next)
+                } finally {draft=null}
+            }
+        }) {
+        viewport?.let {v ->
+            drawImage(image,dstOffset=IntOffset(v.translateX.roundToInt(),v.translateY.roundToInt()),
+                dstSize=IntSize(v.scaledWidth.roundToInt().coerceAtLeast(1),v.scaledHeight.roundToInt().coerceAtLeast(1)),filterQuality=FilterQuality.None)
+            val path=Path().apply {fillType=PathFillType.EvenOdd}
+            shown.forEachIndexed {i,p ->val xy=v.toView(p.x,p.y);if(i==0)path.moveTo(xy.first,xy.second) else path.lineTo(xy.first,xy.second)}
+            if(shown.size>=3) {path.close();drawPath(path,Color(0x3356cfff))}
+            drawPath(path,Color(0xff56cfff),style=Stroke(2.dp.toPx()))
+            shown.forEachIndexed {i,p ->val xy=v.toView(p.x,p.y);drawCircle(if(i==selected)Color.Yellow else Color.White,5.dp.toPx(),Offset(xy.first,xy.second))}
+        }
+    }
 }

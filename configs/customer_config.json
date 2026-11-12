@@ -1,0 +1,18 @@
+{
+  "setting": {
+    "phone": {
+      "brand": "Samsung",
+      "code": "a52xq",
+      "imei": "869390048535541",
+      "manufacturer": "Samsung",
+      "miit": "SM-A5260",
+      "model": "Galaxy A52 5G",
+      "vdid": "76895a53-ff8a-4992-8e62-e222165cf498"
+    },
+    "record": {
+      "time": {
+        "first": "0"
+      }
+    }
+  }
+}

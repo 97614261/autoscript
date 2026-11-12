@@ -12,6 +12,55 @@ fn project() -> Value {
 }
 
 #[test]
+fn polygon_gray_scaled_and_features_validate_bounds_api_and_emit_guards() {
+    let mut manifest = project();
+    manifest["capabilities"] = json!([
+        "core.task",
+        "screen.capture",
+        "vision.template",
+        "vision.opencv"
+    ]);
+    manifest["resources"] = json!([{"kind":"image","path":"assets/images/public.png"}]);
+    manifest["variables"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"frame","type":"image","scope":"global"}));
+    manifest["variables"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"score","type":"integer","scope":"global"}));
+    let shape = "[[0,0],[4,0],[0,4]]";
+    let cases = [
+        (
+            "vision.findgray",
+            json!({"frameVariable":"frame","imagePath":"assets/images/public.png","similarityPermille":900,"region":{"left":0,"top":0,"right":4,"bottom":4},"autoCapture":false,"foundVariable":"i","xVariable":"w","yVariable":"h","scoreVariable":"score","polygon":shape}),
+        ),
+        (
+            "vision.findscaled",
+            json!({"frameVariable":"frame","imagePath":"assets/images/public.png","left":0,"top":0,"right":4,"bottom":4,"tolerance":0,"similarityPermille":900,"direction":0,"minScalePermille":1000,"maxScalePermille":1000,"stepPermille":100,"resultVariable":"s","polygon":shape}),
+        ),
+        (
+            "vision.findfeatures",
+            json!({"frameVariable":"frame","imagePath":"assets/images/public.png","left":0,"top":0,"right":4,"bottom":4,"minimumScorePermille":700,"resultVariable":"s","polygon":shape}),
+        ),
+    ];
+    for (kind, args) in cases {
+        let result = compile(&manifest, &[(kind, args.clone())]).unwrap();
+        let lua = String::from_utf8(result.main_lua).unwrap();
+        assert!(
+            lua.contains("polygonRegionVersion") && lua.contains(shape),
+            "{kind}: {lua}"
+        );
+        let mut bad = args.clone();
+        bad["polygon"] = json!("[[0,0],[5,0],[0,4]]");
+        assert!(compile(&manifest, &[(kind, bad)]).is_err(), "{kind}");
+        let mut old = manifest.clone();
+        old["runtimeApi"] = json!("1.7");
+        assert!(compile(&old, &[(kind, args)]).is_err(), "{kind}");
+    }
+}
+
+#[test]
 fn number_at_uses_declared_typed_operands_and_round_trips() {
     let args = json!({"text":"100(+100) 180","textVariable":"s","index":2,"resultVariable":"s"});
     let output = compile(&project(), &[("text.numberat", args.clone())]).unwrap();

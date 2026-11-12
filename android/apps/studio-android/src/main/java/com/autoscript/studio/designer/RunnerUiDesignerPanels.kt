@@ -1,5 +1,7 @@
 package com.autoscript.studio
 
+import com.autoscript.script.ui.visibleBorderWidthPx
+
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,7 +37,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.roundToInt
 import com.autoscript.project.store.ProjectSnapshot
-import com.autoscript.project.store.ProjectVariableScope
 import com.autoscript.script.ui.UiPage
 
 internal object DesignerColors {
@@ -136,12 +137,16 @@ internal fun DesignerMenu(label: String, actions: List<DesignerMenuAction>) {
 @Composable
 internal fun DesignerToolbox(draft: RunnerUiDesignerDraft, page: UiPage, selection: Set<String>, busy: Boolean, modifier: Modifier,
     onSelect: (String) -> Unit, onAdd: (RunnerUiControlKind) -> Unit,
+    onAddCombination: (DesignerCombination) -> Unit,
 ) {
     var tab by remember { mutableStateOf("添加") }
     Column(modifier.clip(RoundedCornerShape(6.dp)).background(DesignerColors.Panel).border(1.dp, DesignerColors.Line, RoundedCornerShape(6.dp)).padding(4.dp)) {
         DesignerTabs(listOf("控件", "图层"), if (tab == "添加") "控件" else tab) { tab = if (it == "控件") "添加" else it }
         Spacer(Modifier.height(4.dp))
         if (tab == "添加") Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            DesignerMenu("添加组合", DesignerCombination.entries.map { combination ->
+                DesignerMenuAction(combination.label, !busy) { onAddCombination(combination) }
+            })
             RunnerUiControlKind.entries.chunked(2).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 row.forEach { kind -> Box(Modifier.weight(1f).heightIn(min = 24.dp).clip(RoundedCornerShape(4.dp)).background(DesignerColors.Workspace)
                     .clickable(!busy) { onAdd(kind) }.padding(2.dp), contentAlignment = Alignment.Center) {
@@ -169,6 +174,8 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
     onDistribute: (Boolean) -> Unit, onLayer: (Boolean) -> Unit, onNudge: (Int, Int) -> Unit, onDeletePage: () -> Unit,
     smartSize: Boolean, onSmartSize: (Boolean) -> Unit, onFitContent: () -> Unit,
     sizePreset: DesignerSizePreset?, onSizePreset: (DesignerSizePreset) -> Unit,
+    onAppearance: (DesignerAppearance) -> Unit,
+    notices: List<DesignerLayoutNotice>,
 ) {
     Column(modifier.clip(RoundedCornerShape(6.dp)).background(DesignerColors.Panel).border(1.dp, DesignerColors.Line, RoundedCornerShape(6.dp)).padding(4.dp)) {
         Row(Modifier.heightIn(min = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -180,6 +187,12 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
         if (field != null) Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
             DesignerTabs(listOf("布局", "样式", "交互"), tab, onTab)
         }
+        field?.let { selected -> selected.ui.binding?.let { binding ->
+            val bound = draft.bindingOptions(selected, snapshot.manifest).firstOrNull { it.key == binding }
+            Text("绑定 · ${bound?.summary ?: "原绑定不可用"}", Modifier.fillMaxWidth().clickable(enabled) { onTab("交互") },
+                fontSize = 9.sp, lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (bound == null) Color(0xFFB26A1B) else DesignerColors.Accent)
+        } }
         key(field?.id ?: page.id, tab) {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (field == null) {
@@ -198,10 +211,16 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                 } else {
                     val f = field
                     fun style(next: com.autoscript.script.ui.UiPresentation) = onField(f.copy(ui = next))
+                    notices.forEach { notice ->
+                        Text(notice.message, color = if (notice.kind == DesignerNoticeKind.SCROLL) DesignerColors.Muted else Color(0xFFB26A1B),
+                            fontSize = 9.sp, lineHeight = 12.sp)
+                    }
                     when (tab) {
                         "布局" -> {
-                            DesignerInput("标题", f.label, enabled) { onField(f.copy(label = it)) }
+                            DesignerInput(if (f.kind in setOf(RunnerUiControlKind.TEXT, RunnerUiControlKind.PASSWORD, RunnerUiControlKind.INTEGER,
+                                RunnerUiControlKind.DECIMAL, RunnerUiControlKind.TEXTAREA)) "提示文字" else "标题", f.label, enabled) { onField(f.copy(label = it)) }
                             when {
+                                f.kind == RunnerUiControlKind.CONTAINER -> Unit
                                 f.kind.wireName == "multiChoice" -> {
                                     val options = designerOptions(f.optionsText)
                                     val selected = runCatching { com.autoscript.script.ui.uiSelections(f.initialText, options) }.getOrDefault(emptyList())
@@ -222,7 +241,8 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                                 else -> DesignerInput("内容", f.initialText, enabled, numeric = f.kind.wireName == "integer") { onField(f.copy(initialText = it)) }
                             }
                             if (f.kind.wireName in setOf("integer", "number")) Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                                DesignerInput("最小", f.minimum, enabled, Modifier.weight(1f), true) { onField(f.copy(minimum = it)) }
+                                if (f.kind != RunnerUiControlKind.PROGRESS || f.minimum.isNotBlank() && f.minimum.toLongOrNull() != 0L)
+                                    DesignerInput("最小", f.minimum, enabled, Modifier.weight(1f), true) { onField(f.copy(minimum = it)) }
                                 DesignerInput("最大", f.maximum, enabled, Modifier.weight(1f), true) { onField(f.copy(maximum = it)) }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -243,7 +263,8 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 DesignerToggle("可见", f.ui.visible, enabled, Modifier.weight(1f)) { style(f.ui.copy(visible = it)) }
                                 DesignerToggle("启用", f.ui.enabled, enabled, Modifier.weight(1f)) { style(f.ui.copy(enabled = it)) }
-                                DesignerToggle("必填", f.required, enabled, Modifier.weight(1f)) { onField(f.copy(required = it)) }
+                                if (f.kind.hasRequiredChoice() || f.required)
+                                    DesignerToggle(if (f.kind.hasRequiredChoice()) "必填" else "旧必填", f.required, enabled, Modifier.weight(1f)) { onField(f.copy(required = it)) }
                             }
                             if (count > 1) {
                                 DesignerSection("多选对齐")
@@ -254,6 +275,40 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                             }
                         }
                         "样式" -> {
+                            val propertyInputs = LocalDesignerPropertyInputs.current
+                            fun border(width: Int) {
+                                propertyInputs?.clearBorderWidths(setOf(f.id))
+                                style(f.ui.withDesignerBorderWidth(width))
+                            }
+                            DesignerSection(if (count > 1) "所选控件外观" else "控件外观")
+                            Row(Modifier.fillMaxWidth()) {
+                                DesignerAppearance.entries.forEach { appearance ->
+                                    DesignerAction(appearance.label, Modifier.weight(1f), enabled) { onAppearance(appearance) }
+                                }
+                            }
+                            DesignerColor("背景", f.ui.background, enabled) { style(f.ui.copy(background = it)) }
+                            DesignerSection("边框与圆角")
+                            val borderVisible = f.ui.visibleBorderWidthPx > 0
+                            DesignerToggle("显示边框", borderVisible, enabled) {
+                                border(if (it) f.ui.borderWidthPx.coerceAtLeast(1) else 0)
+                            }
+                            Row(Modifier.fillMaxWidth()) {
+                                listOf(0 to "无", 1 to "细", 2 to "标准", 4 to "粗").forEach { (width, title) ->
+                                    DesignerAction(title, Modifier.weight(1f), enabled,
+                                        selected = if (width == 0) !borderVisible else borderVisible && f.ui.borderWidthPx == width) {
+                                        border(width)
+                                    }
+                                }
+                            }
+                            DesignerColor("框色", f.ui.borderColor, enabled) {
+                                val next = f.ui.withDesignerBorderColor(it)
+                                if (next.borderWidthPx != f.ui.borderWidthPx) propertyInputs?.clearBorderWidths(setOf(f.id))
+                                style(next)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                DesignerInput("边框 px", f.ui.borderWidthPx.toString(), enabled, Modifier.weight(1f), numeric = true, integerRange = 0..32) { it.toIntOrNull()?.let { n -> style(f.ui.withDesignerBorderWidth(n)) } }
+                                DesignerInput("圆角 px", f.ui.cornerPx.toString(), enabled, Modifier.weight(1f), numeric = true, integerRange = 0..512) { it.toIntOrNull()?.let { n -> style(f.ui.copy(cornerPx = n)) } }
+                            }
                             DesignerSection(if (count > 1) "所选控件尺寸" else "控件尺寸")
                             val focus = LocalFocusManager.current
                             Row(Modifier.fillMaxWidth().background(DesignerColors.Workspace, RoundedCornerShape(4.dp))) {
@@ -265,7 +320,13 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                                 }
                             }
                             sizePreset?.let { preset -> Text("${preset.width}×${preset.height} · 字 ${preset.fontPx}px", fontSize = 9.sp, color = DesignerColors.Muted) }
-                            if (f.kind !in setOf(RunnerUiControlKind.IMAGE, RunnerUiControlKind.CONTAINER, RunnerUiControlKind.SLIDER, RunnerUiControlKind.PROGRESS)) {
+                            if (f.kind.hasTextStyle()) {
+                                DesignerColor("文字", f.ui.textColor, enabled) { style(f.ui.copy(textColor = it)) }
+                                DesignerInput("字号 px", f.ui.fontPx.toString(), enabled, numeric = true, integerRange = 8..160) { it.toIntOrNull()?.let { n -> style(f.ui.copy(fontPx = n)) } }
+                                Row {
+                                    DesignerToggle("粗体", f.ui.fontBold, enabled, Modifier.weight(1f)) { style(f.ui.copy(fontBold = it)) }
+                                    DesignerToggle("下划线", f.ui.textUnderline, enabled, Modifier.weight(1f)) { style(f.ui.copy(textUnderline = it)) }
+                                }
                                 DesignerSection("文字对齐")
                                 Row(Modifier.fillMaxWidth().background(DesignerColors.Workspace, RoundedCornerShape(4.dp))) {
                                     listOf("左对齐" to "left", "居中" to "center", "右对齐" to "right").forEach { (label, key) ->
@@ -273,38 +334,30 @@ internal fun DesignerInspector(draft: RunnerUiDesignerDraft, page: UiPage, field
                                     }
                                 }
                             }
-                            DesignerColor("文字", f.ui.textColor, enabled) { style(f.ui.copy(textColor = it)) }
-                            DesignerColor("背景", f.ui.background, enabled) { style(f.ui.copy(background = it)) }
-                            DesignerInput("字号 px", f.ui.fontPx.toString(), enabled, numeric = true, integerRange = 8..160) { it.toIntOrNull()?.let { n -> style(f.ui.copy(fontPx = n)) } }
-                            Row {
-                                DesignerToggle("粗体", f.ui.fontBold, enabled, Modifier.weight(1f)) { style(f.ui.copy(fontBold = it)) }
-                                DesignerToggle("下划线", f.ui.textUnderline, enabled, Modifier.weight(1f)) { style(f.ui.copy(textUnderline = it)) }
-                            }
-                            DesignerColor("边框", f.ui.borderColor, enabled) { style(f.ui.copy(borderColor = it)) }
-                            Row {
-                                DesignerInput("边框 px", f.ui.borderWidthPx.toString(), enabled, Modifier.weight(1f), numeric = true, integerRange = 0..32) { it.toIntOrNull()?.let { n -> style(f.ui.copy(borderWidthPx = n)) } }
-                                DesignerInput("圆角 px", f.ui.cornerPx.toString(), enabled, Modifier.weight(1f), numeric = true, integerRange = 0..512) { it.toIntOrNull()?.let { n -> style(f.ui.copy(cornerPx = n)) } }
-                            }
-                            DesignerSection("快捷配色")
-                            Row { DesignerAction("蓝白", Modifier.weight(1f), enabled) { style(f.ui.copy(background = "#FF386AFF", textColor = "#FFFFFFFF")) }
-                                DesignerAction("浅底", Modifier.weight(1f), enabled) { style(f.ui.copy(background = "#FFF2F5FB", textColor = "#FF27344A")) }
-                                DesignerAction("透明", Modifier.weight(1f), enabled) { style(f.ui.copy(background = "#00000000")) }
-                            }
                         }
                         else -> {
+                            val actions = listOf("" to "无动作", "run" to "确认运行", "close" to "关闭 / 停止", "minimize" to "最小化") + draft.pages.map { "page:${it.id}" to "切页 · ${it.title}" } + snapshot.manifest.flows.filter { designerPluginCompatible(f.kind, it) }.map { "flow:${it.flowId}" to "插件 · ${it.displayName()}" }
+                            val button = f.kind == RunnerUiControlKind.BUTTON
+                            if (button) DesignerChoice("点击用途", actions.find { it.first == f.ui.events["click"] }?.second ?: f.ui.events["click"] ?: "无动作", actions, enabled) {
+                                style(f.ui.copy(events = if (it.isBlank()) f.ui.events - "click" else f.ui.events + ("click" to it)))
+                            }
                             Text("ID · ${f.id}", fontSize = 9.sp, color = DesignerColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             DesignerChoice("页面", draft.pages.firstOrNull { it.id == f.ui.pageId }?.title ?: f.ui.pageId, draft.pages.map { it.id to it.title }, enabled) { onReparent(null, it) }
                             DesignerChoice("容器", draft.fields.find { it.id == f.ui.parentId }?.label ?: "页面根层", listOf("" to "页面根层") + draft.fields.filter { it.kind == RunnerUiControlKind.CONTAINER && it.id != f.id && it.ui.pageId == f.ui.pageId }.map { it.id to it.label }, enabled) { onReparent(it.takeIf(String::isNotBlank), f.ui.pageId) }
-                            val bindings = snapshot.manifest.variables.filter { v -> if (f.kind.wireName == "number") v.type.name == "NUMBER" else if (f.kind.wireName in setOf("integer", "boolean")) v.type.name in setOf("INTEGER", "NUMBER") else v.type.name == "STRING" }.map { v ->
-                                val key = if (v.scope == ProjectVariableScope.GLOBAL) "global:${v.name}" else "flow:${v.flowId}:${v.name}"
-                                key to (if (v.scope == ProjectVariableScope.GLOBAL) "全局 · ${v.name}" else "${v.flowId} · ${v.name}")
-                            } + snapshot.manifest.flows.find { it.flowId == snapshot.manifest.entryFlowId }?.params.orEmpty().filter { p -> p.get("type").asString in when (f.kind.wireName) { "number" -> setOf("number"); "integer" -> setOf("integer", "number"); "boolean" -> setOf("boolean"); else -> setOf("string") } }.map { p -> p.get("name").asString.let { "param:$it" to "入口参数 · $it" } }
-                            CompactVariableChoice("绑定", f.ui.binding.orEmpty(), listOf("" to "不绑定") + bindings, enabled) { style(f.ui.copy(binding = it.takeIf(String::isNotBlank))) }
+                            DesignerBindingControl(draft, f, snapshot.manifest, enabled) { style(f.ui.copy(binding = it)) }
                             DesignerSection("事件动作")
-                            val actions = listOf("" to "无动作", "run" to "确认运行", "close" to "关闭 / 停止", "minimize" to "最小化") + draft.pages.map { "page:${it.id}" to "切页 · ${it.title}" } + snapshot.manifest.flows.map { "flow:${it.flowId}" to "插件 · ${it.flowId}" }
-                            listOf("click" to "点击", "longClick" to "长按", "change" to "值变化", "selection" to "选择").forEach { (key, label) ->
+                            f.kind.designerEvents().filterNot { button && it.first == "click" }.forEach { (key, label) ->
                                 DesignerChoice(label, actions.find { it.first == f.ui.events[key] }?.second ?: f.ui.events[key] ?: "无动作", actions, enabled) { style(f.ui.copy(events = if (it.isBlank()) f.ui.events - key else f.ui.events + (key to it))) }
                             }
+                            f.ui.events.filterKeys { key -> f.kind.designerEvents().none { it.first == key } }.forEach { (key, _) ->
+                                val eventName = when (key) { "change" -> "值变化"; "selection" -> "选择变化"; else -> key }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("旧事件“$eventName”不适用于此控件", Modifier.weight(1f), fontSize = 9.sp, color = Color(0xFFB26A1B))
+                                    DesignerAction("清除", enabled = enabled) { style(f.ui.copy(events = f.ui.events - key)) }
+                                }
+                            }
+                            if (f.ui.events.values.any { action -> actions.none { it.first == action } })
+                                Text("原动作目标不可用，请重选或设为无动作", fontSize = 9.sp, color = Color(0xFFB26A1B))
                         }
                     }
                 }
@@ -384,23 +437,8 @@ private fun DesignerOptionsEditor(options: List<String>, enabled: Boolean, onCha
 
 @Composable
 internal fun DesignerColor(label: String, value: String, enabled: Boolean, onChange: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val focus = LocalFocusManager.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        DesignerInput("${label}色", value, enabled, Modifier.weight(1f), onChange = onChange)
-        Box {
-            Box(Modifier.size(22.dp).clip(RoundedCornerShape(4.dp)).background(designerColor(value)).border(1.dp, DesignerColors.Line, RoundedCornerShape(4.dp)).clickable(enabled) { focus.clearFocus(); expanded = true })
-            DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-                listOf("#FF27344A", "#FF386AFF", "#FF21AF83", "#FFFFB84D", "#FFFF647C", "#FFFFFFFF", "#FFF2F5FB", "#00000000").chunked(4).forEach { colors ->
-                    Row(Modifier.padding(horizontal = 6.dp, vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        colors.forEach { color -> Box(Modifier.size(24.dp).clip(RoundedCornerShape(4.dp)).background(designerColor(color))
-                            .border(if (value.equals(color, true)) 2.dp else 1.dp, if (value.equals(color, true)) DesignerColors.Accent else DesignerColors.Line, RoundedCornerShape(4.dp))
-                            .clickable { expanded = false; onChange(color) }) }
-                    }
-                }
-            }
-        }
-    }
+    StudioColorInput(if (label.endsWith("色")) label else "${label}色", value, enabled, Modifier.fillMaxWidth(),
+        StudioColorFormat.ARGB_HEX, onChange = onChange)
 }
 
 private fun designerControlName(kind: RunnerUiControlKind): String = when (kind) {

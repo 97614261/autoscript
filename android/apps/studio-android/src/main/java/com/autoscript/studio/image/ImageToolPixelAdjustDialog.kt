@@ -3,12 +3,9 @@ package com.autoscript.studio
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.autoscript.core.designsystem.AutoScriptPalette
 
 /** Manual edits reject invalid original-image coordinates instead of silently clamping them. */
 internal fun imageToolPixelPoints(values: List<Pair<String, String>>, width: Int, height: Int): List<Pair<Int, Int>>? {
@@ -37,12 +34,13 @@ internal fun ImageToolPixelAdjustDialog(mode: ImageToolMode, width: Int, height:
     val parsed = if (mode.usesDragBox) emptyList() else imageToolPixelPoints(values, width, height)
     val valid = if (mode.usesDragBox) rectangle != null else parsed != null
     fun close() { if (if (mode.usesDragBox) fields != originalFields else values != originalValues) discard = true else onDismiss() }
-    StudioPanelDialog("${mode.label} · 像素微调", ::close, confirmLabel = "应用", confirmEnabled = valid,
-        onConfirm = { if (valid) onApply(rectangle, parsed.orEmpty()) }) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("原图 ${width}×${height}px · 修改后点击应用", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+    ImageWorkspacePanel("${mode.label} · 像素微调", ::close, confirmLabel = "应用", confirmEnabled = valid,showFooter=true,
+        landscapeWidthDp=340,onConfirm = { if (valid) onApply(rectangle, parsed.orEmpty()) }) {
+        Column(Modifier.fillMaxWidth().heightIn(max=360.dp).verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            ImageWorkspaceHint("原图 ${width}×${height}px · 应用后生效")
+            ImageWorkspaceSection(if(mode.usesDragBox) "选区坐标" else "点位坐标") {
             if (mode.usesDragBox) {
-                StudioCompactGrid(listOf("X", "Y", "宽", "高").withIndex().toList(), 130, 2, Modifier.fillMaxWidth()) { field, cell ->
+                StudioCompactGrid(listOf("X", "Y", "宽", "高").withIndex().toList(), 88, 4, Modifier.fillMaxWidth()) { field, cell ->
                     ImageToolCompactInput(field.value, fields[field.index], true, cell, numeric = true) { text ->
                         fields = fields.toMutableList().also { it[field.index] = text.take(10) }
                     }
@@ -51,7 +49,7 @@ internal fun ImageToolPixelAdjustDialog(mode: ImageToolMode, width: Int, height:
                 if (values.size > 1) ImageToolChoice("点位", index.toString(), values.indices.map { i ->
                     i.toString() to if (mode.usesSlideMarkers) if (i == 0) "起点" else "终点" else "第 ${i + 1} 点"
                 }, true) { index = it.toInt() }
-                StudioCompactGrid(listOf(0, 1), 130, 2, Modifier.fillMaxWidth()) { axis, cell ->
+                StudioCompactGrid(listOf(0, 1), 104, 2, Modifier.fillMaxWidth()) { axis, cell ->
                     ImageToolCompactInput(if (axis == 0) "X" else "Y", if (axis == 0) values[index].first else values[index].second,
                         true, cell, numeric = true) { text -> values = values.toMutableList().also {
                             it[index] = if (axis == 0) text.take(10) to it[index].second else it[index].first to text.take(10)
@@ -72,8 +70,9 @@ internal fun ImageToolPixelAdjustDialog(mode: ImageToolMode, width: Int, height:
                     }
                 }
             }
-            if (!valid) Text("请输入原图范围内的整数坐标，宽高至少 1px。", fontSize = 10.sp, color = AutoScriptPalette.Danger)
-            if (mode.usesPressPick) Text("应用时重新读取这些坐标的原图颜色。", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
+            }
+            if (!valid) ImageWorkspaceHint("请输入原图范围内的整数坐标，宽高至少 1px。",error=true)
+            if (mode.usesPressPick) ImageToolHelp("应用时重新读取这些坐标的原图颜色。")
         }
     }
     if (discard) EditorPromptDialog("放弃像素微调？", "未应用的坐标修改会丢失，原选取保留。",

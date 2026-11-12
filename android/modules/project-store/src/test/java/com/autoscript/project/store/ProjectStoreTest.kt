@@ -20,6 +20,74 @@ import org.junit.Before
 import org.junit.Test
 
 class ProjectStoreTest {
+    @Test fun recognitionActionsPromoteSingleAndBatchSavesWithoutChangingOldDefaults() {
+        for (kind in listOf("vision.findimage", "vision.findallimages")) {
+            for ((anchor, mode) in listOf("topLeft" to "follow", "center" to "follow", "topLeft" to "inside", "topLeft" to "disabled", "topLeft" to "offset")) {
+                for (batch in listOf(false, true)) {
+                    val created = store.createFixtureProject("找图动作", ProjectSourceMode.VISUAL)
+                    val original = created.flowSources.getValue("main")
+                    val node = JsonParser.parseString(original.lineSequence().first(String::isNotBlank)).asJsonObject
+                    node.addProperty("kind", kind)
+                    node.addProperty("nodeVersion", if (kind == "vision.findimage") 3 else 1)
+                    node.add("args", JsonParser.parseString("""{"successAction":"tap","actionAnchor":"$anchor","actionRandom":"$mode","actionRandomX":5,"actionRandomY":8}"""))
+                    val source = "$node\n"
+                    val saved = if (batch) store.saveFlows(created, mapOf("main" to source))
+                        else store.saveFlow(created.manifest.projectId, "main", source, original)
+                    val reopened = store.openProject(created.manifest.projectId)
+                    assertEquals(if (anchor == "topLeft" && mode == "follow") "1.7" else "1.8", reopened.manifest.runtimeApi)
+                    assertEquals(saved.manifest, reopened.manifest)
+                    assertEquals(source, reopened.flowSources.getValue("main"))
+                    assertEquals(created.manifest.capabilities, reopened.manifest.capabilities)
+                }
+            }
+        }
+    }
+
+    @Test fun scalarInputExpressionsPromoteApiAndRenameOnlyReferencedIdentifiers() {
+        val created = store.createFixtureProject("输入计算", ProjectSourceMode.VISUAL)
+        val original = created.flowSources.getValue("main")
+        val node = JsonParser.parseString(original.lineSequence().first(String::isNotBlank)).asJsonObject
+        node.addProperty("kind", "task.sleep")
+        node.add("args", JsonParser.parseString("""{"milliseconds":0,"millisecondsVariable":"=int(数字文本)+次数"}"""))
+        val source = "$node\n"
+        store.saveFlow(created.manifest.projectId, "main", source, original)
+        val reopened = store.openProject(created.manifest.projectId)
+        assertEquals("1.8", reopened.manifest.runtimeApi)
+        assertEquals(source, reopened.flowSources.getValue("main"))
+        assertEquals(created.manifest.capabilities, reopened.manifest.capabilities)
+        val rewritten = rewriteFlowVariableReferences(source, mapOf("数字文本" to "识别文本", "次数" to "循环次数"))
+        assertEquals("=int(识别文本)+循环次数", JsonParser.parseString(rewritten.trim()).asJsonObject.getAsJsonObject("args")["millisecondsVariable"].asString)
+        val quoted = source.replace("int(数字文本)+次数", "itemInt(数字文本,\\\"次数\\\")+次数")
+        assertTrue(rewriteFlowVariableReferences(quoted, mapOf("次数" to "循环次数")).contains("\\\"次数\\\""))
+    }
+    @Test fun collectionCalculationPromotesApiAndPreservesExpressionAcrossReopen() {
+        for (expression in listOf("itemInt(\"[\\\"+190\\\"]\",1)", "listLen(\"[]\")", "text(itemInt(\"[]\",1,0))", "\"itemInt(x,1)\"")) {
+            val created = store.createFixtureProject("列表取值", ProjectSourceMode.VISUAL)
+            val original = created.flowSources.getValue("main")
+            val node = JsonParser.parseString(original.lineSequence().first(String::isNotBlank)).asJsonObject
+            node.addProperty("kind", "variable.calculate")
+            node.add("args", com.google.gson.JsonObject().apply { addProperty("name", "count"); addProperty("expression", expression) })
+            val submitted = "$node\n"
+            store.saveFlow(created.manifest.projectId, "main", submitted, original)
+            val reopened = store.openProject(created.manifest.projectId)
+            assertEquals(if (expression.startsWith('"')) "1.7" else "1.8", reopened.manifest.runtimeApi)
+            assertEquals(submitted, reopened.flowSources.getValue("main"))
+            assertEquals(created.manifest.capabilities, reopened.manifest.capabilities)
+        }
+    }
+    @Test fun polygonFlowAndRuntimeApiUpgradeCommitTogetherAndSurviveReopen() {
+        val created=store.createFixtureProject("多边形",ProjectSourceMode.VISUAL)
+        val original=created.flowSources.getValue("main")
+        val node=JsonParser.parseString(original.lineSequence().first(String::isNotBlank)).asJsonObject
+        node.addProperty("kind","vision.countcolor")
+        node.add("args",JsonParser.parseString("""{"frameVariable":"frame","rgb":16777215,"tolerance":0,
+            "region":{"left":0,"top":0,"right":4,"bottom":4},"limit":256,"resultVariable":"count",
+            "polygon":"[[0,0],[4,0],[0,4]]"}""").asJsonObject)
+        val source=node.toString()+"\n"
+        val saved=store.saveFlows(created,mapOf("main" to source))
+        assertEquals("1.8",saved.manifest.runtimeApi)
+        assertEquals(source,store.openProject(created.manifest.projectId).flowSources.getValue("main"))
+    }
     @Test fun imageRecipesConflictBackupAndCorruptionDoNotOverwriteUserData() {
         val project=store.createFixtureProject("图像方案",ProjectSourceMode.VISUAL);val id=project.manifest.projectId
         val recipes=listOf(ProjectImageRecipe("清理",8,8,listOf(ProjectImageStep("despeckle",cleanup=ProjectImageCleanup(minArea=1)))))

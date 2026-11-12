@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
@@ -21,7 +22,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -32,7 +35,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
-import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectStore
 import com.autoscript.project.store.ResourceImportMode
 import kotlinx.coroutines.CancellationException
@@ -73,6 +75,7 @@ internal fun ImageTemplateSaveDialog(
     }
     var discard by remember(projectId) { mutableStateOf(false) }
     var error by remember(projectId) { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("模板保存", error, failure = true)
     val scope = rememberCoroutineScope()
     val savePrompt = rememberResourceSavePrompt()
     val folderFocus = remember { FocusRequester() }
@@ -120,6 +123,7 @@ internal fun ImageTemplateSaveDialog(
         finally { loading = false }
     }
     LaunchedEffect(creatingFolder) { if (creatingFolder) folderFocus.requestFocus() }
+    ImageWorkspaceTheme {
     StudioDialog(onDismissRequest = ::requestDismiss, properties = DialogProperties(
         usePlatformDefaultWidth = false, dismissOnBackPress = !busy, dismissOnClickOutside = !busy,
     )) {
@@ -127,93 +131,86 @@ internal fun ImageTemplateSaveDialog(
         val short = studioShortViewport(maxHeight.value)
         Surface(Modifier.width(studioDialogWidth(maxWidth.value, 380).dp)
             .heightIn(max = studioPanelMaxHeight(maxHeight.value, LocalConfiguration.current.screenHeightDp, if (short) 8 else 32).dp),
-            shape = RoundedCornerShape(4.dp), color = androidx.compose.ui.graphics.Color.White, shadowElevation = 10.dp) {
+            shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 10.dp) {
             Column {
-                Row(Modifier.fillMaxWidth().heightIn(min = if (short) 32.dp else 44.dp).padding(start = 14.dp, end = 6.dp),
+                Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(start = 10.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (folderOnly) "选择图片文件夹" else "保存图片", color = AutoScriptPalette.Accent,
-                        fontSize = if (short) 13.sp else 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(if (folderOnly) "选择文件夹" else "保存图片", color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    if(!folderOnly) pixelSize?.let { (width,height) ->
+                        Text("${width}×${height}",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     SaveAction("×", !busy, ::requestDismiss)
                 }
-                HorizontalDivider(color = AutoScriptPalette.Divider)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(if (short) 8.dp else 12.dp), verticalArrangement = Arrangement.spacedBy(if (short) 5.dp else 8.dp)) {
+                    .padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (!folderOnly) {
-                        Text("图片名称", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary)
-                        Row(Modifier.fillMaxWidth().height(40.dp)
-                            .border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(5.dp))
-                            .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().heightIn(min=34.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(6.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp,vertical=4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("名称", fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(end=8.dp))
                             BasicTextField(imageName, { imageName = it; error = null }, enabled = enabled, singleLine = true,
                                 textStyle = saveTextStyle(), modifier = Modifier.weight(1f),
+                                cursorBrush=SolidColor(MaterialTheme.colorScheme.primary),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                 keyboardActions = KeyboardActions(onDone = { save() }))
-                            Text(".png", fontSize = 12.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.padding(start = 8.dp))
+                            Text(".png", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
                         }
                     }
+                    Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (folderOnly) "当前位置" else "保存位置", fontSize = 12.sp,
-                            color = AutoScriptPalette.TextSecondary, modifier = Modifier.weight(1f))
-                        SaveAction(if (creatingFolder) "收起" else "+ 新建文件夹", enabled, {
+                        Text(if(selected.isEmpty()) "图片根目录" else selected, fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),maxLines=1,overflow=TextOverflow.Ellipsis)
+                        if('/' in selected) SaveAction("根目录",enabled,{navigate("")})
+                        if(selected.isNotEmpty()) SaveAction("上级",enabled,{navigate(selected.substringBeforeLast('/', ""))})
+                        SaveAction(if (creatingFolder) "收起" else "+ 文件夹", enabled, {
                             creatingFolder = !creatingFolder; error = null
                         })
-                    }
-                    Row(Modifier.fillMaxWidth().background(AutoScriptPalette.AccentSoft, RoundedCornerShape(5.dp))
-                        .padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        SaveAction("图片根目录", enabled && selected.isNotEmpty(), { navigate("") })
-                        Text(if (selected.isEmpty()) "/" else "/ $selected", fontSize = 12.sp,
-                            color = AutoScriptPalette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
-                        if (selected.isNotEmpty()) SaveAction("上一级", enabled, { navigate(selected.substringBeforeLast('/', "")) })
                     }
                     if (creatingFolder) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             BasicTextField(folderName, { folderName = it; error = null }, enabled = enabled, singleLine = true,
                                 textStyle = saveTextStyle(), modifier = Modifier.weight(1f).focusRequester(folderFocus),
+                                cursorBrush=SolidColor(MaterialTheme.colorScheme.primary),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                 keyboardActions = KeyboardActions(onDone = { createFolder() }),
                                 decorationBox = { input ->
-                                    Box(Modifier.fillMaxWidth().height(40.dp).border(1.dp, AutoScriptPalette.Divider,
-                                        RoundedCornerShape(5.dp)).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                                        if (folderName.isEmpty()) Text("新文件夹名称", color = AutoScriptPalette.TextSecondary, fontSize = 12.sp)
+                                    Box(Modifier.fillMaxWidth().heightIn(min=34.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant,
+                                        RoundedCornerShape(5.dp)).padding(horizontal = 8.dp,vertical=4.dp), contentAlignment = Alignment.CenterStart) {
+                                        if (folderName.isEmpty()) Text("新文件夹名称", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                                         input()
                                     }
                                 })
                             SaveAction(if (busy) "创建中…" else "创建", enabled && folderName.isNotBlank(), ::createFolder)
                         }
                     }
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(min = 40.dp, max = 160.dp)
-                        .border(1.dp, AutoScriptPalette.Divider, RoundedCornerShape(5.dp))) {
+                    if (loading || children.isNotEmpty()) LazyColumn(Modifier.fillMaxWidth().heightIn(min = 32.dp, max = if(short) 96.dp else 144.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(5.dp))) {
                         if (children.isEmpty()) item {
-                            Text(if (loading) "正在读取文件夹…" else "暂无子文件夹，可选当前目录或新建。",
-                                color = AutoScriptPalette.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
+                            Text("正在读取文件夹…",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(8.dp))
                         }
                         items(children, key = { it }) { folder ->
-                            Row(Modifier.fillMaxWidth().height(40.dp).clickable(enabled = enabled) { navigate(folder) }
-                                .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("▸", color = AutoScriptPalette.Accent, fontSize = 16.sp, modifier = Modifier.padding(end = 8.dp))
-                                Text(folder.substringAfterLast('/'), fontSize = 13.sp, color = AutoScriptPalette.TextPrimary,
+                            Row(Modifier.fillMaxWidth().heightIn(min=32.dp).clickable(enabled = enabled) { navigate(folder) }
+                                .padding(horizontal = 8.dp,vertical=4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("▸", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, modifier = Modifier.padding(end = 6.dp))
+                                Text(folder.substringAfterLast('/'), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                Text("进入 ›", fontSize = 11.sp, color = AutoScriptPalette.TextSecondary)
+                                Text("›", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                    val fileName = runCatching { imageSaveFileName(imageName.text) }.getOrNull()
-                    Text(if (folderOnly) "选中：${selected.ifEmpty { "图片根目录" }}" else
-                        "目标：assets/images/${if (selected.isEmpty()) "" else "$selected/"}${fileName ?: "待填写名称.png"}",
-                        fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                    Text(if (folderOnly) "新建目录立即生效，空目录也随项目备份。" else
-                        "PNG 原像素保存 · 同名可覆盖或编号另存", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary)
-                    if (!folderOnly) pixelSize?.let { (width,height) ->
-                        Text("保存尺寸 ${width}×${height}px · 超预算明确拒绝，不缩小图片",fontSize=10.sp,color=AutoScriptPalette.TextSecondary)
                     }
-                    error?.let { Text(it, color = androidx.compose.ui.graphics.Color(0xFFD84949), fontSize = 11.sp) }
+                    error?.let { ImageWorkspaceHint(it,error=true) }
                 }
-                HorizontalDivider(color = AutoScriptPalette.Divider)
-                Row(Modifier.fillMaxWidth().height(if (short) 36.dp else 44.dp)) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(Modifier.fillMaxWidth().height(studioCompactControlHeight(36,LocalDensity.current.fontScale).dp)) {
                     SaveAction("取消", !busy, ::requestDismiss, Modifier.weight(1f).fillMaxHeight())
-                    VerticalDivider(color = AutoScriptPalette.Divider)
+                    VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant,modifier=Modifier.height(36.dp))
                     SaveAction(if (folderOnly) "选择此文件夹" else if (busy) "保存中…" else "保存图片", enabled && !creatingFolder,
-                        ::save, Modifier.weight(1f).fillMaxHeight())
+                        ::save, Modifier.weight(1f).fillMaxHeight(),primary=true)
                 }
             }
         }
@@ -221,16 +218,19 @@ internal fun ImageTemplateSaveDialog(
     }
     if (discard) EditorPromptDialog("放弃图片保存配置？", "本次名称和位置选择将丢弃，不保存新图片、不改原图；已经创建的空目录不会删除。",
         { discard=false }, { discard=false;onDismiss() }, "继续编辑", "放弃")
+    }
 }
 
-private fun saveTextStyle() = TextStyle(fontSize = 13.sp, color = AutoScriptPalette.TextPrimary,
+@Composable
+private fun saveTextStyle() = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface,
     platformStyle = PlatformTextStyle(includeFontPadding = false))
 
 @Composable
-private fun SaveAction(label: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier.height(40.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 10.dp),
+private fun SaveAction(label: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier,primary:Boolean=false) {
+    Box(modifier.heightIn(min=32.dp).then(if(primary && enabled) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier)
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 8.dp,vertical=4.dp),
         contentAlignment = Alignment.Center) {
-        Text(label, fontSize = 12.sp, color = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary,
+        Text(label, fontSize = 11.sp, color = if(primary && enabled) MaterialTheme.colorScheme.onPrimary else if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
     }
 }

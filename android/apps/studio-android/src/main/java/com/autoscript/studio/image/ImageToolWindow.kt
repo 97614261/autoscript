@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -62,6 +63,7 @@ internal fun ImageToolWindow(
     designHeight: Int,
     scaleMode: String,
     initialMode: ImageToolMode = ImageToolMode.TAP,
+    initialSearchPolygon: String? = null,
     capturing: Boolean,
     message: String?,
     onCapture: () -> Unit,
@@ -76,7 +78,18 @@ internal fun ImageToolWindow(
     projectStore: ProjectStore? = null,
     onWorkbenchSnapshotChanged: ((ProjectSnapshot) -> Unit)? = null,
     insertionTarget: ImageWorkbenchInsertionTarget? = null,
+    onWorkbenchTemplateSaved: ((String) -> Unit)? = null,
+    workspace: ImageWorkspaceActions? = null,
+    touchTools: Boolean = false,
 ) {
+    if (!touchTools && workspace == null && bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null) {
+        if (capturing) BackHandler(onBack = onClose)
+        if (!capturing) ImageProcessingWorkbench(bitmap, snapshot, projectStore, runtimeClient, onWorkbenchSnapshotChanged,
+            onDismiss = onClose, insertionTarget = insertionTarget, capturedScreen = true,
+            capture = ImageWorkspaceCapture(designWidth, designHeight, scaleMode, initialMode, initialSearchPolygon,
+                pointerInputSupported, onCapture, onEmit, onOpenRecorder, onCropToTemplate, message, onWorkbenchTemplateSaved), modifier = modifier)
+        return
+    }
     BackHandler(onBack = onClose)
     // 参考 html{background:#000} 的全屏黑底只在有图时铺——它是给图片当衬底的，不是遮罩。
     // 没图时保持透明，让工作台透出来；截图期间更不能有任何不透明的东西，否则截到的就是自己的黑底。
@@ -87,20 +100,38 @@ internal fun ImageToolWindow(
         val viewWidth = constraints.maxWidth.toFloat()
         val viewHeight = constraints.maxHeight.toFloat()
 
-        var mode by rememberSaveable(initialMode) { mutableStateOf(initialMode) }
-        var menuOpen by rememberSaveable { mutableStateOf(false) }
+        val modeState: MutableState<ImageToolMode> = workspace?.surface?.mode ?: rememberSaveable(initialMode) { mutableStateOf(initialMode) }
+        var mode by modeState
+        var localMenu by remember { mutableStateOf<ImageToolbarMenu?>(null) }
+        val toolbarMenu = if(workspace!=null) workspace.surface.toolbarMenu else localMenu
+        fun setMenu(next: ImageToolbarMenu?) { if(workspace!=null) workspace.surface.toolbarMenu=next else localMenu=next }
+        fun toggleMenu(next: ImageToolbarMenu) { setMenu(if(toolbarMenu==next) null else next) }
         var zoomMode by rememberSaveable { mutableStateOf(false) }
-        var selection by remember(bitmap) { mutableStateOf(ImageToolSelection()) }
+        val selectionState: MutableState<ImageToolSelection> = workspace?.surface?.selection ?: remember(bitmap) { mutableStateOf(runCatching {
+            val points=ImageSearchPolygon.decode(initialSearchPolygon.orEmpty())
+            if(points.isEmpty()) ImageToolSelection() else ImageToolSelection(box=ImageSearchPolygon.bounds(points),polygon=points)
+        }.getOrDefault(ImageToolSelection())) }
+        var selection by selectionState
+        val selectionProblem=remember(bitmap,selection.box,selection.polygon) {
+            if(bitmap==null) "请先截图" else imageSelectionProblem(selection,bitmap.width,bitmap.height)
+        }
+        val saveTarget = remember(bitmap, selection.box, selection.polygon) {
+            bitmap?.let { imageSaveTarget(selection, it.width, it.height) }
+        }
+        var localPolygonEditing by remember(bitmap) { mutableStateOf(false) }
+        val polygonEditing = workspace?.surface?.polygonEditing ?: localPolygonEditing
+        fun setPolygonEditing(next: Boolean) { if(workspace!=null) workspace.surface.polygonEditing=next else localPolygonEditing=next }
+        val polygonHistory = remember(bitmap) { ImagePolygonHistory(selection.polygon) }
+        var selectedVertex by remember(bitmap) { mutableStateOf(-1) }
+        var polygonGesture by remember(bitmap) { mutableStateOf("edit") }
+        LaunchedEffect(selection.polygon) { polygonHistory.synchronize(selection.polygon) }
+        fun publishPolygon() { selection=polygonToolSelection(polygonHistory.points,selection);selectedVertex=selectedVertex.coerceAtMost(polygonHistory.points.lastIndex) }
         var blocked by remember { mutableStateOf<String?>(null) }
         var hint by remember { mutableStateOf<String?>(null) }
         var swipeDuration by rememberSaveable { mutableFloatStateOf(300f) }
         var gestureDuration by rememberSaveable { mutableFloatStateOf(800f) }
         var tolerance by rememberSaveable { mutableFloatStateOf(8f) }
         var ocrRegion by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf<ImageToolCodeGen.Roi?>(null) }
-        var workbenchOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
-        var workbenchFilterOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
-        var workbenchPolygonOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
-        var glyphMakerOpen by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf(false) }
         var pixelAdjustOpen by remember(bitmap, mode) { mutableStateOf(false) }
         var glyphUse by remember(bitmap, snapshot?.manifest?.projectId) { mutableStateOf<Triple<ProjectSnapshot, ImageToolOcrConfig, ImageToolCodeGen.Roi?>?>(null) }
 
@@ -115,20 +146,30 @@ internal fun ImageToolWindow(
         // 首帧先用最大的保守值，完成测量后再按真实宽度计算可拖动边界。
         var toolbarMeasuredWidthPx by remember { mutableFloatStateOf(0f) }
         var toolbarMeasuredHeightPx by remember { mutableFloatStateOf(0f) }
-        var viewport by remember(bitmap) {
+        val viewportState: MutableState<ImageToolViewport?> = workspace?.surface?.viewport ?: remember(bitmap) {
             mutableStateOf(
                 bitmap?.let { ImageToolViewport.fit(it.width, it.height, viewWidth, viewHeight) },
             )
         }
+        var viewport by viewportState
         // 准星初始在屏幕中心，对应参考 crosshairX = window.innerWidth / 2。
         var crosshair by remember(bitmap) { mutableStateOf(Offset(viewWidth / 2f, viewHeight / 2f)) }
-        var slideStart by remember(bitmap) { mutableStateOf<Pair<Int, Int>?>(null) }
-        var slideEnd by remember(bitmap) { mutableStateOf<Pair<Int, Int>?>(null) }
+        // Direct entry and recapture need both markers before any mode-switch gesture.
+        val defaultSlide = remember(bitmap) { bitmap?.let { imageToolSlideDefaults(it.width, it.height) } }
+        var slideStart by remember(bitmap) { mutableStateOf(defaultSlide?.first) }
+        var slideEnd by remember(bitmap) { mutableStateOf(defaultSlide?.second) }
 
-        LaunchedEffect(bitmap, viewWidth, viewHeight) {
-            if (viewWidth > 0f && viewHeight > 0f) {
+        val borrowedCanvas = workspace?.surface?.canvas != null
+        LaunchedEffect(workspace?.panelOpen) {
+            if (workspace?.panelOpen == true) { setMenu(null); zoomMode = false }
+        }
+        LaunchedEffect(bitmap, viewWidth, viewHeight, borrowedCanvas) {
+            if (!borrowedCanvas && bitmap != null && viewWidth > 0f && viewHeight > 0f) {
                 val old = viewport
-                if (old != null && (old.viewWidth != viewWidth || old.viewHeight != viewHeight)) {
+                if (old == null || old.imageWidth != bitmap.width || old.imageHeight != bitmap.height) {
+                    viewport = ImageToolViewport.fit(bitmap.width, bitmap.height, viewWidth, viewHeight)
+                    crosshair = Offset(viewWidth / 2f, viewHeight / 2f)
+                } else if (old.viewWidth != viewWidth || old.viewHeight != viewHeight) {
                     val point = old.toImage(crosshair.x, crosshair.y)
                     val resized = old.resized(viewWidth, viewHeight)
                     viewport = resized
@@ -153,13 +194,13 @@ internal fun ImageToolWindow(
         )
 
         val mapping = remember(bitmap, designWidth, designHeight, scaleMode) {
-            bitmap?.let { ImageToolCodeGen.DesignMapping(it.width, it.height, designWidth, designHeight, scaleMode) }
+            bitmap?.let { ImageToolCodeGen.DesignMapping(workspace?.sourceWidth ?: it.width, workspace?.sourceHeight ?: it.height, designWidth, designHeight, scaleMode) }
         }
 
         /** 切模式：参考 switchActionButtons() —— 强制退出缩放、清掉别的模式的叠加层、弹提示横幅。 */
         fun switchMode(next: ImageToolMode) {
             if (next == ImageToolMode.RECORD && onOpenRecorder != null) {
-                menuOpen = false
+                setMenu(null)
                 onOpenRecorder()
                 return
             }
@@ -175,13 +216,9 @@ internal fun ImageToolWindow(
             zoomMode = false
             mode = next
             selection = selection.clearedFor(next)
-            menuOpen = false
+            setPolygonEditing(false)
+            setMenu(null)
             crosshair = Offset(viewWidth / 2f, viewHeight / 2f)
-            if (next.usesSlideMarkers && slideStart == null && bitmap != null) {
-                // 参考的默认位置：图宽 25% / 75%，高 50%。
-                slideStart = (bitmap.width * 0.25f).toInt() to (bitmap.height * 0.5f).toInt()
-                slideEnd = (bitmap.width * 0.75f).toInt() to (bitmap.height * 0.5f).toInt()
-            }
             hint = "${next.label}模式：${next.hint}"
         }
 
@@ -197,7 +234,13 @@ internal fun ImageToolWindow(
         // 状态声明都在上面，这里返回不会丢掉模式/工具条位置。
         if (capturing) return@BoxWithConstraints
 
-        ImageToolCanvas(
+        if (workspace?.surface?.canvas != null) workspace.surface.canvas?.invoke()
+        else if(polygonEditing && bitmap!=null) ImagePolygonCanvas(bitmap,viewport,selection.polygon,selectedVertex,
+            pan=zoomMode || polygonGesture=="pan",moveShape=polygonGesture=="move",
+            onViewport={viewport=it},onSelected={selectedVertex=it},onPublish={points ->
+                if(polygonHistory.publish(points)) publishPolygon() else hint="顶点最多128个，不能重合"
+            })
+        else ImageToolCanvas(
             bitmap = bitmap,
             viewport = viewport,
             mode = mode,
@@ -208,37 +251,33 @@ internal fun ImageToolWindow(
             slideStart = slideStart,
             slideEnd = slideEnd,
             onViewport = { viewport = it },
-            onSelection = { selection = it },
+            onSelection = { next -> selection = if(workspace==null) next else next.copy(points=next.points.map {p -> p.copy(rgb=workspace.sampleColor(p.x,p.y))}) },
             onCrosshair = { crosshair = it },
             onSlide = { start, end -> slideStart = start; slideEnd = end },
         )
 
-        ImageToolStatusStrip(
+        if (workspace?.surface?.canvas == null) ImageToolStatusStrip(
             mode = mode,
             zoomMode = zoomMode,
             viewport = viewport,
             selection = selection,
             crosshair = crosshair,
+            polygonEditing = polygonEditing,
+            polygonProblem = selectionProblem,
         )
 
         hint?.let { ImageToolHintBanner(it) }
-
-        // 缩放模式的控制条，对应参考 #controls 的「退出缩放 / 原图」。
-        if (zoomMode && viewport != null) {
-            ImageToolZoomControls(
-                scale = viewport!!.scale,
-                onReset = { viewport = viewport?.reset() },
-                onExit = { zoomMode = false },
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
-            )
-        }
 
         ImageToolBar(
             mode = mode,
             zoomMode = zoomMode,
             capturing = capturing,
             hasImage = bitmap != null,
-            ready = isReady(mode, selection, slideStart, slideEnd, mapping),
+            ready = workspace?.busy != true && workspace?.panelOpen != true &&
+                (!(mode.usesDragBox || polygonEditing || selection.polygon.isNotEmpty()) || selectionProblem==null) &&
+                isReady(mode, selection, slideStart, slideEnd, mapping),
+            saveReady = bitmap!=null && workspace?.busy != true && workspace?.panelOpen != true &&
+                saveTarget!=null,
             selection = selection,
             swipeDuration = swipeDuration.roundToInt(),
             gestureDuration = gestureDuration.roundToInt(),
@@ -262,31 +301,42 @@ internal fun ImageToolWindow(
                     toolbarPreferences.edit().putFloat("$positionKey-x", toolbarX / viewWidth)
                         .putFloat("$positionKey-y", toolbarY / viewHeight).apply()
             },
-            onToggleMenu = { menuOpen = !menuOpen },
-            onZoom = { zoomMode = true },
+            onToggleMenu = { if (workspace?.panelOpen != true) toggleMenu(ImageToolbarMenu.MODE) },
+            onZoom = { toggleMenu(ImageToolbarMenu.VIEW) },
             onCapture = onCapture,
+            workspace = workspace,
+            touchTools = touchTools,
             onClear = {
-                selection = ImageToolSelection()
-                slideStart = null
-                slideEnd = null
+                if(workspace?.panelOpen==true) workspace.surface.clearDraft?.invoke()
+                else {
+                    if(polygonEditing) polygonHistory.publish(emptyList())
+                    selection = ImageToolSelection(); selectedVertex=-1
+                }
+                slideStart = defaultSlide?.first
+                slideEnd = defaultSlide?.second
+                if (touchTools) crosshair = Offset(viewWidth / 2f, viewHeight / 2f)
+                zoomMode = false
                 blocked = null
             },
             onSwipeDuration = { swipeDuration = it },
             onGestureDuration = { gestureDuration = it },
             onTolerance = { tolerance = it },
-            onConfirm = {
+            onConfirm = confirm@{
                 val map = mapping
                 if (mode.needsPointerInput && !pointerInputSupported) {
                     blocked = "当前后端不支持持续触点（按下/移动/弹起）"
                 } else if (map == null) {
                     blocked = "请先截图"
                 } else if (mode == ImageToolMode.OCR) {
-                    if (snapshot == null || runtimeClient == null) blocked = "取字需要已打开的项目与运行服务会话"
+                    if (workspace != null) workspace.onOcr()
+                    else if (snapshot == null || runtimeClient == null) blocked = "取字需要已打开的项目与运行服务会话"
                     else { glyphUse = null; ocrRegion = selection.box }
                 } else {
+                    val outputSelection=try { workspace?.mapSelection?.invoke(selection) ?: selection }
+                        catch (_: Exception) { blocked="处理后的选区不能还原到原图，请调整选区后重试";return@confirm }
                     val snippet = buildSnippet(
                         mode = mode,
-                        selection = selection,
+                        selection = outputSelection,
                         crosshair = crosshair,
                         viewport = viewport,
                         bitmap = bitmap,
@@ -296,6 +346,7 @@ internal fun ImageToolWindow(
                         gestureDuration = gestureDuration.roundToInt(),
                         tolerance = tolerance.roundToInt(),
                         mapping = map,
+                        mapPoint = workspace?.onMapPoint ?: { x, y -> x to y },
                         onError = { blocked = it },
                     )
                     if (snippet != null) {
@@ -303,29 +354,45 @@ internal fun ImageToolWindow(
                             if (mode in setOf(ImageToolMode.REGION, ImageToolMode.COLOR, ImageToolMode.MULTI_COLOR)) {
                                 snippet.copy(imageSelection = ImageToolCodeGen.VisualSelection(
                                     mode = mode,
-                                    roi = selection.box,
-                                    points = selection.points.toList(),
+                                    roi = outputSelection.box,
+                                    polygon = outputSelection.polygon,
+                                    points = outputSelection.points.toList(),
                                     tolerance = tolerance.roundToInt(),
-                                    frameWidth = bitmap?.width ?: 0,
-                                    frameHeight = bitmap?.height ?: 0,
+                                    frameWidth = workspace?.sourceWidth ?: bitmap?.width ?: 0,
+                                    frameHeight = workspace?.sourceHeight ?: bitmap?.height ?: 0,
                                 ))
                             } else snippet,
                         )
                     }
                 }
             },
-            onCropToTemplate = { selection.box?.let(onCropToTemplate) },
+            onCropToTemplate = { saveTarget?.region?.let(onCropToTemplate) },
             onClose = onClose,
             onAdjust = if (bitmap != null && (mode.usesDragBox || mode.usesCrosshair || mode.usesPressPick || mode.usesSlideMarkers))
-                ({ menuOpen = false; pixelAdjustOpen = true }) else null,
-            onProcessing = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
-                ({ menuOpen = false; workbenchFilterOpen=false;workbenchPolygonOpen=false; workbenchOpen = true }) else null,
-            onFilter = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
-                ({ menuOpen=false;workbenchFilterOpen=true;workbenchPolygonOpen=false;workbenchOpen=true }) else null,
-            onPolygon = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
-                ({menuOpen=false;workbenchFilterOpen=false;workbenchPolygonOpen=true;workbenchOpen=true}) else null,
-            onMakeGlyph = if (bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null)
-                ({ menuOpen = false; glyphMakerOpen = true }) else null,
+                ({ setMenu(null); pixelAdjustOpen = true }) else null,
+            onSelectionShape = workspace?.onSelection ?: { toggleMenu(ImageToolbarMenu.SELECTION) },
+            menu = toolbarMenu,
+            secondaryContent = {
+                toolbarMenu?.let { menu -> ImageToolSecondaryBar(menu,mode,polygonEditing,polygonHistory,selectedVertex,polygonGesture,
+                    workspace,onOpenRecorder!=null,zoomMode,onMode={switchMode(it)},onShape={polygon ->
+                        zoomMode=false;setPolygonEditing(polygon);polygonGesture="edit";selectedVertex=-1
+                        if(mode !in setOf(ImageToolMode.CROP,ImageToolMode.REGION,ImageToolMode.COLOR,ImageToolMode.MULTI_COLOR)) mode=ImageToolMode.REGION
+                        selection=if(polygon) polygonToolSelection(selection.polygon,selection) else selection.copy(polygon=emptyList())
+                    },onPolygonGesture={polygonGesture=it;zoomMode=false},onPublishPolygon={publishPolygon()},
+                    onDeleteVertex={
+                        if(selectedVertex in polygonHistory.points.indices) {
+                            polygonHistory.publish(polygonHistory.points.filterIndexed {i,_->i!=selectedVertex});publishPolygon();selectedVertex=-1
+                        }
+                    },onView={ action ->
+                        val v=viewport
+                        when(action) {
+                            "pan" -> zoomMode=!zoomMode
+                            "fit" -> viewport=v?.reset()
+                            "actual" -> viewport=v?.actualSize()
+                            "in", "out" -> if(v!=null) viewport=v.scaledBy(if(action=="in") 2f else .5f,v.viewWidth/2,v.viewHeight/2)
+                        }
+                    },onClose={setMenu(null)},touchTools=touchTools) }
+            },
             modifier = Modifier.widthIn(max = (maxWidth - 8.dp).coerceAtLeast(1.dp))
                 .heightIn(max = (maxHeight - 8.dp).coerceAtLeast(1.dp)).onSizeChanged { measured ->
                 toolbarMeasuredWidthPx = measured.width.toFloat()
@@ -344,10 +411,10 @@ internal fun ImageToolWindow(
             ImageToolPixelAdjustDialog(mode, bitmap.width, bitmap.height, selection.box, pixels,
                 onDismiss = { pixelAdjustOpen = false }, onApply = { rectangle, points ->
                     when {
-                        mode.usesDragBox -> selection = selection.copy(box = rectangle)
+                        mode.usesDragBox -> selection = selection.copy(box = rectangle,polygon=emptyList())
                         mode.usesSlideMarkers -> { slideStart = points[0]; slideEnd = points[1] }
                         mode.usesPressPick -> selection = selection.copy(points = points.map { (x, y) ->
-                            ImageToolCodeGen.PickedPoint(x, y, bitmap.getPixel(x, y) and 0xFFFFFF)
+                            ImageToolCodeGen.PickedPoint(x, y, workspace?.sampleColor?.invoke(x, y) ?: (bitmap.getPixel(x, y) and 0xFFFFFF))
                         })
                         else -> points.firstOrNull()?.let { (x, y) -> viewport?.toView(x, y)?.let { crosshair = Offset(it.first, it.second) } }
                     }
@@ -357,19 +424,6 @@ internal fun ImageToolWindow(
         }
 
         val ocrSource = bitmap
-        if (glyphMakerOpen && bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null) {
-            GlyphMakerDialog(snapshot, projectStore, runtimeClient, onWorkbenchSnapshotChanged,
-                onDismiss = { glyphMakerOpen = false }, initialBitmap = bitmap, initialRoi = selection.box,
-                initialForeground = selection.points.lastOrNull()?.rgb ?: 0xFFFFFF, initialTolerance = tolerance.roundToInt(),
-                onUseSaved = { updated, config, roi ->
-                    glyphUse = Triple(updated, config, roi); glyphMakerOpen = false
-                    ocrRegion = roi ?: selection.box ?: ImageToolCodeGen.Roi(0, 0, bitmap.width, bitmap.height)
-                })
-        }
-        if (workbenchOpen && bitmap != null && snapshot != null && runtimeClient != null && projectStore != null && onWorkbenchSnapshotChanged != null) {
-            ImageProcessingWorkbench(bitmap, snapshot, projectStore, runtimeClient,
-                onWorkbenchSnapshotChanged, onDismiss = { workbenchOpen = false }, insertionTarget = insertionTarget,initialFilterOpen=workbenchFilterOpen,capturedScreen=true,initialPolygonOpen=workbenchPolygonOpen)
-        }
         ocrRegion?.let { roi ->
             if (ocrSource != null && snapshot != null && runtimeClient != null) ImageToolOcrDialog(
                 bitmap = ocrSource, initialRoi = roi, snapshot = glyphUse?.first ?: snapshot, runtimeClient = runtimeClient,
@@ -382,41 +436,20 @@ internal fun ImageToolWindow(
             )
         }
 
-        if (menuOpen) {
-            val menuWidth = minOf(with(density) { MENU_WIDTH.toPx() }, (viewWidth - with(density) { 8.dp.toPx() }).coerceAtLeast(1f))
-            val menuHeight = minOf(with(density) { MENU_HEIGHT.toPx() }, (viewHeight - with(density) { 12.dp.toPx() }).coerceAtLeast(1f))
-            val placement = menuPlacement(
-                toolbarLeft = resolvedToolbar.first,
-                toolbarTop = resolvedToolbar.second,
-                toolbarHeight = toolbarHeightPx,
-                menuWidth = menuWidth,
-                menuHeight = menuHeight,
-                viewWidth = viewWidth,
-                viewHeight = viewHeight,
-            )
-            ImageToolMenu(
-                current = mode,
-                onPick = ::switchMode,
-                recorderAvailable = onOpenRecorder != null,
-                modifier = Modifier.width(with(density) { menuWidth.toDp() })
-                    .heightIn(max = with(density) { menuHeight.toDp() }).offset {
-                    IntOffset(placement.first.roundToInt(), placement.second.roundToInt())
-                },
-            )
-        }
-
         val notice = blocked ?: message
+        StudioSystemLogEffect("图像工具", if (workspace == null) notice else blocked)
         if (notice != null) {
             Text(
                 notice,
                 color = if (blocked != null) BlockedText else Color(0xFFD5DCE8),
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
+                maxLines = 2,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .background(Color(0xCC11151D))
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
     }
@@ -462,22 +495,27 @@ private fun buildSnippet(
     gestureDuration: Int,
     tolerance: Int,
     mapping: ImageToolCodeGen.DesignMapping,
+    mapPoint: (Int, Int) -> Pair<Int, Int> = { x, y -> x to y },
     onError: (String) -> Unit,
 ): ImageToolCodeGen.Snippet? = runCatching {
     val inputMapping = ImageToolCodeGen.DesignMapping(mapping.captureWidth, mapping.captureHeight, mapping.captureWidth, mapping.captureHeight)
+    fun mapped(p: ImageToolCodeGen.PickedPoint): ImageToolCodeGen.PickedPoint {
+        val xy = mapPoint(p.x,p.y); return p.copy(x=xy.first,y=xy.second)
+    }
+    fun crosshairPixel() = mapped(crosshairPoint(crosshair,viewport,bitmap) ?: error("请先截图"))
     val snippet = when (mode) {
-        ImageToolMode.REGION -> ImageToolCodeGen.region(selection.box!!, mapping)
+        ImageToolMode.REGION -> ImageToolCodeGen.region(selection.box!!, mapping, selection.polygon)
         ImageToolMode.TAP -> ImageToolCodeGen.tap(
-            crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"),
+            crosshairPixel(),
             inputMapping,
         )
         ImageToolMode.LONG_PRESS -> ImageToolCodeGen.longPress(
-            crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"),
+            crosshairPixel(),
             gestureDuration,
             inputMapping,
         )
-        ImageToolMode.POINTER_DOWN -> ImageToolCodeGen.pointerDown(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), inputMapping)
-        ImageToolMode.POINTER_MOVE -> ImageToolCodeGen.pointerMove(crosshairPoint(crosshair, viewport, bitmap) ?: error("请先截图"), inputMapping)
+        ImageToolMode.POINTER_DOWN -> ImageToolCodeGen.pointerDown(crosshairPixel(), inputMapping)
+        ImageToolMode.POINTER_MOVE -> ImageToolCodeGen.pointerMove(crosshairPixel(), inputMapping)
         ImageToolMode.POINTER_UP -> ImageToolCodeGen.pointerUp()
         // 取色用的是抬手时取到的点，不是准星——参考 colorpicker 没有常驻准星。
         ImageToolMode.COLOR -> ImageToolCodeGen.getColor(selection.points.first(), mapping)
@@ -487,12 +525,13 @@ private fun buildSnippet(
             tolerance = tolerance,
             roi = selection.box,
             mapping = mapping,
+            polygon = selection.polygon,
         )
         ImageToolMode.SWIPE -> {
             val start = slideStart ?: error("请先设置滑动起点")
             val end = slideEnd ?: error("请先设置滑动终点")
             val pixel = { p: Pair<Int, Int> ->
-                ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0)
+                mapped(ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0))
             }
             ImageToolCodeGen.swipe(pixel(start), pixel(end), swipeDuration, inputMapping)
         }
@@ -500,7 +539,7 @@ private fun buildSnippet(
             val start = slideStart ?: error("请先设置拖动起点")
             val end = slideEnd ?: error("请先设置拖动终点")
             val pixel = { p: Pair<Int, Int> ->
-                ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0)
+                mapped(ImageToolCodeGen.PickedPoint(p.first, p.second, bitmap?.getPixel(p.first, p.second)?.and(0xFFFFFF) ?: 0))
             }
             ImageToolCodeGen.drag(pixel(start), pixel(end), gestureDuration, inputMapping)
         }
@@ -516,8 +555,6 @@ private fun buildSnippet(
 
 private val TOOLBAR_FALLBACK_WIDTH = 304.dp
 private val TOOLBAR_HEIGHT = 34.dp
-private val MENU_WIDTH = 180.dp
-private val MENU_HEIGHT = (((ImageToolMode.menuOrder.size + 3) / 4) * 40 + 8).dp
 
 internal val ToolChrome = Color(0xE61E2531)
 internal val BoxStroke = Color(0xFFFF4D4F)

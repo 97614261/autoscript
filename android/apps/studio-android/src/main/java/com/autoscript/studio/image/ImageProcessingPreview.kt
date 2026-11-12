@@ -59,13 +59,7 @@ internal fun rememberImageProcessingPreview(source:Bitmap,operation:ImagePixelOp
 
 @Composable
 internal fun ImageProcessingPreviewCanvas(bitmap:Bitmap,height:Int,modifier:Modifier=Modifier,label:String="图像处理预览") {
-    val image=remember(bitmap) {bitmap.asImageBitmap()}
-    Canvas(Modifier.fillMaxWidth().height(height.dp).then(modifier).clipToBounds().background(Color(0xff202632)).semantics {contentDescription=label}) {
-        val tile=16.dp.toPx()
-        for(y in 0..(size.height/tile).toInt()) for(x in 0..(size.width/tile).toInt())
-            if((x+y)%2==0) drawRect(Color(0xff343c4c),Offset(x*tile,y*tile),Size(tile,tile))
-        val viewport=glyphMakerFocus(ImageToolViewport.fit(bitmap.width,bitmap.height,size.width,size.height))
-        drawImage(image,dstOffset=IntOffset(viewport.translateX.toInt(),viewport.translateY.toInt()),
-            dstSize=IntSize((bitmap.width*viewport.scale).toInt().coerceAtLeast(1),(bitmap.height*viewport.scale).toInt().coerceAtLeast(1)),filterQuality=FilterQuality.None)
+    ImageWorkspaceCanvasSlot(Modifier.fillMaxWidth().height(height.dp).then(modifier)) { bounds ->
+        ImageWorkspaceImageCanvas(bitmap,modifier=bounds,label=label)
     }
 }

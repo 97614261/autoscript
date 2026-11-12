@@ -35,7 +35,11 @@ internal fun editorProjectSearchIndex(flows: List<EditorSearchFlow>, checkCancel
                     value.isJsonPrimitive && value.asJsonPrimitive.isString -> {
                         val text = value.asString
                         if (key == "variable" || key.endsWith("Variable") ||
-                            (node.row.kind.startsWith("variable.") && key in setOf("name", "sourceName"))) variables += text
+                            (node.row.kind.startsWith("variable.") && key in setOf("name", "sourceName"))) {
+                            if (text.startsWith("=")) variables += calculationReferencedNames(text.drop(1)) else variables += text
+                        } else if (key == "expression" && node.row.kind in setOf("variable.calculate", "task.message")) {
+                            variables += calculationReferencedNames(text)
+                        }
                         if (text.startsWith("assets/images/")) images += text
                     }
                 }

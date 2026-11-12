@@ -20,7 +20,8 @@
         "region": { "$ref": "#/$defs/rect" },
         "foundVariable": { "$ref": "#/$defs/variable" },
         "xVariable": { "$ref": "#/$defs/variable" },
-        "yVariable": { "$ref": "#/$defs/variable" }
+        "yVariable": { "$ref": "#/$defs/variable" },
+        "polygon": {"type": "string", "maxLength": 8192, "description": "可选顶点JSON [[x,y],...]；3–128个不重合、不自交顶点，坐标0–4096，完全位于region内。空字符串使用矩形。"}
       }
     }
   },

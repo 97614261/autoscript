@@ -91,8 +91,6 @@ internal fun ConfiguredEntryArgumentsDialog(
         }, onManageVariables, initial, kind, confirmLabel)
         return true
     }
-    // Calls always use the real typed argument editor, even when their current argument map is empty.
-    // A newly selected target may require parameters; the compact target-only form cannot supply them.
     val jump = kind in setOf("control.break", "control.continue", "control.label", "control.goto", "flow.return", "flow.status.return",
         "flow.argument.set", "flow.argument.get", "flow.return.set", "flow.return.get") &&
         (kind != "flow.return" || arguments.size() == 0)
@@ -266,7 +264,9 @@ private fun CommonPage(
     var parameterValue by remember { mutableStateOf(initialArguments?.get("value")?.toString() ?: "0") }
     var parameterVariable by remember { mutableStateOf(text("valueVariable", text("targetVariable"))) }
     var useParameterVariable by remember { mutableStateOf(initialArguments?.has("valueVariable") == true) }
-    var targetFlowId by remember(currentFlowId, projectFlows) { mutableStateOf(text("targetFlowId").ifBlank { targets.firstOrNull()?.flowId }) }
+    var callDraft by remember(currentFlowId, projectFlows, initialArguments) {
+        mutableStateOf(PluginCallDraft.create(targets, initialArguments))
+    }
     var picker by remember { mutableStateOf<PickerRequest?>(null) }
     val resolvedVariables = calculationVariables(projectVariables, currentFlowId, projectFlows).associateBy { it.name }
     fun variableType(name: String): ProjectVariableType? = resolvedVariables[name]?.type
@@ -278,7 +278,9 @@ private fun CommonPage(
         if (options.isEmpty()) jumpError = "没有符合类型的变量，请先维护变量"
         else picker = variablePicker(options, parameterVariable) { update(it); jumpError = null }
     }
-    SplitEntryPage("流程 · 插件调用", tabs, selected, { if (initialKind == null || it == initialTab) { selected = it; jumpError = null } else jumpError = "修改时请保留原积木类型" }, onDismiss, {
+    SplitEntryPage(if (initialKind == null) "流程 · 插件调用" else tabs[initialTab],
+        if (initialKind == null) tabs else emptyList(), selected,
+        { if (initialKind == null || it == initialTab) { selected = it; jumpError = null } else jumpError = "修改时请保留原积木类型" }, onDismiss, {
         val index = parameterIndex.toIntOrNull()
         val snippet = when (selected) {
             0 -> when (action) {
@@ -312,8 +314,9 @@ private fun CommonPage(
                     }
                 }
             }
-            1 -> JumpPanelCode.callSnippet(targetFlowId?.takeIf { id -> targets.any { it.flowId == id } }.orEmpty(), callBranches).also {
-                if (it == null) jumpError = "请先创建并选择目标插件"
+            1 -> JumpPanelCode.configuredCallSnippet(targets.firstOrNull { it.flowId == callDraft.targetId }, callDraft.inputs, callBranches).let { (hint, problem) ->
+                jumpError = problem
+                hint
             }
             2, 4 -> {
                 if (index == null || index !in 1..99) jumpError = "参数序号须为 1～99"
@@ -340,7 +343,7 @@ private fun CommonPage(
             }
         }
         if (jumpError == null && snippet != null) onInsert(snippet)
-    }, headerHint = "当前插件内操作", confirmLabel = confirmLabel) {
+    }, confirmLabel = confirmLabel) {
         when (selected) {
             0 -> {
                 DenseFlowActions(action) {
@@ -396,31 +399,16 @@ private fun CommonPage(
                     if (initialKind == null) callBranches = it
                     else if (it != callBranches) jumpError = "修改时保留原子区；请新建分支调用积木"
                 }
-                DenseNotice(if (callBranches) "子插件返回成功走成功分支，返回失败走失败分支；正常结束默认成功，异常或取消中止。"
-                    else "先设置调用参数，再加入调用；调用后可读取返回参数。", if (callBranches) "分支规则" else "调用顺序")
-                val selectedTarget = targets.firstOrNull { it.flowId == targetFlowId }
-                DenseLabeledRow("目标插件", selectedTarget?.displayName() ?: "未创建", {
-                    if (targets.isEmpty()) jumpError = "请先创建另一个插件"
-                    else {
-                        val labels = targets.mapIndexed { index, flow -> "${index + 1}. ${flow.displayName()} (${flow.flowId.take(8)})" }
-                        picker = PickerRequest("选择目标插件", labels,
-                            labels.getOrNull(targets.indexOfFirst { it.flowId == targetFlowId })) { choice ->
-                            targetFlowId = targets[labels.indexOf(choice)].flowId; jumpError = null
-                        }
-                    }
-                }, arrow = true)
-                if (targets.isEmpty()) DenseNotice("当前只有一个插件；请先在标题的插件管理中创建目标插件。")
+                PluginCallFields(targets, callDraft) { callDraft = it; jumpError = null }
             }
             2, 4 -> {
-                Text(if (selected == 2) "设置下一次调用的参数" else "设置当前插件的返回参数",
-                    color = EntryAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 DenseTypedValue("序号", parameterIndex, { parameterIndex = it; jumpError = null }, "")
                 SegmentedChoice("固定值", "变量", useParameterVariable) { useParameterVariable = it; jumpError = null }
                 if (useParameterVariable) DenseTypedValue("来源", parameterVariable, { parameterVariable = it; jumpError = null }, "选择变量") {
                     pickVariable(scalarVariables) { parameterVariable = it }
                 } else {
                     DenseTypedValue("数值", parameterValue, { parameterValue = it; jumpError = null }, "")
-                    DenseNotice("数字、true/false 自动识别；普通文字直接输入。数字样式的文字请用双引号包住。")
+                    Text("纯数字文字用双引号包住", color = EntryMuted, fontSize = 10.sp)
                 }
                 if (useParameterVariable && onManageVariables != null) {
                     Text("维护变量", color = EntryAccent, fontSize = 11.sp,
@@ -428,8 +416,6 @@ private fun CommonPage(
                 }
             }
             else -> {
-                Text(if (selected == 3) "读取当前插件收到的调用参数" else "读取上一次插件调用的返回参数",
-                    color = EntryAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 DenseTypedValue("序号", parameterIndex, { parameterIndex = it; jumpError = null }, "")
                 DenseTypedValue("接收", parameterVariable, { parameterVariable = it; jumpError = null }, "选择变量") {
                     pickVariable(scalarVariables) { parameterVariable = it }
@@ -768,6 +754,7 @@ private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onS
         }
         DividerLine()
         Row(Modifier.weight(1f)) {
+            if (tabs.isNotEmpty()) {
             Column(Modifier.width(96.dp).fillMaxHeight().background(EntryPanel).verticalScroll(rememberScrollState())) {
                 tabs.forEachIndexed { index, tab ->
                     Box(Modifier.fillMaxWidth().height(38.dp).clickable { onSelected(index) }) {
@@ -785,6 +772,7 @@ private fun SplitEntryPage(title: String, tabs: List<String>, selected: Int, onS
                 }
             }
             DividerVertical()
+            }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
         }

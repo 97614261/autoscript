@@ -13,7 +13,7 @@ internal fun visualImageToolDraft(selection: ImageToolCodeGen.VisualSelection): 
         addProperty("right", region.right)
         addProperty("bottom", region.bottom)
     }
-    return when (selection.mode) {
+    val result = when (selection.mode) {
         ImageToolMode.OCR -> selection.ocr?.let { config -> config.kind to config.arguments(region) }
         ImageToolMode.COLOR -> selection.points.firstOrNull()?.let { point ->
             "vision.findcolor" to JsonObject().apply {
@@ -43,6 +43,10 @@ internal fun visualImageToolDraft(selection: ImageToolCodeGen.VisualSelection): 
             }
         }
         else -> null
+    }
+    return result?.let { (kind,args) ->
+        if(selection.polygon.isNotEmpty() && kind in ImageSearchPolygon.kinds) args.addProperty("polygon",ImageSearchPolygon.encode(selection.polygon))
+        kind to args
     }
 }
 

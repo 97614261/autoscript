@@ -8,7 +8,8 @@ internal fun recognitionLimitRange(kind: String): IntRange = when (kind) {
 }
 
 internal fun recognitionValuePresets(field: String, kind: String = ""): List<String> = when (field) {
-    "tolerance" -> listOf("0", "8", "16", "32", "64")
+    "tolerance" -> if (kind in setOf("vision.findimage", "vision.findallimages", "vision.findscaled"))
+        listOf("0", "3", "8", "16", "32", "64") else listOf("0", "8", "16", "32", "64")
     "similarityPermille" -> listOf("800", "900", "950", "990", "1000")
     "minimumConfidencePermille" -> listOf("300", "500", "700", "900", "950")
     "frequency" -> listOf("1", "2", "5", "10", "30")

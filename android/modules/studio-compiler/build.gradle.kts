@@ -34,7 +34,7 @@ val compilerSyncTasks = selectedCompilerTargets.mapIndexed { index, (target, abi
             "../rust/crates/flow-ir", "../rust/crates/glyph-ocr", "../rust/crates/lua-runtime",
             "../rust/crates/pixel-vision", "../rust/crates/runtime-scheduler",
         )) {
-            inputs.files(rootProject.fileTree(module) { include("src/**/*.rs", "Cargo.toml") })
+            inputs.files(rootProject.fileTree(module) { include("src/**/*.rs", "src/**/*.lua", "Cargo.toml") })
         }
         inputs.files(rootProject.file("../rust/Cargo.toml"), rootProject.file("../rust/Cargo.lock"))
         inputs.property("nativeProfile", nativeProfile)

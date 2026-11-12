@@ -29,17 +29,13 @@
           "minLength": 1,
           "maxLength": 256
         },
-        "pathVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "pathVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "key": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
         },
-        "keyVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "keyVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

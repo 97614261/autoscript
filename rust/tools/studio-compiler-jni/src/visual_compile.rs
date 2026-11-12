@@ -384,9 +384,34 @@ fn encode_reply(reply: &BridgeReply) -> String {
 fn draft_uses_api18(source: &FlowSource<'_>) -> bool {
     source.report.document.as_ref().is_some_and(|document| {
         document.nodes.iter().any(|node| {
-            node.envelope.randomization.is_some()
+            matches!(
+                node.envelope.kind.as_str(),
+                "variable.calculate" | "task.message"
+            ) && node
+                .envelope
+                .args
+                .get("expression")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(flow_compiler::calculation_uses_collections)
+                || !flow_compiler::input_expressions(&node.envelope.args).is_empty()
+                || node.envelope.randomization.is_some()
+                || flow_compiler::recognition_action_requires_api18(
+                    &node.envelope.kind,
+                    &node.envelope.args,
+                )
+                || node
+                    .envelope
+                    .args
+                    .get("polygon")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|v| !v.is_empty())
                 || node.envelope.kind == "legacy.getrectcolornum"
-                    && node.envelope.args.get("autoCapture").and_then(serde_json::Value::as_bool) == Some(true)
+                    && node
+                        .envelope
+                        .args
+                        .get("autoCapture")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
                 || matches!(
                     node.envelope.kind.as_str(),
                     "screen.frameinfo" | "screen.captureregion" | "text.numberat"
@@ -499,6 +524,7 @@ mod tests {
     };
     use automation_core::{FrameFormat, FrameMetadata, FramePool, FramePoolConfig, Rotation};
     use engine_core::{EngineSession, EngineSessionConfig, EngineState};
+    use flow_ir::{load_jsonl, parse_project_manifest, LoadOptions};
     use glyph_ocr::{encode_dictionary, GlyphSource};
     use lua_runtime::LuaScalar;
     use runtime_executor::{ExternalHostEvent, ExternalHostQueue};
@@ -829,6 +855,101 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    fn assert_randomized_commit_roundtrip(project_policy: Option<&str>, node_mode: Option<&str>) {
+        let root = create_project("task.noop");
+        let manifest_path = root.join("project.json");
+        let flow_path = root.join("visual/flows/main.jsonl");
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["runtimeApi"] = serde_json::json!("1.8");
+        let mut policy = serde_json::to_value(flow_ir::ProjectRandomization::default()).unwrap();
+        if let Some(key) = project_policy {
+            policy[key]["enabled"] = serde_json::json!(true);
+        }
+        manifest["randomization"] = policy;
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        fs::write(&manifest_path, &manifest_bytes).unwrap();
+        let mut node: Value = serde_json::from_slice(&fs::read(&flow_path).unwrap()).unwrap();
+        node["kind"] = serde_json::json!("task.sleep");
+        node["args"] = serde_json::json!({"milliseconds":0});
+        if let Some(mode) = node_mode {
+            node["randomization"] = serde_json::json!({"mode":mode,
+                "position":{"enabled":true,"xPx":2,"yPx":3},
+                "wait":{"enabled":true,"unit":"milliseconds","min":5,"max":5}});
+        }
+        let source = serde_json::to_vec(&node).unwrap();
+        fs::write(&flow_path, &source).unwrap();
+        fs::create_dir_all(root.join("generated")).unwrap();
+        for file in ["main.lua", "source-map.json", "generation.json"] {
+            fs::write(
+                root.join("generated").join(file),
+                b"stale generated artifact",
+            )
+            .unwrap();
+        }
+        // Separate calls reread only persisted sources, including after an old failed commit.
+        for _ in 0..2 {
+            let reply: Value = serde_json::from_str(&compile_project_directory(&root)).unwrap();
+            assert_eq!(
+                reply["status"], "ok",
+                "{project_policy:?}/{node_mode:?}: {reply}"
+            );
+            let lua = fs::read(root.join("generated/main.lua")).unwrap();
+            let map = fs::read(root.join("generated/source-map.json")).unwrap();
+            let record = fs::read(root.join("generated/generation.json")).unwrap();
+            let manifest = parse_project_manifest(&manifest_bytes).unwrap();
+            let report = load_jsonl(
+                &source,
+                LoadOptions {
+                    flow_id: "main",
+                    root_block_id: "block-main",
+                    flow_schema_version: 1,
+                    supported_nodes: flow_compiler::SUPPORTED_NODE_VERSIONS,
+                },
+            );
+            let verified = flow_compiler::verify_generation(
+                &record,
+                &manifest,
+                &[flow_compiler::FlowSource {
+                    flow_id: "main",
+                    exact_bytes: &source,
+                    report: &report,
+                }],
+                &lua,
+                &map,
+            )
+            .unwrap();
+            assert_eq!(reply["generationId"], verified.generation_id);
+            let mut engine = EngineSession::new(720, 1280, EngineSessionConfig::default()).unwrap();
+            engine
+                .start(&lua, "randomized-commit", &["core.task".into()])
+                .unwrap();
+            engine.pump(1).unwrap();
+            assert_eq!(engine.state(), EngineState::Stopped);
+            let selected: Value =
+                serde_json::from_str(&compile_node_test(&root, "main", "node-1")).unwrap();
+            assert_eq!(selected["status"], "ok", "{selected}");
+            assert_eq!(fs::read(root.join("generated/main.lua")).unwrap(), lua);
+        }
+        assert_eq!(fs::read(&manifest_path).unwrap(), manifest_bytes);
+        assert_eq!(fs::read(&flow_path).unwrap(), source);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn randomized_project_commits_and_reopens_with_stale_artifacts() {
+        for key in ["touch", "recognition", "wait"] {
+            assert_randomized_commit_roundtrip(Some(key), None);
+        }
+    }
+
+    #[test]
+    fn randomized_node_overrides_commit_and_reopen_with_stale_artifacts() {
+        for mode in ["follow", "disabled", "custom"] {
+            assert_randomized_commit_roundtrip(None, Some(mode));
+        }
+    }
+
     #[test]
     #[allow(clippy::too_many_lines)] // One test intentionally shows the full compile/runtime seam.
     fn compiled_visual_project_executes_the_complete_runtime_pipeline() {
@@ -1102,6 +1223,11 @@ mod tests {
             ),
             (
                 "vision.countcolor",
+                serde_json::json!({"frameVariable":"frame","rgb":16711680,"tolerance":0,
+                "polygon":"[[0,0],[100,0],[0,20]]", "region":{"left":0,"top":0,"right":100,"bottom":20},"limit":256,"resultVariable":"score"}),
+            ),
+            (
+                "vision.countcolor",
                 serde_json::json!({"frameVariable":"frame","autoCapture":true,"rgb":16711680,"tolerance":0,
                 "region":{"left":0,"top":0,"right":100,"bottom":20},"limit":0,"resultVariable":"score"}),
             ),
@@ -1154,6 +1280,174 @@ mod tests {
         assert_eq!(fs::read(&flow_path).expect("source after"), source_before);
         assert!(!root.join("generated/generation.json").exists());
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn quick_collection_calculation_drafts_promote_without_writing_then_compile_and_run() {
+        let root = create_project("task.noop");
+        let manifest_path = root.join("project.json");
+        let source_path = root.join("visual/flows/main.jsonl");
+        let original = fs::read(&source_path).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["runtimeApi"] = serde_json::json!("1.7");
+        manifest["variables"] =
+            serde_json::json!([{"name":"结果","type":"integer","scope":"global"}]);
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let before = fs::read(&manifest_path).unwrap();
+        let mut node: Value = serde_json::from_slice(&original).unwrap();
+        node["kind"] = serde_json::json!("variable.calculate");
+        node["args"] = serde_json::json!({"name":"结果","expression":"itemInt(split(\"100,+100,180\",\",\",0),2)"});
+        let draft = serde_json::to_vec(&node).unwrap();
+        for reply in [
+            validate_project_draft(&root, "main", &draft),
+            super::validate_project_draft_set(&root, &encode_draft_set(&[("main", &draft)])),
+        ] {
+            let reply: Value = serde_json::from_str(&reply).unwrap();
+            assert_eq!(reply["status"], "ok", "{reply}");
+        }
+        assert_eq!(fs::read(&manifest_path).unwrap(), before);
+        assert_eq!(fs::read(&source_path).unwrap(), original);
+        assert!(!root.join("generated").exists());
+        manifest["runtimeApi"] = serde_json::json!("1.8");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let mut log = node.clone();
+        log["nodeId"] = serde_json::json!("node-2");
+        log["orderKey"] = serde_json::json!("a1");
+        log["kind"] = serde_json::json!("task.log");
+        log["args"] = serde_json::json!({"level":"info","message":"value","valueVariable":"结果"});
+        fs::write(&source_path, format!("{node}\n{log}\n")).unwrap();
+        let reply: Value = serde_json::from_str(&compile_project_directory(&root)).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let lua = fs::read(root.join("generated/main.lua")).unwrap();
+        let mut engine = EngineSession::new(720, 1280, EngineSessionConfig::default()).unwrap();
+        engine
+            .start(&lua, "quick-collection", &["core.task".into()])
+            .unwrap();
+        engine.pump(1).unwrap();
+        assert_eq!(engine.drain_script_logs(), ["脚本/INFO: 100"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn value_source_drafts_promote_without_writing_then_compile_and_run() {
+        let root = create_project("task.noop");
+        let manifest_path = root.join("project.json");
+        let source_path = root.join("visual/flows/main.jsonl");
+        let original = fs::read(&source_path).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["runtimeApi"] = serde_json::json!("1.7");
+        manifest["variables"] =
+            serde_json::json!([{"name":"结果","type":"integer","scope":"global"}]);
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let before = fs::read(&manifest_path).unwrap();
+        let mut node: Value = serde_json::from_slice(&original).unwrap();
+        node["kind"] = serde_json::json!("variable.copy");
+        node["args"] = serde_json::json!({"name":"结果","sourceName":"=itemInt(split(\"100,+100,180\",\",\",0),2)"});
+        let draft = serde_json::to_vec(&node).unwrap();
+        for reply in [
+            validate_project_draft(&root, "main", &draft),
+            super::validate_project_draft_set(&root, &encode_draft_set(&[("main", &draft)])),
+        ] {
+            let reply: Value = serde_json::from_str(&reply).unwrap();
+            assert_eq!(reply["status"], "ok", "{reply}");
+        }
+        assert_eq!(fs::read(&manifest_path).unwrap(), before);
+        assert_eq!(fs::read(&source_path).unwrap(), original);
+        assert!(!root.join("generated").exists());
+        manifest["runtimeApi"] = serde_json::json!("1.8");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let mut log = node.clone();
+        log["nodeId"] = serde_json::json!("node-2");
+        log["orderKey"] = serde_json::json!("a1");
+        log["kind"] = serde_json::json!("task.log");
+        log["args"] = serde_json::json!({"level":"info","message":"value","valueVariable":"结果"});
+        fs::write(&source_path, format!("{node}\n{log}\n")).unwrap();
+        let reply: Value = serde_json::from_str(&compile_project_directory(&root)).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let lua = fs::read(root.join("generated/main.lua")).unwrap();
+        let mut engine = EngineSession::new(720, 1280, EngineSessionConfig::default()).unwrap();
+        engine
+            .start(&lua, "quick-collection", &["core.task".into()])
+            .unwrap();
+        engine.pump(1).unwrap();
+        assert_eq!(engine.drain_script_logs(), ["脚本/INFO: 100"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recognition_action_drafts_promote_single_and_all_without_writing() {
+        let root = create_project("task.noop");
+        let manifest_path = root.join("project.json");
+        let source_path = root.join("visual/flows/main.jsonl");
+        let original = fs::read(&source_path).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["runtimeApi"] = serde_json::json!("1.7");
+        manifest["capabilities"] = serde_json::json!([
+            "core.task",
+            "screen.capture",
+            "vision.template",
+            "input.basic"
+        ]);
+        manifest["resources"] = serde_json::json!([{"kind":"image","path":"assets/images/a.png"}]);
+        manifest["variables"] = serde_json::json!([
+            {"name":"matches","type":"string","scope":"global"},
+            {"name":"found","type":"integer","scope":"global"},
+            {"name":"x","type":"integer","scope":"global"},
+            {"name":"y","type":"integer","scope":"global"}
+        ]);
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let before = fs::read(&manifest_path).unwrap();
+        for kind in ["vision.findimage", "vision.findallimages"] {
+            for (anchor, mode) in [
+                ("topLeft", "follow"),
+                ("center", "follow"),
+                ("topLeft", "inside"),
+            ] {
+                let mut node: Value = serde_json::from_slice(&original).unwrap();
+                node["kind"] = serde_json::json!(kind);
+                node["childBlocks"] =
+                    serde_json::json!({"success":"found-block","failure":"miss-block"});
+                node["nodeVersion"] =
+                    serde_json::json!(if kind == "vision.findimage" { 3 } else { 1 });
+                node["args"] = serde_json::json!({
+                    "frameVariable":"frame","imagePath":"assets/images/a.png","autoCapture":true,
+                    "region":{"left":0,"top":0,"right":720,"bottom":1280},
+                    "tolerance":0,"similarityPermille":900,"foundVariable":"found","xVariable":"x","yVariable":"y",
+                    "resultVariable":"matches","limit":4,"successAction":"tap","actionAnchor":anchor,"actionRandom":mode
+                });
+                if kind == "vision.findimage" {
+                    node["args"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("resultVariable");
+                    node["args"].as_object_mut().unwrap().remove("limit");
+                } else {
+                    for key in ["imagePath", "foundVariable", "xVariable", "yVariable"] {
+                        node["args"].as_object_mut().unwrap().remove(key);
+                    }
+                    node["args"]["imagePaths"] = serde_json::json!(["assets/images/a.png"]);
+                    node["args"]["direction"] = serde_json::json!(0);
+                }
+                let draft = serde_json::to_vec(&node).unwrap();
+                for reply in [
+                    validate_project_draft(&root, "main", &draft),
+                    super::validate_project_draft_set(
+                        &root,
+                        &encode_draft_set(&[("main", &draft)]),
+                    ),
+                ] {
+                    let reply: Value = serde_json::from_str(&reply).unwrap();
+                    assert_eq!(reply["status"], "ok", "{kind}/{anchor}/{mode}: {reply}");
+                }
+                assert_eq!(fs::read(&manifest_path).unwrap(), before);
+                assert_eq!(fs::read(&source_path).unwrap(), original);
+                assert!(!root.join("generated").exists());
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

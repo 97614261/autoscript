@@ -25,16 +25,16 @@ import com.autoscript.core.designsystem.AutoScriptPalette
 
 @Composable
 internal fun StudioToolAction(title: String, icon: Int, modifier: Modifier = Modifier,
-    enabled: Boolean = true, primary: Boolean = false, onClick: () -> Unit) {
+    enabled: Boolean = true, primary: Boolean = false, dense: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(6.dp)
-    Row(modifier.heightIn(min = 44.dp).clip(shape)
+    Row(modifier.heightIn(min = if (dense) 34.dp else 44.dp).clip(shape)
         .background(if (primary) AutoScriptPalette.AccentSoft else AutoScriptPalette.VisualEditor.ControlBackground, shape)
         .border(1.dp, AutoScriptPalette.Border, shape).clickable(enabled = enabled, onClick = onClick)
-        .padding(horizontal = 9.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        .padding(horizontal = if (dense) 7.dp else 9.dp, vertical = if (dense) 5.dp else 7.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (dense) 5.dp else 8.dp)) {
         Icon(painterResource(icon), null, tint = if (enabled) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary,
-            modifier = Modifier.size(19.dp))
-        Text(title, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.size(if (dense) 16.dp else 19.dp))
+        Text(title, Modifier.weight(1f), fontSize = if (dense) 11.sp else 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium,
                 color = if (enabled) AutoScriptPalette.TextPrimary else AutoScriptPalette.TextSecondary,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
     }

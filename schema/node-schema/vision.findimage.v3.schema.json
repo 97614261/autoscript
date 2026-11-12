@@ -71,6 +71,10 @@
           "type": "boolean",
           "default": false
         },
+        "actionAnchor": {"enum": ["topLeft", "center"], "default": "topLeft"},
+        "actionRandom": {"enum": ["follow", "disabled", "offset", "inside"], "default": "follow"},
+        "actionRandomX": {"type": "integer", "minimum": 0, "maximum": 4096, "default": 0},
+        "actionRandomY": {"type": "integer", "minimum": 0, "maximum": 4096, "default": 0},
         "successAction": {
           "enum": [
             "none",
@@ -115,18 +119,10 @@
           "maximum": 4,
           "default": 0
         },
-        "leftVariable": {
-          "$ref": "#/$defs/variable"
-        },
-        "topVariable": {
-          "$ref": "#/$defs/variable"
-        },
-        "rightVariable": {
-          "$ref": "#/$defs/variable"
-        },
-        "bottomVariable": {
-          "$ref": "#/$defs/variable"
-        },
+        "leftVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
+        "topVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
+        "rightVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
+        "bottomVariable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "foundVariable": {
           "$ref": "#/$defs/variable"
         },
@@ -135,7 +131,8 @@
         },
         "yVariable": {
           "$ref": "#/$defs/variable"
-        }
+        },
+        "polygon": {"type": "string", "maxLength": 8192, "description": "可选顶点JSON [[x,y],...]；3–128个不重合、不自交顶点，坐标0–4096，完全位于region内。空字符串使用矩形。"}
       }
     },
     "childBlocks": {

@@ -31,33 +31,25 @@
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "x1Variable": {
-          "$ref": "#/$defs/variable"
-        },
+        "x1Variable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "y1": {
           "type": "number",
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "y1Variable": {
-          "$ref": "#/$defs/variable"
-        },
+        "y1Variable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "x2": {
           "type": "number",
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "x2Variable": {
-          "$ref": "#/$defs/variable"
-        },
+        "x2Variable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "y2": {
           "type": "number",
           "minimum": -1000000000000,
           "maximum": 1000000000000
         },
-        "y2Variable": {
-          "$ref": "#/$defs/variable"
-        },
+        "y2Variable": {"anyOf": [{"$ref": "#/$defs/variable"}, {"type": "string", "pattern": "^=[\\s\\S]+$", "maxLength": 1025, "description": "运行时标量表达式；UTF-8最多1024字节，结果需匹配输入类型。"}]},
         "resultVariable": {
           "$ref": "#/$defs/variable"
         }

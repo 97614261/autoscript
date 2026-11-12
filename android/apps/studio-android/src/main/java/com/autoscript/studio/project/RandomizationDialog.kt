@@ -46,6 +46,7 @@ internal fun RandomizationDialog(initial: ProjectRandomization, busy: Boolean, o
     var form by remember(initial) { mutableStateOf(baseline) }
     var mode by remember(initialNodeMode) { mutableStateOf(initialNodeMode) }
     var message by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("随机设置", message)
     var discard by remember { mutableStateOf(false) }
     val parsed = form.parse()
     val dirty = form != baseline || mode != initialNodeMode

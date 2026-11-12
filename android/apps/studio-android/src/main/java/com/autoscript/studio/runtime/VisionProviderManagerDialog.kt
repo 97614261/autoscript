@@ -30,6 +30,7 @@ internal fun VisionProviderManagerDialog(client: RuntimeClient, onDismiss: () ->
     var inventory by remember { mutableStateOf<VisionProviderInventory?>(null) }
     var status by remember { mutableStateOf<Map<String, VisionProviderStatus?>>(emptyMap()) }
     var message by remember { mutableStateOf("本地导入固定发行签名组件，不是 Runner 打包模板；不提供下载。") }
+    StudioSystemLogEffect("识别组件", message, skipInitial = true)
     var job by remember { mutableStateOf<Job?>(null) }
     var busy by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }

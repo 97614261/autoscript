@@ -5,7 +5,7 @@
   "nodeSchemaId": "https://autoscript.local/schema/node/vision.findallimages/1/vision.findallimages.schema.json",
   "title": "多结果找图 · 成功/失败",
   "category": "vision",
-  "summary": "保留1–64个位置及模板信息；结果为字符型JSON集合。模板按列表优先级，包含重叠位置。找到执行success，否则failure；错误或取消中止。",
+  "summary": "保留1–64个位置及模板信息；结果为字符型JSON集合。模板按列表优先级，包含重叠位置。找到执行success，否则failure；错误或取消中止。 可选多边形范围；找色只检查内部像素，多点整组、找图整个模板需位于选区内。",
   "searchTerms": [
     "图像",
     "多结果",
@@ -22,6 +22,10 @@
     "failure"
   ],
   "properties": [
+    {"path": "actionAnchor", "label": "点击位置", "editor": "enum", "required": false, "defaultValue": "topLeft", "choices": ["topLeft", "center"]},
+    {"path": "actionRandom", "label": "点击随机", "editor": "enum", "required": false, "defaultValue": "follow", "choices": ["follow", "disabled", "offset", "inside"]},
+    {"path": "actionRandomX", "label": "随机X±px", "editor": "integer", "required": false, "defaultValue": "0"},
+    {"path": "actionRandomY", "label": "随机Y±px", "editor": "integer", "required": false, "defaultValue": "0"},
     {
       "path": "frameVariable",
       "label": "帧变量（图像型；自动截图时不使用）",
@@ -49,7 +53,7 @@
       "label": "像素容差",
       "editor": "integer",
       "required": true,
-      "defaultValue": "0"
+      "defaultValue": "3"
     },
     {
       "path": "similarityPermille",
@@ -141,7 +145,8 @@
       "editor": "integer",
       "required": false,
       "defaultValue": "0"
-    }
+    },
+    {"path": "polygon", "label": "多边形选区", "editor": "string", "required": false, "defaultValue": ""}
   ],
   "migrations": []
 }

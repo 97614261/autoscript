@@ -20,14 +20,19 @@ class ScreenshotTemplateRegionTest {
     }.toByteArray()
 
     /** Real, lossless RGBA PNG with filter-0 rows, using only the JVM/Android shared APIs. */
-    private fun image(): ByteArray {
+    private fun image(argb: IntArray? = null): ByteArray {
+        require(argb == null || argb.size == 120 * 80)
         val header = ByteArrayOutputStream().also { DataOutputStream(it).apply {
             writeInt(120); writeInt(80); write(byteArrayOf(8, 6, 0, 0, 0))
         } }.toByteArray()
         val pixels = ByteArrayOutputStream().also { rows ->
             for (y in 0 until 80) {
                 rows.write(0)
-                for (x in 0 until 120) rows.write(byteArrayOf(x.toByte(), y.toByte(), 0x45, (x * 17).toByte()))
+                for (x in 0 until 120) {
+                    val pixel = argb?.get(y * 120 + x)
+                    rows.write(if (pixel == null) byteArrayOf(x.toByte(), y.toByte(), 0x45, (x * 17).toByte())
+                        else byteArrayOf((pixel ushr 16).toByte(), (pixel ushr 8).toByte(), pixel.toByte(), (pixel ushr 24).toByte()))
+                }
             }
         }.toByteArray()
         val data = ByteArrayOutputStream().also { DeflaterOutputStream(it).use { compressor -> compressor.write(pixels) } }.toByteArray()
@@ -66,6 +71,55 @@ class ScreenshotTemplateRegionTest {
         val hintSize = saved.size - original.size
         assertArrayEquals(original.copyOfRange(33, original.size), saved.copyOfRange(33 + hintSize, saved.size))
         assertTrue(hintSize < 160)
+    }
+
+    @Test fun processedLandscapeCropRoundTripsOriginalOffsetWithoutChangingPngPixels() {
+        val pipeline = ImageProcessingPipeline(1920, 1080, listOf(
+            ImagePixelOperation("crop", roi = ImageToolCodeGen.Roi(1000, 100, 1400, 400)),
+            ImagePixelOperation("crop", roi = ImageToolCodeGen.Roi(10, 20, 130, 100))))
+        val region = requireNotNull(pipeline.screenshotTemplateRegion(ImageToolCodeGen.Roi(0, 0, 120, 80)))
+        val png = image()
+        val saved = encoded(png, region)
+        assertEquals("1010,120,1130,200", requireNotNull(read(saved)).regionText())
+        assertEquals(region, read(saved))
+        assertArrayEquals(pixels(png), pixels(saved))
+    }
+
+    @Test fun colorAndCleanupEditsKeepTheScreenRegionThroughRepeatedCrops() {
+        val filter = com.autoscript.project.store.ProjectImageFilter(output = "keep")
+        val edits = listOf(ImagePixelOperation("gray"), ImagePixelOperation("threshold"),
+            ImagePixelOperation("filter", filter = filter)) + com.autoscript.project.store.imageCleanupModes.map {
+                ImagePixelOperation(it, cleanup = com.autoscript.project.store.ProjectImageCleanup())
+            }
+        for (edit in edits) {
+            val pipeline = ImageProcessingPipeline(1920, 1080, listOf(
+                ImagePixelOperation("crop", roi = ImageToolCodeGen.Roi(1000, 100, 1400, 400)), edit,
+                ImagePixelOperation("crop", roi = ImageToolCodeGen.Roi(10, 20, 130, 100))))
+            val expected = ScreenshotTemplateRegion(1920, 1080, ImageToolCodeGen.Roi(1010, 120, 1130, 200))
+            assertEquals(edit.mode, expected, pipeline.screenshotTemplateRegion(ImageToolCodeGen.Roi(0, 0, 120, 80)))
+            assertEquals(edit.mode, expected, read(encoded(image(), expected)))
+        }
+    }
+
+    @Test fun transparentFilterSavesProcessedPixelsAndAlphaWithoutChangingTheSource() {
+        val source = IntArray(120 * 80) { if (it % 120 < 10) 0x80FFFFFF.toInt() else 0xFF223344.toInt() }
+        val original = source.copyOf()
+        val settings = com.autoscript.project.store.ProjectImageFilter(output = "keep", rules = listOf(
+            com.autoscript.project.store.ProjectColorRule(0xFFFFFF, 0, 0, 0)))
+        val operation = ImagePixelOperation("filter", filter = settings)
+        val processed = processImagePixels(source, 120, 80, operation) {}
+        val target = requireNotNull(imageSaveTarget(ImageToolSelection(), processed.width, processed.height))
+        val pipeline = ImageProcessingPipeline(720, 1280, listOf(
+            ImagePixelOperation("crop", roi = origin.roi), operation))
+        val region = requireNotNull(pipeline.screenshotTemplateRegion(target.region))
+        val png = encoded(image(processed.argb), region)
+        val rows = pixels(png)
+        assertEquals(origin, read(png))
+        assertEquals(128, rows[1 + 3].toInt() and 255)
+        assertEquals(0, rows[1 + 20 * 4 + 3].toInt() and 255)
+        assertArrayEquals(original, source)
+        assertEquals(0x80FFFFFF.toInt(), processed.argb[0])
+        assertEquals(0, processed.argb[20])
     }
 
     @Test fun arbitraryEncoderWriteBoundariesDoNotDuplicateOrDropBytes() {

@@ -340,6 +340,8 @@ pub(crate) struct GetColorArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindColorArgs {
     #[serde(default)]
+    pub polygon: String,
+    #[serde(default)]
     pub auto_capture: bool,
     pub frame_variable: String,
     pub rgb: u32,
@@ -379,6 +381,8 @@ pub(crate) struct MultiColorSampleArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindMultiColorArgs {
     #[serde(default)]
+    pub polygon: String,
+    #[serde(default)]
     pub auto_capture: bool,
     pub frame_variable: String,
     pub anchor_rgb: u32,
@@ -393,6 +397,8 @@ pub(crate) struct FindMultiColorArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CountColorArgs {
+    #[serde(default)]
+    pub polygon: String,
     #[serde(default)]
     pub auto_capture: bool,
     pub frame_variable: String,
@@ -409,6 +415,8 @@ pub(crate) struct CountColorArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindAllColorArgs {
     #[serde(default)]
+    pub polygon: String,
+    #[serde(default)]
     pub auto_capture: bool,
     pub frame_variable: String,
     pub rgb: u32,
@@ -423,6 +431,8 @@ pub(crate) struct FindAllColorArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindImageArgs {
+    #[serde(default)]
+    pub polygon: String,
     pub frame_variable: String,
     pub image_path: String,
     pub tolerance: u8,
@@ -453,6 +463,14 @@ pub(crate) struct FindImageArgs {
     pub offset_x: i32,
     #[serde(default)]
     pub offset_y: i32,
+    #[serde(default)]
+    pub action_anchor: RecognitionAnchor,
+    #[serde(default)]
+    pub action_random: RecognitionRandom,
+    #[serde(default)]
+    pub action_random_x: u16,
+    #[serde(default)]
+    pub action_random_y: u16,
     #[serde(default = "default_action_duration")]
     pub action_duration_ms: u32,
 }
@@ -460,6 +478,8 @@ pub(crate) struct FindImageArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct FindAllImagesArgs {
+    #[serde(default)]
+    pub polygon: String,
     pub frame_variable: String,
     pub auto_capture: bool,
     pub image_paths: Vec<String>,
@@ -477,6 +497,14 @@ pub(crate) struct FindAllImagesArgs {
     pub offset_x: i32,
     #[serde(default)]
     pub offset_y: i32,
+    #[serde(default)]
+    pub action_anchor: RecognitionAnchor,
+    #[serde(default)]
+    pub action_random: RecognitionRandom,
+    #[serde(default)]
+    pub action_random_x: u16,
+    #[serde(default)]
+    pub action_random_y: u16,
     #[serde(default = "default_action_duration")]
     pub action_duration_ms: u32,
     #[serde(default)]
@@ -509,6 +537,24 @@ pub(crate) enum RecognitionAction {
     Hold,
     TapWait,
     PressRelease,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RecognitionAnchor {
+    #[default]
+    TopLeft,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RecognitionRandom {
+    #[default]
+    Follow,
+    Disabled,
+    Offset,
+    Inside,
 }
 
 impl FindImageArgs {
@@ -581,6 +627,8 @@ impl GlyphOcrArgs {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct GrayArgs {
+    #[serde(default)]
+    pub polygon: String,
     pub frame_variable: String,
     pub image_path: String,
     pub similarity_permille: u16,
@@ -913,6 +961,34 @@ fn validate_nodes(
                 let in_loop = node_is_inside_loop(node, &node_by_id);
                 if !in_loop {
                     invalid_arguments(node, "循环指标/检查只能位于当前插件的循环体", errors);
+                }
+            }
+            if !crate::value_source::valid_fields(&node.envelope.kind, &node.envelope.args) {
+                invalid_arguments(
+                    node,
+                    "此位置是输出变量或图像句柄，不能使用输入表达式",
+                    errors,
+                );
+            }
+            if let Err(reason) = crate::value_source::validate_types(
+                &node.envelope.kind,
+                &node.envelope.args,
+                manifest,
+                &flow.declaration.flow_id,
+            ) {
+                invalid_arguments(node, reason, errors);
+            }
+            for source in crate::value_source::input_expressions(&node.envelope.args) {
+                if let Err(reason) =
+                    crate::value_source::infer(&source[1..], manifest, &flow.declaration.flow_id)
+                {
+                    invalid_arguments(node, reason, errors);
+                }
+                if !runtime_api_at_least(&manifest.runtime_api, 1, 8) {
+                    invalid_arguments(node, "输入表达式需要runtimeApi 1.8", errors);
+                }
+                if crate::variable_expression::calculation_uses_collections(&source[1..]) {
+                    require_capability(node, "core.task", &capabilities, errors);
                 }
             }
             match node.envelope.kind.as_str() {
@@ -1424,7 +1500,9 @@ fn parse_data_ui_arguments(
                 .filter(|v| {
                     valid_control_id(&v.control_id)
                         && v.value.len() <= 8192
-                        && v.value_variable.as_deref().is_none_or(valid_variable_name)
+                        && v.value_variable
+                            .as_deref()
+                            .is_none_or(crate::value_source::valid)
                         && if kind == "ui.get"
                             || (kind == "ui.command" && v.operation.starts_with("get:"))
                         {
@@ -1467,7 +1545,7 @@ fn parse_task_arguments(
                     && value
                         .milliseconds_variable
                         .as_deref()
-                        .is_none_or(valid_variable_name)
+                        .is_none_or(crate::value_source::valid)
             })
             .map(BuiltinNodeArgs::Sleep)
             .ok_or("task.sleep requires non-negative integer milliseconds"),
@@ -1479,7 +1557,7 @@ fn parse_task_arguments(
                     && value
                         .value_variable
                         .as_deref()
-                        .is_none_or(valid_variable_name)
+                        .is_none_or(crate::value_source::valid)
             })
             .map(BuiltinNodeArgs::Log)
             .ok_or("task.log requires a valid level, message, and optional variable name"),
@@ -1500,7 +1578,7 @@ fn parse_task_arguments(
                     && value
                         .value_variable
                         .as_deref()
-                        .is_none_or(valid_variable_name)
+                        .is_none_or(crate::value_source::valid)
             })
             .map(BuiltinNodeArgs::Prompt)
             .ok_or("task.prompt requires a valid message and optional variable name"),
@@ -1512,7 +1590,7 @@ fn parse_task_arguments(
                     && value
                         .value_variable
                         .as_deref()
-                        .is_none_or(valid_variable_name)
+                        .is_none_or(crate::value_source::valid)
             })
             .map(BuiltinNodeArgs::RunPrompt)
             .ok_or("task.runprompt requires a valid message and optional variable name"),
@@ -1581,7 +1659,7 @@ fn parse_control_arguments(
                 .ok()
                 .filter(|value| {
                     value.times <= 1_000_000
-                        && value.times_variable.as_deref().is_none_or(valid_variable_name)
+                        && value.times_variable.as_deref().is_none_or(crate::value_source::valid)
                         && value.index_variable.as_deref().is_none_or(valid_variable_name)
                         && value.elapsed_variable.as_deref().is_none_or(valid_variable_name)
                 })
@@ -1604,7 +1682,7 @@ fn parse_control_arguments(
                         && value
                             .duration_variable
                             .as_deref()
-                            .is_none_or(valid_variable_name)
+                            .is_none_or(crate::value_source::valid)
                         && value
                             .iteration_variable
                             .as_deref()
@@ -1634,7 +1712,7 @@ fn parse_control_arguments(
                         && value
                             .duration_variable
                             .as_deref()
-                            .is_none_or(valid_variable_name)
+                            .is_none_or(crate::value_source::valid)
                         && value
                             .iteration_variable
                             .as_deref()
@@ -1671,7 +1749,9 @@ fn parse_loop_metric_arguments(
             .ok()
             .filter(|v| {
                 v.limit.is_finite()
-                    && v.limit_variable.as_deref().is_none_or(valid_variable_name)
+                    && v.limit_variable
+                        .as_deref()
+                        .is_none_or(crate::value_source::valid)
                     && (v.metric == LoopMetric::Elapsed || v.unit == LoopTimeUnit::Milliseconds)
                     && if v.limit_variable.is_some() {
                         v.limit >= 0.0 && v.limit <= 86_400_000.0
@@ -1718,7 +1798,7 @@ fn parse_variable_arguments(
         "variable.copy" => serde_json::from_value::<VariableCopyArgs>(node.envelope.args.clone())
             .ok()
             .filter(|value| {
-                valid_variable_name(&value.name) && valid_variable_name(&value.source_name)
+                valid_variable_name(&value.name) && crate::value_source::valid(&value.source_name)
             })
             .map(BuiltinNodeArgs::VariableCopy)
             .ok_or("variable.copy requires valid name and sourceName"),
@@ -1856,6 +1936,9 @@ pub(crate) fn declared_variable_type(
     flow_id: &str,
     name: &str,
 ) -> Option<flow_ir::ProjectVariableType> {
+    if let Some(expression) = name.strip_prefix('=') {
+        return crate::value_source::infer(expression, manifest, flow_id).ok();
+    }
     // A Flow-local declaration intentionally shadows a global declaration of
     // the same name, matching the editor's local/global chooser.
     manifest
@@ -2404,7 +2487,7 @@ fn require_declared_variable_type(
     })
 }
 
-fn loop_declared_type(
+pub(crate) fn loop_declared_type(
     manifest: &ProjectManifest,
     flow_id: &str,
     name: &str,
@@ -2458,6 +2541,19 @@ fn validate_builtin_requirements(
     capabilities: &HashSet<&str>,
     errors: &mut Vec<CompileError>,
 ) {
+    if matches!(kind, "variable.calculate" | "task.message")
+        && node
+            .envelope
+            .args
+            .get("expression")
+            .and_then(Value::as_str)
+            .is_some_and(crate::variable_expression::calculation_uses_collections)
+    {
+        require_capability(node, "core.task", capabilities, errors);
+        if !runtime_api_at_least(&manifest.runtime_api, 1, 8) {
+            invalid_arguments(node, "列表取值计算需要runtimeApi 1.8", errors);
+        }
+    }
     if (matches!(
         kind,
         "screen.frameinfo" | "screen.captureregion" | "text.numberat"
@@ -2917,11 +3013,66 @@ fn valid_legacy_region(value: &LegacyRegionArgs) -> bool {
         && value.top.checked_add(value.height).is_some()
 }
 
+pub(crate) fn validate_polygon_arguments(
+    args: &Value,
+    manifest: &ProjectManifest,
+) -> Result<(), &'static str> {
+    if let Some(polygon) = args.get("polygon") {
+        let polygon = polygon.as_str().ok_or("多边形需要顶点JSON文本")?;
+        if !polygon.is_empty() {
+            if !runtime_api_at_least(&manifest.runtime_api, 1, 8) {
+                return Err("多边形搜索需要runtimeApi 1.8");
+            }
+            if polygon.len() > 8192 {
+                return Err("多边形配置过长");
+            }
+            let points: Vec<[u32; 2]> =
+                serde_json::from_str(polygon).map_err(|_| "多边形顶点格式无效")?;
+            let prepared = pixel_vision::polygon::PolygonRegion::prepare(&points)
+                .map_err(|_| "多边形顶点无效、交叉或没有有效面积")?;
+            let rect: RectArgs =
+                serde_json::from_value(args.get("region").cloned().unwrap_or_else(|| {
+                    serde_json::json!({
+                        "left": args.get("left"), "top": args.get("top"),
+                        "right": args.get("right"), "bottom": args.get("bottom")
+                    })
+                }))
+                .map_err(|_| "多边形范围格式无效")?;
+            if !valid_rect(&rect)
+                || !prepared.fits(pixel_vision::PixelRect {
+                    left: rect.left as u32,
+                    top: rect.top as u32,
+                    right: rect.right as u32,
+                    bottom: rect.bottom as u32,
+                })
+            {
+                return Err("多边形顶点必须在搜索范围内");
+            }
+            if [
+                "leftVariable",
+                "topVariable",
+                "rightVariable",
+                "bottomVariable",
+            ]
+            .iter()
+            .any(|key| {
+                args.get(*key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|v| !v.is_empty())
+            }) {
+                return Err("多边形搜索使用固定截图坐标，请清除范围变量");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_visual_node(
     kind: &str,
     node: &flow_ir::FlowNode,
     manifest: &ProjectManifest,
 ) -> Result<BuiltinNodeArgs, &'static str> {
+    validate_polygon_arguments(&node.envelope.args, manifest)?;
     if matches!(kind, "vision.countcolor" | "vision.findallcolor")
         && node
             .envelope
@@ -3040,6 +3191,8 @@ fn parse_multi_match_node(
                         && (1..=5000).contains(&v.action_duration_ms)
                         && v.before_wait_ms <= 60_000
                         && v.after_wait_ms <= 60_000
+                        && v.action_random_x <= 4096
+                        && v.action_random_y <= 4096
                         && !(v.all_matches && v.success_action == RecognitionAction::Hold)
                         && v.similarity_permille <= 1000
                         && (1..=64).contains(&v.image_paths.len())
@@ -3133,6 +3286,8 @@ fn parse_find_image_node(
                     .flatten(),
                 );
                 value.similarity_permille <= 1000
+                    && value.action_random_x <= 4096
+                    && value.action_random_y <= 4096
                     && names.iter().collect::<HashSet<_>>().len() == names.len()
                     && value
                         .region_variables()
@@ -3166,7 +3321,7 @@ fn parse_find_image_node(
                         .region_variables()
                         .iter()
                         .flatten()
-                        .all(|name| valid_variable_name(name))
+                        .all(|name| crate::value_source::valid(name))
                     && valid_rect(&value.region)
                     && has_resource(manifest, ProjectResourceKind::Image, &value.image_path)
                     && valid_variable_names([
@@ -3379,13 +3534,13 @@ fn valid_comparison(value: &ComparisonArgs) -> bool {
         && value
             .value_variable
             .as_deref()
-            .is_none_or(valid_variable_name)
+            .is_none_or(crate::value_source::valid)
         && value.else_if.iter().all(|branch| {
             valid_comparison_parts(&branch.variable, branch.operator, &branch.value)
                 && branch
                     .value_variable
                     .as_deref()
-                    .is_none_or(valid_variable_name)
+                    .is_none_or(crate::value_source::valid)
                 && branch
                     .condition
                     .as_ref()
@@ -3398,7 +3553,7 @@ fn valid_comparison(value: &ComparisonArgs) -> bool {
 }
 
 fn valid_comparison_parts(variable: &str, operator: ComparisonOperator, value: &Value) -> bool {
-    valid_variable_name(variable)
+    crate::value_source::valid(variable)
         && is_scalar(value)
         && (matches!(
             operator,

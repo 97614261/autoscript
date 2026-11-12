@@ -24,6 +24,7 @@ internal fun StudioUpdateHost(updater: StudioUpdateController, installAllowed: B
     val owner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val value by updater.state.collectAsState()
+    StudioSystemLogEffect("应用更新", value.message)
     val allowed by rememberUpdatedState(installAllowed)
     DisposableEffect(owner, updater) {
         val observer = LifecycleEventObserver { _, event ->

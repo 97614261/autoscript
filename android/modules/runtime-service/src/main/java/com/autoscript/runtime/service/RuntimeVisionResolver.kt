@@ -257,7 +257,8 @@ internal class RuntimeVisionResolver(
 
 /** Fail busy rather than queuing SDK work; release only after the active call has returned. */
 internal class VisionRuntimeSession(private val delegate: NativeVisionBackend,
-    private val onInitializationFailure: () -> Unit = {}) : NativeVisionBackend {
+    private val onInitializationFailure: () -> Unit = {}) : NativeVisionBackend, NativePolygonSearchBackend {
+    override fun supportsPolygonSearch() = (delegate as? NativePolygonSearchBackend)?.supportsPolygonSearch() == true
     private val lifecycle = NativeVisionLifecycle()
     private val active = AtomicReference<NativeVisionWork?>(null)
     override fun execute(work: NativeVisionWork, pixels: ByteBuffer, metadata: IntArray,

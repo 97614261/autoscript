@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1, "kind": "vision.findcolor", "nodeVersion": 1,
   "nodeSchemaId": "https://autoscript.local/schema/node/vision.findcolor/1/vision.findcolor.schema.json",
-  "title": "区域找色", "category": "vision", "summary": "在图像帧的半开矩形中查找目标颜色。范围超出实际截图时按未找到处理并记录警告。",
+  "title": "区域找色", "category": "vision", "summary": "在图像帧的半开矩形中查找目标颜色。范围超出实际截图时按未找到处理并记录警告。 可选多边形范围；找色只检查内部像素，多点整组、找图整个模板需位于选区内。",
   "searchTerms": ["多色", "色组", "任意颜色", "findcolor", "找色", "颜色", "区域"],
   "requiredCapabilities": ["vision.pixel"], "childBlocks": [],
   "properties": [
@@ -13,6 +13,7 @@
     { "path": "region", "label": "区域(L,T,R,B)", "editor": "rect", "required": true, "defaultValue": "0,0,720,1280" },
     { "path": "foundVariable", "label": "找到变量", "editor": "string", "required": true, "defaultValue": "found" },
     { "path": "xVariable", "label": "结果X变量", "editor": "string", "required": true, "defaultValue": "foundX" },
-    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "foundY" }
+    { "path": "yVariable", "label": "结果Y变量", "editor": "string", "required": true, "defaultValue": "foundY" },
+    {"path": "polygon", "label": "多边形选区", "editor": "string", "required": false, "defaultValue": ""}
   ], "migrations": []
 }

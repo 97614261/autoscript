@@ -64,7 +64,9 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
     private var pendingCapture: StudioCaptureHandoff? = null
     private var captureJob: Job? = null
     private var runtime by mutableStateOf(RuntimeConnectionState())
-    private val console = RuntimeConsoleLog()
+    private val console = RuntimeConsoleLog(onStateDelta = {
+        com.autoscript.runtime.api.RuntimeSystemLog.notice(filesDir, "运行连接", it)
+    })
     private var destroyed = false
     private var windowUnavailable = false
     private var permissionListener: AppOpsManager.OnOpChangedListener? = null
@@ -324,7 +326,10 @@ class EditorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner,
         super.onDestroy()
     }
 
-    private fun message(text: String) { Toast.makeText(this, text, Toast.LENGTH_LONG).show() }
+    private fun message(text: String) {
+        com.autoscript.runtime.api.RuntimeSystemLog.notice(filesDir, "编辑浮窗", text)
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    }
     private fun notification(): Notification {
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel(CHANNEL, "悬浮编辑", NotificationManager.IMPORTANCE_LOW))

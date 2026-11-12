@@ -47,6 +47,7 @@ internal fun RecordingWorkspaceScreen(
     var working by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
+    StudioSystemLogEffect("触控录制", message, failure = messageIsError)
     var reply by remember { mutableStateOf<RecordingReply?>(null) }
     var actions by remember { mutableStateOf<List<RecordedAction>>(emptyList()) }
     var selected by remember { mutableStateOf<Set<Int>>(emptySet()) }

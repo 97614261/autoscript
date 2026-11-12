@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -18,7 +19,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectGlyphColor
 
 internal data class GlyphColorDraft(val rgb: String, val tolerance: String) {
@@ -62,26 +62,33 @@ internal data class GlyphPaletteDraft(val colors: List<GlyphColorDraft>, val sel
 @OptIn(ExperimentalLayoutApi::class)
 internal fun GlyphColorPaletteEditor(draft: GlyphPaletteDraft, enabled: Boolean, onChange: (GlyphPaletteDraft) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             draft.colors.forEachIndexed { index, color ->
                 val active = index == draft.selected
-                Row(Modifier.heightIn(min = 26.dp).border(1.dp, if (active) AutoScriptPalette.Accent else AutoScriptPalette.Border,
+                Row(Modifier.heightIn(min = 26.dp).background(if(active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    RoundedCornerShape(4.dp)).border(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                     RoundedCornerShape(4.dp)).clickable(enabled = enabled) { onChange(draft.copy(selected = index, replaceOnPick = true)) }
                     .padding(horizontal = 5.dp, vertical = 3.dp).semantics { contentDescription = "前景色${index+1}"; selected = active },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     Box(Modifier.size(12.dp).background(color.parsed()?.let { Color(0xff000000 or it.rgb.toLong()) } ?: Color.Transparent)
-                        .border(1.dp, AutoScriptPalette.Divider))
-                    Text("${index+1}", fontSize = 10.sp, color = if (active) AutoScriptPalette.Accent else AutoScriptPalette.TextSecondary)
+                        .border(1.dp, MaterialTheme.colorScheme.outline))
+                    Text("${index+1}", fontSize = 10.sp, color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            ImageToolCompactAction("+颜色", enabled && draft.colors.size < ProjectGlyphColor.MAX_COLORS) { onChange(draft.add()) }
-            ImageToolCompactAction("删除颜色", enabled && draft.colors.size > 1) { onChange(draft.remove()) }
+            }
+            ImageToolCompactAction("新增", enabled && draft.colors.size < ProjectGlyphColor.MAX_COLORS,
+                Modifier.semantics { contentDescription = "新增前景颜色" }) { onChange(draft.add()) }
+            ImageToolCompactAction("删除", enabled && draft.colors.size > 1,
+                Modifier.semantics { contentDescription = "删除当前前景颜色" }) { onChange(draft.remove()) }
         }
-        StudioCompactGrid(listOf("颜色 RGB", "容差"), cellDp = 148, maximum = 2) { label, cell ->
+        StudioCompactGrid(listOf("RGB", "容差"), cellDp = 160, maximum = 2) { label, cell ->
             if (label == "容差") ImageToolCompactInput(label, draft.current.tolerance, enabled, cell, numeric = true) { onChange(draft.edit(tolerance = it.take(3))) }
-            else ImageToolCompactInput(label, draft.current.rgb, enabled, cell) { onChange(draft.edit(rgb = it.take(7))) }
+            else key(draft.selected) {
+                StudioColorInput(label, draft.current.rgb, enabled, cell, StudioColorFormat.RGB_BARE) { onChange(draft.edit(rgb = it.take(7))) }
+            }
         }
-        if (draft.parsed() == null) Text("每色需6位RGB、容差0–255，颜色不能重复；请补全或删除未完成项。", fontSize = 10.sp, color = AutoScriptPalette.Danger)
+        if (draft.parsed() == null) ImageWorkspaceHint("每色需6位RGB、容差0–255且不能重复；补全或删除未完成项。", error = true)
     }
 }
 
@@ -109,15 +116,16 @@ internal fun GlyphColorPaletteDialog(
     val draft = currentDraft ?: localDraft
     var discard by remember { mutableStateOf(false) }
     fun close() { if (draft.colors != initial.colors) discard = true else onDismiss() }
-    StudioPanelDialog(title, ::close, confirmLabel = "保存色组", confirmEnabled = draft.parsed() != null,
+    ImageWorkspaceTheme {
+    ImageWorkspacePanel(title, ::close, confirmLabel = "保存色组", confirmEnabled = draft.parsed() != null, showFooter = true,
         onConfirm = { draft.parsed()?.let(onApply) }, compactHeader = true) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             GlyphColorPaletteEditor(draft, true) { localDraft = it; onDraftChange?.invoke(it) }
             onPickFromScreen?.let { pick -> ImageToolCompactAction("屏幕取色 · 替换第${draft.selected + 1}色", true, onClick = pick) }
-            Text(description, fontSize = 10.sp,
-                color = AutoScriptPalette.TextSecondary)
+            ImageToolHelp(description)
         }
     }
     if (discard) EditorPromptDialog("放弃色组修改？", "尚未保存的颜色与容差将丢弃。", { discard = false },
         { discard = false; onDismiss() }, "继续编辑", "放弃")
+    }
 }

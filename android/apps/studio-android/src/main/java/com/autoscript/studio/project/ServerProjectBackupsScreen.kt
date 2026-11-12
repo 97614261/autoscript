@@ -2,6 +2,8 @@ package com.autoscript.studio
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,20 +36,31 @@ internal fun ServerProjectBackupsScreen(
     onRestored: suspend () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    accountSession: StudioAccountSession? = null,
+    onSignOut: (() -> Unit)? = null,
+    onLegacy: (() -> Unit)? = null,
+    onSessionExpired: (suspend () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("personal-project-backup", 0) }
     val useDefaults = remember { !prefs.contains("origin") && !prefs.contains("key") }
     var savedOrigin by remember {
-        mutableStateOf(if (useDefaults) BuildConfig.DEFAULT_BACKUP_SITE else prefs.getString("origin", "").orEmpty())
+        mutableStateOf(accountSession?.origin ?: if (useDefaults) BuildConfig.DEFAULT_BACKUP_SITE else prefs.getString("origin", "").orEmpty())
     }
     var savedKey by remember {
-        mutableStateOf(if (useDefaults) BuildConfig.DEFAULT_BACKUP_KEY else prefs.getString("key", "").orEmpty())
+        mutableStateOf(accountSession?.backupKey ?: if (useDefaults) BuildConfig.DEFAULT_BACKUP_KEY else prefs.getString("key", "").orEmpty())
     }
     var origin by remember { mutableStateOf(savedOrigin) }
     var secret by remember { mutableStateOf(savedKey) }
     var configuring by remember { mutableStateOf(savedOrigin.isEmpty() || savedKey.isEmpty()) }
     var records by remember { mutableStateOf<List<ServerBackupRecord>>(emptyList()) }
+    var backupQuery by remember { mutableStateOf("") }
+    var projectQuery by remember { mutableStateOf("") }
+    val names = remember(records, savedKey) { records.associate { record -> record.id to
+        runCatching { ServerBackupCrypto.decryptName(record.label, savedKey, record.id) }.getOrDefault("无法解密名称") } }
+    val visibleRecords = remember(records, names, backupQuery) {
+        records.filter { backupQuery.isBlank() || names[it.id].orEmpty().contains(backupQuery.trim(), ignoreCase = true) }
+    }
     var selected by remember { mutableStateOf<String?>(null) }
     var chooseProject by remember { mutableStateOf(false) }
     var uploadProject by remember { mutableStateOf<ProjectSummary?>(null) }
@@ -57,10 +70,11 @@ internal fun ServerProjectBackupsScreen(
     var restore by remember { mutableStateOf<ServerBackupRecord?>(null) }
     var delete by remember { mutableStateOf<ServerBackupRecord?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    StudioSystemLogEffect("服务器备份", message)
     var progress by remember { mutableStateOf<String?>(null) }
     var committing by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
-    var client by remember { mutableStateOf<ServerBackupClient?>(null) }
+    var client by remember { mutableStateOf<BackupTransport?>(null) }
     val scope = rememberCoroutineScope()
     val currentBlocked by rememberUpdatedState(blocked)
     val currentRestored by rememberUpdatedState(onRestored)
@@ -71,21 +85,30 @@ internal fun ServerProjectBackupsScreen(
     DisposableEffect(Unit) { onDispose { client?.close() } }
 
     fun requireIdle() { check(!currentBlocked()) { "BACKUP_EDITOR_OR_RUN_ACTIVE" } }
-    fun runTask(title: String, action: suspend (ServerBackupClient) -> Unit) {
+    fun runTask(title: String, action: suspend (BackupTransport) -> Unit) {
         if (progress != null) return
         progress = title; message = null
+        com.autoscript.runtime.api.RuntimeSystemLog.notice(context.filesDir, "服务器备份", title)
         job = scope.launch {
-            var active: ServerBackupClient? = null
+            var active: BackupTransport? = null
             try {
-                active = ServerBackupClient(savedOrigin, savedKey)
+                active = if (accountSession == null) ServerBackupClient(savedOrigin, savedKey)
+                    else StudioCloudClient(savedOrigin, accountSession.allowHttp, accountSession)
                 client = active
                 action(active)
             } catch (cancelled: CancellationException) {
                 message = "已取消；若上传已在服务端提交，请刷新确认。"
                 throw cancelled
             } catch (failure: Exception) {
+                if (failure is StudioCloudFailure && failure.code == 401 && onSessionExpired != null) {
+                    try { onSessionExpired() }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { message = "登录已过期，本机登录信息未能清除，请点退出账号后重试。" }
+                    return@launch
+                }
                 val code = failure.message?.takeIf { Regex("[A-Z_]{1,64}").matches(it) }
-                message = when (code) {
+                message = if (failure is StudioCloudFailure) failure.userMessage else when (code) {
+                    "CLOUD_HTTPS_REQUIRED" -> "账号服务请使用 HTTPS；HTTP 仅在登录页明确开启调试后使用。"
                     "BACKUP_EDITOR_OR_RUN_ACTIVE" -> "请先保存并关闭编辑/配置窗口，停止脚本后再备份或恢复。"
                     "BACKUP_CAPACITY" -> "服务器空间或份数已满，请先删除不需要的快照。"
                     "BACKUP_TOO_LARGE" -> "备份超过 128 MiB，请先精简项目资源。"
@@ -94,7 +117,8 @@ internal fun ServerProjectBackupsScreen(
                     "BACKUP_REPLACE_UNSUPPORTED" -> "当前备份服务尚不支持覆盖，请先更新服务；仍可新增备份。"
                     "BACKUP_CHANGED", "BACKUP_NOT_FOUND" -> "这份备份已变化或删除，请刷新列表后重新选择；未覆盖其他备份。"
                     "BACKUP_REPLACE_TARGET_REQUIRED" -> "请先选择要覆盖的服务器备份。"
-                    else -> "操作未完成，请检查网络、备份地址和密钥${code?.let { " [$it]" }.orEmpty()}。"
+                    "CLOUD_TIMEOUT" -> "连接超时，请刷新列表确认结果后再重试；不要重复上传或恢复。"
+                    else -> "操作结果未确认，请检查网络、备份地址和密钥，再刷新列表确认后重试${code?.let { " [$it]" }.orEmpty()}。"
                 }
             } finally {
                 active?.close(); client = null; progress = null; committing = false; job = null
@@ -166,12 +190,19 @@ internal fun ServerProjectBackupsScreen(
         } finally { zip.delete() }
     }
 
+    LaunchedEffect(accountSession?.token) { if (accountSession != null) refresh() }
+
     Column(modifier.fillMaxSize().background(AutoScriptPalette.PageBackground)) {
-        UtilityLightHeader("服务器备份", "手动快照 · 恢复为新项目", { if (progress == null) onBack() }) {
-            TextButton(onClick = { configuring = !configuring }, enabled = progress == null) { Text("设置", fontSize = 11.sp) }
+        UtilityLightHeader(if (accountSession == null) "个人密钥备份" else "账号云备份",
+            if (accountSession == null) "手动快照 · 恢复为新项目" else "", { if (progress == null) onBack() }) {
+            if (accountSession == null) TextButton(onClick = { configuring = !configuring }, enabled = progress == null) { Text("设置", fontSize = 11.sp) }
+            else {
+                onLegacy?.let { TextButton(it, enabled = progress == null) { Text("旧备份", fontSize = 11.sp) } }
+                onSignOut?.let { TextButton(it, enabled = progress == null) { Text("退出账号", fontSize = 11.sp) } }
+            }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().imePadding(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (configuring) item {
+            if (configuring && accountSession == null) item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(origin, { origin = it }, label = { Text("服务器地址，如 http://服务器IP") }, singleLine = true, enabled = progress == null, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(secret, { secret = it.trim().lowercase(Locale.ROOT) }, label = { Text("独立备份密钥（64位十六进制）") },
@@ -190,6 +221,7 @@ internal fun ServerProjectBackupsScreen(
                 }
             }
             item {
+                accountSession?.let { Text("当前账号：${it.userName}", fontSize = 12.sp) }
                 Text("只备份已经保存的脚本、界面和项目资源，不含草稿与运行数据。上传/恢复前请关闭编辑窗口并停止脚本。", fontSize = 11.sp)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton({ chooseProject = true }, enabled = ready) { Text(projects.firstOrNull { it.projectId == selected }?.name ?: "选择本机项目", fontSize = 12.sp) }
@@ -200,11 +232,18 @@ internal fun ServerProjectBackupsScreen(
                 if (progress != null && !committing) TextButton({ client?.close(); job?.cancel() }) { Text("取消") }
                 message?.let { Text(it, fontSize = 12.sp) }
                 if (records.isEmpty()) Text("暂无已读取的服务器备份；点刷新读取。", fontSize = 11.sp)
+                if (records.isNotEmpty()) {
+                    OutlinedTextField(backupQuery, { backupQuery = it }, label = { Text("搜索备份名称") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(), trailingIcon = {
+                            if (backupQuery.isNotEmpty()) TextButton({ backupQuery = "" }) { Text("清空") }
+                        })
+                    if (backupQuery.isNotBlank()) Text("找到 ${visibleRecords.size} / ${records.size} 份备份", fontSize = 11.sp)
+                }
             }
-            items(records, key = { it.id }) { record ->
+            items(visibleRecords, key = { it.id }) { record ->
                 Surface(color = AutoScriptPalette.AccentSoft, shape = MaterialTheme.shapes.small) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)) {
-                        Text(runCatching { ServerBackupCrypto.decryptName(record.label, savedKey, record.id) }.getOrDefault("无法解密名称"), fontSize = 13.sp)
+                        Text(names[record.id].orEmpty(), fontSize = 13.sp)
                         Text("${date.format(Date(record.createdAt))} · ${"%.2f".format(record.bytes / 1048576.0)} MiB · ${record.id.take(8)}", fontSize = 10.sp)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton({ restore = record }, enabled = ready) { Text("恢复为新项目", fontSize = 12.sp) }
@@ -216,9 +255,16 @@ internal fun ServerProjectBackupsScreen(
         }
     }
     if (chooseProject) StudioConfirmDialog(onDismissRequest = { chooseProject = false }, title = { Text("选择已保存项目") },
-        text = { Column { if (projects.isEmpty()) Text("暂无本机项目") else projects.forEach { project ->
-            TextButton({ selected = project.projectId; chooseProject = false }) { Text(project.name) }
-        } } }, confirmButton = { TextButton({ chooseProject = false }) { Text("取消") } })
+        text = { Column {
+            OutlinedTextField(projectQuery, { projectQuery = it }, label = { Text("搜索本机项目") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            val matches = projects.filter { projectQuery.isBlank() || it.name.contains(projectQuery.trim(), ignoreCase = true) }
+            Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                if (projects.isEmpty()) Text("暂无本机项目") else if (matches.isEmpty()) Text("没有匹配的项目")
+                else matches.forEach { project ->
+                    TextButton({ selected = project.projectId; chooseProject = false }, modifier = Modifier.fillMaxWidth()) { Text(project.name) }
+                }
+            }
+        } }, confirmButton = { TextButton({ chooseProject = false }) { Text("取消") } })
     uploadProject?.let { project ->
         val target = records.firstOrNull { it.id == uploadTargetId }
         StudioConfirmDialog(onDismissRequest = { uploadProject = null }, title = { Text("上传项目备份") },

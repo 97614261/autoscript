@@ -36,7 +36,8 @@ internal fun programEnumLabel(key: String, value: String): String = when (key) {
         "none" -> "无后续动作"; "tap" -> "点击"; "hold" -> "按下不弹起"; "tapWait" -> "点击后等待"; "pressRelease" -> "按下再弹起"; else -> value
     }
     "selection" -> when (value) { "first" -> "首项"; "all" -> "全部"; else -> value }
-    "anchor" -> when (value) { "center" -> "中心点"; "topLeft" -> "左上角"; else -> value }
+    "anchor", "actionAnchor" -> when (value) { "center" -> "中心点"; "topLeft" -> "左上角"; else -> value }
+    "actionRandom" -> when (value) { "follow" -> "跟随原设置"; "disabled" -> "关闭随机"; "offset" -> "指定随机偏移"; "inside" -> "图内随机"; else -> value }
     "metric" -> when (value) { "count" -> "次数"; "elapsed" -> "耗时"; else -> value }
     "unit", "durationUnit" -> timeUnit(value)
     "field" -> resultFieldLabel(value)

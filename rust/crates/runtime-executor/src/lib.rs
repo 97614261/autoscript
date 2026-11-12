@@ -49,16 +49,22 @@ mod host_utility_runtime;
 mod json_extensions;
 #[cfg(test)]
 mod performance_tests;
+mod polygon_search;
 mod pure_utility_runtime;
 #[cfg(test)]
 mod pure_utility_tests;
 mod recognition_result;
 mod regex_cache;
+mod run_action;
+mod run_action_catalog;
 mod run_observation;
 mod runtime_tools;
 #[cfg(test)]
 mod script_control_tests;
 mod template_results;
+mod template_roi;
+#[cfg(test)]
+mod template_roi_tests;
 mod template_search_control;
 mod text_runtime;
 mod ui_dialog;
@@ -120,7 +126,7 @@ const OP_OCR_GLYPH: u32 = 6_100;
 const MAX_PROJECT_CAPABILITIES: usize = 64;
 const MAX_SCRIPT_LOG_ENTRIES: usize = 200;
 const MAX_SCRIPT_LOG_BYTES: usize = 2_048;
-const MAX_COLOR_ROI_WARNINGS: usize = 128;
+const MAX_VISION_ROI_WARNINGS: usize = 128;
 const MAX_SCRIPT_PROMPT_ENTRIES: usize = 64;
 const MAX_SCRIPT_PROMPT_BYTES: usize = 2_048;
 const MAX_UI_CONTROLS: usize = 256;
@@ -202,6 +208,7 @@ pub struct NativeVisionRequest {
     pub template: Option<FrameView>,
     pub region: PixelRect,
     pub minimum_score: u16,
+    pub polygon: Option<Vec<[u32; 2]>>,
 }
 
 pub trait HostCancelListener: Send + Sync + std::fmt::Debug {
@@ -661,18 +668,20 @@ struct ScriptOutputSwitches {
 pub struct RuntimeExecutor<C, H> {
     utilities: utility_runtime::UtilityState,
     regexes: regex_cache::RegexCache,
+    polygons: Mutex<polygon_search::PolygonCache>,
     recognition_results: recognition_result::ResultCache,
     scheduler: Scheduler<C, LuaTaskRegistry>,
     backend: H,
     config: ExecutorConfig,
     next_request_id: u64,
     pending_host: BTreeMap<RequestId, PendingHost>,
+    pending_log_sleeps: BTreeMap<TaskToken, run_observation::Observation>,
     resume_inputs: BTreeMap<TaskToken, LuaInput>,
     frames: Arc<Mutex<FramePool>>,
     dictionaries: Arc<Mutex<DictionaryStore>>,
     script_logs: VecDeque<String>,
     script_logs_dropped: u64,
-    color_roi_warnings: BTreeSet<(TaskToken, String)>,
+    vision_roi_warnings: BTreeSet<(TaskToken, String)>,
     script_prompts: VecDeque<String>,
     output_switches: ScriptOutputSwitches,
     run_events: VecDeque<String>,
@@ -766,12 +775,14 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             config: executor_config,
             next_request_id: 1,
             pending_host: BTreeMap::new(),
+            pending_log_sleeps: BTreeMap::new(),
             resume_inputs: BTreeMap::new(),
             frames,
             dictionaries,
             script_logs: VecDeque::with_capacity(MAX_SCRIPT_LOG_ENTRIES),
             script_logs_dropped: 0,
-            color_roi_warnings: BTreeSet::new(),
+            vision_roi_warnings: BTreeSet::new(),
+            polygons: Mutex::new(polygon_search::PolygonCache::default()),
             script_prompts: VecDeque::with_capacity(MAX_SCRIPT_PROMPT_ENTRIES),
             output_switches: ScriptOutputSwitches {
                 logs: true,
@@ -1033,6 +1044,59 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         Ok(())
     }
     fn apply_yield(&mut self, task: TaskToken, values: &[LuaScalar]) -> Result<(), ExecutorError> {
+        if !matches!(values.first(), Some(LuaScalar::Bytes(marker)) if marker == HOST_MARKER) {
+            return self.apply_yield_inner(task, values);
+        }
+        let opcode = decode_host_opcode(values)?;
+        let observation = if run_action::observed_inline(opcode) {
+            None
+        } else {
+            self.start_action_observation(task, opcode, &values[2..])
+        };
+        let result = self.apply_yield_inner(task, values);
+        if let Some(mut observation) = observation {
+            if result.is_err() {
+                observation.record_failure_code("RUNTIME_REQUEST_FAILED");
+                self.finish_observation(Some(observation), "error");
+            } else if let Some(pending) = self
+                .pending_host
+                .values_mut()
+                .find(|pending| pending.task == task)
+            {
+                // Real host requests already own their completion record; local UI waits do not.
+                if pending.observation.is_none() {
+                    pending.observation = Some(observation);
+                }
+            } else if opcode == OP_TASK_SLEEP
+                && matches!(values.get(2), Some(LuaScalar::Integer(ms)) if *ms > 0)
+                && !matches!(self.resume_inputs.get(&task), Some(LuaInput::Values(v)) if matches!(v.first(), Some(LuaScalar::Boolean(false))))
+            {
+                self.record_action_waiting(&observation);
+                self.pending_log_sleeps.insert(task, observation);
+            } else {
+                let input = self.resume_inputs.get(&task).cloned();
+                let status = if matches!(opcode, 1101 | 1102) {
+                    if self.output_switches.prompts {
+                        "requested"
+                    } else {
+                        "disabled"
+                    }
+                } else if matches!(opcode, 3010 | 3011) {
+                    "requested"
+                } else {
+                    "completed"
+                };
+                self.finish_observation_result(Some(observation), status, input.as_ref());
+            }
+        }
+        result
+    }
+
+    fn apply_yield_inner(
+        &mut self,
+        task: TaskToken,
+        values: &[LuaScalar],
+    ) -> Result<(), ExecutorError> {
         let Some(LuaScalar::Bytes(marker)) = values.first() else {
             return Err(ExecutorError::InvalidYield(
                 "missing host marker".to_owned(),
@@ -1040,6 +1104,9 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         };
         if marker == b"__AUTOSCRIPT_RUN_CONTEXT_V1" {
             return self.apply_run_context(task, values);
+        }
+        if marker == b"__AUTOSCRIPT_BRANCH_RESULT_V1" {
+            return self.apply_branch_result(task, values);
         }
         if marker == b"__AUTOSCRIPT_DEBUG_CHECKPOINT_V1" && values.len() == 1 {
             self.scheduler.yield_budget(task)?;
@@ -1166,6 +1233,10 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         } else {
             host_failure_input("CAPABILITY_DENIED", &message)
         };
+        if run_action::observed_inline(opcode) {
+            let observation = self.start_action_observation(task, opcode, &[]);
+            self.finish_observation_result(observation, "error", Some(&input));
+        }
         self.resume_inputs.insert(task, input);
         self.scheduler.yield_budget(task)?;
         Ok(false)
@@ -1223,6 +1294,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         opcode: u32,
         args: &[LuaScalar],
     ) -> Result<(), ExecutorError> {
+        let observation = self.start_observation(task, opcode, args, None);
         let result = match opcode {
             OP_OCR_LOAD_DICTIONARY => self.load_dictionary(task, args),
             OP_OCR_RELEASE_DICTIONARY => self.release_dictionary(task, args),
@@ -1233,6 +1305,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         };
         let input = result
             .unwrap_or_else(|message| host_failure_input("GLYPH_OCR_OPERATION_FAILED", &message));
+        self.finish_observation_result(observation, "completed", Some(&input));
         self.resume_inputs.insert(task, input);
         self.scheduler.yield_budget(task)?;
         Ok(())
@@ -1381,37 +1454,79 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         args: &[LuaScalar],
     ) -> Result<(), ExecutorError> {
         let mut observation = self.start_observation(task, opcode, args, None);
-        let mut search_metrics = observation.as_ref().and_then(|_| {
-            matches!(
-                opcode,
-                OP_SCREEN_FIND_IMAGE | OP_SCREEN_FIND_IMAGES | OP_SCREEN_FIND_ALL_IMAGES
-            )
-            .then(automation_core::TemplateSearchMetrics::default)
-        });
-        let mut result = match opcode {
-            OP_SCREEN_CACHE => self.cache_frame(task, args),
-            OP_SCREEN_RELEASE => self.release_frame(task, args),
-            OP_SCREEN_LOAD_IMAGE => self.load_image(task, args),
-            OP_SCREEN_FIND_COLOR => self.find_color(task, args),
-            OP_SCREEN_FIND_IMAGE => self.find_image(task, args, search_metrics.as_mut()),
-            OP_SCREEN_FIND_IMAGES => self.find_images(task, args, search_metrics.as_mut()),
-            OP_SCREEN_FIND_ALL_IMAGES => self.find_all_images(task, args, search_metrics.as_mut()),
-            OP_SCREEN_MATCH_VALUE => template_results::value(args)
-                .map(|value| LuaInput::Values(vec![LuaScalar::Boolean(true), value])),
-            OP_SCREEN_CROP => self.crop_frame(task, args),
-            OP_SCREEN_GET_COLOR => self.get_color(task, args),
-            OP_SCREEN_COMPARE_COLOR => self.compare_color(task, args),
-            OP_SCREEN_FIND_MULTI_COLOR => self.find_multi_color(task, args),
-            OP_SCREEN_COUNT_COLOR => self.count_color(task, args),
-            OP_SCREEN_FIND_ALL_COLOR => self.find_all_color(task, args),
-            OP_LEGACY_DUO_DIAN_ZHAO_SE => self.legacy_duo_dian_zhao_se(task, args),
-            OP_LEGACY_DUO_DIAN_BI_SE => self.legacy_duo_dian_bi_se(task, args),
-            OP_LEGACY_GET_RECT_COLOR_NUM => self.legacy_get_rect_color_num(task, args),
-            OP_LEGACY_GET_RGB_COLOR => Self::legacy_get_rgb_color(args),
-            OP_SCREEN_BEGIN_SERIES => self.begin_capture_series(task, args),
-            OP_SCREEN_CACHE_SERIES_FRAME => self.cache_series_frame(task, args),
-            OP_SCREEN_RELEASE_SERIES => self.release_capture_series(task, args),
-            _ => return Err(ExecutorError::UnknownOpcode(opcode)),
+        let mut search_metrics = observation
+            .as_ref()
+            .filter(|v| !v.fields.is_null())
+            .and_then(|_| {
+                matches!(
+                    opcode,
+                    OP_SCREEN_FIND_IMAGE | OP_SCREEN_FIND_IMAGES | OP_SCREEN_FIND_ALL_IMAGES
+                )
+                .then(automation_core::TemplateSearchMetrics::default)
+            });
+        let (args, polygon_json) = if matches!(
+            opcode,
+            OP_SCREEN_FIND_COLOR
+                | OP_SCREEN_COUNT_COLOR
+                | OP_SCREEN_FIND_ALL_COLOR
+                | OP_SCREEN_FIND_MULTI_COLOR
+                | OP_SCREEN_FIND_IMAGE
+                | OP_SCREEN_FIND_IMAGES
+                | OP_SCREEN_FIND_ALL_IMAGES
+        ) {
+            polygon_search::split(args)
+        } else {
+            (args, None)
+        };
+        let polygon = match polygon_json {
+            Some(encoded) => self
+                .polygons
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(Some(encoded)),
+            None => Ok(None),
+        };
+        let mut result = match polygon {
+            Err(error) => Err(error),
+            Ok(polygon) => match opcode {
+                OP_SCREEN_FIND_COLOR
+                | OP_SCREEN_COUNT_COLOR
+                | OP_SCREEN_FIND_ALL_COLOR
+                | OP_SCREEN_FIND_MULTI_COLOR
+                    if polygon.is_some() =>
+                {
+                    self.polygon_color_search(task, opcode, args, polygon.as_deref().unwrap())
+                }
+                OP_SCREEN_CACHE => self.cache_frame(task, args),
+                OP_SCREEN_RELEASE => self.release_frame(task, args),
+                OP_SCREEN_LOAD_IMAGE => self.load_image(task, args),
+                OP_SCREEN_FIND_COLOR => self.find_color(task, args),
+                OP_SCREEN_FIND_IMAGE => {
+                    self.find_image(task, args, search_metrics.as_mut(), polygon.as_deref())
+                }
+                OP_SCREEN_FIND_IMAGES => {
+                    self.find_images(task, args, search_metrics.as_mut(), polygon.as_deref())
+                }
+                OP_SCREEN_FIND_ALL_IMAGES => {
+                    self.find_all_images(task, args, search_metrics.as_mut(), polygon.as_deref())
+                }
+                OP_SCREEN_MATCH_VALUE => template_results::value(args)
+                    .map(|value| LuaInput::Values(vec![LuaScalar::Boolean(true), value])),
+                OP_SCREEN_CROP => self.crop_frame(task, args),
+                OP_SCREEN_GET_COLOR => self.get_color(task, args),
+                OP_SCREEN_COMPARE_COLOR => self.compare_color(task, args),
+                OP_SCREEN_FIND_MULTI_COLOR => self.find_multi_color(task, args),
+                OP_SCREEN_COUNT_COLOR => self.count_color(task, args),
+                OP_SCREEN_FIND_ALL_COLOR => self.find_all_color(task, args),
+                OP_LEGACY_DUO_DIAN_ZHAO_SE => self.legacy_duo_dian_zhao_se(task, args),
+                OP_LEGACY_DUO_DIAN_BI_SE => self.legacy_duo_dian_bi_se(task, args),
+                OP_LEGACY_GET_RECT_COLOR_NUM => self.legacy_get_rect_color_num(task, args),
+                OP_LEGACY_GET_RGB_COLOR => Self::legacy_get_rgb_color(args),
+                OP_SCREEN_BEGIN_SERIES => self.begin_capture_series(task, args),
+                OP_SCREEN_CACHE_SERIES_FRAME => self.cache_series_frame(task, args),
+                OP_SCREEN_RELEASE_SERIES => self.release_capture_series(task, args),
+                _ => return Err(ExecutorError::UnknownOpcode(opcode)),
+            },
         };
         if !self.scheduler.handle().cancellation_requested(task) {
             if let Some(input) = result
@@ -1430,7 +1545,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         if let (Some(observation), Some(metrics)) = (observation.as_mut(), search_metrics) {
             observation.record_search_metrics(metrics);
         }
-        self.finish_observation(observation, status);
+        self.finish_observation_result(observation, status, result.as_ref().ok());
         // A cooperative search may have returned because Stop arrived during its hot loop.
         // Let the priority scheduler cancel the task; do not resume Lua with a spurious failure.
         if self.scheduler.handle().cancellation_requested(task) {
@@ -1473,11 +1588,11 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         if roi.right <= width && roi.bottom <= height {
             return None;
         }
-        if self.output_switches.logs && self.color_roi_warnings.len() < MAX_COLOR_ROI_WARNINGS {
+        if self.output_switches.logs && self.vision_roi_warnings.len() < MAX_VISION_ROI_WARNINGS {
             let message = self.message_with_run_context(task, &format!(
                 "COLOR_ROI_OUT_OF_BOUNDS: {name}范围({left},{top})-({right},{bottom})超出截图{width}x{height}，本次按未命中返回；请切换到取样时的方向或重新选择范围。"
             ));
-            if self.color_roi_warnings.insert((task, message.clone())) {
+            if self.vision_roi_warnings.insert((task, message.clone())) {
                 self.record_script_log("WARN", &message);
             }
         }
@@ -1587,10 +1702,11 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn find_image(
-        &self,
+        &mut self,
         task: TaskToken,
         args: &[LuaScalar],
         metrics: Option<&mut automation_core::TemplateSearchMetrics>,
+        polygon: Option<&pixel_vision::polygon::PolygonRegion>,
     ) -> Result<LuaInput, String> {
         let (args, direction) = match args {
             [head @ .., LuaScalar::Integer(direction)] if args.len() == 9 => (head, *direction),
@@ -1609,9 +1725,15 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let similarity =
             u16::try_from(similarity).map_err(|_| "similarity is invalid".to_owned())?;
         let search = template_search_options(left, top, right, bottom, direction)?;
+        let options = TemplateOptions {
+            search,
+            tolerance,
+            minimum_match_permille: similarity,
+            ignore_transparent_template_pixels: true,
+        };
         let mut control =
             template_search_control::TemplateSearchControl::new(self.scheduler.handle(), task);
-        let match_result = self
+        let result = self
             .frames
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1620,18 +1742,16 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                 screen,
                 template,
                 self.scheduler.resources(),
-                TemplateOptions {
-                    search,
-                    tolerance,
-                    minimum_match_permille: similarity,
-                    ignore_transparent_template_pixels: true,
-                },
+                options,
                 automation_core::SearchControl {
                     cancelled: &mut || control.checkpoint(),
                     metrics,
+                    polygon,
                 },
-            )
-            .map_err(|error| control.describe_error(error, search, 1))?;
+            );
+        let match_result = self
+            .recover_template_roi(task, screen, options, polygon, result)
+            .map_err(|error| control.describe_error(error, search, 1, polygon))?;
         Ok(point_input(
             match_result.map(|matched| (matched.origin.x, matched.origin.y)),
         ))
@@ -1657,10 +1777,11 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn find_images(
-        &self,
+        &mut self,
         task: TaskToken,
         args: &[LuaScalar],
         metrics: Option<&mut automation_core::TemplateSearchMetrics>,
+        polygon: Option<&pixel_vision::polygon::PolygonRegion>,
     ) -> Result<LuaInput, String> {
         let [LuaScalar::Integer(frame), LuaScalar::Bytes(paths_json), tail @ ..] = args else {
             return Err("Screen.findImages expects frame and JSON template paths".to_owned());
@@ -1672,6 +1793,13 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             .map_err(|_| "invalid template paths JSON".to_owned())?;
         let [tolerance, similarity, left, top, right, bottom, direction] = integer_args::<7>(tail)?;
         let search = template_search_options(left, top, right, bottom, direction)?;
+        let screen = decode_frame_handle(*frame)?;
+        let options = TemplateOptions {
+            search,
+            tolerance: decode_tolerance(tolerance)?,
+            minimum_match_permille: u16::try_from(similarity).map_err(|_| "invalid similarity")?,
+            ignore_transparent_template_pixels: true,
+        };
         let mut control =
             template_search_control::TemplateSearchControl::new(self.scheduler.handle(), task);
         let result = self
@@ -1680,22 +1808,19 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .find_named_templates_observed(
                 task,
-                decode_frame_handle(*frame)?,
+                screen,
                 self.scheduler.resources(),
                 &paths,
-                TemplateOptions {
-                    search,
-                    tolerance: decode_tolerance(tolerance)?,
-                    minimum_match_permille: u16::try_from(similarity)
-                        .map_err(|_| "invalid similarity")?,
-                    ignore_transparent_template_pixels: true,
-                },
+                options,
                 automation_core::SearchControl {
                     cancelled: &mut || control.checkpoint(),
                     metrics,
+                    polygon,
                 },
-            )
-            .map_err(|error| control.describe_error(error, search, paths.len()))?;
+            );
+        let result = self
+            .recover_template_roi(task, screen, options, polygon, result)
+            .map_err(|error| control.describe_error(error, search, paths.len(), polygon))?;
         Ok(result.map_or_else(
             || LuaInput::Values(vec![LuaScalar::Boolean(true), LuaScalar::Nil]),
             |result| {
@@ -1713,10 +1838,11 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
     }
 
     fn find_all_images(
-        &self,
+        &mut self,
         task: TaskToken,
         args: &[LuaScalar],
         metrics: Option<&mut automation_core::TemplateSearchMetrics>,
+        polygon: Option<&pixel_vision::polygon::PolygonRegion>,
     ) -> Result<LuaInput, String> {
         let [LuaScalar::Integer(frame), LuaScalar::Bytes(paths_json), tail @ ..] = args else {
             return Err("findAllImages expects frame and JSON paths".into());
@@ -1732,33 +1858,37 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         let [tolerance, similarity, left, top, right, bottom, direction, limit] =
             integer_args::<8>(tail)?;
         let search = template_search_options(left, top, right, bottom, direction)?;
+        let screen = decode_frame_handle(*frame)?;
+        let options = TemplateOptions {
+            search,
+            tolerance: decode_tolerance(tolerance)?,
+            minimum_match_permille: u16::try_from(similarity).map_err(|_| "invalid similarity")?,
+            ignore_transparent_template_pixels: true,
+        };
         let mut control =
             template_search_control::TemplateSearchControl::new(self.scheduler.handle(), task);
-        let (matches, truncated) = self
+        let result = self
             .frames
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .find_all_named_templates_observed(
                 task,
-                decode_frame_handle(*frame)?,
+                screen,
                 self.scheduler.resources(),
                 &paths,
                 automation_core::MultiTemplateSearch {
-                    options: TemplateOptions {
-                        search,
-                        tolerance: decode_tolerance(tolerance)?,
-                        minimum_match_permille: u16::try_from(similarity)
-                            .map_err(|_| "invalid similarity")?,
-                        ignore_transparent_template_pixels: true,
-                    },
+                    options,
                     limit: usize::try_from(limit).map_err(|_| "invalid result limit")?,
                 },
                 automation_core::SearchControl {
                     cancelled: &mut || control.checkpoint(),
                     metrics,
+                    polygon,
                 },
-            )
-            .map_err(|error| control.describe_error(error, search, paths.len()))?;
+            );
+        let (matches, truncated) = self
+            .recover_template_roi(task, screen, options, polygon, result)
+            .map_err(|error| control.describe_error(error, search, paths.len(), polygon))?;
         let result = template_results::MatchResults {
             version: 1,
             count: matches.len(),
@@ -2827,6 +2957,11 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         opcode: u32,
         args: &[LuaScalar],
     ) -> Result<NativeVisionRequest, String> {
+        let (args, polygon_json) = if matches!(opcode, 5108 | 5109) {
+            polygon_search::split(args)
+        } else {
+            (args, None)
+        };
         let (handle, template, score, left, top, right, bottom) = if matches!(opcode, 5108 | 5109) {
             let [handle, template, score, left, top, right, bottom] = integer_args::<7>(args)?;
             (handle, Some(template), score, left, top, right, bottom)
@@ -2860,6 +2995,20 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             })
             .transpose()?;
         let region = search_options(left, top, right, bottom)?.roi;
+        let polygon = if let Some(encoded) = polygon_json {
+            let prepared = self
+                .polygons
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(Some(encoded))?
+                .unwrap();
+            if !prepared.fits(region) {
+                return Err("多边形顶点必须在搜索范围内".into());
+            }
+            Some(serde_json::from_slice(encoded).map_err(|_| "POLYGON_REGION_INVALID")?)
+        } else {
+            None
+        };
         if region.right > frame.metadata.width
             || region.bottom > frame.metadata.height
             || u64::from(region.right - region.left) * u64::from(region.bottom - region.top)
@@ -2892,6 +3041,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             template,
             region,
             minimum_score,
+            polygon,
         })
     }
 
@@ -3113,10 +3263,21 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
                     }
                 } else if !interval && self.scheduler.task_state(*task) == Some(TaskState::Running)
                 {
+                    let observation = self.pending_log_sleeps.remove(task);
+                    self.finish_observation(observation, "completed");
                     self.resume_inputs.insert(*task, LuaInput::None);
                 }
             }
             SchedulerEvent::TaskFinished { task, state } => {
+                let observation = self.pending_log_sleeps.remove(task);
+                self.finish_observation(
+                    observation,
+                    if *state == TaskState::Cancelled {
+                        "cancelled"
+                    } else {
+                        "error"
+                    },
+                );
                 self.apply_task_finished(task, *state)?;
             }
             SchedulerEvent::ResourceReleased(resource) => match resource.kind() {
@@ -3193,12 +3354,19 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
             }
             HostResult::Success(_) => run_observation::result_status(&Ok(input.clone())),
         };
-        self.finish_observation(pending.observation, status);
+        self.finish_observation_result(pending.observation, status, Some(&input));
         self.resume_inputs.insert(completion.task, input);
         Ok(())
     }
 
     fn observe_capture_completion(&self, pending: &mut PendingHost, input: &LuaInput) {
+        if pending
+            .observation
+            .as_ref()
+            .is_some_and(|v| v.fields.is_null())
+        {
+            return;
+        }
         if matches!(
             pending.opcode,
             OP_SCREEN_CAPTURE | OP_SCREEN_CAPTURE_REGION | OP_SCREEN_CAPTURE_SERIES_FRAME
@@ -3309,7 +3477,7 @@ impl<C: Clock, H: HostBackend> RuntimeExecutor<C, H> {
         self.record_task_terminal(*task, state);
         self.recognition_results.clear_task(*task);
         self.regexes.clear_task(*task);
-        self.color_roi_warnings.retain(|(owner, _)| owner != task);
+        self.vision_roi_warnings.retain(|(owner, _)| owner != task);
         self.run_contexts.remove(task);
         self.resume_inputs.remove(task);
         if let Some((owner, timer)) = self.callback_tasks.remove(task) {
@@ -4300,14 +4468,26 @@ mod tests {
             LuaScalar::Bytes(b"AbZ019".to_vec())
         );
         let events = executor.drain_run_events();
-        assert_eq!(events.len(), 4);
-        let capture: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
+        let records: Vec<serde_json::Value> = events
+            .iter()
+            .map(|v| serde_json::from_str(v).unwrap())
+            .collect();
+        let metrics: Vec<_> = records.iter().filter(|v| v["kind"] != "action").collect();
+        assert_eq!(metrics.len(), 4);
+        let capture = metrics[0];
         assert_eq!(capture["frame"], serde_json::json!([1, 1]));
-        let gray: serde_json::Value = serde_json::from_str(&events[1]).unwrap();
+        let gray = metrics[1];
         assert_eq!(gray["templateSizes"], serde_json::json!([[1, 1]]));
         assert_eq!(gray["roi"], serde_json::json!([0, 0, 1, 1]));
-        assert!(!events.join("\n").contains("AbZ019"));
-        assert!(!events.join("\n").contains("100(+100) 180"));
+        let metric_text = serde_json::to_string(&metrics).unwrap();
+        assert!(!metric_text.contains("AbZ019"));
+        assert!(!metric_text.contains("100(+100) 180"));
+        assert!(records
+            .iter()
+            .any(|v| v["kind"] == "action" && v["result"] == "AbZ019"));
+        assert!(records
+            .iter()
+            .any(|v| v["kind"] == "action" && v["result"] == "100(+100) 180"));
         for (name, value) in [("first", "100"), ("second", "+100"), ("third", "180")] {
             assert_eq!(
                 executor.lua().global_scalar(name).unwrap(),

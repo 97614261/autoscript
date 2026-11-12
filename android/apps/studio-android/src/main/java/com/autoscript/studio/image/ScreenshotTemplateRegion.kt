@@ -133,3 +133,16 @@ internal fun recognitionTemplateRegionInputs(
 ): Map<String, String> = if (!followTemplate || region == null || "region" !in inputs ||
     listOf("leftVariable", "topVariable", "rightVariable", "bottomVariable").any { !inputs[it].isNullOrBlank() }) inputs
     else inputs + ("region" to region.regionText())
+
+/** Pixel/color edits preserve screen coordinates; this hint describes a location, not unchanged colors. */
+internal fun ImageProcessingPipeline.screenshotTemplateRegion(roi: ImageToolCodeGen.Roi): ScreenshotTemplateRegion? {
+    if (operations.any { it.mode !in setOf("mask", "crop", "gray", "threshold", "filter", "despeckle", "erode", "dilate", "open", "close") }) return null
+    if (roi.left < 0 || roi.top < 0 || roi.right > dimensions.first || roi.bottom > dimensions.second ||
+        roi.width <= 0 || roi.height <= 0) return null
+    val start = mapBoundaryToOriginal(roi.left.toDouble(), roi.top.toDouble())
+    val end = mapBoundaryToOriginal(roi.right.toDouble(), roi.bottom.toDouble())
+    val original = ImageToolCodeGen.Roi(start.first.toInt(), start.second.toInt(), end.first.toInt(), end.second.toInt())
+    return ScreenshotTemplateRegion(sourceWidth, sourceHeight, original).takeIf {
+        it.valid() && original.width == roi.width && original.height == roi.height
+    }
+}

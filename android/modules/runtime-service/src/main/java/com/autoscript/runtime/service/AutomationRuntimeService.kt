@@ -33,6 +33,7 @@ import com.autoscript.runtime.api.InputPointPickReply
 import com.autoscript.runtime.api.RuntimeProtocol
 import com.autoscript.runtime.api.RuntimeLogWriter
 import com.autoscript.runtime.api.RuntimeScriptLog
+import com.autoscript.runtime.api.RuntimeSystemLog
 import com.autoscript.runtime.api.RuntimeScriptLogState
 import com.autoscript.runtime.api.TemplateMatchReply
 import com.autoscript.runtime.api.RecognitionPreviewReply
@@ -63,6 +64,11 @@ class AutomationRuntimeService : Service() {
     private val appDiagnostics by lazy {
         RuntimeAppDiagnostics(File(filesDir, "app-diagnostics")) { line ->
             android.util.Log.i("ZhigouDiagnostics", line)
+            com.autoscript.runtime.api.RuntimeSystemMessages.readableDiagnostic(line)?.let { readable ->
+                RuntimeSystemLog.enqueue(filesDir,
+                    if (com.autoscript.runtime.api.RuntimeSystemMessages.diagnosticIsFailure(line) == true) "ERROR" else "INFO",
+                    readable)
+            }
             synchronized(runtimeLogLock) {
                 while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
                 runtimeLogs.addLast(line)
@@ -87,6 +93,9 @@ class AutomationRuntimeService : Service() {
     private var publishedExecutionPosition: com.autoscript.runtime.api.RuntimeExecutionPosition? = null
     private var executionPositionScheduled = false
     private var executionPositionSequence = 0L
+    private var feedbackRun: RuntimeDebugRun? = null
+    private var executionFeedback = com.autoscript.runtime.api.RuntimeExecutionFeedbackBuffer()
+    private var publishedFeedback: com.autoscript.runtime.api.RuntimeExecutionFeedback? = null
     private val publishExecutionPosition = Runnable { publishLatestExecutionPosition() }
     private val runtimeLogs = ArrayDeque<String>(MAX_RUNTIME_LOG_ENTRIES)
     private val runtimeLogLock = Any()
@@ -661,6 +670,7 @@ class AutomationRuntimeService : Service() {
                 return RuntimeProtocol.START_INVALID_PROJECT
             }
             runtimeTools.reset()
+            RuntimeSystemLog.location("")
             overlayController.resetRunPrompts()
             runStopRequested.set(false)
             val displaySize = Point().also {
@@ -1174,6 +1184,9 @@ class AutomationRuntimeService : Service() {
 
     /** New listeners need the unchanged current row even during a long host wait. */
     @Synchronized private fun replayPublishedExecutionPosition(listener: IRuntimeStateListener) {
+        publishedFeedback?.takeIf { report ->
+            debugSession.ticket(sessionGenerationRef.get(), nativeHandleRef.get(), report.projectId)?.revision == report.runRevision
+        }?.let { listener.onExecutionFeedback(it.sessionGeneration, it.runRevision, it.projectId, it.encode()) }
         val position = publishedExecutionPosition ?: return
         if (currentRuntimeState() != RuntimeProtocol.STATE_RUNNING) return
         val ticket = debugSession.ticket(sessionGenerationRef.get(), nativeHandleRef.get(), position.projectId) ?: return
@@ -1186,6 +1199,7 @@ class AutomationRuntimeService : Service() {
 
     @Synchronized private fun publishLatestExecutionPosition() {
         executionPositionScheduled = false
+        if (currentRuntimeState() == RuntimeProtocol.STATE_RUNNING) publishExecutionFeedback("running")
         val position = pendingExecutionPosition ?: return
         pendingExecutionPosition = null
         val ticket = debugSession.ticket(position.sessionGeneration, nativeHandleRef.get(), position.projectId) ?: return
@@ -1197,6 +1211,29 @@ class AutomationRuntimeService : Service() {
             stateListeners.getBroadcastItem(index).onExecutionPosition(position.sessionGeneration, position.runRevision,
                 position.projectId, position.flowId, position.nodeId, position.sampleSequence,
                 position.recent.map { it.flowId }.toTypedArray(), position.recent.map { it.nodeId }.toTypedArray())
+        } } finally { stateListeners.finishBroadcast() }
+    }
+
+    @Synchronized private fun feedbackTicket(): RuntimeDebugRun? {
+        val project = lastProjectIdRef.get() ?: return null
+        val ticket = debugSession.ticket(sessionGenerationRef.get(), nativeHandleRef.get(), project) ?: return null
+        if (ticket != feedbackRun) {
+            feedbackRun = ticket
+            executionFeedback = com.autoscript.runtime.api.RuntimeExecutionFeedbackBuffer()
+            publishedFeedback = null
+        }
+        return ticket
+    }
+
+    @Synchronized private fun publishExecutionFeedback(phase: String) {
+        val ticket = feedbackTicket() ?: return
+        val report = executionFeedback.snapshot(ticket.generation, ticket.revision, ticket.projectId, phase)
+        if (!debugSession.accepts(ticket, sessionGenerationRef.get(), nativeHandleRef.get())) return
+        publishedFeedback = report
+        val payload = report.encode()
+        val count = stateListeners.beginBroadcast()
+        try { for (index in 0 until count) runCatching {
+            stateListeners.getBroadcastItem(index).onExecutionFeedback(ticket.generation, ticket.revision, ticket.projectId, payload)
         } } finally { stateListeners.finishBroadcast() }
     }
 
@@ -1245,8 +1282,19 @@ class AutomationRuntimeService : Service() {
             engineHandler.removeCallbacks(publishExecutionPosition)
             executionPositionScheduled = false
         }
+        val newlyRunning = state == RuntimeProtocol.STATE_RUNNING && lastNotifiedStateRef.get() != state
         lastNotifiedStateRef.set(state)
         lastNotifiedRootStateRef.set(rootState)
+        if (newlyRunning || state in setOf(RuntimeProtocol.STATE_PAUSED, RuntimeProtocol.STATE_STOPPED, RuntimeProtocol.STATE_FAILED)) {
+            val handle = nativeHandleRef.get()
+            if (handle != 0L) drainNativeRunEvents(handle)
+            publishExecutionFeedback(when (state) {
+                RuntimeProtocol.STATE_RUNNING -> "running"
+                RuntimeProtocol.STATE_PAUSED -> "paused"
+                RuntimeProtocol.STATE_FAILED -> "failed"
+                else -> if (runStopRequested.get()) "stopped" else "ended"
+            })
+        }
         appendRuntimeLog(state, rootState)
         val generation = sessionGenerationRef.get()
         publishFinalizedRuntimeState(finalizeState = {
@@ -1545,12 +1593,19 @@ class AutomationRuntimeService : Service() {
     }
 
     private fun appendRuntimeLog(state: Int, rootState: Int) {
+        if (state == RuntimeProtocol.STATE_IDLE || state == RuntimeProtocol.STATE_STOPPED) RuntimeSystemLog.location("")
         val entry = "${SystemClock.elapsedRealtime()}ms · Runner状态 · ${runtimeStateName(state)} · " +
             "Root ${rootStateName(rootState)}"
-        // Raw Lua diagnostics can contain private source; persist only whitelisted codes.
+        // Full failures stay in the private local journal for troubleshooting.
         runLogWriter.append("diagnostic.log", entry)
+        RuntimeSystemLog.record(filesDir, if (state == RuntimeProtocol.STATE_FAILED) "ERROR" else "INFO",
+            "运行状态：${runtimeStateName(state)} · Root ${rootStateName(rootState)}" +
+                if (state == RuntimeProtocol.STATE_FAILED) "\n${currentRuntimeDiagnostic().orEmpty()}" else "")
         if (state == RuntimeProtocol.STATE_FAILED) {
             runLogWriter.append("diagnostic.log", "Runner错误码 · ${runtimeFailureCode(currentRuntimeDiagnostic())}")
+            currentRuntimeDiagnostic()?.let { diagnostic ->
+                runLogWriter.append("diagnostic.log", "${SystemClock.elapsedRealtime()}ms · 系统/ERROR: ${diagnostic.take(4096)}")
+            }
         }
         synchronized(runtimeLogLock) {
             while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
@@ -1573,14 +1628,25 @@ class AutomationRuntimeService : Service() {
             .forEach(::appendScriptRuntimeLog)
     }
 
-    private fun drainNativeRunEvents(handle: Long) {
+    // Terminal snapshots and event draining must observe the same complete tail.
+    @Synchronized private fun drainNativeRunEvents(handle: Long) {
         NativeEngineBridge.nativeDrainRunEvents(handle).take(257).forEach { payload ->
             if (payload.toByteArray(Charsets.UTF_8).size <= 8_192) {
                 val event = runCatching { JSONObject(payload) }.getOrNull() ?: return@forEach
+                val structural = when (event.optString("kind")) {
+                    "step", "trace", "task", "branch", "dropped" -> true
+                    else -> false
+                }
+                if (structural && feedbackTicket() != null && executionFeedback.observe(payload) &&
+                    currentRuntimeState() == RuntimeProtocol.STATE_RUNNING && !executionPositionScheduled) {
+                    executionPositionScheduled = true
+                    engineHandler.postDelayed(publishExecutionPosition, 50L)
+                }
                 event.put("receivedAtElapsedMs", SystemClock.elapsedRealtime())
                 runLogWriter.append("events.jsonl", event.toString())
-                if (event.optString("kind") in setOf("trace", "task", "dropped")) {
+                if (event.optString("kind") in setOf("trace", "step", "task", "action", "dropped")) {
                     RuntimeScriptLog.observation(event.toString())?.let { line ->
+                        if (event.has("visualLocation")) RuntimeSystemLog.location(line)
                         synchronized(runtimeLogLock) {
                             while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
                             runtimeLogs.addLast(line.take(MAX_RUNTIME_LOG_LENGTH))
@@ -1660,6 +1726,7 @@ class AutomationRuntimeService : Service() {
     }
 
     private fun appendPreviewRuntimeLog(message: String) {
+        RuntimeSystemLog.record(filesDir, if (message.contains("失败")) "ERROR" else "INFO", message)
         val entry = "${SystemClock.elapsedRealtime()}ms · Runner诊断 · ${message.take(MAX_RUNTIME_LOG_LENGTH - 20)}"
         synchronized(runtimeLogLock) {
             while (runtimeLogs.size >= MAX_RUNTIME_LOG_ENTRIES) runtimeLogs.removeFirst()
@@ -2105,7 +2172,7 @@ class AutomationRuntimeService : Service() {
         const val ACTION_PAUSE_SCRIPT = "com.autoscript.runtime.action.PAUSE_SCRIPT"
         const val ACTION_RESUME_SCRIPT = "com.autoscript.runtime.action.RESUME_SCRIPT"
         const val MAX_RUNTIME_LOG_ENTRIES = 200
-        const val MAX_RUNTIME_LOG_LENGTH = 512
+        const val MAX_RUNTIME_LOG_LENGTH = 1024
         const val MAX_SCRIPT_LOG_BATCH = 200
         const val MAX_SCRIPT_PROMPT_BATCH = 64
         const val CAPTURE_HANDOFF_DIRECTORY = "capture-handoffs"

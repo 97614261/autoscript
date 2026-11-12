@@ -283,6 +283,48 @@ mod tests {
     }
 
     #[test]
+    fn invalid_payload_identity_preserves_the_previous_generation_and_allows_recovery() {
+        let directory = test_directory();
+        let original = bundle();
+        commit_generation(&directory, &original).unwrap();
+        for mutation in 0..3 {
+            let mut invalid = original.clone();
+            if mutation == 0 {
+                invalid
+                    .main_lua
+                    .splice(0..0, b"local helper = {}\n".iter().copied());
+            } else {
+                let mut map: SourceMap = serde_json::from_slice(&invalid.source_map_json).unwrap();
+                if mutation == 1 {
+                    map.generation_id = "gen-different".into();
+                } else {
+                    map.vision_requirements = Some(crate::VisionRequirements {
+                        version: 99,
+                        components: Vec::new(),
+                    });
+                }
+                invalid.source_map_json = serde_json::to_vec(&map).unwrap();
+            }
+            invalid.record.lua_digest = content_digest(&invalid.main_lua);
+            invalid.record.source_map_digest = content_digest(&invalid.source_map_json);
+            invalid.generation_json = serde_json::to_vec(&invalid.record).unwrap();
+            assert!(matches!(
+                commit_generation(&directory, &invalid),
+                Err(CommitError::InvalidBundle(_))
+            ));
+            for (name, expected) in [
+                ("main.lua", &original.main_lua),
+                ("source-map.json", &original.source_map_json),
+                ("generation.json", &original.generation_json),
+            ] {
+                assert_eq!(&fs::read(directory.join(name)).unwrap(), expected);
+            }
+        }
+        commit_generation(&directory, &original).unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn concurrent_writer_is_rejected() {
         let directory = test_directory();
         fs::create_dir_all(&directory).expect("test directory");

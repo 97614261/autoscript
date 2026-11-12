@@ -559,11 +559,6 @@ impl LuaTaskRegistry {
                     function Math.green(...) return host(1020,...) end
                     function Math.blue(...) return host(1021,...) end
                     Path = {}
-                    function Screen.findFeatures(frame, template, score, left, top, right, bottom)
-                        local x,y,width,height,confidence=host(5109,frame,template,score,left,top,right,bottom)
-                        if x==nil then return '[]' end
-                        return string.format('[{"x":%d,"y":%d,"width":%d,"height":%d,"scorePermille":%d}]',x,y,width,height,confidence)
-                    end
                     function Ocr.alphanumericV5(frame,left,top,right,bottom,confidence)
                         local text,score=host(6104,frame,left,top,right,bottom,confidence)
                         return string.format('{"text":"%s","averageScorePermille":%d}',text,score)
@@ -754,6 +749,22 @@ impl LuaTaskRegistry {
                         if left >= right or top >= bottom then error(name .. " ROI is empty", 3) end
                     end
 
+                    Screen.polygonRegionVersion = 1
+                    local function regionHost(opcode, polygon, ...)
+                        if polygon == nil or polygon == "" then return host(opcode, ...) end
+                        if type(polygon) ~= "string" or #polygon > 8192 then error("invalid polygon JSON", 3) end
+                        local args = table.pack(...)
+                        args.n = args.n + 1; args[args.n] = "@polygon:" .. polygon
+                        return host(opcode, table.unpack(args, 1, args.n))
+                    end
+                    local function colorRegionHost(opcode, colors, polygon, ...)
+                        if colors == nil or colors == "" then return regionHost(opcode, polygon, ...) end
+                        if type(colors) ~= "string" or #colors > 164 then error("invalid color group", 3) end
+                        local args = table.pack(...)
+                        args.n=args.n+1; args[args.n]=colors
+                        return regionHost(opcode, polygon, table.unpack(args, 1, args.n))
+                    end
+
                     Screen.colorGroupVersion = 1
                     Screen.colorLimitsVersion = 1
                     local function colorHost(opcode, additionalColors, ...)
@@ -765,17 +776,17 @@ impl LuaTaskRegistry {
                         return host(opcode, table.unpack(args, 1, args.n))
                     end
 
-                    function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, additionalColors)
+                    function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, additionalColors, polygon)
                         integer(frame, "Screen.findColor frame", 1, 9223372036854775807)
                         integer(rgb, "Screen.findColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.findColor tolerance", 0, 255)
                         searchRegion(left, top, right, bottom, "Screen.findColor")
-                        local x, y = colorHost(5100, additionalColors, frame, rgb, tolerance, left, top, right, bottom)
+                        local x, y = colorRegionHost(5100, additionalColors, polygon, frame, rgb, tolerance, left, top, right, bottom)
                         if x == nil then return nil end
                         return { x = x, y = y }
                     end
 
-                    function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom, direction)
+                    function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom, direction, polygon)
                         integer(frame, "Screen.findImage frame", 1, 9223372036854775807)
                         integer(template, "Screen.findImage template", 1, 9223372036854775807)
                         integer(tolerance, "Screen.findImage tolerance", 0, 255)
@@ -783,10 +794,10 @@ impl LuaTaskRegistry {
                         searchRegion(left, top, right, bottom, "Screen.findImage")
                         local x, y
                         if direction == nil then
-                            x, y = host(5101, frame, template, tolerance, similarityPermille, left, top, right, bottom)
+                            x, y = regionHost(5101, polygon, frame, template, tolerance, similarityPermille, left, top, right, bottom)
                         else
                             integer(direction, "Screen.findImage direction", 0, 4)
-                            x, y = host(5101, frame, template, tolerance, similarityPermille, left, top, right, bottom, direction)
+                            x, y = regionHost(5101, polygon, frame, template, tolerance, similarityPermille, left, top, right, bottom, direction)
                         end
                         if x == nil then return nil end
                         return { x = x, y = y }
@@ -799,19 +810,19 @@ impl LuaTaskRegistry {
                         return host(5102, frame, x, y)
                     end
 
-                    function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction)
+                    function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, polygon)
                         integer(frame, "Screen.findImages frame", 1, 9223372036854775807)
                         if type(pathsJson) ~= "string" or #pathsJson > 16384 then error("Screen.findImages expects bounded JSON paths", 2) end
                         integer(tolerance, "Screen.findImages tolerance", 0, 255)
                         integer(similarityPermille, "Screen.findImages similarity", 0, 1000)
                         integer(direction or 0, "Screen.findImages direction", 0, 4)
                         searchRegion(left, top, right, bottom, "Screen.findImages")
-                        local x,y,path,score,width,height = host(5107, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction or 0)
+                        local x,y,path,score,width,height = regionHost(5107, polygon, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction or 0)
                         if x == nil then return nil end
                         return {x=x,y=y,path=path,scorePermille=score,width=width,height=height}
                     end
 
-                    function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit)
+                    function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit, polygon)
                         integer(frame, "Screen.findAllImages frame", 1, 9223372036854775807)
                         if type(pathsJson) ~= "string" or #pathsJson > 16384 then error("bounded JSON paths required", 2) end
                         integer(tolerance, "Screen.findAllImages tolerance", 0, 255)
@@ -819,7 +830,7 @@ impl LuaTaskRegistry {
                         integer(direction, "Screen.findAllImages direction", 0, 4)
                         integer(limit, "Screen.findAllImages limit", 1, 64)
                         searchRegion(left, top, right, bottom, "Screen.findAllImages")
-                        return host(5114, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit)
+                        return regionHost(5114, polygon, frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit)
                     end
                     function Screen.matchValue(result, index, field)
                         if type(result) ~= "string" or #result > 65536 then error("bounded match JSON required", 2) end
@@ -874,7 +885,7 @@ impl LuaTaskRegistry {
                         return count, flattened
                     end
 
-                    function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left, top, right, bottom)
+                    function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left, top, right, bottom, polygon)
                         integer(frame, "Screen.findMultiColor frame", 1, 9223372036854775807)
                         integer(anchorRgb, "Screen.findMultiColor anchorRgb", 0, 16777215)
                         integer(anchorTolerance, "Screen.findMultiColor anchorTolerance", 0, 255)
@@ -882,27 +893,27 @@ impl LuaTaskRegistry {
                         local count, flattened = validateMultiColorSamples(samples)
                         local arguments = { frame, anchorRgb, anchorTolerance, left, top, right, bottom, count }
                         for index = 1, #flattened do arguments[#arguments + 1] = flattened[index] end
-                        local x, y = host(5104, table.unpack(arguments, 1, #arguments))
+                        local x, y = regionHost(5104, polygon, table.unpack(arguments, 1, #arguments))
                         if x == nil then return nil end
                         return { x = x, y = y }
                     end
 
-                    function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors)
+                    function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors, polygon)
                         integer(frame, "Screen.countColor frame", 1, 9223372036854775807)
                         integer(rgb, "Screen.countColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.countColor tolerance", 0, 255)
                         searchRegion(left, top, right, bottom, "Screen.countColor")
                         integer(limit, "Screen.countColor limit", 0, 64000000)
-                        return colorHost(5105, additionalColors, frame, rgb, tolerance, left, top, right, bottom, limit)
+                        return colorRegionHost(5105, additionalColors, polygon, frame, rgb, tolerance, left, top, right, bottom, limit)
                     end
 
-                    function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors)
+                    function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors, polygon)
                         integer(frame, "Screen.findAllColor frame", 1, 9223372036854775807)
                         integer(rgb, "Screen.findAllColor rgb", 0, 16777215)
                         integer(tolerance, "Screen.findAllColor tolerance", 0, 255)
                         searchRegion(left, top, right, bottom, "Screen.findAllColor")
                         integer(limit, "Screen.findAllColor limit", 1, 2048)
-                        local raw = table.pack(colorHost(5106, additionalColors, frame, rgb, tolerance, left, top, right, bottom, limit))
+                        local raw = table.pack(colorRegionHost(5106, additionalColors, polygon, frame, rgb, tolerance, left, top, right, bottom, limit))
                         local count = raw[1]
                         local points = {}
                         for index = 1, count do
@@ -1088,12 +1099,17 @@ impl LuaTaskRegistry {
                     function Screen.components(frame, options) return host(5121, frame, options) end
                     function Screen.savePng(frame, path) return host(14130, frame, path) end
 
-                    function Screen.findGray(frame, template, similarity, left, top, right, bottom)
+                    function Screen.findFeatures(frame, template, score, left, top, right, bottom, polygon)
+                        local x,y,width,height,confidence=regionHost(5109,polygon,frame,template,score,left,top,right,bottom)
+                        if x==nil then return '[]' end
+                        return string.format('[{"x":%d,"y":%d,"width":%d,"height":%d,"scorePermille":%d}]',x,y,width,height,confidence)
+                    end
+                    function Screen.findGray(frame, template, similarity, left, top, right, bottom, polygon)
                         integer(frame, "Screen.findGray frame", 1, 9223372036854775807)
                         integer(template, "Screen.findGray template", 1, 9223372036854775807)
                         integer(similarity, "Screen.findGray similarity", 0, 1000)
                         searchRegion(left, top, right, bottom, "Screen.findGray")
-                        local x,y,score=host(5108,frame,template,similarity,left,top,right,bottom)
+                        local x,y,score=regionHost(5108,polygon,frame,template,similarity,left,top,right,bottom)
                         if x==nil then return nil end
                         return {x=x,y=y,scorePermille=score}
                     end

@@ -16,14 +16,14 @@ class EditorContinuousEditingTest {
         assertTrue(operations.contains("onDismiss = { nodeEditorVisible = false }"))
     }
 
-    @Test fun indentationMovesTheWholeRowAndClampsInvalidDepths() {
+    @Test fun indentationKeepsAllLegalDisplayLevelsAndClampsInvalidDepths() {
         assertEquals(2, editorTreeRowIndent(0))
         assertEquals(14, editorTreeRowIndent(1))
         assertEquals(26, editorTreeRowIndent(2))
         assertEquals(2, editorTreeRowIndent(-100))
-        assertEquals(386, editorTreeRowIndent(Int.MAX_VALUE))
+        assertEquals(782, editorTreeRowIndent(Int.MAX_VALUE))
         val source = editorDockTestSources()
-        assertTrue(source.contains(".padding(start = editorTreeRowIndent(row.depth).dp)"))
+        assertTrue(source.contains(".padding(start = editorTreeRowIndent(displayDepth).dp, end = 3.dp)"))
     }
 
     @Test fun bothTreesUseNarrowAlignedColumnsWithoutChangingVerticalTargets() {
@@ -33,11 +33,15 @@ class EditorContinuousEditingTest {
         assertEquals(10, editorTreeGuideOffset(0))
         assertEquals(22, editorTreeGuideOffset(1))
         assertEquals(10, editorTreeGuideOffset(-1))
-        assertEquals(382, editorTreeGuideOffset(Int.MAX_VALUE))
-        for (depth in 0..31) assertEquals(editorTreeRowIndent(depth) + EDITOR_TREE_EXPAND_WIDTH_DP / 2, editorTreeGuideOffset(depth))
+        assertEquals(790, editorTreeGuideOffset(Int.MAX_VALUE))
+        for (depth in 0..EDITOR_TREE_MAX_DISPLAY_DEPTH) {
+            assertEquals(editorTreeRowIndent(depth) + EDITOR_TREE_EXPAND_WIDTH_DP / 2, editorTreeGuideOffset(depth))
+            assertEquals(editorTreeGuideOffset(depth) + EDITOR_TREE_CHECK_WIDTH_DP,
+                editorTreeGuideOffset(depth, EDITOR_TREE_CHECK_WIDTH_DP))
+        }
         val source = editorDockTestSources()
-        assertEquals(2, Regex("start = editorTreeRowIndent\\((?:row.depth|displayDepth)\\).dp").findAll(source).count())
-        assertEquals(3, Regex("width\\(EDITOR_TREE_EXPAND_WIDTH_DP.dp\\)").findAll(source).count())
+        assertEquals(1, Regex("start = editorTreeRowIndent\\(displayDepth\\).dp").findAll(source).count())
+        assertEquals(2, Regex("width\\(EDITOR_TREE_EXPAND_WIDTH_DP.dp\\)").findAll(source).count())
         assertTrue(source.contains("width(EDITOR_TREE_CHECK_WIDTH_DP.dp).heightIn(min = EDITOR_PROGRAM_ROW_MIN_HEIGHT_DP.dp)"))
     }
 
@@ -66,7 +70,7 @@ class EditorContinuousEditingTest {
     @Test fun sharedTreesUseContentSizedHorizontalSpaceInsteadOfAFixedWideCanvas() {
         assertEquals(292f, editorTreeContentWidth(292f, 0), .01f)
         assertEquals(340f, editorTreeContentWidth(210f, 10), .01f)
-        assertEquals(604f, editorTreeContentWidth(210f, Int.MAX_VALUE), .01f)
+        assertEquals(1000f, editorTreeContentWidth(210f, Int.MAX_VALUE), .01f)
         assertEquals(800f, editorTreeContentWidth(800f, 32), .01f)
         assertEquals(220f, editorTreeContentWidth(Float.NaN, -1), .01f)
     }

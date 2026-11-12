@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
 internal data class EditorTreeGroup(val key: String, val depth: Int, val first: Int, val last: Int,
     val branch: Boolean, val disabled: Boolean)
 internal data class EditorTreeGroupedRow(val row: EditorTreeDisplayRow, val index: Int, val groups: List<EditorTreeGroup>) {
-    val visibleGroups = groups.filter { it.depth in 0..31 }
+    val visibleGroups = groups.filter { it.depth in 0..EDITOR_TREE_MAX_DISPLAY_DEPTH }.takeLast(32)
 }
 internal class EditorTreeGrouping(val rows: List<EditorTreeGroupedRow>) {
     private val byKey = rows.associateBy { it.row.key }
@@ -40,9 +40,9 @@ internal fun editorTreeGrouping(rows: List<EditorTreeDisplayRow>): EditorTreeGro
 }
 
 /** Draw inside each row so lazy scrolling never needs offscreen coordinates or extra end rows. */
-internal fun Modifier.editorTreeGroups(item: EditorTreeGroupedRow, focusedGroups: Set<String>): Modifier = drawBehind {
+internal fun Modifier.editorTreeGroups(item: EditorTreeGroupedRow, focusedGroups: Set<String>, leadingDp: Int = 0): Modifier = drawBehind {
     item.visibleGroups.lastOrNull()?.let { group ->
-        val x = editorTreeGuideOffset(group.depth).dp.toPx()
+        val x = editorTreeGuideOffset(group.depth, leadingDp).dp.toPx()
         val color = if (group.disabled) Color(0xFF929AA7) else Color(0xFF6A82A2)
         if (size.width > x) drawRect(color.copy(alpha = if (group.depth % 2 == 0) .035f else .065f),
             topLeft = Offset(x, 0f), size = Size(size.width - x, size.height))
@@ -50,7 +50,7 @@ internal fun Modifier.editorTreeGroups(item: EditorTreeGroupedRow, focusedGroups
     // The focus path is outer-to-inner. Only its nearest scope gets a rail.
     val focusedKey = focusedGroups.lastOrNull()
     item.visibleGroups.firstOrNull { it.key == focusedKey }?.let { group ->
-        val x = editorTreeGuideOffset(group.depth).dp.toPx()
+        val x = editorTreeGuideOffset(group.depth, leadingDp).dp.toPx()
         val startY = if (item.index == group.first) center.y + if (group.branch) 0f else 6.dp.toPx() else 0f
         val endY = if (item.index == group.last) size.height - 2.dp.toPx() else size.height
         val ink = if (group.disabled) Color(0xFF929AA7) else Color(0xFF7796BE)

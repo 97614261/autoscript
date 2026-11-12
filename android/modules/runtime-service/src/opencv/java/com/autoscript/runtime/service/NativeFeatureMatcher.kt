@@ -14,7 +14,7 @@ import kotlin.math.floor
 import kotlin.math.hypot
 
 /** Explicit bounded ORB/RANSAC, never a fallback for pixel or grayscale matching. */
-internal class NativeFeatureMatcher:NativeVisionBackend {
+internal class NativeFeatureMatcher:NativeVisionBackend,NativePolygonSearchBackend {
     private var orb:ORB?=null
     private var matcher:BFMatcher?=null
     private data class TemplateKey(val width:Int,val height:Int,val stride:Int,val format:Int,val digest:List<Byte>)
@@ -63,7 +63,8 @@ internal class NativeFeatureMatcher:NativeVisionBackend {
     override fun execute(work:NativeVisionWork,pixels:ByteBuffer,metadata:IntArray,
         templatePixels:ByteBuffer?,templateMetadata:IntArray,options:IntArray):ByteArray {
         require(templatePixels!=null);NativeCvBuffers.load();work.checkActive()
-        val roi=checkedVisionRect(metadata[0],metadata[1],options)
+        val roi=checkedVisionRect(metadata[0],metadata[1],options.copyOf(5))
+        val polygon=VisionSearchPolygon.fromOptions(options,work::checkActive)
         require(roi.width.toLong()*roi.height<=1_048_576 && templateMetadata[0].toLong()*templateMetadata[1]<=262_144)
         if(roi.width<32 || roi.height<32 || templateMetadata[0]<32 || templateMetadata[1]<32) return byteArrayOf()
         val detector=orb ?: ORB.create(512,1.2f,8,15,0,2,ORB.HARRIS_SCORE,31,20).also {orb=it}
@@ -79,6 +80,15 @@ internal class NativeFeatureMatcher:NativeVisionBackend {
             // Transparent filter/mask edges must not become artificial keypoints.
             Core.extractChannel(clipped,alpha,3);require(Core.minMaxLoc(alpha).minVal==255.0) {"FEATURE_REQUIRES_OPAQUE_SOURCE"}
             Imgproc.cvtColor(clipped,gray,if(metadata[3]==1) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_BGRA2GRAY)
+            if (polygon != null) {
+                empty.create(roi.height,roi.width,CvType.CV_8UC1)
+                val row=ByteArray(roi.width)
+                for (y in 0 until roi.height) {
+                    work.checkActive();row.fill(0)
+                    for (span in polygon.spans(y+roi.y)) row.fill(255.toByte(),span.first-roi.x,span.last-roi.x+1)
+                    empty.put(y,0,row)
+                }
+            }
             work.checkActive();detector.detectAndCompute(gray,empty,sourceKeys,sourceDesc)
             work.checkActive()
             if(templateDesc.empty() || sourceDesc.rows()<2) return byteArrayOf()
@@ -114,6 +124,7 @@ internal class NativeFeatureMatcher:NativeVisionBackend {
             val left=floor(points.minOf {it.x}).toInt();val top=floor(points.minOf {it.y}).toInt()
             val right=ceil(points.maxOf {it.x}).toInt();val bottom=ceil(points.maxOf {it.y}).toInt()
             if(right<=left || bottom<=top) return byteArrayOf()
+            if(polygon!=null && !polygon.containsRect(left+roi.x,top+roi.y,right-left,bottom-top)) return byteArrayOf()
             return ByteBuffer.allocate(18).order(ByteOrder.LITTLE_ENDIAN).putInt(left+roi.x).putInt(top+roi.y)
                 .putInt(right-left).putInt(bottom-top).putShort(score.toShort()).array()
         } finally {

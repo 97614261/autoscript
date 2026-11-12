@@ -17,6 +17,7 @@ use runtime_scheduler::{ResourceId, ResourceKind, ResourceOwner, TaskResourceReg
 pub struct SearchControl<'a> {
     pub cancelled: &'a mut dyn FnMut() -> bool,
     pub metrics: Option<&'a mut TemplateSearchMetrics>,
+    pub polygon: Option<&'a pixel_vision::polygon::PolygonRegion>,
 }
 
 /// Matching options and the bounded retained-result count belong to one query.
@@ -860,6 +861,7 @@ impl FramePool {
             SearchControl {
                 cancelled,
                 metrics: None,
+                polygon: None,
             },
         )
     }
@@ -879,6 +881,7 @@ impl FramePool {
         let SearchControl {
             cancelled,
             mut metrics,
+            polygon,
         } = control;
         let screen = self.view(task, screen_handle, resources)?;
         let template = self.view(task, template_handle, resources)?;
@@ -888,13 +891,14 @@ impl FramePool {
                 m.templates_visited += 1;
                 m.prepared_cache_hits += 1;
             }
-            Ok(pixel_vision::find_prepared_template_observed(
+            Ok(pixel_vision::find_prepared_template_in_region_observed(
                 screen.image_view()?,
                 prepared,
                 options,
                 &mut remaining,
                 cancelled,
                 metrics,
+                polygon,
             )?)
         } else {
             if cancelled() {
@@ -905,13 +909,14 @@ impl FramePool {
                 m.templates_visited += 1;
                 m.templates_prepared += 1;
             }
-            Ok(pixel_vision::find_prepared_template_observed(
+            Ok(pixel_vision::find_prepared_template_in_region_observed(
                 screen.image_view()?,
                 &prepared,
                 options,
                 &mut remaining,
                 cancelled,
                 metrics,
+                polygon,
             )?)
         }
     }
@@ -940,6 +945,7 @@ impl FramePool {
             SearchControl {
                 cancelled,
                 metrics: None,
+                polygon: None,
             },
         )
     }
@@ -959,6 +965,7 @@ impl FramePool {
         let SearchControl {
             cancelled,
             mut metrics,
+            polygon,
         } = control;
         if paths.is_empty() || paths.len() > 64 {
             return Err(FrameError::InvalidTemplateName.into());
@@ -999,13 +1006,14 @@ impl FramePool {
                 m.templates_visited += 1;
                 m.prepared_cache_hits += 1;
             }
-            if let Some(matched) = pixel_vision::find_prepared_template_observed(
+            if let Some(matched) = pixel_vision::find_prepared_template_in_region_observed(
                 frame.image_view()?,
                 &template.prepared,
                 options,
                 &mut remaining,
                 cancelled,
                 metrics.as_deref_mut(),
+                polygon,
             )? {
                 return Ok(Some(NamedTemplateMatch {
                     path: path.clone(),
@@ -1043,6 +1051,7 @@ impl FramePool {
         let SearchControl {
             cancelled,
             mut metrics,
+            polygon,
         } = control;
         if batch.queries.is_empty() {
             return Err(FrameError::TemplateBatchEmpty.into());
@@ -1108,13 +1117,14 @@ impl FramePool {
                     m.templates_visited += 1;
                     m.prepared_cache_hits += 1;
                 }
-                if let Some(matched) = pixel_vision::find_prepared_template_observed(
+                if let Some(matched) = pixel_vision::find_prepared_template_in_region_observed(
                     image,
                     &template.prepared,
                     query.options,
                     &mut remaining,
                     cancelled,
                     metrics.as_deref_mut(),
+                    polygon,
                 )? {
                     result = Some(NamedTemplateMatch {
                         path: path.clone(),
@@ -1153,6 +1163,7 @@ impl FramePool {
             SearchControl {
                 cancelled,
                 metrics: None,
+                polygon: None,
             },
         )
     }
@@ -1173,6 +1184,7 @@ impl FramePool {
         let SearchControl {
             cancelled,
             mut metrics,
+            polygon,
         } = control;
         if paths.is_empty() || paths.len() > 64 || !(1..=64).contains(&limit) {
             return Err(FrameError::InvalidTemplateName.into());
@@ -1215,7 +1227,7 @@ impl FramePool {
                 m.templates_visited += 1;
                 m.prepared_cache_hits += 1;
             }
-            for matched in pixel_vision::find_prepared_templates_observed(
+            for matched in pixel_vision::find_prepared_templates_in_region_observed(
                 frame.image_view()?,
                 &template.prepared,
                 options,
@@ -1223,6 +1235,7 @@ impl FramePool {
                 &mut remaining,
                 cancelled,
                 metrics.as_deref_mut(),
+                polygon,
             )? {
                 matches.push(NamedTemplateMatch {
                     path: path.clone(),
@@ -2042,6 +2055,7 @@ mod tests {
                 SearchControl {
                     cancelled: &mut || false,
                     metrics: None,
+                    polygon: None,
                 },
             )
             .expect("batch search");
@@ -2078,6 +2092,7 @@ mod tests {
                 SearchControl {
                     cancelled: &mut || false,
                     metrics: None,
+                    polygon: None,
                 },
             ),
             Err(super::FrameVisionError::Vision(
@@ -2105,6 +2120,7 @@ mod tests {
                 SearchControl {
                     cancelled,
                     metrics: None,
+                    polygon: None,
                 },
             ),
             Err(super::FrameVisionError::Vision(
@@ -2129,6 +2145,7 @@ mod tests {
                 SearchControl {
                     cancelled: &mut || false,
                     metrics: None,
+                    polygon: None,
                 },
             ),
             Err(super::FrameVisionError::Frame(
@@ -2155,6 +2172,7 @@ mod tests {
                 SearchControl {
                     cancelled: &mut || false,
                     metrics: None,
+                    polygon: None,
                 },
             ),
             Err(super::FrameVisionError::Frame(
@@ -2273,6 +2291,7 @@ mod tests {
                     SearchControl {
                         cancelled: &mut || false,
                         metrics: None,
+                        polygon: None,
                     },
                 )
                 .expect("batch search");

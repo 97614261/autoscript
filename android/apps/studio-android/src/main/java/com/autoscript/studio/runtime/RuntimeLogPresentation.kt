@@ -7,13 +7,13 @@ import java.util.Locale
 internal data class RuntimeLogLinePresentation(val time: String, val message: String, val failure: Boolean, val warning: Boolean,
     val label: String)
 
-private val scriptLevel = Regex("^脚本/(INFO|WARN|ERROR|DEBUG):\\s*")
+private val scriptLevel = Regex("^脚本(?:动作)?/(INFO|WARN|ERROR|DEBUG):\\s*")
 private val executionLevel = Regex("^脚本执行/(START|RESUME|PAUSE|END|TRACE|WARN|ERROR):\\s*")
 private const val logIdentity = "(?:[A-Za-z0-9_.-]{1,128}|anonymous:[a-f0-9]{16})"
 private val executionIdentity = Regex(" \\[定位:$logIdentity/$logIdentity](?= · 执行失败$|$)")
 private val legacyExecutionLocation = Regex("^插件 $logIdentity · 积木 $logIdentity( · 执行失败)?$")
 
-/** Strip only recognized transport prefixes; the full original remains available in details and copy. */
+/** Strip recognized transport prefixes and navigation markers for readable display and export. */
 internal fun runtimeLogLinePresentation(line: String, clockOffsetMs: Long? = null): RuntimeLogLinePresentation {
     val stamp = runtimeConsoleTimestamp.find(line)
     val time = stamp?.groupValues?.get(1)?.takeIf(String::isNotEmpty) ?: stamp?.groupValues?.get(2)?.toLongOrNull()?.let { value ->
@@ -31,8 +31,9 @@ internal fun runtimeLogLinePresentation(line: String, clockOffsetMs: Long? = nul
         message = message.removePrefix("脚本调试日志 · ")
         val level = scriptLevel.find(message)
         warning = level?.groupValues?.get(1) == "WARN"
-        label = "输出"
+        label = if (message.startsWith("脚本动作/")) "动作" else "输出"
         if (level != null) message = message.substring(level.range.last + 1)
+        if (label == "动作") message = message.replace(executionIdentity, "")
     } else if (source == RuntimeConsoleChannel.EXECUTION) {
         val level = executionLevel.find(message)
         warning = level?.groupValues?.get(1) == "WARN"
@@ -46,9 +47,15 @@ internal fun runtimeLogLinePresentation(line: String, clockOffsetMs: Long? = nul
         }
     } else if (source == RuntimeConsoleChannel.DIAGNOSTIC) {
         label = "诊断"
-        listOf("App诊断 · ", "Runner状态 · ", "Runner诊断 · ", "诊断：").firstOrNull(message::startsWith)?.let {
+        val readable = com.autoscript.runtime.api.RuntimeSystemMessages.readableDiagnostic(message)
+        if (readable != null) message = readable
+        else listOf("App诊断 · ", "Runner状态 · ", "Runner诊断 · ", "诊断：").firstOrNull(message::startsWith)?.let {
             message = message.removePrefix(it)
         }
+    }
+    if (message.startsWith("系统/")) {
+        message = message.removePrefix("系统/ERROR: ").removePrefix("系统/INFO: ")
+        label = "系统"
     }
     val failure = editorConsoleLineIsFailure(line)
     return RuntimeLogLinePresentation(time, message.trim().ifEmpty { line }, failure, warning,

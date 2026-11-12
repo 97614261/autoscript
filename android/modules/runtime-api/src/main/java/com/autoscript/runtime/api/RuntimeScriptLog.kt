@@ -17,6 +17,18 @@ object RuntimeScriptLog {
         val event = JsonParser.parseString(payload).asJsonObject
         val time = event.get("receivedAtElapsedMs")?.asLong?.takeIf { it >= 0 } ?: return null
         when (event.get("kind")?.asString) {
+            "action" -> action(event, time)
+            "step" -> {
+                require(event.get("version")?.asInt == 1 && event.get("phase")?.asString == "enter")
+                val location = visualLocation(event) ?: return null
+                val title = event.getAsJsonObject("visualLocation").get("blockTitle").asString
+                // Detailed operations are recorded only after their actual runtime reply.
+                if (detailedActionTitle(title)) return null
+                val flow = event.get("flowId")?.asString ?: return null
+                val node = event.get("nodeId")?.asString ?: return null
+                require(identity.matches(flow) && identity.matches(node))
+                "${time}ms · 脚本动作/INFO: 执行 $location [定位:$flow/$node]"
+            }
             "trace", "task" -> {
                 require(event.get("version")?.asInt == 1)
                 val flow = event.get("flowId")?.asString ?: return null
@@ -43,6 +55,46 @@ object RuntimeScriptLog {
             else -> null
         }
     }.getOrNull()
+
+    private fun detailedActionTitle(title: String): Boolean = title in runtimeApiActionTitles ||
+        listOf("点击", "长按", "滑动", "找图", "找色", "查找图片", "计数", "识别", "截图", "触点", "颜色", "按键").any(title::contains)
+
+    private fun action(event: JsonObject, time: Long): String? {
+        require(event.get("version")?.asInt == 1)
+        fun text(key: String, maximum: Int): String {
+            val value = event.get(key) ?: return ""
+            require(value.isJsonPrimitive && value.asJsonPrimitive.isString)
+            return value.asString.also { require(it.length <= maximum && it.none(Char::isISOControl)) }
+        }
+        val operation = text("operation", 32).also { require(it.isNotBlank()) }
+        // Rust bounds Unicode characters; a supplementary character uses two UTF-16 units here.
+        val details = text("details", 512)
+        val result = text("result", 512)
+        val status = text("status", 32)
+        val failure = status !in setOf("completed", "found", "not_found", "cancelled", "waiting", "requested", "disabled")
+        // A recognition block may call these helpers hundreds of times. Its actual
+        // search/action replies are the user operation; helper failures remain visible.
+        val title = event.getAsJsonObject("visualLocation")?.get("blockTitle")?.asString.orEmpty()
+        if (!failure && event.get("opcode")?.asInt in setOf(5001, 5002, 5003, 5115) &&
+            listOf("区域找图", "多结果找图", "灰度找图", "多尺度找图", "特征匹配", "区域找色",
+                "多点找色", "颜色计数", "字库识别", "字母 / 数字").any(title::startsWith)) return null
+        val outcome = when (status) {
+            "completed" -> "完成"; "found" -> "找到"; "not_found" -> "未找到"
+            "timeout" -> "超时"; "cancelled" -> "已取消"
+            "waiting" -> "等待中"; "requested" -> "已提交请求"; "disabled" -> "已关闭，未显示"
+            else -> "失败"
+        }
+        val flow = event.get("flowId")?.asString
+        val node = event.get("nodeId")?.asString
+        val location = if (flow == null && node == null) "" else {
+            require(flow != null && node != null && identity.matches(flow) && identity.matches(node))
+            " · ${visualLocation(event) ?: "插件 $flow · 积木 $node"} [定位:$flow/$node]"
+        }
+        val message = listOf(operation, details, text("coordinateSpace", 32),
+            if (event.get("polygon")?.asBoolean == true) "多边形内" else "", outcome, result,
+            text("failureCode", 64).takeIf { failure }.orEmpty()).filter(String::isNotBlank).joinToString(" · ")
+        return "${time}ms · 脚本动作/${if (failure) "ERROR" else if (status == "cancelled") "WARN" else "INFO"}: $message$location"
+    }
 
     /** Names and rows come from the executed checkpoint, never from a later editor draft. */
     private fun visualLocation(event: JsonObject): String? = runCatching {

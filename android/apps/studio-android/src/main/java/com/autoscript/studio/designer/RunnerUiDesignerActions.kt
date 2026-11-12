@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 internal fun DesignerCanvasActions(
     multi: Boolean, count: Int, enabled: Boolean, canPosition: Boolean, canAlign: Boolean,
     onMulti: () -> Unit, onCopy: () -> Unit, onDelete: () -> Unit,
+    canPasteStyle: Boolean, onCopyStyle: () -> Unit, onPasteStyle: () -> Unit,
     onPosition: (String) -> Unit, onAlign: (String) -> Unit, onDistribute: (Boolean) -> Unit,
     organize: List<DesignerMenuAction>,
 ) {
@@ -27,6 +28,10 @@ internal fun DesignerCanvasActions(
         DesignerAction("多选", selected = multi, primary = true, enabled = enabled, onClick = onMulti)
         DesignerAction("复制", enabled = enabled && count > 0, onClick = onCopy)
         DesignerAction("删除", enabled = enabled && count > 0, onClick = onDelete)
+        DesignerMenu("样式", listOf(
+            DesignerMenuAction("复制样式", enabled && count == 1, onCopyStyle),
+            DesignerMenuAction("粘贴样式", enabled && count > 0 && canPasteStyle, onPasteStyle),
+        ))
         Box(Modifier.width(1.dp).height(14.dp).background(DesignerColors.Line))
         DesignerMenu("定位", listOf("靠左" to "left", "水平居中" to "centerX", "靠右" to "right",
             "靠上" to "top", "垂直居中" to "centerY", "靠下" to "bottom", "正中" to "center").map { (label, key) ->

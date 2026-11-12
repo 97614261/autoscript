@@ -392,8 +392,9 @@ function Screen.captureRegion(left, top, right, bottom) end
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
 ---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return Point value 首个匹配点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
-function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, additionalColors) end
+function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, additionalColors, polygon) end
 
 ---使用不可变模板帧执行有界透明像素模板匹配。
 ---@param frame integer 待搜索帧句柄。
@@ -405,8 +406,9 @@ function Screen.findColor(frame, rgb, tolerance, left, top, right, bottom, addit
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
 ---@param direction integer API 1.7新增：0左上、1右上、2左下、3右下、4中心向外；省略为0。与旧版多点找色枚举独立。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return Point value 首个匹配模板的左上角；未找到时为nil。
-function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom, direction) end
+function Screen.findImage(frame, template, tolerance, similarityPermille, left, top, right, bottom, direction, polygon) end
 
 ---读取任务所持不可变帧中的一个像素，返回0xRRGGBB。
 ---@param frame integer 任务持有的帧句柄。
@@ -434,8 +436,9 @@ function Screen.compareColor(frame, x, y, rgb, tolerance, additionalColors) end
 ---@param top integer ROI上边界，包含。
 ---@param right integer ROI右边界，不包含。
 ---@param bottom integer ROI下边界，不包含。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return Point value 首个匹配锚点；未找到时为nil。合法非空ROI超出实际帧时整次返回nil并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
-function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left, top, right, bottom) end
+function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left, top, right, bottom, polygon) end
 
 ---统计半开ROI内的匹配像素，limit为0统计全部、正数达到即返回。可选备选色组命中任意颜色，同一像素只计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。
 ---@param frame integer 任务持有的帧句柄。
@@ -447,8 +450,9 @@ function Screen.findMultiColor(frame, anchorRgb, anchorTolerance, samples, left,
 ---@param bottom integer ROI下边界，不包含。
 ---@param limit integer 0统计全部匹配像素；1至64000000为提前停止上限。0或大于256需Screen.colorLimitsVersion=1。
 ---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return integer value 匹配像素数量；limit为0时返回全区域计数，正数时最多返回limit。合法非空ROI超出实际帧时整次返回0并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
-function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors) end
+function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors, polygon) end
 
 ---按行优先返回半开ROI内最多limit个匹配颜色坐标。可选备选色组命中任意颜色，同一像素只返回或计数一次；色组需要runtimeApi 1.8及Screen.colorGroupVersion=1。
 ---@param frame integer 任务持有的帧句柄。
@@ -460,8 +464,9 @@ function Screen.countColor(frame, rgb, tolerance, left, top, right, bottom, limi
 ---@param bottom integer ROI下边界，不包含。
 ---@param limit integer 1至2048的返回数量上限。 大于256需Screen.colorLimitsVersion=1。
 ---@param additionalColors string 可选额外颜色，RRGGBB:容差以分号分隔，最多15项/164字节；含主色最多16个不同RGB，各容差0–255；空值保留单色行为。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return Point[] value 按行优先排序的坐标数组。合法非空ROI超出实际帧时整次返回空数组并记录去重警告，不缩放或裁剪；负坐标、空/反向ROI及其他非法参数仍报错。
-function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors) end
+function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, limit, additionalColors, polygon) end
 
 ---按给定顺序匹配1–64个已声明图片，共享比较预算，返回第一个匹配的模板标识、坐标与得分。
 ---@param frame integer 缓存帧句柄。
@@ -473,8 +478,9 @@ function Screen.findAllColor(frame, rgb, tolerance, left, top, right, bottom, li
 ---@param right integer 右边界，不包含。
 ---@param bottom integer 下边界，不包含。
 ---@param direction integer 0左上、1右上、2左下、3右下、4中心向外，默认0。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return TemplateMatch value x/y、path、scorePermille、width/height；没有匹配为nil。
-function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction) end
+function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, polygon) end
 
 ---OpenCV灰度归一化平方差找图，返回最高分位置；不支持缩放旋转，与像素算法得分不同。
 ---@param frame integer 缓存帧。
@@ -484,8 +490,9 @@ function Screen.findImages(frame, pathsJson, tolerance, similarityPermille, left
 ---@param top integer 上边界。
 ---@param right integer 右边界，不含。
 ---@param bottom integer 下边界，不含。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；整个目标矩形须在选区内。空值沿用矩形，需Screen.polygonRegionVersion=1及支持多边形的OpenCV组件。
 ---@return GrayMatchResult value x/y和scorePermille；无匹配nil。
-function Screen.findGray(frame, template, similarityPermille, left, top, right, bottom) end
+function Screen.findGray(frame, template, similarityPermille, left, top, right, bottom, polygon) end
 
 ---显式ORB+Hamming比值筛选+RANSAC单应性匹配，不是像素多尺度。来源ROI≤1048576像素、模板≤262144像素，均须不透明，最多512特征、256次RANSAC、至少8个几何内点；缩放0.25–4，拒绝越界/退化几何。返回0或1项JSON数组，含原帧x/y/width/height及内点比例scorePermille；分数不与像素相似度等同，不自动点击。
 ---@param frame integer frame
@@ -495,8 +502,9 @@ function Screen.findGray(frame, template, similarityPermille, left, top, right, 
 ---@param top integer top
 ---@param right integer right
 ---@param bottom integer bottom
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；整个目标矩形须在选区内。空值沿用矩形，需Screen.polygonRegionVersion=1及支持多边形的OpenCV组件。
 ---@return string value 显式ORB+Hamming比值筛选+RANSAC单应性匹配，不是像素多尺度。来源ROI≤1048576像素、模板≤262144像素，均须不透明，最多512特征、256次RANSAC、至少8个几何内点；缩放0.25–4，拒绝越界/退化几何。返回0或1项JSON数组，含原帧x/y/width/height及内点比例scorePermille；分数不与像素相似度等同，不自动点击。
-function Screen.findFeatures(frame, template, minimumScorePermille, left, top, right, bottom) end
+function Screen.findFeatures(frame, template, minimumScorePermille, left, top, right, bottom, polygon) end
 
 Legacy = Legacy or {}
 
@@ -547,8 +555,9 @@ function Legacy.getRgbColor(red, green, blue) end
 ---@param bottom integer 下边界不含。
 ---@param direction integer 0左上、1右上、2左下、3右下、4中心向外。
 ---@param limit integer 最大保留数量1–64。
+---@param polygon string 可选多边形顶点JSON [[x,y],...]，3–128个不同顶点，坐标0–4096，不自交且位于ROI内。找色只计内部，多点整组、找图整个模板均须在选区内；需Screen.polygonRegionVersion=1，空值沿用矩形。
 ---@return string value 版本1的有界JSON结果集合，最大64KiB；无匹配为count=0/matches=[]。
-function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit) end
+function Screen.findAllImages(frame, pathsJson, tolerance, similarityPermille, left, top, right, bottom, direction, limit, polygon) end
 
 ---读取有界找图结果的白名单属性；返回JSON标量编码，不求值代码。
 ---@param result string 多图结果JSON，最多64KiB。
@@ -580,7 +589,7 @@ function Screen.recognitionValue(result, shape, index, field) end
 ---显式枚举缩放模板的像素找图，不换OpenCV、不改原资源。按距1000‰最近优先、同距较小优先，再按指定位置方向返回首个达到阈值的结果，不代表全局最高分。
 ---@param frame integer 任务所属来源帧。
 ---@param template integer 任务所属模板帧。
----@param options string 严格JSON最多1024字节：region半开LTRB对象、tolerance0–255、similarityPermille0–1000、direction0–4、range={minPermille,maxPermille,stepPermille}。范围250–4000‰、正步长≤1000、末端须整除、最多16档，最近邻取整。单档模板≤262144像素、累计重采样≤4194304像素、所有档合计1亿像素比较；无效/超预算明确拒绝，透明像素忽略，零有效模板拒绝。
+---@param options string 严格JSON最多16384字节：region半开LTRB对象、tolerance0–255、similarityPermille0–1000、direction0–4、range={minPermille,maxPermille,stepPermille}。范围250–4000‰、正步长≤1000、末端须整除、最多16档，最近邻取整。可选polygon为顶点JSON文本 [[x,y],...]，3–128点、坐标0–4096，须在ROI内且不自交；各档缩放模板须完整落在选区内，需Screen.polygonRegionVersion=1。单档模板≤262144像素、累计重采样≤4194304像素、所有档合计1亿像素比较；无效/超预算明确拒绝，透明像素忽略，零有效模板拒绝。
 ---@return string value JSON数组0或1项，每项x/y/width/height/scorePermille/scalePermille；位置属于输入帧，不自动截图、点击或释放。
 function Screen.findScaled(frame, template, options) end
 

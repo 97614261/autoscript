@@ -75,7 +75,8 @@ internal fun VisualRuntimeToolsDialog(contract: BlockContract, arguments: JsonOb
                 if (property.path.endsWith("Variable")) {
                     val type = if (contract.kind == "audio.getvolume") ProjectVariableType.INTEGER else ProjectVariableType.STRING
                     CompactVariableChoice(property.label, inputs[property.path].orEmpty(),
-                        (if (property.path == "textVariable") listOf("" to "使用固定文字") else emptyList()) + variables.filter { it.type == type }.map { it.name to it.name }, !busy, variables) {
+                        (if (property.path == "textVariable") listOf("" to "使用固定文字") else emptyList()) + variables.filter { it.type == type }.map { it.name to it.name }, !busy, variables,
+                        inputTypes = scalarInputTypes(contract.kind, property.path)) {
                         inputs = inputs + (property.path to it); error = null
                     }
                 } else DesignerInput(property.label, inputs[property.path].orEmpty(), !busy, Modifier.fillMaxWidth(),
@@ -110,7 +111,7 @@ internal fun runtimeToolArgumentError(kind: String, inputs: Map<String, String>,
     }
     if (kind in setOf("clipboard.settext","input.pastetext")) {
         val source=inputs["textVariable"].orEmpty()
-        if (source.isNotEmpty() && variables.find { it.name==source }?.type!=ProjectVariableType.STRING) return "请选择字符来源变量"
+        if (source.isNotEmpty()) scalarSourceError(source, variables, setOf(ProjectVariableType.STRING))?.let { return it }
         if (inputs["text"].orEmpty().toByteArray(Charsets.UTF_8).size>4096) return "剪贴板文字最多4096字节"
     }
     if (kind.startsWith("app.")) {

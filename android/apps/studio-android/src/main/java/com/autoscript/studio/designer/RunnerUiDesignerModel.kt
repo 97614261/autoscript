@@ -20,7 +20,7 @@ internal data class RunnerUiFieldDraft(
     val ui: UiPresentation = UiPresentation(control = kind.control.name),
 )
 internal data class DesignerPreviewClip(val left: Int, val top: Int, val right: Int, val bottom: Int)
-internal data class RunnerUiDesignerDraft(val description: String = "", val fields: List<RunnerUiFieldDraft> = emptyList(), val pages: List<UiPage> = listOf(UiPage())) {
+internal data class RunnerUiDesignerDraft(val description: String = "", val fields: List<RunnerUiFieldDraft> = emptyList(), val pages: List<UiPage> = listOf(designerPage())) {
     fun addPage(page: UiPage): RunnerUiDesignerDraft {
         require(pages.size < 16) { "页面不能超过16个" }
         require(pages.none { it.id == page.id }) { "页面标识已存在" }
@@ -30,7 +30,6 @@ internal data class RunnerUiDesignerDraft(val description: String = "", val fiel
     fun add(kind: RunnerUiControlKind, pageId: String = pages.first().id): RunnerUiDesignerDraft {
         require(fields.size < MAX_SCRIPT_UI_CONTROLS) { "控件不能超过${MAX_SCRIPT_UI_CONTROLS}个" }
         var n = fields.size + 1; while (fields.any { it.id == "control$n" }) n++
-        val value = when (kind.wireName) { "multiChoice" -> "[]"; "number" -> "0.0"; "integer" -> "0"; "boolean" -> "false"; "choice" -> "选项1"; else -> if (kind == RunnerUiControlKind.LABEL) "标签" else "" }
         val currentPage = pages.first { it.id == pageId }
         val width = ((currentPage.width - 32) / 3).coerceIn(20, com.autoscript.script.ui.ScriptUiControlMetrics.DEFAULT_WIDTH)
         val height = com.autoscript.script.ui.ScriptUiControlMetrics.DEFAULT_HEIGHT
@@ -40,13 +39,7 @@ internal data class RunnerUiDesignerDraft(val description: String = "", val fiel
                 x < p.x + p.width + 4 && x + width + 4 > p.x && y < p.y + p.height + 4 && y + height + 4 > p.y
             } }?.let { it to y }
         } ?: error("当前页面没有空位，请整理布局或添加页面")
-        return copy(fields = fields + RunnerUiFieldDraft("control$n", kind.label, kind, false, value,
-            minimum = if (kind in setOf(RunnerUiControlKind.SLIDER, RunnerUiControlKind.PROGRESS)) "0" else "",
-            maximum = if (kind in setOf(RunnerUiControlKind.SLIDER, RunnerUiControlKind.PROGRESS)) "100" else "",
-            optionsText = if (kind.wireName in setOf("choice", "multiChoice")) designerOptionsText(listOf("选项1", "选项2")) else "",
-            ui = UiPresentation(control = kind.control.name, pageId = pageId, x = position.first, y = position.second,
-                width = width, height = height, fontPx = com.autoscript.script.ui.ScriptUiControlMetrics.DEFAULT_FONT,
-                events = if (kind == RunnerUiControlKind.BUTTON) mapOf("click" to "run") else emptyMap())))
+        return copy(fields = fields + newDesignerControl(kind, "control$n", pageId, position.first, position.second, width, height))
     }
     fun update(index: Int, field: RunnerUiFieldDraft) = copy(fields = fields.toMutableList().also { it[index] = field })
     fun remove(index: Int): RunnerUiDesignerDraft {

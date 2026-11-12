@@ -54,8 +54,22 @@ pub fn find_scaled(
     options: TemplateOptions,
     cancelled: &mut dyn FnMut() -> bool,
 ) -> Result<Option<ScaledMatch>, VisionError> {
+    find_scaled_in_region(image, template, range, options, cancelled, None)
+}
+
+pub fn find_scaled_in_region(
+    image: ImageView<'_>,
+    template: ImageView<'_>,
+    range: ScaleRange,
+    options: TemplateOptions,
+    cancelled: &mut dyn FnMut() -> bool,
+    polygon: Option<&crate::polygon::PolygonRegion>,
+) -> Result<Option<ScaledMatch>, VisionError> {
     crate::validate_image(template)?;
     crate::validate_search(image, options.search)?;
+    if polygon.is_some_and(|p| !p.fits(options.search.roi)) {
+        return Err(VisionError::InvalidRoi);
+    }
     if template.width > 4096
         || template.height > 4096
         || u64::from(template.width) * u64::from(template.height) > 4_194_304
@@ -115,12 +129,14 @@ pub fn find_scaled(
         if cancelled() {
             return Err(VisionError::Cancelled);
         }
-        if let Some(matched) = crate::find_prepared_template_controlled(
+        if let Some(matched) = crate::find_prepared_template_in_region_observed(
             image,
             &prepared,
             options,
             &mut remaining,
             cancelled,
+            None,
+            polygon,
         )? {
             if cancelled() {
                 return Err(VisionError::Cancelled);
@@ -151,6 +167,63 @@ mod tests {
             format: PixelFormat::Rgba8888,
             pixels,
         }
+    }
+    #[test]
+    fn polygon_scaled_search_filters_before_scale_acceptance() {
+        let polygon =
+            crate::polygon::PolygonRegion::prepare(&[[0, 0], [1, 0], [1, 4], [0, 4]]).unwrap();
+        let options = TemplateOptions {
+            search: SearchOptions {
+                roi: PixelRect {
+                    left: 0,
+                    top: 0,
+                    right: 4,
+                    bottom: 4,
+                },
+                step_x: 1,
+                step_y: 1,
+                order: SearchOrder::TopLeftToBottomRight,
+                max_pixel_comparisons: 10000,
+            },
+            tolerance: ColorTolerance::EXACT,
+            minimum_match_permille: 1000,
+            ignore_transparent_template_pixels: true,
+        };
+        let range = ScaleRange {
+            min_permille: 500,
+            max_permille: 1000,
+            step_permille: 500,
+        };
+        let found = find_scaled_in_region(
+            image(4, 4, &[255; 64]),
+            image(2, 2, &[255; 16]),
+            range,
+            options,
+            &mut || false,
+            Some(&polygon),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (
+                found.scale_permille,
+                found.width,
+                found.height,
+                found.matched.origin.x
+            ),
+            (500, 1, 1, 0)
+        );
+        assert_eq!(
+            find_scaled_in_region(
+                image(4, 4, &[255; 64]),
+                image(2, 2, &[255; 16]),
+                range,
+                options,
+                &mut || true,
+                Some(&polygon)
+            ),
+            Err(VisionError::Cancelled)
+        );
     }
     #[test]
     fn explicit_scaled_sampling_preserves_transparency_direction_and_budget() {

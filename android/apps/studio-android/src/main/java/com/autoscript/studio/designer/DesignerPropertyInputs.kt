@@ -29,6 +29,18 @@ internal class DesignerPropertyInputs {
         }.forEach(invalid::remove)
     }
     fun clear() { invalid.clear() }
+    fun clearAppearance(ids: Set<String>) {
+        invalid.keys.filter { it.owner.controlId in ids && it.label in setOf("边框 px", "圆角 px") }.forEach(invalid::remove)
+    }
+    fun clearPastedStyle(ids: Set<String>) {
+        invalid.keys.filter { it.owner.controlId in ids && it.label in setOf("边框 px", "圆角 px", "字号 px") }.forEach(invalid::remove)
+    }
+    fun hasUnfinishedStyle(id: String) = invalid.keys.any {
+        it.owner.controlId == id && it.label in setOf("边框 px", "圆角 px", "字号 px")
+    }
+    fun clearBorderWidths(ids: Set<String>) {
+        invalid.keys.filter { it.owner.controlId in ids && it.label == "边框 px" }.forEach(invalid::remove)
+    }
     fun clearSizes(ids: Set<String>) {
         invalid.keys.filter { it.owner.controlId in ids && it.label in setOf("宽", "高", "字号 px") }.forEach(invalid::remove)
     }

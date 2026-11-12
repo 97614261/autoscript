@@ -18,7 +18,8 @@
         "additionalColors": { "type": "string", "maxLength": 164, "pattern": "^(?:|[0-9A-Fa-f]{6}:[0-9]{1,3}(?:;[0-9A-Fa-f]{6}:[0-9]{1,3}){0,14})$" },
         "region": { "$ref": "#/$defs/rect" },
         "limit": { "type": "integer", "minimum": 1, "maximum": 2048 },
-        "resultVariable": { "$ref": "#/$defs/variable" }
+        "resultVariable": { "$ref": "#/$defs/variable" },
+        "polygon": {"type": "string", "maxLength": 8192, "description": "可选顶点JSON [[x,y],...]；3–128个不重合、不自交顶点，坐标0–4096，完全位于region内。空字符串使用矩形。"}
       }
     }
   },

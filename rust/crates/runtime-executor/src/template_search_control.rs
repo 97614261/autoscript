@@ -65,13 +65,25 @@ impl TemplateSearchControl {
         error: FrameVisionError,
         search: SearchOptions,
         templates: usize,
+        polygon: Option<&pixel_vision::polygon::PolygonRegion>,
     ) -> String {
+        let reason = if matches!(error, FrameVisionError::Vision(VisionError::InvalidRoi))
+            && polygon.is_some_and(|region| !region.fits(search.roi))
+        {
+            "VISION_POLYGON_OUTSIDE_ROI: 多边形选区超出找图范围，请重新选择范围或清除旧多边形。"
+                .to_owned()
+        } else {
+            self.error(error)
+        };
         format!(
-            "{}; ROI={}x{}; templates={templates}; comparison_limit={}",
-            self.error(error),
+            "{reason}; ROI={}x{}; templates={templates}; comparison_limit={}; bounds=({},{})-({},{})",
             search.roi.width(),
             search.roi.height(),
-            search.max_pixel_comparisons
+            search.max_pixel_comparisons,
+            search.roi.left,
+            search.roi.top,
+            search.roi.right,
+            search.roi.bottom,
         )
     }
 }
@@ -138,9 +150,14 @@ mod tests {
     #[test]
     fn budget_diagnostics_include_geometry_and_count_without_resource_paths() {
         let options = crate::template_search_options(0, 0, 720, 1280, 0).unwrap();
-        let error =
-            control().describe_error(VisionError::ComparisonBudgetExceeded.into(), options, 4);
+        let error = control().describe_error(
+            VisionError::ComparisonBudgetExceeded.into(),
+            options,
+            4,
+            None,
+        );
         assert!(error.contains("ROI=720x1280; templates=4; comparison_limit=1000000000"));
+        assert!(error.contains("bounds=(0,0)-(720,1280)"));
         assert!(!error.contains("assets/"));
     }
 }

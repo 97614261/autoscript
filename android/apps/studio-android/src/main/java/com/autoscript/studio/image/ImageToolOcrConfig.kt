@@ -110,14 +110,24 @@ internal fun recognitionPreviewMessage(reply: RecognitionPreviewReply): String =
     else if (reply.operation in setOf(RecognitionPreviewReply.TEMPLATE, RecognitionPreviewReply.GRAY_TEMPLATE,RecognitionPreviewReply.FEATURE_TEMPLATE))
         "已找到：(${reply.x}, ${reply.y}) · ${reply.scorePermille}‰" else
         "识别文本：${if(reply.operation==RecognitionPreviewReply.GLYPH_DETAILS) runCatching { com.google.gson.JsonParser.parseString(reply.text).asJsonObject["text"].asString }.getOrDefault("逐字结果无效") else reply.text}\n得分 ${reply.scorePermille}‰" + if (reply.operation in setOf(RecognitionPreviewReply.GLYPH,RecognitionPreviewReply.GLYPH_DETAILS)) " · 覆盖率 ${reply.coveragePermille}‰" else ""
-    RecognitionPreviewReply.NOT_FOUND -> "未识别到符合阈值的文字或模板"
+    RecognitionPreviewReply.NOT_FOUND -> when(reply.operation) {
+        RecognitionPreviewReply.TEMPLATE, RecognitionPreviewReply.GRAY_TEMPLATE,
+        RecognitionPreviewReply.SCALED_TEMPLATE, RecognitionPreviewReply.FEATURE_TEMPLATE ->
+            "未找到符合当前条件的模板。先检查框选范围是否包含目标，再核对模板尺寸、画面方向与匹配参数；此结果不能确定具体原因。"
+        RecognitionPreviewReply.GLYPH, RecognitionPreviewReply.GLYPH_DETAILS ->
+            "未识别到符合条件的字形。请检查范围、前景颜色、字号和字库样本，再调整相似度。"
+        else -> "未识别到符合条件的文字。请框选清晰的单行文字，检查方向、字符大小与置信度。"
+    }
     RecognitionPreviewReply.BUSY -> "脚本运行或其他测试进行中，请先停止或等待完成"
     RecognitionPreviewReply.SESSION_MISMATCH -> "运行服务会话未建立或已变化，请重新测试"
     RecognitionPreviewReply.BUDGET_EXCEEDED -> "超过识别预算，请缩小区域或模板后重试"
     RecognitionPreviewReply.CANCELLED -> "已取消识别"
     RecognitionPreviewReply.TIMEOUT -> "识别超过5秒，请缩小区域后重试"
     RecognitionPreviewReply.ENGINE_ERROR -> recognitionEngineFailure(reply.text)
-    else -> "图像、字库、范围或参数无效；字母数字模式仅支持宽高比不超过20的单行区域"
+    else -> if(reply.operation in setOf(RecognitionPreviewReply.TEMPLATE,RecognitionPreviewReply.GRAY_TEMPLATE,
+        RecognitionPreviewReply.SCALED_TEMPLATE,RecognitionPreviewReply.FEATURE_TEMPLATE))
+        "模板、搜索范围或匹配参数无效；请检查模板能否放入范围，以及多尺度设置是否有效，未完成识别"
+    else "图片、字库、范围或参数无效；自动识字需单行区域且宽高比不超过20，未完成识别"
 }
 
 internal fun recognitionEngineFailure(code: String): String = when (com.autoscript.runtime.api.RecognitionPreviewErrors.accepted(code)) {

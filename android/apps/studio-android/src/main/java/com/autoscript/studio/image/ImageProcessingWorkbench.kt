@@ -1,5 +1,6 @@
 package com.autoscript.studio
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -7,14 +8,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
@@ -25,65 +23,80 @@ import com.autoscript.project.store.ProjectImageRecipeTail
 import com.autoscript.runtime.client.RuntimeClient
 import kotlinx.coroutines.*
 
+private data class ImageWorkbenchSaveRequest(
+    val image: Bitmap, val pipeline: ImageProcessingPipeline?, val target: ImageSaveTarget,
+)
+
 /** One editor workspace for the library and screenshot tools; never owns the borrowed source. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot, store: ProjectStore,
     runtimeClient: RuntimeClient, onSnapshotChanged: (ProjectSnapshot) -> Unit, onDismiss: () -> Unit,
     originalImagePath: String? = null, insertionTarget: ImageWorkbenchInsertionTarget? = null,
-    initialFilterOpen: Boolean = false,capturedScreen:Boolean=false,initialPolygonOpen:Boolean=false) {
+    initialFilterOpen: Boolean = false,capturedScreen:Boolean=false,initialPolygonOpen:Boolean=false, capture: ImageWorkspaceCapture? = null,
+    modifier: Modifier = Modifier) {
     val history = remember(bitmap, snapshot.manifest.projectId) {
         runCatching { ImageProcessingHistory(ImageProcessingVersion(bitmap, ImageProcessingPipeline(bitmap.width, bitmap.height)),
             { it.image.allocationByteCount.toLong() }, { it.image.recycle() }) }.getOrNull()
     }
-    var revision by remember(history) { mutableLongStateOf(0) }
-    var originalVisible by remember(history) { mutableStateOf(false) }
-    var processing by remember(history) { mutableStateOf(false) }
-    var saving by remember(history) { mutableStateOf(false) }
-    var task by remember(history) { mutableStateOf<Job?>(null) }
-    var message by remember(history) { mutableStateOf("处理只生成预览；保存时可新建图片或确认覆盖同名图片。") }
-    var saveDialog by remember(history) { mutableStateOf(false) }
-    var resizeDialog by remember(history) { mutableStateOf(false) }
-    var thresholdDialog by remember(history) { mutableStateOf(false) }
-    var filterDialog by remember(history) { mutableStateOf(initialFilterOpen) }
-    var maskDialog by remember(history) { mutableStateOf(false) }
-    var polygonDialog by remember(history) { mutableStateOf(initialPolygonOpen) }
-    var cleanupDialog by remember(history) { mutableStateOf(false) }
-    var recipeDialog by remember(history) {mutableStateOf(false)}
-    var coordinateDialog by remember(history) {mutableStateOf(false)}
-    var recipeRecognition by remember(history) {mutableStateOf<Pair<ProjectImageRecipeTail,ImageToolCodeGen.Roi>?>(null)}
-    var loadedRecipe by remember(history) {mutableStateOf<ProjectImageRecipe?>(null)}
-    var pendingRecipe by remember(history) {mutableStateOf<Pair<Bitmap,ProjectImageRecipe>?>(null)}
-    var lastFilter by remember(history) { mutableStateOf(com.autoscript.project.store.ProjectImageFilter()) }
-    var ocrDialog by remember(history) { mutableStateOf(false) }
-    var glyphMaker by remember(history) { mutableStateOf(false) }
-    var glyphUse by remember(history) { mutableStateOf<Triple<ProjectSnapshot, ImageToolOcrConfig, ImageToolCodeGen.Roi?>?>(null) }
-    var matchDialog by remember(history) { mutableStateOf(false) }
-    var closeConfirm by remember(history) { mutableStateOf(false) }
-    var lastSavedImage by remember(history) { mutableStateOf(bitmap) }
-    var insertionConfiguration by remember(history) { mutableStateOf(false) }
-    var recognitionTail by remember(history) { mutableStateOf<ImagePipelineRecognitionTail?>(null) }
-    var recognitionValidity by remember(history) { mutableStateOf<(() -> Boolean)?>(null) }
-    var insertion by remember(history) { mutableStateOf<Pair<ImageBlockInsertionRequest, ImageWorkbenchInsertionTarget>?>(null) }
-    var inserting by remember(history) { mutableStateOf(false) }
-    var zoomMode by remember(history) { mutableStateOf(false) }
-    var showRulers by remember(history) { mutableStateOf(false) }
-    var selection by remember(history) { mutableStateOf(ImageToolSelection()) }
-    var viewport by remember(history) { mutableStateOf<ImageToolViewport?>(null) }
+    val workspaceIdentity = remember(bitmap, snapshot.manifest.projectId) { Any() }
+    val drafts = remember(workspaceIdentity) { ImageWorkspaceDrafts() }
+    val surface = remember(workspaceIdentity) { ImageWorkspaceSurface().also {
+        it.mode.value = capture?.initialMode ?: ImageToolMode.CROP
+        it.polygonEditing = initialPolygonOpen || capture?.initialSearchPolygon != null
+        if (it.polygonEditing) it.toolbarMenu = ImageToolbarMenu.SELECTION
+        val points = runCatching { ImageSearchPolygon.decode(capture?.initialSearchPolygon.orEmpty()) }.getOrDefault(emptyList())
+        if (points.isNotEmpty()) it.selection.value = ImageToolSelection(box=ImageSearchPolygon.bounds(points),polygon=points)
+    } }
+    val navigation = remember(workspaceIdentity) { ImageWorkspaceNavigation(if (initialFilterOpen) "filter" else null) }
+    val panel = navigation.panel
+    var captureAfterClose by remember(workspaceIdentity) { mutableStateOf(false) }
+    SideEffect { surface.cancelNavigation = { navigation.cancelPending() } }
+    fun closePanel() { navigation.finish() }
+    var revision by remember(workspaceIdentity) { mutableLongStateOf(0) }
+    var originalVisible by remember(workspaceIdentity) { mutableStateOf(false) }
+    var processing by remember(workspaceIdentity) { mutableStateOf(false) }
+    var saving by remember(workspaceIdentity) { mutableStateOf(false) }
+    var task by remember(workspaceIdentity) { mutableStateOf<Job?>(null) }
+    var message by remember(workspaceIdentity) { mutableStateOf(if (history == null) "原图超出处理预算，可框选后存模板。" else "") }
+    StudioSystemLogEffect("图像处理", message, skipInitial = true)
+    LaunchedEffect(capture?.message) { capture?.message?.takeIf { it.isNotBlank() }?.let { message = it } }
+    var saveRequest by remember(workspaceIdentity) { mutableStateOf<ImageWorkbenchSaveRequest?>(null) }
+    var recipeRecognition by remember(workspaceIdentity) {mutableStateOf<Pair<ProjectImageRecipeTail,ImageToolCodeGen.Roi>?>(null)}
+    var loadedRecipe by remember(workspaceIdentity) {mutableStateOf<ProjectImageRecipe?>(null)}
+    var pendingRecipe by remember(workspaceIdentity) {mutableStateOf<Pair<Bitmap,ProjectImageRecipe>?>(null)}
+    var lastFilter by remember(workspaceIdentity) { mutableStateOf(com.autoscript.project.store.ProjectImageFilter()) }
+    var glyphUse by remember(workspaceIdentity) { mutableStateOf<Triple<ProjectSnapshot, ImageToolOcrConfig, ImageToolCodeGen.Roi?>?>(null) }
+    var closeConfirm by remember(workspaceIdentity) { mutableStateOf(false) }
+    var lastSavedImage by remember(workspaceIdentity) { mutableStateOf(bitmap) }
+    var insertionConfiguration by remember(workspaceIdentity) { mutableStateOf(false) }
+    var recognitionTail by remember(workspaceIdentity) { mutableStateOf<ImagePipelineRecognitionTail?>(null) }
+    var recognitionValidity by remember(workspaceIdentity) { mutableStateOf<(() -> Boolean)?>(null) }
+    var insertion by remember(workspaceIdentity) { mutableStateOf<Pair<ImageBlockInsertionRequest, ImageWorkbenchInsertionTarget>?>(null) }
+    var inserting by remember(workspaceIdentity) { mutableStateOf(false) }
+    var showRulers by remember(workspaceIdentity) { mutableStateOf(false) }
+    var selection by surface.selection
+    var viewport by surface.viewport
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val latestHistory by rememberUpdatedState(history)
+    val latestWorkspaceIdentity by rememberUpdatedState(workspaceIdentity)
     val latestSnapshot by rememberUpdatedState(snapshot)
     val latestSnapshotChanged by rememberUpdatedState(onSnapshotChanged)
     // revision makes otherwise non-Compose history changes observable.
     val version = remember(history, revision, originalVisible) { if (originalVisible) history?.original else history?.current }
     val displayed = version?.image ?: bitmap
-    val busy = processing || saving || inserting
-    DisposableEffect(history) { onDispose { task?.cancel(); history?.close() } }
+    val selectionProblem=remember(displayed,selection.box,selection.polygon) {imageSelectionProblem(selection,displayed.width,displayed.height)}
+    val imageIdentity = remember(displayed) { Any() }
+    val busy = processing || saving || inserting || saveRequest != null
+    DisposableEffect(workspaceIdentity) { onDispose { task?.cancel(); history?.close() } }
     LaunchedEffect(displayed) {
-        selection=ImageToolSelection();recognitionTail=null;recognitionValidity=null
+        if (selection.box?.let {it.right>displayed.width || it.bottom>displayed.height} == true ||
+            selection.points.any {it.x>=displayed.width || it.y>=displayed.height}) selection=ImageToolSelection()
+        recognitionTail=null;recognitionValidity=null
         val restored=pendingRecipe?.takeIf {it.first===displayed}?.second
         loadedRecipe=restored
+        if (restored != null) { drafts.match = null; drafts.ocr = null }
         recipeRecognition=restored?.tail?.let {it to requireNotNull(restored.region).toolRegion()}
         restored?.region?.let {selection=selection.copy(box=it.toolRegion())}
         pendingRecipe=null
@@ -131,11 +144,18 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
         if (busy || history?.current?.image?.let { it !== bitmap && it !== lastSavedImage } == true) closeConfirm = true
         else onDismiss()
     }
+    fun requestWorkspaceClose() {
+        navigation.cancelPending()
+        if (panel != null) surface.requestClose?.invoke() ?: closePanel() else requestDismiss()
+    }
 
-    fun applyOperations(operations: List<ImagePixelOperation>) {
+    fun applyOperations(operations: List<ImagePixelOperation>, saveAfterApply: Boolean = false) {
         val owner = history ?: return
-        if (busy || originalVisible) return
+        if (processing || saving || inserting || saveRequest != null || originalVisible) return
         val source = owner.current.image
+        val saveTarget = if (saveAfterApply) imageSaveTarget(selection, source.width, source.height)
+            ?: run { message = imageSelectionProblem(selection, source.width, source.height).orEmpty(); return } else null
+        val identity = workspaceIdentity
         val ticket = owner.revision
         val pipeline = try { operations.fold(owner.current.pipeline) {p,op -> p.append(op)} }
             catch (_: Exception) { message = "处理最多64步，请保存图片后重新打开作为新来源"; return }
@@ -155,12 +175,15 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
                     processImagePipelineBitmap(frozen,ImageProcessingPipeline(frozen.width,frozen.height,operations),checkpoint)
                         .also { result = it }
                 }
+                ensureActive()
                 val published = requireNotNull(result)
                 result = null // publish consumes ownership, including stale failure.
                 if (owner.publish(ImageProcessingVersion(published, pipeline), ticket)) {
-                    selection = ImageToolSelection()
+                    if(operations.any {it.mode in setOf("crop","resize","rotate90","rotate180","rotate270","flipX","flipY")}) selection=ImageToolSelection()
                     revision = owner.revision
                     message = "处理完成 · ${published.width}×${published.height}px · 保留${owner.editCount}步"
+                    if (saveTarget != null && identity === latestWorkspaceIdentity && owner === latestHistory)
+                        saveRequest = ImageWorkbenchSaveRequest(published, pipeline, saveTarget)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Throwable) { if (owner === latestHistory) message = "处理失败或超过预算，当前图片保留" }
@@ -168,148 +191,186 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
         }.also { it.invokeOnCompletion { if (!frozen.isRecycled) frozen.recycle() } }
     }
     fun apply(operation:ImagePixelOperation)=applyOperations(listOf(operation))
-
-    StudioDialog(onDismissRequest = ::requestDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
-        BoxWithConstraints(Modifier.fillMaxSize().background(ToolChrome)) {
-        val sideWidth = imageWorkbenchSideWidth(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale).dp
-        val sideTools = sideWidth > 0.dp
-        val controlsMax = maxHeight * .22f
-        val headerMax = maxHeight * .22f
-        val bottomActionsMax = maxHeight * .22f
-        val statusMax = maxHeight * .10f
-        val actionsMax = maxHeight * .42f
-        val toolScroll = rememberScrollState()
-        val toolButtons: @Composable () -> Unit = {
-            listOf("gray" to "灰度", "rotate90" to "右转90°", "rotate270" to "左转90°", "rotate180" to "转180°", "flipX" to "水平镜像", "flipY" to "垂直镜像").forEach { (mode, title) ->
-                ImageToolButton(title, ButtonGrey, !busy && !originalVisible && history != null) { apply(ImagePixelOperation(mode)) }
-            }
-            ImageToolButton("二值化", ButtonGrey, !busy && !originalVisible && history != null) { thresholdDialog = true }
-            ImageToolButton("裁剪选框", ButtonGrey, !busy && !originalVisible && history != null && selection.box != null) { apply(ImagePixelOperation("crop", roi = selection.box)) }
-            ImageToolButton("尺寸缩放", ButtonGrey, !busy && !originalVisible && history != null) { resizeDialog = true }
-            ImageToolButton("清除框选", ButtonGrey, !busy && selection.box != null) { selection = ImageToolSelection() }
-            ImageToolButton("滤色", ButtonBlue, !busy && !originalVisible && history != null) { filterDialog = true }
-            ImageToolButton("蒙版", ButtonBlue, !busy && !originalVisible && history != null) { maskDialog = true }
-            ImageToolButton("多边形", ButtonBlue, !busy && !originalVisible && history != null) { polygonDialog = true }
-            ImageToolButton("数字清理", ButtonBlue, !busy && !originalVisible && history != null) { cleanupDialog = true }
-            ImageToolButton("图像方案", ButtonBlue, !busy && history != null) { recipeDialog = true }
-            ImageToolButton("坐标还原", ButtonGrey, !busy && history != null) { coordinateDialog = true }
-        }
-        val status: @Composable () -> Unit = {
-            Text("${if (originalVisible) "原图" else "处理图"} ${displayed.width}×${displayed.height}px · ${(viewport?.scale?.times(100) ?: 100f).toInt()}%" +
-                (selection.box?.let { " · X${it.left} Y${it.top} ${it.width}×${it.height}px" } ?: ""),
-                color = androidx.compose.ui.graphics.Color.White, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
-            Text(if (history == null) "原图超过预览内存预算，请先在截图工具裁剪后保存" else message,
-                color = androidx.compose.ui.graphics.Color.LightGray, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
-        }
-        val actions: @Composable () -> Unit = {
-            ImageToolButton(if (saving) "保存中…" else "保存当前图", ButtonGreen, !busy && history != null) { saveDialog = true }
-            ImageToolButton("找图测试", ButtonBlue, !busy && history != null) { selection = selection.copy(points = emptyList()); matchDialog = true }
-            ImageToolButton("取字测试", ButtonBlue, !busy && history != null) { glyphUse = null; ocrDialog = true }
-            ImageToolButton("制作字库", ButtonBlue, !busy && history != null) { glyphMaker = true }
-            if (insertionTarget != null) ImageToolButton("加入处理积木", ButtonGreen, !busy && version != null) { recognitionTail = null; recognitionValidity = null; insertionConfiguration = true }
-            if (processing) ImageToolButton("取消处理", ButtonGrey, true) { task?.cancel() }
-        }
-        val canvas: @Composable (Modifier) -> Unit = { canvasModifier ->
-            // Canvas draws transformed bitmaps; clip its own bounds before drawing adjacent tools.
-            BoxWithConstraints(canvasModifier.clipToBounds().background(androidx.compose.ui.graphics.Color.Black)
-                .semantics { contentDescription = "图片工作台预览" }) {
-                val width = constraints.maxWidth.toFloat(); val height = constraints.maxHeight.toFloat()
-                LaunchedEffect(displayed.width, displayed.height, width, height) {
-                    if (width > 0 && height > 0) {
-                        val previous = viewport
-                        viewport = if (previous?.imageWidth == displayed.width && previous.imageHeight == displayed.height)
-                            previous.resized(width, height) else ImageToolViewport.fit(displayed.width, displayed.height, width, height)
-                    }
-                }
-                ImageToolCanvas(displayed, viewport, ImageToolMode.CROP, zoomMode || busy, false, selection, Offset.Zero, null, null,
-                    onViewport = { viewport = it }, onSelection = { if (!busy) selection = it }, onCrosshair = {}, onSlide = { _, _ -> })
-                if (showRulers) viewport?.let { ImageWorkbenchRulers(it) }
-            }
-        }
-        Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(6.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                FlowRow(Modifier.weight(1f).heightIn(max = headerMax).verticalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("图片工作台", color = androidx.compose.ui.graphics.Color.White, fontSize = 12.sp, maxLines=1)
-                ImageToolButton(if (originalVisible) "原图对照" else "处理图", ButtonBlue, !busy) { selection = ImageToolSelection(); originalVisible = !originalVisible }
-                ImageToolButton("撤销", ButtonGrey, !busy && history?.canUndo == true) { selection = ImageToolSelection(); history?.undo(); revision = history?.revision ?: 0; originalVisible = false }
-                ImageToolButton("重做", ButtonGrey, !busy && history?.canRedo == true) { selection = ImageToolSelection(); history?.redo(); revision = history?.revision ?: 0; originalVisible = false }
-                ImageToolButton("适应", ButtonGrey, !busy) { viewport = viewport?.reset() }
-                ImageToolButton("100%", ButtonGrey, !busy) { viewport = viewport?.actualSize() }
-                ImageToolButton(if (zoomMode) "框选" else "缩放/拖动", ButtonGrey, !busy) { zoomMode = !zoomMode }
-                ImageToolButton(if (showRulers) "隐藏标尺" else "标尺/网格", ButtonGrey, true) { showRulers = !showRulers }
-                }
-                ImageToolButton("返回", ButtonGrey, true, ::requestDismiss)
-            }
-            if (sideTools) {
-                Row(Modifier.weight(1f).fillMaxWidth()) {
-                    canvas(Modifier.weight(1f).fillMaxHeight())
-                    Column(Modifier.width(sideWidth).fillMaxHeight()) {
-                        Column(Modifier.weight(1f).verticalScroll(toolScroll)) {
-                            FlowRow(Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)) { toolButtons() }
-                            status()
-                        }
-                        FlowRow(Modifier.fillMaxWidth().heightIn(max = actionsMax).verticalScroll(rememberScrollState()).padding(6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
-                    }
-                }
-            } else {
-                FlowRow(Modifier.fillMaxWidth().heightIn(max = controlsMax).verticalScroll(toolScroll).padding(6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { toolButtons() }
-                canvas(Modifier.weight(1f).fillMaxWidth())
-                Column(Modifier.fillMaxWidth().heightIn(max = statusMax).verticalScroll(rememberScrollState())) { status() }
-                FlowRow(Modifier.fillMaxWidth().heightIn(max = bottomActionsMax).verticalScroll(rememberScrollState()).padding(6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
-            }
-        }
+    fun applyAndSave(operation: ImagePixelOperation) = applyOperations(listOf(operation), saveAfterApply = true)
+    fun openPanel(next: String) {
+        if (busy || panel == next) return
+        navigation.afterClose(surface.requestClose) {
+            if (originalVisible) { originalVisible = false; selection = ImageToolSelection() }
+            surface.toolbarMenu = null
+            navigation.open(next, null)
         }
     }
-    if (resizeDialog) ImageWorkbenchResizeDialog(displayed.width, displayed.height,
-        onDismiss = { resizeDialog = false }, onApply = { w, h -> resizeDialog = false; apply(ImagePixelOperation("resize", w, h)) })
-    if (thresholdDialog) ImageWorkbenchThresholdDialog(onDismiss = { thresholdDialog = false }, onApply = {
-        thresholdDialog = false; apply(ImagePixelOperation("threshold", threshold = it))
+    fun openToolbar(menu: ImageToolbarMenu) {
+        if (busy) return
+        navigation.afterClose(surface.requestClose) { surface.toolbarMenu = if(surface.toolbarMenu==menu) null else menu }
+    }
+    val latestToolbar by rememberUpdatedState<(ImageToolbarMenu) -> Unit>({ openToolbar(it) })
+    val returnToTools = remember(workspaceIdentity) { { latestToolbar(ImageToolbarMenu.PROCESS) } }
+    SideEffect { surface.backToTools = returnToTools.takeIf { panel != null } }
+    fun requestCapture() {
+        if (busy || capture == null) return
+        navigation.afterClose(surface.requestClose) {
+            if (history?.current?.image?.let { it !== bitmap && it !== lastSavedImage } == true) {
+                captureAfterClose = true; closeConfirm = true
+            } else capture.onCapture()
+        }
+    }
+
+    fun requestSave(wholeImage: Boolean = false) {
+        if (busy) return
+        val target = imageSaveTarget(selection, displayed.width, displayed.height, wholeImage)
+            ?: run { message = imageSelectionProblem(selection, displayed.width, displayed.height).orEmpty(); return }
+        // Polygon templates need transparent corners, not the unrelated pixels of their bounding box.
+        if (target.polygon.isEmpty() && capture != null && version?.pipeline?.operations?.isEmpty() != false) capture.onSaveRegion(target.region)
+        else saveRequest = ImageWorkbenchSaveRequest(displayed, version?.pipeline, target)
+    }
+    fun canQuickAction(key: String): Boolean {
+        if (busy) return false
+        val editable = !originalVisible && history != null
+        return when(key) {
+            "crop" -> editable && selectionProblem==null
+            "keep", "ignore" -> editable && selection.polygon.isNotEmpty() && selectionProblem==null
+            "match", "ocr", "glyph", "saveAll", "rulers" -> true
+            "insert" -> editable && insertionTarget!=null && version!=null
+            "recipe", "coordinate" -> history!=null
+            else -> editable
+        }
+    }
+    fun quickAction(key: String) {
+        if (!canQuickAction(key)) return
+        when(key) {
+            "crop", "keep", "ignore" -> {
+                if (key=="crop" && selection.polygon.isEmpty()) apply(ImagePixelOperation("crop",roi=selection.box))
+                else applyOperations(polygonSelectionOperations(displayed.width,displayed.height,selection.polygon,crop=key=="crop",keep=key!="ignore"))
+            }
+            "gray", "rotate270", "rotate90", "rotate180", "flipX", "flipY" -> apply(ImagePixelOperation(key))
+            "rulers" -> showRulers=!showRulers
+            "saveAll" -> requestSave(wholeImage = true)
+            "insert" -> {recognitionTail=null;recognitionValidity=null;insertionConfiguration=true}
+            else -> {
+                if (key=="match") selection=selection.copy(points=emptyList())
+                if (key=="ocr") glyphUse=null
+                openPanel(key)
+            }
+        }
+    }
+    val parameterPanel: @Composable () -> Unit = {
+        CompositionLocalProvider(LocalImageWorkspace provides surface) {
+        key(workspaceIdentity, panel, displayed) {
+        if(panel=="coordinate") version?.let {ImageCoordinateDialog(it.pipeline,capturedScreen,selection.box) {closePanel()}}
+
+    if (panel == "resize") ImageWorkbenchResizeDialog(displayed.width, displayed.height,
+        onDismiss = { closePanel() }, onApply = { w, h -> closePanel(); apply(ImagePixelOperation("resize", w, h)) })
+    if (panel == "threshold") ImageWorkbenchThresholdDialog(displayed, onDismiss = { closePanel() }, onApply = {
+        closePanel(); apply(ImagePixelOperation("threshold", threshold = it))
+    }, onApplyAndSave = {
+        closePanel(); applyAndSave(ImagePixelOperation("threshold", threshold = it))
     })
-    if (filterDialog) ImageColorFilterDialog(lastFilter, onDismiss = { filterDialog=false }, onApply = {
-        lastFilter=it;filterDialog=false;apply(ImagePixelOperation("filter",filter=it))
-    },bitmap=displayed,snapshot=snapshot,store=store)
-    if(maskDialog) ImageMaskDialog(displayed,onDismiss={maskDialog=false},onApply={maskDialog=false;apply(ImagePixelOperation("mask",mask=it))})
-    if(polygonDialog) ImagePolygonDialog(displayed,onDismiss={polygonDialog=false},onApply={polygonDialog=false;applyOperations(it)})
-    if(cleanupDialog) ImageCleanupDialog(displayed,onDismiss={cleanupDialog=false},onApply={mode,spec ->cleanupDialog=false;apply(ImagePixelOperation(mode,cleanup=spec))})
-    if (matchDialog) ImageWorkbenchMatchDialog(displayed, selection.box, snapshot, runtimeClient,
+    if (panel == "filter") ImageColorFilterDialog(lastFilter, onDismiss = { closePanel() }, onApply = {
+        lastFilter=it;closePanel();apply(ImagePixelOperation("filter",filter=it))
+    },bitmap=displayed,snapshot=snapshot,store=store,onApplyAndSave={
+        lastFilter=it;closePanel();applyAndSave(ImagePixelOperation("filter",filter=it))
+    })
+    if (panel == "mask") ImageMaskDialog(displayed,onDismiss={closePanel()},
+        onApply={closePanel();apply(ImagePixelOperation("mask",mask=it))},
+        onApplyAndSave={closePanel();applyAndSave(ImagePixelOperation("mask",mask=it))})
+    if (panel == "cleanup") ImageCleanupDialog(displayed,onDismiss={closePanel()},
+        onApply={mode,spec ->closePanel();apply(ImagePixelOperation(mode,cleanup=spec))},
+        onApplyAndSave={mode,spec ->closePanel();applyAndSave(ImagePixelOperation(mode,cleanup=spec))})
+    if (panel == "match") ImageWorkbenchMatchDialog(displayed, selection.box, snapshot, runtimeClient,
         onResult = { result ->
             selection = selection.copy(points = if (result != null && result.status == com.autoscript.runtime.api.RecognitionPreviewReply.SUCCESS &&
                 result.x in 0 until displayed.width && result.y in 0 until displayed.height)
                 listOf(ImageToolCodeGen.PickedPoint(result.x, result.y, displayed.getPixel(result.x, result.y) and 0xFFFFFF)) else emptyList())
-        }, onDismiss = { matchDialog = false }, onConfirm = if (insertionTarget == null) null else { settings, roi, validity ->
-            matchDialog = false; recognitionTail = ImagePipelineRecognitionTail.Match(settings, roi); recognitionValidity = boundRecognitionProof(validity); insertionConfiguration = true
-        },initialConfig=loadedRecipe?.matchSettings(),onSaveRecipe={settings,area ->recipeRecognition=matchRecipeTail(settings) to area;matchDialog=false;recipeDialog=true})
-    if (glyphMaker) GlyphMakerDialog(snapshot, store, runtimeClient, onSnapshotChanged,
-        onDismiss = { glyphMaker = false }, initialBitmap = displayed, initialRoi = selection.box,
+        }, onDismiss = { closePanel() }, onConfirm = if (insertionTarget == null) null else { settings, roi, validity ->
+            closePanel(); recognitionTail = ImagePipelineRecognitionTail.Match(settings, roi); recognitionValidity = boundRecognitionProof(validity); insertionConfiguration = true
+        },initialConfig=loadedRecipe?.matchSettings(),onSaveRecipe={settings,area ->recipeRecognition=matchRecipeTail(settings) to area;closePanel();openPanel("recipe")},
+        initialDraft=drafts.match,onRememberDraft={drafts.match=it})
+    if (panel == "glyph") GlyphMakerDialog(snapshot, store, runtimeClient, onSnapshotChanged,
+        onDismiss = { closePanel() }, initialBitmap = displayed, initialRoi = selection.box,
         initialForeground = selection.points.lastOrNull()?.rgb ?: 0xFFFFFF,
         onUseSaved = { updated, config, roi ->
-            glyphUse = Triple(updated, config, roi); glyphMaker = false; ocrDialog = true
+            drafts.ocr = null; glyphUse = Triple(updated, config, roi); closePanel(); openPanel("ocr")
         })
-    if (ocrDialog) ImageToolOcrDialog(displayed, glyphUse?.third ?: selection.box ?: ImageToolCodeGen.Roi(0, 0, displayed.width, displayed.height),
+    if (panel == "ocr") ImageToolOcrDialog(displayed, glyphUse?.third ?: selection.box ?: ImageToolCodeGen.Roi(0, 0, displayed.width, displayed.height),
         snapshot, runtimeClient,
-        onDismiss = { ocrDialog = false }, onConfirm = { settings, roi ->
-            ocrDialog = false; recognitionTail = ImagePipelineRecognitionTail.Ocr(settings, roi); insertionConfiguration = true
-        }, allowBackfill = insertionTarget != null, confirmLabel = "加入处理 + 取字", onProofConfirmed = { recognitionValidity = boundRecognitionProof(it) },
+        onDismiss = { closePanel() }, onConfirm = { settings, roi ->
+            if (capture != null && version?.pipeline?.operations?.isEmpty() != false) {
+                val snippet = settings.snippet(roi, bitmap.width, bitmap.height)
+                if (snippet.rejection != null) message = snippet.rejection else { closePanel(); capture.onEmit(snippet) }
+            } else { closePanel(); recognitionTail = ImagePipelineRecognitionTail.Ocr(settings, roi); insertionConfiguration = true }
+        }, allowBackfill = insertionTarget != null || (capture != null && version?.pipeline?.operations?.isEmpty() != false), confirmLabel = if (version?.pipeline?.operations?.isEmpty() != false) "加入取字" else "加入处理 + 取字", onProofConfirmed = { recognitionValidity = boundRecognitionProof(it) },
         resultReadTarget = insertionTarget, initialConfig = glyphUse?.second ?: loadedRecipe?.ocrSettings(),
-        onSaveRecipe={settings,area ->recipeRecognition=ocrRecipeTail(settings) to area;ocrDialog=false;recipeDialog=true})
-    if(recipeDialog) {
+        onSaveRecipe={settings,area ->recipeRecognition=ocrRecipeTail(settings) to area;closePanel();openPanel("recipe")},
+        initialDraft=drafts.ocr,sourceIdentity=imageIdentity,onRememberDraft={drafts.ocr=it})
+    if (panel == "recipe") {
         val current=runCatching {
             val plan=requireNotNull(version).pipeline
             ProjectImageRecipe("当前配置",plan.sourceWidth,plan.sourceHeight,plan.operations.map {it.recipeStep()},
                 recipeRecognition?.second?.recipeRegion() ?: selection.box?.recipeRegion(),recipeRecognition?.first)
         }.getOrNull()
-        ImageRecipeDialog(snapshot,store,current,onDismiss={recipeDialog=false},onLoad={recipeDialog=false;applyRecipe(it)})
+        ImageRecipeDialog(snapshot,store,current,onDismiss={closePanel()},onLoad={closePanel();applyRecipe(it)})
     }
+        }
+        }
+    }
+    val workspaceContent: @Composable () -> Unit = {
+        ImageWorkspaceTheme {
+        val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        BoxWithConstraints(modifier.fillMaxSize().background(ToolChrome)) {
+            val fullWidth = maxWidth.value; val fullHeight = maxHeight.value
+            val keyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
+            val layout = imageWorkspaceLayout(fullWidth, fullHeight, maxHeight.value, keyboard, landscape,
+                compact = false)
+            val canvas: @Composable (Modifier) -> Unit = { bounds ->
+                Box(bounds.clipToBounds().background(androidx.compose.ui.graphics.Color.Black)) {
+                    ImageToolWindow(displayed, capture?.designWidth ?: bitmap.width, capture?.designHeight ?: bitmap.height,
+                        capture?.scaleMode ?: "letterbox", initialMode=capture?.initialMode ?: ImageToolMode.CROP,
+                        capturing=false, message=message.takeIf {it.isNotBlank()},
+                        onCapture={ requestCapture() },
+                        onEmit={ snippet -> if(capture!=null) capture.onEmit(snippet) else message="选区已保留，请选择识别测试或保存图片" },
+                        onCropToTemplate={requestSave()}, onClose={requestWorkspaceClose()},
+                        pointerInputSupported=capture?.pointerInputSupported ?: false,
+                        onOpenRecorder=capture?.onOpenRecorder,
+                        workspace=ImageWorkspaceActions(surface,
+                            onSelection={openToolbar(ImageToolbarMenu.SELECTION)},onProcessing={openToolbar(ImageToolbarMenu.PROCESS)},onOcr={glyphUse=null;openPanel("ocr")},
+                            onUndo=if(!busy && panel==null && history?.canUndo==true) ({history.undo();revision=history.revision;originalVisible=false;selection=ImageToolSelection()}) else null,
+                            onRedo=if(!busy && panel==null && history?.canRedo==true) ({history.redo();revision=history.revision;originalVisible=false;selection=ImageToolSelection()}) else null,
+                            onOriginal={navigation.afterClose(surface.requestClose) {originalVisible=!originalVisible;selection=ImageToolSelection()}},
+                            showingOriginal=originalVisible,
+                            onRestore={navigation.afterClose(surface.requestClose) {selection=ImageToolSelection();applyRecipe(ProjectImageRecipe("原图",bitmap.width,bitmap.height,emptyList()))}},
+                            onMapPoint={x,y -> version?.pipeline?.mapToOriginal(x,y) ?: (x to y)},
+                            sourceWidth=bitmap.width,sourceHeight=bitmap.height,busy=busy,
+                            captureAvailable=capture!=null,panelOpen=panel!=null,onTest={openToolbar(ImageToolbarMenu.TEST)},
+                            sampleColor={x,y -> val xy=version?.pipeline?.mapToOriginal(x,y) ?: (x to y); bitmap.getPixel(xy.first,xy.second) and 0xFFFFFF},
+                            mapSelection={selected -> version?.pipeline?.selectionToOriginal(selected) ?: selected},
+                            onQuickAction={quickAction(it)},canQuickAction={canQuickAction(it)}))
+                    if(showRulers && surface.canvas==null) viewport?.let {ImageWorkbenchRulers(it)}
+                }
+            }
+            Box(Modifier.fillMaxSize()) {
+                canvas(Modifier.fillMaxSize())
+                if(panel!=null) ImageDraggablePanelHost(landscape, surface.panelPlacement, Modifier.fillMaxSize(),
+                    defaultPosition = ImagePanelPosition(1f, if(layout.side) 0f else 1f)) { position ->
+                    val panelWidth = if(layout.side) layout.panelWidthDp.dp.coerceAtMost(maxWidth)
+                        else maxWidth.coerceAtMost(440.dp)
+                    val panelHeight = if(layout.side) maxHeight.coerceAtMost(520.dp)
+                        else layout.panelHeightDp.dp.coerceAtMost(maxHeight)
+                    Box(position.width(panelWidth).height(panelHeight)) {parameterPanel()}
+                }
+            }
+        }
+    }
+    }
+    }
+    if(capture!=null) workspaceContent() else StudioDialog(onDismissRequest={requestWorkspaceClose()},
+        properties=DialogProperties(usePlatformDefaultWidth=false,dismissOnClickOutside=false)) {workspaceContent()}
     if (insertionConfiguration && insertionTarget != null && version != null) ImagePipelineInsertDialog(version.pipeline, originalImagePath,
         snapshot, insertionTarget, onDismiss = { insertionConfiguration = false }, onReady = {
             insertion = it to insertionTarget
-        }, recognitionTail = recognitionTail, recognitionIsCurrent = recognitionValidity ?: { false }, visible = insertion == null && !inserting)
+        }, recognitionTail = recognitionTail, recognitionIsCurrent = recognitionValidity ?: { false }, visible = insertion == null && !inserting,
+        initialDraft=drafts.insertion,onRememberDraft={drafts.insertion=it})
     insertion?.let { (request, target) ->
         if (!inserting) ImageInsertionPositionDialog(request, target.editor,
             onDismiss = { insertion = null; insertionConfiguration = true }, onConfirm = { position, slot ->
@@ -325,62 +386,93 @@ internal fun ImageProcessingWorkbench(bitmap: Bitmap, snapshot: ProjectSnapshot,
                 }
             })
     }
-    if(coordinateDialog) version?.let {ImageCoordinateDialog(it.pipeline,capturedScreen,selection.box) {coordinateDialog=false}}
-    if (saveDialog) ImageTemplateSaveDialog(store = store, projectId = snapshot.manifest.projectId,
-        pixelSize = displayed.width to displayed.height,
+
+    saveRequest?.let { request -> ImageTemplateSaveDialog(store = store, projectId = snapshot.manifest.projectId,
+        pixelSize = request.target.region.let {it.width to it.height},
         imagePaths = snapshot.manifest.resources.mapNotNull { it.get("path")?.asString },
         initialFolder = originalImagePath?.removePrefix("assets/images/")?.substringBeforeLast('/', "").orEmpty(),
         defaultName = originalImagePath?.substringAfterLast('/')?.substringBeforeLast('.')?.let { "$it.png" }
             ?: "processed-${System.currentTimeMillis()}.png",
-        onDismiss = { saveDialog = false }, onSave = { folder, name, mode ->
-            val owner = history
-            val savedImage = displayed
-            val frozen = requireNotNull(displayed.copy(Bitmap.Config.ARGB_8888, false)) { "无法准备保存图片；当前预览保留" }
+        onDismiss = { saveRequest = null }, onSave = { folder, name, mode ->
+            val savedImage = request.image
+            val savedRegion = request.target.region
+            val savedSnapshot = snapshot
+            val onSavedTemplate = capture?.onTemplateSaved
+            val screenRegion = if (!capturedScreen) null else if (request.pipeline != null)
+                request.pipeline.screenshotTemplateRegion(savedRegion)
+                else ScreenshotTemplateRegion(bitmap.width, bitmap.height, savedRegion).takeIf { it.valid() }
+            val polygon = request.target.polygon.map { it.copy(x = it.x - savedRegion.left, y = it.y - savedRegion.top) }
+            val (cropWidth, cropHeight) = templateCropDimensions(savedImage.width, savedImage.height, savedRegion)
+            // Freeze only the selected patch; masking a small polygon must not process the entire screen.
+            val patch = Bitmap.createBitmap(savedImage, savedRegion.left, savedRegion.top, cropWidth, cropHeight)
+            val frozen = try { requireNotNull(patch.copy(Bitmap.Config.ARGB_8888, false)) { "无法准备保存图片；当前预览保留" } }
+                finally { if (patch !== savedImage) patch.recycle() }
             saving = true
             try {
                 val (updated, path) = withContext(Dispatchers.IO) {
                     ensureActive()
-                    cropAndImportTemplate(store, snapshot, frozen, ImageToolCodeGen.Roi(0, 0, frozen.width, frozen.height), context, folder, name, mode = mode)
+                    var masked: Bitmap? = null
+                    try {
+                        val work = currentCoroutineContext()
+                        val deadline = System.nanoTime() + 5_000_000_000L
+                        val material = if (polygon.isEmpty()) frozen else processImagePipelineBitmap(frozen,
+                            ImageProcessingPipeline(frozen.width, frozen.height,
+                                polygonSelectionOperations(frozen.width, frozen.height, polygon, crop=false, keep=true))) {
+                            work.ensureActive(); check(System.nanoTime() < deadline) { "多边形保存处理超时" }
+                        }.also { masked = it }
+                        cropAndImportTemplate(store, savedSnapshot, material, ImageToolCodeGen.Roi(0, 0, cropWidth, cropHeight), context, folder, name,
+                            mode = mode, screenRegion = screenRegion)
+                    } finally { masked?.takeIf { it !== frozen }?.recycle() }
                 }
-                if (owner === latestHistory) {
-                    latestSnapshotChanged(updated); lastSavedImage = savedImage; saveDialog = false
+                if (workspaceIdentity === latestWorkspaceIdentity) {
+                    latestSnapshotChanged(updated)
+                    if (polygon.isEmpty() && savedRegion == ImageToolCodeGen.Roi(0, 0, savedImage.width, savedImage.height)) lastSavedImage = savedImage
+                    saveRequest = null
                     message = "已保存：${path.removePrefix("assets/images/")}"
+                    onSavedTemplate?.invoke(path)
                 }
-            } finally { frozen.recycle(); if (owner === latestHistory) saving = false }
-        })
-    if (closeConfirm) StudioConfirmDialog(onDismissRequest = { closeConfirm = false }, title = { Text("关闭图片工作台？") },
+            } finally { frozen.recycle(); if (workspaceIdentity === latestWorkspaceIdentity) saving = false }
+        }) }
+    if (closeConfirm) StudioConfirmDialog(onDismissRequest = { closeConfirm = false; captureAfterClose = false }, title = { Text(if(captureAfterClose) "重新截图？" else "关闭图像工具？") },
         text = { Text("未保存的处理预览将丢弃，进行中的任务会取消；已经提交的保存不会撤销。", fontSize = 12.sp) },
-        confirmButton = { TextButton(onClick = { task?.cancel(); closeConfirm = false; onDismiss() }) { Text("关闭") } },
-        dismissButton = { TextButton(onClick = { closeConfirm = false }) { Text("继续编辑") } })
+        confirmButton = { TextButton(onClick = { task?.cancel(); closeConfirm = false; if(captureAfterClose) {captureAfterClose=false;capture?.onCapture?.invoke()} else onDismiss() }) { Text(if(captureAfterClose) "重新截图" else "关闭") } },
+        dismissButton = { TextButton(onClick = { closeConfirm = false; captureAfterClose=false }) { Text("继续编辑") } })
 }
 
 @Composable
 private fun ImageWorkbenchResizeDialog(width: Int, height: Int, onDismiss: () -> Unit, onApply: (Int, Int) -> Unit) {
     var w by remember { mutableStateOf(width.toString()) }; var h by remember { mutableStateOf(height.toString()) }
     val valid = runCatching { ImagePixelOperation("resize", w.toInt(), h.toInt()).dimensions(width, height) }.getOrNull()
-    StudioConfirmDialog(onDismissRequest = onDismiss, prompt = false, title = { Text("明确输出尺寸") }, text = {
+    ImageWorkspaceConfirmPanel(onDismissRequest = onDismiss, prompt = false, title = { Text("改尺寸") }, text = {
         Column {
-            Text("像素单位 · 最近邻缩放，不平滑、不自动压缩", fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(w, { w = it.take(5) }, singleLine = true, label = { Text("宽 px") }, modifier = Modifier.weight(1f))
-                OutlinedTextField(h, { h = it.take(5) }, singleLine = true, label = { Text("高 px") }, modifier = Modifier.weight(1f))
+                ImageToolCompactInput("宽 px", w, true, Modifier.weight(1f), numeric=true,dense=true) { w=it.take(5) }
+                ImageToolCompactInput("高 px", h, true, Modifier.weight(1f), numeric=true,dense=true) { h=it.take(5) }
             }
             if (valid == null) Text("每边1–4096，总计不超过400万像素", color = androidx.compose.ui.graphics.Color.Red, fontSize = 10.sp)
+            ImageToolHelp("按像素设置输出宽高，最近邻缩放，不平滑、不自动压缩。")
         }
-    }, confirmButton = { TextButton(enabled = valid != null, onClick = { valid?.let { onApply(it.first, it.second) } }) { Text("应用") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+    }, confirmButton = { GlyphMakerPrimaryAction("应用", valid != null) { valid?.let { onApply(it.first, it.second) } } },
+        dismissButton = { ImageToolCompactAction("取消",true,onClick=onDismiss) })
 }
 
 @Composable
-private fun ImageWorkbenchThresholdDialog(onDismiss: () -> Unit, onApply: (Int) -> Unit) {
+private fun ImageWorkbenchThresholdDialog(bitmap: Bitmap, onDismiss: () -> Unit, onApply: (Int) -> Unit,
+    onApplyAndSave: (Int) -> Unit) {
     var text by remember { mutableStateOf("128") }
     val threshold = text.toIntOrNull()?.takeIf { it in 0..255 }
-    StudioConfirmDialog(onDismissRequest = onDismiss, prompt = false, title = { Text("灰度二值化") }, text = {
+    val preview=rememberImageProcessingPreview(bitmap,threshold?.let {ImagePixelOperation("threshold",threshold=it)})
+    ImageWorkspaceConfirmPanel(onDismissRequest = onDismiss, prompt = false, title = { Text("二值化") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("先转灰度：大于或等于阈值为白，否则为黑；保留透明度和原图。", fontSize = 11.sp)
-            OutlinedTextField(text, { text = it.take(3) }, singleLine = true, label = { Text("阈值 0–255") }, modifier = Modifier.fillMaxWidth())
+            ImageProcessingPreviewCanvas(preview.bitmap,96)
+            ImageToolCompactInput("阈值 0–255", text, true, Modifier.fillMaxWidth(), numeric=true,dense=true) { text=it.take(3) }
             if (threshold == null) Text("请输入0–255之间的整数，不会自动截断", fontSize = 11.sp, color = androidx.compose.ui.graphics.Color.Red)
+            if(preview.message.startsWith("处理无效") || preview.message.startsWith("预览内存不足"))
+                ImageWorkspaceHint(preview.message,error=true)
+            ImageToolHelp("灰度大于或等于阈值为白，否则为黑；保留透明度和原图。黑白找图需对运行画面应用同样处理。")
         }
-    }, confirmButton = { TextButton(enabled = threshold != null, onClick = { threshold?.let(onApply) }) { Text("应用") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+    }, confirmButton = {
+        ImageToolCompactAction("应用", threshold != null) { threshold?.let(onApply) }
+        GlyphMakerPrimaryAction("应用并存图", threshold != null) { threshold?.let(onApplyAndSave) }
+    }, dismissButton = { ImageToolCompactAction("取消", true, onClick = onDismiss) })
 }

@@ -1,0 +1,101 @@
+"""Generate readable runtime log labels from the existing API and block catalogs."""
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ALIASES = {
+    'Apps.openUrl': '打开网址', 'Apps.info': '查询应用', 'Apps.open': '打开应用',
+    'Floating.waitImageEvent': '等待图片浮窗操作', 'Floating.getBounds': '读取浮窗位置',
+    'Input.pointerMoveScreen': '移动屏幕触点', 'Input.pointerDownScreen': '按下屏幕触点',
+    'Input.resolvePoint': '转换触控坐标', 'Input.swipeScreen': '屏幕滑动', 'Input.tapScreen': '屏幕点击',
+    'Log.setEnabled': '设置脚本输出', 'Log.write': '脚本输出',
+    'Ocr.latinText': '数字字母与符号识别', 'Ocr.loadDictionary': '加载字库', 'Ocr.releaseDictionary': '释放字库',
+    'Prompt.setEnabled': '设置运行提示', 'Prompt.show': '显示运行提示', 'Prompt.toast': '显示短提示',
+    'Screen.cache': '保留图像帧', 'Screen.captureSeries': '创建截图序列',
+    'Screen.compareColor': '比较颜色', 'Screen.components': '查找连通区域',
+    'Screen.countColor': '颜色计数', 'Screen.findAllColor': '查找全部颜色',
+    'Screen.findAllImages': '查找全部图片', 'Screen.findColor': '区域找色',
+    'Screen.findGray': '灰度找图', 'Screen.findImage': '区域找图', 'Screen.findImages': '多模板找图',
+    'Screen.findMultiColor': '多点找色', 'Screen.findAllMultiColor': '查找全部多点颜色',
+    'Screen.findScaled': '多尺度找图', 'Screen.getColor': '读取颜色',
+    'Screen.matchValue': '读取找图结果', 'Screen.recognitionValue': '读取识别结果',
+    'System.getTimeMillis': '读取系统时间', 'System.keepScreenAwake': '设置屏幕常亮',
+    'System.elapsedRealtimeMillis': '读取计时时间', 'System.getScreenSize': '读取屏幕尺寸',
+    'Text.repeatText': '重复文本', 'UI.closeDialog': '关闭脚本界面',
+    'UI.getValue': '读取控件值', 'UI.setValue': '设置控件值',
+    'UI.showDialogAndWait': '显示脚本界面并等待', 'UI.waitEvent': '等待界面操作',
+    'Screen.findFeatures': '特征匹配',
+}
+PARAMETERS = {
+    'additionalColors': '附加颜色', 'allowPartial': '允许部分识别', 'anchorRgb': '锚点颜色',
+    'anchorTolerance': '锚点容差', 'angle': '角度', 'background': '背景色', 'base64': '编码内容',
+    'blockOutside': '阻止外部点击', 'blue': '蓝色通道', 'body': '请求内容', 'bottom': '下边界',
+    'callback': '回调', 'cancelText': '取消文字', 'captureId': '截图标识', 'centerX': '中心X',
+    'centerY': '中心Y', 'confirmText': '确认文字', 'count': '数量', 'current': '当前值',
+    'days': '天数', 'delta': '增量', 'destination': '目标路径', 'details': '详细结果',
+    'dictionary': '字库', 'digits': '小数位数', 'direction': '方向', 'draggable': '允许拖动',
+    'durationMs': '持续毫秒', 'enabled': '启用', 'endMs': '结束毫秒', 'eventBudget': '事件预算',
+    'field': '字段', 'fontPx': '字号', 'foregroundRgb': '前景色', 'format': '格式',
+    'frame': '图像帧', 'green': '绿色通道', 'headersJson': '请求头', 'height': '高度',
+    'id': '标识', 'imagePath': '图片路径', 'index': '索引', 'json': '数据', 'key': '键',
+    'keyCode': '按键值', 'left': '左边界', 'length': '长度', 'level': '级别', 'limit': '结果数量',
+    'line': '行号', 'max': '上限', 'maxFrames': '最大帧数', 'maxResponseBytes': '响应字节上限',
+    'message': '内容', 'method': '请求方法', 'milliseconds': '毫秒', 'min': '下限',
+    'minIntegerDigits': '整数最少位数', 'minimumConfidencePermille': '最低置信度',
+    'minimumMatchPercent': '最低匹配比例', 'minimumScorePermille': '最低匹配分数',
+    'mode': '模式', 'name': '名称', 'needle': '查找内容', 'occurrence': '第几次出现',
+    'offsetMinutes': '时区分钟', 'operation': '操作', 'options': '选项', 'packageName': '应用包名',
+    'pageId': '页面', 'parameters': '参数', 'path': '路径', 'pathsJson': '图片列表',
+    'pattern': '匹配规则', 'pointerId': '手指', 'polygon': '多边形', 'previous': '之前值',
+    'radius': '半径', 'recordingJson': '录制数据', 'red': '红色通道', 'replacement': '替换内容',
+    'result': '结果', 'rgb': '颜色', 'right': '右边界', 'samples': '采样数',
+    'screenPixels': '屏幕坐标', 'section': '分组', 'separator': '分隔符', 'shape': '图形',
+    'shapesJson': '图形列表', 'similarityPermille': '相似度', 'snapshotId': '画面标识',
+    'spaceGapColumns': '空格间隔', 'start': '开始位置', 'startMs': '开始毫秒',
+    'styleJson': '样式', 'targetFps': '目标帧率', 'task': '任务', 'template': '模板',
+    'text': '文本', 'textColor': '文字颜色', 'timeoutMs': '超时毫秒', 'timer': '定时器',
+    'timestampMs': '时间戳', 'title': '标题', 'tolerance': '容差', 'top': '上边界',
+    'url': '网址', 'value': '值', 'valueJson': '数据值', 'volume': '音量', 'width': '宽度',
+    'x': 'X', 'x1': '起点X', 'x2': '终点X', 'y': 'Y', 'y1': '起点Y', 'y2': '终点Y',
+}
+
+
+def generate():
+    titles = {}
+    for path in (ROOT / 'schema/block-catalog/blocks').glob('*.json'):
+        block = json.loads(path.read_text(encoding='utf-8-sig'))
+        titles[block['kind'].lower()] = block['title']
+    rows = []
+    api_blocks = set()
+    for path in (ROOT / 'schema/api-schema/functions').glob('*.json'):
+        api = json.loads(path.read_text(encoding='utf-8-sig'))
+        title = ALIASES.get(api['name'], titles.get(api['name'].lower()))
+        if not title:
+            raise ValueError('Missing readable log title: ' + api['name'])
+        api_blocks.add(title)
+        if api['name'].lower() in titles:
+            api_blocks.add(titles[api['name'].lower()])
+        labels = [PARAMETERS[p['name']] for p in api['params']]
+        quote = lambda value: json.dumps(value, ensure_ascii=False)
+        rows.append((api['opcode'], '        %s => (%s, &[%s]),' % (
+            api['opcode'], quote(title), ', '.join(map(quote, labels)))))
+    text = '// Generated by scripts/generate-runtime-log-catalog.py.\n'
+    text += 'pub(super) fn entry(opcode: u32) -> Option<(&\'static str, &\'static [&\'static str])> {\n'
+    text += '    Some(match opcode {\n' + '\n'.join(row for _, row in sorted(rows))
+    text += '\n        _ => return None,\n    })\n}\n'
+    target = ROOT / 'rust/crates/runtime-executor/src/run_action_catalog.rs'
+    with target.open('w', encoding='utf-8', newline='\n') as output:
+        output.write(text)
+    kotlin = '// Generated by scripts/generate-runtime-log-catalog.py.\n'
+    kotlin += 'package com.autoscript.runtime.api\n\n'
+    kotlin += 'internal val runtimeApiActionTitles = setOf(\n'
+    kotlin += ''.join('    %s,\n' % json.dumps(title, ensure_ascii=False) for title in sorted(api_blocks))
+    kotlin += ')\n'
+    target = ROOT / 'android/modules/runtime-api/src/main/java/com/autoscript/runtime/api/RuntimeActionTitles.kt'
+    with target.open('w', encoding='utf-8', newline='\n') as output:
+        output.write(kotlin)
+    print('RUNTIME_LOG_CATALOG: %s APIs' % len(rows))
+
+
+if __name__ == '__main__':
+    generate()

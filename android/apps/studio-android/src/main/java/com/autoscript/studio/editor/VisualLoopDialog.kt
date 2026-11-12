@@ -192,7 +192,7 @@ internal fun buildLoopInsertion(draft: LoopDraft, variables: List<CalculationVar
         return number
     }
     fun variable(name: String, types: Set<ProjectVariableType>): String {
-        require(variables.any { it.name == name && it.type in types }) { "请选择当前插件可用且类型正确的变量" }
+        require(scalarSourceError(name, variables, types) == null) { scalarSourceError(name, variables, types).orEmpty() }
         return name
     }
     fun duration(value: String, unit: LoopTimeUnit, allowZero: Boolean = false) =
@@ -221,6 +221,7 @@ internal fun buildLoopInsertion(draft: LoopDraft, variables: List<CalculationVar
         }
         LoopMode.COUNT, LoopMode.ELAPSED -> {
             val elapsed = draft.mode == LoopMode.ELAPSED
+            require(!(if (elapsed) draft.elapsedOutput else draft.countOutput).startsWith("=")) { "输出请选择变量" }
             args.addProperty("metric", if (elapsed) "elapsed" else "count")
             args.addProperty("name", variable(if (elapsed) draft.elapsedOutput else draft.countOutput,
                 if (!elapsed) integers else if (draft.elapsedUnit == LoopTimeUnit.MILLISECONDS) numbers else setOf(ProjectVariableType.NUMBER)))
@@ -248,8 +249,8 @@ internal fun buildLoopInsertion(draft: LoopDraft, variables: List<CalculationVar
     }
     if (draft.mode in setOf(LoopMode.REPEAT, LoopMode.FOREVER, LoopMode.TIMED)) {
         if (draft.iterationOutput.isNotBlank()) args.addProperty(if (kind == "control.repeat") "indexVariable" else "iterationVariable",
-            variable(draft.iterationOutput, integers))
-        if (draft.loopElapsedOutput.isNotBlank()) args.addProperty("elapsedVariable", variable(draft.loopElapsedOutput, numbers))
+            variable(draft.iterationOutput, integers).also { require(!it.startsWith("=")) { "输出请选择变量" } })
+        if (draft.loopElapsedOutput.isNotBlank()) args.addProperty("elapsedVariable", variable(draft.loopElapsedOutput, numbers).also { require(!it.startsWith("=")) { "输出请选择变量" } })
         require(variables.none { it.scope == "参数" && it.name in listOf(draft.iterationOutput, draft.loopElapsedOutput) }) {
             "循环输出请选择已声明变量，不写入插件参数"
         }
@@ -331,7 +332,13 @@ internal fun VisualLoopDialog(
             draft = applyLoopPickerSelection(draft, key, value)
             picker = null; error = null
         }
-        if (!preset) CompactVariablePickerDialog(options = variablePickerOptions(eligible.map { it.name }, eligible),
+        if (key in setOf("count", "time", "delay", "checkCount", "checkTime")) ScalarValueSourcePicker(
+            "选择取值", when (key) { "count" -> draft.countVariable; "time" -> draft.timeVariable; "delay" -> draft.delayVariable;
+                "checkCount" -> draft.checkCountVariable; else -> draft.checkTimeVariable }, choices,
+            if (key in setOf("count", "delay", "checkCount")) setOf(ProjectVariableType.INTEGER)
+                else setOf(ProjectVariableType.INTEGER, ProjectVariableType.NUMBER),
+            onDismiss = { picker = null }, onSelect = ::select, onManage = onManageVariables)
+        else if (!preset) CompactVariablePickerDialog(options = variablePickerOptions(eligible.map { it.name }, eligible),
             selected = null, onDismiss = { picker = null }, onSelect = ::select, initialScope = pickerScope,
             onManage = onManageVariables)
         else StudioPanelDialog("常用数值", { picker = null }, showFooter = false) {
@@ -485,7 +492,7 @@ private fun LoopVariableRow(onVariable: () -> Unit, value: @Composable () -> Uni
             .border(1.dp, AutoScriptPalette.VisualEditor.Border, shape)
             .clickable(role = Role.Button) { focus.clearFocus(); onVariable() }
             .padding(horizontal = 4.dp, vertical = 5.dp), contentAlignment = Alignment.Center) {
-            Text("变量", fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.Accent)
+            Text("取值", fontSize = 10.sp, lineHeight = 14.sp, color = AutoScriptPalette.Accent)
         }
     }
 }
@@ -520,7 +527,7 @@ private fun LoopVariableRow(onVariable: () -> Unit, value: @Composable () -> Uni
         Row(Modifier.weight(1f).clickable(onClick = onClick).padding(horizontal = 7.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (type.isNotEmpty()) Text(type, color = AutoScriptPalette.TextSecondary, fontSize = 10.sp)
-            Text(name.ifEmpty { if (showIcon) "选择变量" else "未选择" }, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
+            Text(name.removePrefix("=").ifEmpty { if (showIcon) "选择变量" else "未选择" }, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (showIcon) androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(R.drawable.ic_list_24), "选择变量",
                 Modifier.size(16.dp), tint = AutoScriptPalette.Accent)

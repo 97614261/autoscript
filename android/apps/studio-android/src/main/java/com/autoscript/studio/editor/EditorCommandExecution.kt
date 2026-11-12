@@ -19,7 +19,8 @@ internal fun executeEditorCommand(editor: VisualEditorState, command: EditorProg
     EditorProgramCommand.COPY -> EditorCommandResult.Clipboard(editor.copySelection().takeIf { it.isNotEmpty() }, false)
     EditorProgramCommand.CUT -> {
         val copied = editor.copySelection().takeIf { it.isNotEmpty() }
-        EditorCommandResult.Clipboard(copied, true, copied != null && editor.deleteSelection())
+        val changed = copied != null && editor.deleteSelection()
+        EditorCommandResult.Clipboard(copied.takeIf { changed }, true, changed)
     }
     EditorProgramCommand.PASTE -> EditorCommandResult.Paste
     EditorProgramCommand.UNDO -> EditorCommandResult.Mutation(editor.undo(), "已撤销")

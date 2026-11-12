@@ -12,7 +12,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** Optional OpenCV source set. No model/session ownership or ONNX dependency. */
-class NativeGrayMatcher : NativeVisionBackend {
+class NativeGrayMatcher : NativeVisionBackend, NativePolygonSearchBackend {
     private val features=NativeFeatureMatcher()
     // Keep native calls short enough for the shared cancellation deadline to be observed on
     // slower devices. The total bounded-work guard below remains unchanged for compatibility.
@@ -42,16 +42,16 @@ class NativeGrayMatcher : NativeVisionBackend {
 
     override fun execute(work: NativeVisionWork, pixels: ByteBuffer, metadata: IntArray,
         templatePixels: ByteBuffer?, templateMetadata: IntArray, options: IntArray): ByteArray {
-        if(options.size==6 && options[5]==1) return features.execute(work,pixels,metadata,templatePixels,templateMetadata,options.copyOf(5))
+        if(options.size>=6 && options[5]==1) return features.execute(work,pixels,metadata,templatePixels,templateMetadata,options.copyOf(5)+options.drop(6))
         require(templatePixels != null)
         NativeCvBuffers.load()
         val source = NativeCvBuffers.image(pixels, metadata)
         var template: Mat? = null
         try {
             template = grayTemplate(templatePixels, templateMetadata)
-            val roi = checkedVisionRect(metadata[0], metadata[1], options)
+            val roi = checkedVisionRect(metadata[0], metadata[1], options.copyOf(5))
             return grayMatch(source, template, Rect(roi.x, roi.y, roi.width, roi.height),
-                options[4], work, metadata[3])
+                options[4], work, metadata[3], VisionSearchPolygon.fromOptions(options, work::checkActive))
         } finally {
             releaseNativeVisionResources({ template?.release() }, { source.release() })
         }
@@ -137,11 +137,13 @@ class NativeGrayMatcher : NativeVisionBackend {
         }
     }
 
-    private fun grayMatch(source: Mat, template: Mat, roi: Rect, threshold: Int, work: NativeVisionWork, sourceFormat: Int): ByteArray {
+    private fun grayMatch(source: Mat, template: Mat, roi: Rect, threshold: Int, work: NativeVisionWork, sourceFormat: Int,
+        polygon: VisionSearchPolygon?): ByteArray {
         require(template.channels() == 1)
         require(template.cols() <= roi.width && template.rows() <= roi.height && template.total() <= 262144)
         val candidates = (roi.width-template.cols()+1).toLong()*(roi.height-template.rows()+1)
         require(candidates*template.total() <= 20_000_000_000L) // Bound work estimate; native FFT optimizations vary by device.
+        val origins = polygon?.templateOrigins(template.cols(), template.rows(), work::checkActive)
         val src = Mat(); val tpl = template; val result = Mat()
         val clipped = source.submat(roi)
         try {
@@ -165,11 +167,25 @@ class NativeGrayMatcher : NativeVisionBackend {
                     // every non-black region gets 0, preserving the limit of our stated score.
                     try { Imgproc.matchTemplate(tile,tpl,result,if(blackTemplate) Imgproc.TM_SQDIFF else Imgproc.TM_SQDIFF_NORMED) } finally { tile.release() }
                     work.checkActive()
-                    val match=Core.minMaxLoc(result)
-                    val difference=if(blackTemplate) { if(match.minVal<.5) 0.0 else 1.0 } else match.minVal.coerceAtLeast(0.0)
-                    val x=left+if(blackTemplate && difference==1.0) 0 else match.minLoc.x.toInt()
-                    val y=top+if(blackTemplate && difference==1.0) 0 else match.minLoc.y.toInt()
-                    if(difference.isFinite() && (difference<best || (difference==best && (y<by || (y==by && x<bx))))) { best=difference; bx=x; by=y }
+                    fun consider(raw: Double, x: Int, y: Int) {
+                        val difference=if(blackTemplate) {if(raw<.5) 0.0 else 1.0} else raw.coerceAtLeast(0.0)
+                        if(difference.isFinite() && (difference<best || difference==best && (y<by || y==by && x<bx))) {best=difference;bx=x;by=y}
+                    }
+                    if (origins == null) {
+                        val match=Core.minMaxLoc(result)
+                        val fallback=blackTemplate && match.minVal>=.5
+                        consider(match.minVal,left+if(fallback) 0 else match.minLoc.x.toInt(),top+if(fallback) 0 else match.minLoc.y.toInt())
+                    } else {
+                        val scores=FloatArray(w)
+                        for (row in 0 until h) {
+                            work.checkActive()
+                            result.get(row,0,scores)
+                            for (span in origins.spans(roi.y+top+row)) {
+                                val start=maxOf(left,span.first-roi.x); val end=minOf(left+w,span.last-roi.x+1)
+                                for (x in start until end) consider(scores[x-left].toDouble(),x,top+row)
+                            }
+                        }
+                    }
                     left+=w
                 }
                 top+=tileRows

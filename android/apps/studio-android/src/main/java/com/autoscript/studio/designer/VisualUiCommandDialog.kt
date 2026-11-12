@@ -139,8 +139,9 @@ internal fun VisualUiCommandDialog(contract: BlockContract, arguments: JsonObjec
             } else if (!window || operation in setOf("page","restoreConfig","windowPosition","bubblePosition")) {
                 if(operation=="restoreConfig") Text("从文件读取到字符变量后恢复；全部校验成功才应用，不恢复密码、不触发事件。")
                 val sourceVariables=if(operation in setOf("range","restoreConfig","windowPosition","bubblePosition","backgroundImage")) resultVariables else variables
-                CompactVariableChoice("值来源", inputs["valueVariable"].orEmpty(), listOf("" to "固定值") + sourceVariables.map { it to it }, true, variableMetadata) { update("valueVariable", it) }
-                if (!inputs["valueVariable"].isNullOrBlank()) Text("执行时读取所选变量，固定值不参与本次设置。")
+                CompactVariableChoice("值来源", inputs["valueVariable"].orEmpty(), listOf("" to "固定值") + sourceVariables.map { it to it }, true, variableMetadata,
+                    inputTypes = if(operation in setOf("range","restoreConfig","windowPosition","bubblePosition","backgroundImage")) setOf(com.autoscript.project.store.ProjectVariableType.STRING) else scalarValueTypes) { update("valueVariable", it) }
+                if (!inputs["valueVariable"].isNullOrBlank()) Text("执行时读取变量或计算表达式，固定值不参与本次设置。")
                 else when (operation) {
                     "backgroundImage" -> {
                         val images=project.manifest.resources.filter {it.get("kind")?.asString=="image"}.map {it.get("path").asString.let {path->path to path.removePrefix("assets/images/")}}

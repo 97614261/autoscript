@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.autoscript.core.designsystem.AutoScriptPalette
 import com.autoscript.project.store.ProjectSnapshot
+import com.autoscript.project.store.ProjectVariableType
 import com.autoscript.project.store.ProjectFlow
 import com.autoscript.project.store.ProjectVariable
 import com.autoscript.project.store.ProjectVariableScope
@@ -299,7 +300,7 @@ internal fun VisualVariableConditionDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            VisualVariableField("变量值（可选，优先输出）", values["valueVariable"].orEmpty(), knownVariables) {
+                            VisualVariableField("取值（可选，优先输出）", values["valueVariable"].orEmpty(), knownVariables, inputTypes = scalarValueTypes) {
                                 values = values + ("valueVariable" to it)
                             }
                         }
@@ -311,7 +312,7 @@ internal fun VisualVariableConditionDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            VisualVariableField("变量值（可选，优先提示）", values["valueVariable"].orEmpty(), knownVariables) {
+                            VisualVariableField("取值（可选，优先提示）", values["valueVariable"].orEmpty(), knownVariables, inputTypes = scalarValueTypes) {
                                 values = values + ("valueVariable" to it)
                             }
                         }
@@ -325,8 +326,10 @@ internal fun VisualVariableConditionDialog(
                             )
                         }
                         else -> {
-                            VisualVariableField("来源变量", values["sourceName"].orEmpty(), knownVariables) { values = values + ("sourceName" to it) }
                             VisualVariableField("目标变量", values["name"].orEmpty(), knownVariables) { values = values + ("name" to it) }
+                            val imageTarget = LocalVariablePickerMetadata.current.any { it.name == values["name"] && it.type == ProjectVariableType.IMAGE }
+                            VisualVariableField("来源取值", values["sourceName"].orEmpty(), knownVariables,
+                                inputTypes = if (imageTarget) null else scalarValueTypes, allowFixed = false) { values = values + ("sourceName" to it) }
                         }
                     }
                     if (contract.kind != "control.if") validationError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
@@ -383,7 +386,18 @@ private fun serializeElseIfDrafts(branches: List<VisualElseIfDraft>): String = J
 
 @Composable
 internal fun VisualVariableField(label: String, value: String, choices: List<String>,
-    variables: List<CalculationVariable> = LocalVariablePickerMetadata.current, onValueChange: (String) -> Unit) {
+    variables: List<CalculationVariable> = LocalVariablePickerMetadata.current,
+    inputTypes: Set<ProjectVariableType>? = null, allowFixed: Boolean = true, onValueChange: (String) -> Unit) {
+    var sourcePicker by remember { mutableStateOf(false) }
+    if (inputTypes != null) {
+        ImageToolCompactInput(label, value.removePrefix("="), true, Modifier.fillMaxWidth(), dense = true,
+            trailing = { StudioToolButton("取值") { sourcePicker = true } }, onChange = { next ->
+                onValueChange(if (value.startsWith("=")) "=$next" else next)
+            })
+        if (sourcePicker) ScalarValueSourcePicker(label, value, variables, inputTypes, allowFixed = allowFixed,
+            onDismiss = { sourcePicker = false }, onSelect = { onValueChange(it); sourcePicker = false })
+        return
+    }
     if (choices.isEmpty()) {
         ImageToolCompactInput(label, value, true, Modifier.fillMaxWidth(), onChange = onValueChange)
         return
@@ -411,6 +425,7 @@ internal fun VisualNodeArgumentsDialog(
     imageCaptureSelection: ImageToolCodeGen.VisualSelection? = null,
     imageCaptureTemplatePath: String? = null,
     onPickImageFromScreen: ((ImageToolMode) -> Unit)? = null,
+    onPickPolygon: ((String) -> Unit)? = null,
     onManageVariables: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: (JsonObject) -> Unit,
@@ -441,7 +456,7 @@ internal fun VisualNodeArgumentsDialog(
     }
     if (contract.kind in visionExtensionKinds && imageProject != null) {
         VisualVisionExtensionDialog(contract, arguments, imageProject, currentFlowId, onManageVariables, onDismiss, onConfirm, confirmLabel,
-            visible = imageDialogVisible, captureSelection = imageCaptureSelection, onPickFromScreen = onPickImageFromScreen,projectStore=projectStore)
+            visible = imageDialogVisible, captureSelection = imageCaptureSelection, onPickFromScreen = onPickImageFromScreen,projectStore=projectStore,onPickPolygon=onPickPolygon)
         return
     }
     if (contract.kind in floatingKinds && imageProject!=null) {
@@ -477,6 +492,10 @@ internal fun VisualNodeArgumentsDialog(
             }, confirmLabel = confirmLabel)
         return
     }
+    if (contract.kind in setOf("flow.call", "flow.call.branch")) {
+        VisualPluginCallDialog(contract, arguments, flows, currentFlowId, onDismiss, onConfirm, confirmLabel)
+        return
+    }
     if (ConfiguredEntryArgumentsDialog(contract, arguments, imageProject?.manifest?.variables.orEmpty(), flows,
             currentFlowId, knownVariables, imageProject?.manifest?.debugSettings ?: com.autoscript.project.store.ProjectDebugSettings(),
             onManageVariables, onDismiss, onConfirm, confirmLabel, knownLabels)) return
@@ -489,7 +508,7 @@ internal fun VisualNodeArgumentsDialog(
         VisualImageRecognitionDialog(
             contract, arguments, resources, knownVariables, imageProject,
             visible = imageDialogVisible, captureSelection = imageCaptureSelection,
-            captureTemplatePath = imageCaptureTemplatePath, onPickFromScreen = onPickImageFromScreen,
+            captureTemplatePath = imageCaptureTemplatePath, onPickFromScreen = onPickImageFromScreen, onPickPolygon=onPickPolygon,
             confirmLabel = confirmLabel,
             onDismiss = onDismiss, onConfirm = { _, configured -> onConfirm(configured) },
             currentFlowId = currentFlowId, onManageVariables = onManageVariables,
@@ -523,6 +542,13 @@ internal fun VisualNodeArgumentsDialog(
                             val reading = inputs["operation"].orEmpty().startsWith("get:")
                             if (reading && property.path in setOf("value", "valueVariable")) return@forEach
                             if (!reading && property.path == "resultVariable") return@forEach
+                        }
+                        val colorFormat = studioBlockColorFormat(property.path, property.editor)
+                        if (colorFormat != null) {
+                            StudioColorInput(property.label, inputs[property.path].orEmpty(), true, Modifier.fillMaxWidth(), colorFormat) {
+                                inputs = inputs + (property.path to it)
+                            }
+                            return@forEach
                         }
                         when (property.editor) {
                             BlockPropertyEditor.FLOW_REFERENCE -> {
@@ -580,6 +606,16 @@ internal fun VisualNodeArgumentsDialog(
                                     }
                                 }
                             }
+                            BlockPropertyEditor.MULTI_COLOR_SAMPLES,
+                            BlockPropertyEditor.LEGACY_PATTERN,
+                            BlockPropertyEditor.LEGACY_FIXED_PATTERN,
+                            BlockPropertyEditor.LEGACY_COLOR_GROUP -> {
+                                OutlinedTextField(inputs[property.path].orEmpty(), { inputs = inputs + (property.path to it) },
+                                    label = { Text(property.label) }, modifier = Modifier.fillMaxWidth())
+                                StudioSampleColors(inputs[property.path].orEmpty(), if (property.editor == BlockPropertyEditor.LEGACY_COLOR_GROUP) 0 else 2) {
+                                    inputs = inputs + (property.path to it)
+                                }
+                            }
                             BlockPropertyEditor.BOOLEAN,
                             BlockPropertyEditor.ENUM,
                             BlockPropertyEditor.INTEGER_ENUM -> {
@@ -595,7 +631,8 @@ internal fun VisualNodeArgumentsDialog(
                             }
                             BlockPropertyEditor.STRING -> if (property.path.endsWith("Variable")) {
                                 VisualVariableField(property.label, inputs[property.path].orEmpty(), knownVariables,
-                                    calculationVariables(imageProject?.manifest?.variables.orEmpty(), currentFlowId, flows)) {
+                                    calculationVariables(imageProject?.manifest?.variables.orEmpty(), currentFlowId, flows),
+                                    inputTypes = scalarInputTypes(contract.kind, property.path)) {
                                     inputs = inputs + (property.path to it)
                                 }
                             } else OutlinedTextField(
@@ -728,7 +765,10 @@ internal fun parseBlockArguments(
                     ?: return null to "${property.label}必须是有限数字",
             )
             BlockPropertyEditor.STRING -> {
-                arguments.addProperty(property.path, text)
+                if(property.path=="polygon" && contract.kind in ImageSearchPolygon.kinds && text.isNotEmpty()) {
+                    val shape=runCatching {ImageSearchPolygon.encode(ImageSearchPolygon.decode(text))}.getOrElse {return null to "多边形无效：${it.message}"}
+                    arguments.addProperty(property.path,shape)
+                } else arguments.addProperty(property.path, text)
             }
             BlockPropertyEditor.RESOURCE -> {
                 if (text !in resourcePaths(resources, property.resourceKind)) {
@@ -1066,7 +1106,7 @@ internal fun resourcePaths(
     }.sorted()
 }
 
-private fun parseFlowCallArguments(
+internal fun parseFlowCallArguments(
     flow: ProjectFlow,
     inputs: Map<String, String>,
 ): Pair<JsonObject?, String?> {

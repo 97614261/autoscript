@@ -62,8 +62,8 @@ internal fun DebugPopupStyleEditor(draft: PopupStyleDraft, initialStyle: PopupSt
                 PopupStyleNumberInput("圆角 px", "corner", draft, Modifier.weight(1f), onChange = onChange)
             }
             PopupStyleNumberInput("时长 ms", "duration", draft, Modifier.fillMaxWidth(), onChange = onChange)
-            PopupStyleColorInput("背景色", "background", draft, preview.backgroundColor, onChange)
-            PopupStyleColorInput("文字色", "text", draft, preview.textColor, onChange)
+            PopupStyleColorInput("背景色", "background", draft, onChange)
+            PopupStyleColorInput("文字色", "text", draft, onChange)
             Row(Modifier.fillMaxWidth().heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("对齐", fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.width(40.dp))
@@ -164,12 +164,12 @@ private fun PopupStyleNumberInput(label: String, key: String, draft: PopupStyleD
 }
 
 @Composable
-private fun PopupStyleColorInput(label: String, key: String, draft: PopupStyleDraft, previewColor: String,
+private fun PopupStyleColorInput(label: String, key: String, draft: PopupStyleDraft,
     onChange: (PopupStyleDraft) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 30.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, fontSize = 10.sp, color = AutoScriptPalette.TextSecondary, modifier = Modifier.width(40.dp))
-        Box(Modifier.padding(end = 6.dp).size(20.dp).border(1.dp, AutoScriptPalette.Border, RoundedCornerShape(3.dp))
-            .background(Color(previewColor.toColorInt()), RoundedCornerShape(3.dp)))
+        StudioColorButton(label, draft.inputs[key].orEmpty(), StudioColorFormat.ARGB_HEX,
+            modifier = Modifier.padding(end = 6.dp)) { onChange(draft.edit(key, it)) }
         PopupStyleTextInput(draft.inputs[key].orEmpty(), draft.valid(key), Modifier.weight(1f), TextAlign.Start) {
             onChange(draft.edit(key, it.take(9)))
         }
